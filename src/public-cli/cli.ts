@@ -86,7 +86,6 @@ import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
   peekRoleRunRole,
-  resolveRoleRunBirthHost,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -329,12 +328,6 @@ type RoleEnvironmentOptions = {
   credentials?: CredentialProviders;
   seat: EffectiveSeat;
   config?: PublicCliConfig;
-  /**
-   * Resume must not inject seat startup/persistent defaults as env.model — those
-   * would mask admitted.model restoration (standards-2 second facet). Only an
-   * explicit invocation --model (source === "invocation") is forwarded.
-   */
-  resume?: boolean;
 };
 
 function createRoleEnvironment(
@@ -379,13 +372,8 @@ function createRoleEnvironment(
                     ? env.notaryTimeoutMs
                     : undefined;
 
-  // Initial runs take seat.selection from any source (invocation/persistent/startup).
-  // Resume only forwards an explicit CLI --model; otherwise env.model stays unset so
-  // resolveResumeModel can restore admitted.model (incl. thinking).
-  const injectModel =
-    options.seat.selection !== undefined &&
-    (options.resume !== true || options.seat.source === "invocation");
-
+  // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
+  // come from the live seat table (invocation flag → persistent → default).
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
@@ -402,7 +390,7 @@ function createRoleEnvironment(
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(injectModel ? { model: options.seat.selection } : {}),
+    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -617,7 +605,7 @@ function projectSeatEngine(
   return seat.engine === undefined ? {} : { engine: seat.engine };
 }
 
-/** Single seat.host → run-options projection (#595 birth host). */
+/** Single seat.host → run-options projection (#595 / #617). */
 function projectSeatHost(
   seat: Readonly<{ host: string }>,
 ): { host: string } {
@@ -731,7 +719,7 @@ function renderHelp(): string {
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
-    "Host resolution: --host → persistent seat host → pi; after set-host the role command face is unchanged",
+    "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
@@ -1062,17 +1050,17 @@ export async function runAkRole(
       principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority,
     };
     const parsed = parseArgv(argv);
-    // Invocation --engine rejects at the call-request seam (not role submission).
-    // #356 / #378 / #391: engine axis is every callable role (not resume / support).
-    if (parsed.host !== undefined && parsed.command === "resume") {
-      throw new CliUsageError("resume cannot change host");
-    }
+    // Host/engine axes: callable roles + resume (#617 DK-3: resume shares seat axes).
+    // Support commands (roles/config/…) still refuse both flags.
+    const acceptsSeatAxes =
+      parsed.command !== undefined &&
+      (isPublicCallableRole(parsed.command) || parsed.command === "resume");
     if (
       parsed.host !== undefined &&
       !parsed.help &&
       parsed.command !== undefined &&
       parsed.command !== "help" &&
-      !isPublicCallableRole(parsed.command)
+      !acceptsSeatAxes
     ) {
       throw new CliUsageError(`host axis is role commands only; refused command ${parsed.command}`);
     }
@@ -1082,7 +1070,7 @@ export async function runAkRole(
         !parsed.help &&
         parsed.command !== undefined &&
         parsed.command !== "help" &&
-        !isPublicCallableRole(parsed.command)
+        !acceptsSeatAxes
       ) {
         throw new CliUsageError(
           `engine axis is role commands only; refused command ${parsed.command}`,
@@ -1168,19 +1156,14 @@ export async function runAkRole(
                   : resumeRole === "gleaner-left"
                     ? "gleaner-left"
                     : "judge";
-      // Bare resume reuses the run's birth host (#595); never the live seat table.
-      // --host on resume remains structurally refused above.
-      const birthHost = await resolveRoleRunBirthHost(home, resumeRequest.runId);
-      const resumeInvocation = {
-        ...invocationFromParsed(parsed),
-        host: birthHost,
-      };
-      // Temporary model/thinking override for this resume only — never persists.
+      // #617 DK-4: resume resolves model/host/engine from the live seat table
+      // exactly as a new leg would (flag → persistent → default). Cross-host
+      // resume delivers prior native records as context to the target host.
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
         credentials,
-        resumeInvocation,
+        invocationFromParsed(parsed),
       );
       if (resumeRole === "coder") {
         const result = await runPublicCoderResume(
@@ -1193,7 +1176,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1213,7 +1195,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1233,7 +1214,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1253,7 +1233,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1273,7 +1252,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1293,7 +1271,6 @@ export async function runAkRole(
             credentials,
             seat,
             config,
-            resume: true,
           }),
           io,
         );
@@ -1312,7 +1289,6 @@ export async function runAkRole(
           credentials,
           seat,
           config,
-          resume: true,
         }),
         io,
       );

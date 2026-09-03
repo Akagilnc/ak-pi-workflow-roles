@@ -12,6 +12,8 @@ import { installGrokPreToolUseDeny } from "./bash-seatbelt.ts";
 export interface GrokAcpConnection {
   request(method: string, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
+  /** Subscribe to agent→client notifications (session/update stream, etc.). */
+  onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
   close(): Promise<void>;
 }
 
@@ -69,6 +71,8 @@ export type GrokCapabilityDeclaration = Readonly<{
 export type GrokSessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
+  /** Durable principal session path for layout ownership / isAvailable — not a rebuild source (#617 DK-4). */
+  resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
 }>;
 
 export type GrokRoleTurnHostConfig = Readonly<{
@@ -197,6 +201,9 @@ export function connectGrokAcpStdio(options: {
       if (closed) throw terminalError ?? acpError("acp-connection-closed", "Grok ACP connection is closed");
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
+    onNotification(handler) {
+      notificationHandlers.push(handler);
+    },
     async close() {
       if (closed) return;
       settleClosed(acpError("acp-connection-closed", "Grok ACP connection is closed"));
@@ -222,6 +229,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             privateActive: [...inspected.privateActive],
           });
         }
+        const continuation = request.continuation;
         const prepared = await config.prepare(request);
         let connection: GrokAcpConnection | undefined;
         let sessionId: string | undefined;
@@ -264,30 +272,66 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
               model: request.model.model,
             });
           }
-          const continuation = request.continuation;
-          const resumedSessionId = continuation.kind === "resume"
-            ? await config.sessionIdentity.load(request.principal)
-            : undefined;
-          if (continuation.kind === "resume" && resumedSessionId === undefined) {
-            return failure("session", "GrokAcpSessionFailure", "session-binding-missing");
+
+          // #617 DK-7: hand Pi session path once; Grok reads the file itself.
+          const priorNativePaths =
+            continuation.kind === "resume"
+            && request.hostTransition?.previousHost === "pi"
+              ? request.hostTransition.priorNativePaths
+              : undefined;
+          if (continuation.kind === "resume") {
+            const boundSessionId = await config.sessionIdentity.load(request.principal);
+            if (boundSessionId !== undefined && boundSessionId !== "") {
+              // Same-host Grok resume reuses native ACP session via session/load.
+              const loaded = await connection.request("session/load", {
+                sessionId: boundSessionId,
+                cwd: request.cwd,
+                mcpServers: prepared.mcpServers,
+                _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+              });
+              sessionId = typeof loaded.sessionId === "string" && loaded.sessionId !== ""
+                ? loaded.sessionId
+                : boundSessionId;
+            } else {
+              // Unbound resume (cross-host or lost binding): session/new + bind.
+              const session = await connection.request(
+                "session/new",
+                {
+                  cwd: request.cwd,
+                  mcpServers: prepared.mcpServers,
+                  _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+                },
+              );
+              sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
+              if (sessionId === undefined || sessionId === "") {
+                return failure("session", "GrokAcpSessionFailure", "session-id-missing");
+              }
+              await config.sessionIdentity.bind(request.principal, sessionId);
+            }
+          } else {
+            // Initial run: session/new + bind.
+            const session = await connection.request(
+              "session/new",
+              {
+                cwd: request.cwd,
+                mcpServers: prepared.mcpServers,
+                _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+              },
+            );
+            sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
+            if (sessionId === undefined || sessionId === "") {
+              return failure("session", "GrokAcpSessionFailure", "session-id-missing");
+            }
+            await config.sessionIdentity.bind(request.principal, sessionId);
           }
-          const session = await connection.request(
-            continuation.kind === "resume" ? "session/load" : "session/new",
-            {
-              ...(resumedSessionId === undefined ? {} : { sessionId: resumedSessionId }),
-              cwd: request.cwd,
-              mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: renderGrokSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
-            },
-          );
-          sessionId = resumedSessionId ?? (typeof session.sessionId === "string" ? session.sessionId : undefined);
-          if (sessionId === undefined || sessionId === "") {
-            return failure("session", "GrokAcpSessionFailure", "session-id-missing");
-          }
-          if (continuation.kind === "initial") await config.sessionIdentity.bind(request.principal, sessionId);
-          let prompt = prepared.prompt;
+
+          let prompt =
+            priorNativePaths !== undefined && priorNativePaths.length > 0
+              ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
+              : prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;
+
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
           const promptOrAbort = async (
             params: Readonly<Record<string, unknown>>,
@@ -326,9 +370,12 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           for (let attempt = 0; attempt < 8; attempt += 1) {
             let result: Readonly<Record<string, unknown>>;
             try {
+              const promptParts: Array<Record<string, unknown>> = [
+                { type: "text", text: prompt },
+              ];
               result = await promptOrAbort({
                 sessionId,
-                prompt: [{ type: "text", text: prompt }],
+                prompt: promptParts,
               });
             } catch (error) {
               // Envelope abort (typed infra declaration): closeRound owns the failure record.

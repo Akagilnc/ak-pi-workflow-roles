@@ -19,8 +19,10 @@ test("Grok ACP session binding persists through the durable-principal authority"
         return { sessionDirectory: root, sessionFile: join(root, "session.jsonl") };
       },
     };
-    await createGrokSessionIdentityAuthority(durable).bind(principal, "acp-s1");
-    assert.equal(await createGrokSessionIdentityAuthority(durable).load(principal), "acp-s1");
+    const identity = createGrokSessionIdentityAuthority(durable);
+    assert.equal(identity.resolveSessionFile(principal), join(root, "session.jsonl"));
+    await identity.bind(principal, "acp-s1");
+    assert.equal(await identity.load(principal), "acp-s1");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
