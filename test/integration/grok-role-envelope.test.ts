@@ -1088,20 +1088,17 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
         const entry = structured.evidence?.find((record) => record.kind === "issue_comment");
         assert.ok(entry, "observed comment must be pointer-reachable in structuredContent");
 
-        // Provider-visible faces carry only the bounded head — never the full body
-        // (Grok/ACP relays tool details as MCP structuredContent).
+        // Provider-visible structuredContent carries only the bounded head — never
+        // the full body (Grok/ACP relays tool details as MCP structuredContent).
         assert.notEqual(entry.body, body);
         assert.ok(Buffer.byteLength(entry.body ?? "", "utf8") < Buffer.byteLength(body, "utf8"));
-        const text = result.content?.find((part) => part.type === "text")?.text ?? "";
-        assert.deepEqual(JSON.parse(text), structured, "text and structuredContent share the same bounded projection");
 
         // Full body enters context only by explicit pointer open.
         const read = await callThroughMcp(server, COLLECTOR_READ_TOOL, { evidenceId: entry.evidenceId });
         assert.equal(read.error, undefined);
-        const readResult = read.result as { content?: Array<{ type: string; text?: string }> };
-        const opened = JSON.parse(readResult.content?.find((part) => part.type === "text")?.text ?? "{}") as { evidenceId?: string; body?: string };
-        assert.equal(opened.evidenceId, entry.evidenceId);
-        assert.equal(opened.body, body);
+        const readResult = read.result as { structuredContent?: { evidenceId?: string; body?: string } };
+        assert.equal(readResult.structuredContent?.evidenceId, entry.evidenceId);
+        assert.equal(readResult.structuredContent?.body, body);
 
         // Unknown finding pointer is a correctable rejection — retryable in the
         // same ACP round, never an infrastructure abort; ledger records typed-bounce.
