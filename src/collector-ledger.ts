@@ -16,6 +16,8 @@ import {
   type CollectorClock,
   type CollectorEvidenceRecord,
   type CollectorSnapshot,
+  type HeadRelation,
+  type WindowRelation,
 } from "./collector-evidence.ts";
 import {
   buildCollectorRequestBody,
@@ -41,6 +43,71 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 ] as const;
+
+/**
+ * #641 chain①: observe context projects at most this many bytes of each
+ * material body; the full body stays reachable via the record pointer
+ * (evidenceId + htmlUrl) and is preserved in the volume, never unconditionally
+ * transcribed into model context or receipt.
+ */
+export const COLLECTOR_OBSERVE_BODY_HEAD_BYTES = 512;
+
+function utf8SafePrefix(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  const bytes = Buffer.from(text, "utf8");
+  let end = maxBytes;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return `${bytes.subarray(0, end).toString("utf8")}…`;
+}
+
+export type ObserveEvidenceEntry = {
+  evidenceId: string;
+  kind: string;
+  authorLogin?: string | undefined;
+  state?: string | undefined;
+  body?: string | undefined;
+  commitOid?: string | null | undefined;
+  htmlUrl?: string | undefined;
+  path?: string | undefined;
+  line?: number | null | undefined;
+  side?: string | null | undefined;
+  authoritativeTime?: string | null | undefined;
+  windowRelation?: WindowRelation | undefined;
+  pullRequestReviewId?: number | null | undefined;
+};
+
+export type ObserveModelView = {
+  snapshotId: string;
+  observedAt: string;
+  completedAt: string;
+  prState: string;
+  headOid: string;
+  complete: boolean;
+  evidence: ObserveEvidenceEntry[];
+  requestAttempts: Array<{
+    attemptId: string;
+    requestId: string;
+    observedHead: string;
+    status: string;
+    marker: string;
+    recoverySnapshotId?: string | undefined;
+  }>;
+};
+
+/**
+ * #641 chain① model-context projection: identical shape to the volume view,
+ * with every material body bounded to a head preview. Full bodies remain
+ * pointer-reachable (evidenceId/htmlUrl) and stay in the volume (details).
+ */
+export function projectObserveContextView(modelView: ObserveModelView): ObserveModelView {
+  return {
+    ...modelView,
+    evidence: modelView.evidence.map((entry) =>
+      entry.body === undefined
+        ? entry
+        : { ...entry, body: utf8SafePrefix(entry.body, COLLECTOR_OBSERVE_BODY_HEAD_BYTES) }),
+  };
+}
 
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
 
@@ -117,7 +184,8 @@ export type CollectorLedger = {
     signal?: AbortSignal,
   ): Promise<{
     snapshot: CollectorSnapshot;
-    modelView: unknown;
+    modelView: ObserveModelView;
+    contextView: ObserveModelView;
   }>;
 
   request(
@@ -566,7 +634,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         attempts,
       });
 
-      return { snapshot, modelView };
+      return { snapshot, modelView, contextView: projectObserveContextView(modelView) };
     },
 
     async request(input, transport, clock, signal) {
@@ -785,7 +853,7 @@ function buildObserveModelView(input: {
   records: readonly CollectorEvidenceRecord[];
   requesterLogin: string | undefined;
   attempts: readonly CollectorRequestAttempt[];
-}): unknown {
+}): ObserveModelView {
   const relevant = input.records;
   return {
     snapshotId: input.snapshot.snapshotId,
@@ -794,7 +862,7 @@ function buildObserveModelView(input: {
     prState: input.snapshot.prState,
     headOid: input.snapshot.headOid,
     complete: input.snapshot.complete,
-    evidence: relevant.map((record) => ({
+    evidence: relevant.map((record): ObserveEvidenceEntry => ({
       evidenceId: record.evidenceId,
       kind: record.kind,
       authorLogin: record.authorLogin,

@@ -260,7 +260,7 @@ export function createCollectorRoleRuntime(
     pi.registerTool({
       name: COLLECTOR_OBSERVE_TOOL,
       label: "通进司观察",
-      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。",
+      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文以头部摘录加指针呈现，完整正文以 evidenceId/htmlUrl 可达；findings 的拆分与归类由你在交件时完成。",
       promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
       async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -269,7 +269,7 @@ export function createCollectorRoleRuntime(
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
-          const { snapshot, modelView } = await activation.ledger.observe(
+          const { snapshot, modelView, contextView } = await activation.ledger.observe(
             activation.transport,
             activation.clock,
             signal,
@@ -282,8 +282,10 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: JSON.stringify(modelView),
+              // #641 chain①: model context carries bounded body heads + pointers only.
+              text: JSON.stringify(contextView),
             }],
+            // Volume seam: full evidence (bodies included) stays openable for 开卷 verification.
             details: modelView,
           };
         } catch (error) {
@@ -358,7 +360,7 @@ export function createCollectorRoleRuntime(
     pi.registerTool({
       name: COLLECTOR_OUTPUT_TOOL,
       label: "通进司输出",
-      description: "观察完成后提交；回执由 runtime 组装。",
+      description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
       promptSnippet: "提交通进司回执",
       parameters: outputSchema,
       async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
