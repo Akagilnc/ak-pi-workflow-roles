@@ -8,8 +8,8 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-
-export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
+import { GATEKEEPER_OUTPUT_TOOL_NAME, gatekeeperOutputSchema } from "./package-contracts/gatekeeper-output.ts";
+export { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "./package-contracts/gatekeeper-output.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 const SUBJECT_TOOL = "ak_gatekeeper_subject";
@@ -88,6 +88,23 @@ const gatekeeperDecisionSchema = openToolObject(Type.Object({
   findings: Type.Unknown({ description: "status 为 pass 时可选 string[] findings" }),
 }));
 
+/**
+ * Direct-seat decision tool spec (#639). Lifecycle assembly stays on the
+ * registration envelope — src/role-runtime.ts (ADR 0018). Schema authority is
+ * the shared contract module (with infrastructure-failure declaration).
+ */
+export const GATEKEEPER_TOOL_SPEC = {
+  name: GATEKEEPER_OUTPUT_TOOL_NAME,
+  label: "门下省决议",
+  description: "门下省终局决议，状态为 dispatch 或 pass。",
+  promptSnippet: "门下省决议",
+  parameters: gatekeeperOutputSchema,
+} as const;
+
+export type GatekeeperRuntimeDependencies = {
+  loadSoul(): Promise<string>;
+};
+
 function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
 }
@@ -114,7 +131,7 @@ export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
 /** Gatekeeper province decision tool — open transport; projection owns legality. */
 export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
-    name: GATEKEEPER_OUTPUT_TOOL,
+    name: GATEKEEPER_OUTPUT_TOOL_NAME,
     description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
     async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },

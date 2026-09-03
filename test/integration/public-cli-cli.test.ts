@@ -136,7 +136,8 @@ test("help document capabilities match typed registry without depending on layou
   for (const role of PUBLIC_CALLABLE_ROLES) {
     assert.equal(names.includes(role), true);
   }
-  assert.equal((names as readonly string[]).includes("navigator"), false);
+  // #639: navigator is a callable role and carries its own help capability.
+  assert.equal((names as readonly string[]).includes("navigator"), true);
 });
 
 // Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案
@@ -271,7 +272,7 @@ test("config persistence round-trips across processes on the typed seat face", a
       thinking: "high",
     });
 
-    // #453: automatic gate seats are configurable; unset restores absence.
+    // #453: gate seats are configurable; unset restores absence.
     const gateSet = await runAkRole(
       [
         "config",
@@ -309,13 +310,6 @@ test("config persistence round-trips across processes on the typed seat face", a
         xai: true,
       }).source,
       "persistent",
-    );
-    assert.equal(
-      resolveEffectiveSeat(gatePersisted, "gatekeeper", {
-        "openai-codex": true,
-        xai: true,
-      }).automatic,
-      true,
     );
 
     const unsetInspector = await runAkRole(["config", "unset", "inspector"], {

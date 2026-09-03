@@ -360,9 +360,10 @@ test("registry renderer owns public command text; model prose is ignored", () =>
     renderPublicAkRoleCommand({ role: "coder", phase: "plan" }),
     "ak-role coder plan",
   );
+  // #639: navigator is a callable role like any other, so its advice renders.
   assert.equal(
     renderPublicAkRoleCommand({ role: "navigator", phase: null }),
-    undefined,
+    "ak-role navigator",
   );
 
   const fact = recommendationNavigatorFact({

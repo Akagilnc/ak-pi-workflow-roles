@@ -136,6 +136,14 @@ export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "inspector";
 };
 
+export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "gatekeeper";
+};
+
+export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "navigator";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -217,6 +225,8 @@ export type AdmittedRoleInvocation =
   | AdmittedCountersignInvocation
   | AdmittedGleanerLeftInvocation
   | AdmittedInspectorInvocation
+  | AdmittedGatekeeperInvocation
+  | AdmittedNavigatorInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -535,6 +545,8 @@ export type ParseInstructionArgvResult = {
 export type ParseJudgeArgvResult = ParseInstructionArgvResult;
 export type ParseCountersignArgvResult = ParseInstructionArgvResult;
 export type ParseInspectorArgvResult = ParseInstructionArgvResult;
+export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
+export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number shared by countersign/notary/analyst faces. */
 export function parsePositiveTicketNumber(
@@ -555,7 +567,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -799,6 +811,14 @@ export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvR
   return parseInstructionArgv(args, "inspector");
 }
 
+export function parseGatekeeperArgv(args: readonly string[]): ParseGatekeeperArgvResult {
+  return parseInstructionArgv(args, "gatekeeper");
+}
+
+export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvResult {
+  return parseInstructionArgv(args, "navigator");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -988,6 +1008,9 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
   correlationId?: string;
 };
 
+export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
+
 /**
  * Shared instruction-seat admission for Judge and Inspector: project check,
  * principal/placement issue, attachment freeze, ticket extract, admitted-request
@@ -995,7 +1018,7 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
  * (Inspector). Countersign keeps its own path for ticket-override specialty.
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1101,6 +1124,26 @@ export async function admitInspectorInvocation(
   return admitStandardMaterialInvocation("inspector", options);
 }
 
+/**
+ * Admit a direct Gatekeeper (门下省) run (#639): freeze attachments, persist
+ * the request, reserve session placement — same instruction-seat face.
+ */
+export async function admitGatekeeperInvocation(
+  options: AdmitGatekeeperInvocationOptions,
+): Promise<AdmittedGatekeeperInvocation> {
+  return admitStandardMaterialInvocation("gatekeeper", options);
+}
+
+/**
+ * Admit a direct Navigator (游奕使) run (#639): freeze attachments, persist
+ * the request, reserve session placement — same instruction-seat face.
+ */
+export async function admitNavigatorInvocation(
+  options: AdmitNavigatorInvocationOptions,
+): Promise<AdmittedNavigatorInvocation> {
+  return admitStandardMaterialInvocation("navigator", options);
+}
+
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
@@ -1127,6 +1170,20 @@ export function buildJudgeTransportPrompt(
 
 export function buildInspectorTransportPrompt(
   admitted: AdmittedInspectorInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export function buildGatekeeperTransportPrompt(
+  admitted: AdmittedGatekeeperInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export function buildNavigatorTransportPrompt(
+  admitted: AdmittedNavigatorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);

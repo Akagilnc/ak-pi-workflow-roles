@@ -41,9 +41,11 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedFixerInvocation,
+  type AdmittedGatekeeperInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
+  type AdmittedNavigatorInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
   type CoderPhase,
@@ -84,7 +86,9 @@ export type RoleRunRecord = {
     | "notary"
     | "countersign"
     | "gleaner-left"
-    | "inspector";
+    | "inspector"
+    | "gatekeeper"
+    | "navigator";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -244,7 +248,9 @@ async function readRoleRunStateDisk(
     record.role !== "notary" &&
     record.role !== "countersign" &&
     record.role !== "gleaner-left" &&
-    record.role !== "inspector"
+    record.role !== "inspector" &&
+    record.role !== "gatekeeper" &&
+    record.role !== "navigator"
   ) {
     return undefined;
   }
@@ -1139,6 +1145,90 @@ export async function loadResumableReviewerRun(
 }
 
 /**
+ * Load a resumable Gatekeeper run for resume (#639). Instruction-seat restore:
+ * identity + attachments only; no role-specific admitted fields.
+ */
+export async function loadResumableGatekeeperRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableGatekeeperRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "gatekeeper") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not gatekeeper`,
+    );
+  }
+  const admitted: AdmittedGatekeeperInvocation = {
+    role: "gatekeeper",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableGatekeeperRun = {
+  readonly admitted: AdmittedGatekeeperInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Navigator run for resume (#639). Instruction-seat restore:
+ * identity + attachments only; no role-specific admitted fields.
+ */
+export async function loadResumableNavigatorRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableNavigatorRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "navigator") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not navigator`,
+    );
+  }
+  const admitted: AdmittedNavigatorInvocation = {
+    role: "navigator",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableNavigatorRun = {
+  readonly admitted: AdmittedNavigatorInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
  * Load a resumable Countersign run for resume (#599). Ticket binding and
  * attachments restore from the admitted request; diarist does not re-run.
  */
@@ -1293,6 +1383,8 @@ export async function peekRoleRunRole(
   | "countersign"
   | "gleaner-left"
   | "inspector"
+  | "gatekeeper"
+  | "navigator"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

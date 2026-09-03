@@ -36,7 +36,7 @@ import {
   formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
-import { loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
+import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
@@ -128,6 +128,8 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
+    loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
+    loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

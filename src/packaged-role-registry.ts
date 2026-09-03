@@ -1,5 +1,7 @@
 /** Composition-root unique authoritative public-role records (#509 / #524). */
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "./package-contracts/worker-output.ts";
@@ -26,8 +28,7 @@ export const INSPECTOR_SESSION_MATERIALS = [
 ] as const;
 
 /**
- * One record per public callable role. Navigator is absent (name-only materials
- * live on the session-opening projection).
+ * One record per public callable role (#639: includes gatekeeper and navigator).
  */
 export const PUBLIC_ROLE_RECORDS = [
   {
@@ -154,6 +155,28 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,
+  },
+  // #639: gatekeeper and navigator are roles like any other — public ak-role
+  // entries; automatic attendance (province dispatch, navigator sidecar) is
+  // unchanged and orthogonal to callability.
+  {
+    role: "gatekeeper",
+    phases: [null],
+    outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    // Province materials; officers reuse their own public records below.
+    sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
+  },
+  {
+    role: "navigator",
+    phases: [null],
+    outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
 ] as const;
 

@@ -366,6 +366,8 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
         { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
         { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
+        { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
+        { role: "navigator", outputTool: "ak_navigator_output" },
       ],
     );
 
