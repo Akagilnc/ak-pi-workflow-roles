@@ -1056,118 +1056,79 @@ function grokCollectorDependencies(root: string): {
   };
 }
 
-test("Grok collector observe structuredContent carries bounded heads; full body opens only by pointer", async () => {
+test("Grok collector keeps observe bounded, opens full bodies by pointer, and rejects unknown finding pointers as retryable", async () => {
   const priorExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
-    const root = await mkdtemp(join(tmpdir(), "ak-grok-collector-observe-"));
+    const root = await mkdtemp(join(tmpdir(), "ak-grok-collector-"));
     const priorHome = process.env.HOME;
     const priorRun = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = root;
     delete process.env.AK_ROLE_RUN_DIR;
     try {
-    const runId = "grok-collector-observe";
-    const { body, dependencies } = grokCollectorDependencies(root);
-    const prepared = await prepareGrokRoleEnvelope({
-      request: {
-        principal: {}, activation: { role: "collector", repo: "acme/widgets", pr: "1" }, methods: [],
-        continuation: { kind: "initial", prompt: "collect" },
-        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@collector`),
-      } as RoleTurnRequest,
-      socketPath: join(root, "mcp.sock"),
-      dependencies,
-    });
-    try {
-      const server = prepared.mcpServers[0] as McpServer;
-      const observe = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
-      assert.equal(observe.error, undefined);
-      const result = observe.result as { content?: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown> };
-      const structured = result.structuredContent as { evidence?: Array<{ evidenceId?: string; body?: string; kind?: string }> };
-      assert.ok(structured, "observe result must expose structuredContent");
-      const entry = structured.evidence?.find((record) => record.kind === "issue_comment");
-      assert.ok(entry, "observed comment must be pointer-reachable in structuredContent");
+      const runId = "grok-collector";
+      const { body, dependencies } = grokCollectorDependencies(root);
+      const prepared = await prepareGrokRoleEnvelope({
+        request: {
+          principal: {}, activation: { role: "collector", repo: "acme/widgets", pr: "1" }, methods: [],
+          continuation: { kind: "initial", prompt: "collect" },
+          model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+          agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@collector`),
+        } as RoleTurnRequest,
+        socketPath: join(root, "mcp.sock"),
+        dependencies,
+      });
+      try {
+        const server = prepared.mcpServers[0] as McpServer;
+        const observe = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
+        assert.equal(observe.error, undefined);
+        const result = observe.result as { content?: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown> };
+        const structured = result.structuredContent as { evidence?: Array<{ evidenceId?: string; body?: string; kind?: string }> };
+        assert.ok(structured, "observe result must expose structuredContent");
+        const entry = structured.evidence?.find((record) => record.kind === "issue_comment");
+        assert.ok(entry, "observed comment must be pointer-reachable in structuredContent");
 
-      // Provider-visible faces carry only the bounded head — never the full body
-      // (Grok/ACP relays tool details as MCP structuredContent).
-      assert.notEqual(entry.body, body);
-      assert.ok(Buffer.byteLength(entry.body ?? "", "utf8") < Buffer.byteLength(body, "utf8"));
-      const text = result.content?.find((part) => part.type === "text")?.text ?? "";
-      assert.deepEqual(JSON.parse(text), structured, "text and structuredContent share the same bounded projection");
+        // Provider-visible faces carry only the bounded head — never the full body
+        // (Grok/ACP relays tool details as MCP structuredContent).
+        assert.notEqual(entry.body, body);
+        assert.ok(Buffer.byteLength(entry.body ?? "", "utf8") < Buffer.byteLength(body, "utf8"));
+        const text = result.content?.find((part) => part.type === "text")?.text ?? "";
+        assert.deepEqual(JSON.parse(text), structured, "text and structuredContent share the same bounded projection");
 
-      // Full body enters context only by explicit pointer open.
-      const read = await callThroughMcp(server, COLLECTOR_READ_TOOL, { evidenceId: entry.evidenceId });
-      assert.equal(read.error, undefined);
-      const readResult = read.result as { content?: Array<{ type: string; text?: string }> };
-      const opened = JSON.parse(readResult.content?.find((part) => part.type === "text")?.text ?? "{}") as { evidenceId?: string; body?: string };
-      assert.equal(opened.evidenceId, entry.evidenceId);
-      assert.equal(opened.body, body);
+        // Full body enters context only by explicit pointer open.
+        const read = await callThroughMcp(server, COLLECTOR_READ_TOOL, { evidenceId: entry.evidenceId });
+        assert.equal(read.error, undefined);
+        const readResult = read.result as { content?: Array<{ type: string; text?: string }> };
+        const opened = JSON.parse(readResult.content?.find((part) => part.type === "text")?.text ?? "{}") as { evidenceId?: string; body?: string };
+        assert.equal(opened.evidenceId, entry.evidenceId);
+        assert.equal(opened.body, body);
+
+        // Unknown finding pointer is a correctable rejection — retryable in the
+        // same ACP round, never an infrastructure abort; ledger records typed-bounce.
+        const bounced = await callThroughMcp(server, COLLECTOR_OUTPUT_TOOL, { findings: [{ evidenceId: "missing0000000000" }] });
+        assert.equal(bounced.error, undefined);
+        const bouncedResult = bounced.result as { isError?: boolean; structuredContent?: { code?: string }; content?: Array<{ type: string; text?: string }> };
+        assert.equal(bouncedResult.isError, true);
+        assert.equal(bouncedResult.structuredContent?.code, "CollectorUnknownEvidenceError");
+        assert.equal(prepared.abortSignal?.aborted, false, "pointer correction must not arm infrastructure abort");
+
+        const closure = await prepared.closeRound();
+        assert.equal(closure.accepted, false);
+        assert.ok("retry" in closure, "correctable pointer bounce must retry in the same ACP session");
+        assert.equal(closure.retry.code, "CollectorUnknownEvidenceError");
+        assert.equal(closure.retry.toolCallIds.length, 1);
+
+        const outcome = await readLatestSubmissionOutcome(process.cwd(), runId, root);
+        assert.equal(outcome?.outcome, "correctable-rejection");
+        assert.equal(outcome?.code, "typed-bounce");
+      } finally {
+        await prepared.dispose?.();
+      }
     } finally {
-      await prepared.dispose?.();
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      await rm(root, { recursive: true, force: true });
     }
-  } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
-  } finally {
-    process.exitCode = priorExitCode;
-  }
-});
-
-test("Grok collector unknown finding pointer is a retryable correctable rejection, not an infra abort", async () => {
-  const priorExitCode = process.exitCode;
-  process.exitCode = undefined;
-  try {
-    const root = await mkdtemp(join(tmpdir(), "ak-grok-collector-pointer-"));
-    const priorHome = process.env.HOME;
-    const priorRun = process.env.AK_ROLE_RUN_DIR;
-    process.env.HOME = root;
-    delete process.env.AK_ROLE_RUN_DIR;
-    try {
-    const runId = "grok-collector-pointer";
-    const { dependencies } = grokCollectorDependencies(root);
-    const prepared = await prepareGrokRoleEnvelope({
-      request: {
-        principal: {}, activation: { role: "collector", repo: "acme/widgets", pr: "1" }, methods: [],
-        continuation: { kind: "initial", prompt: "collect" },
-        model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@collector`),
-      } as RoleTurnRequest,
-      socketPath: join(root, "mcp.sock"),
-      dependencies,
-    });
-    try {
-      const server = prepared.mcpServers[0] as McpServer;
-      const observe = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
-      assert.equal(observe.error, undefined);
-
-      const bounced = await callThroughMcp(server, COLLECTOR_OUTPUT_TOOL, { findings: [{ evidenceId: "missing0000000000" }] });
-      assert.equal(bounced.error, undefined);
-      const bouncedResult = bounced.result as { isError?: boolean; structuredContent?: { code?: string }; content?: Array<{ type: string; text?: string }> };
-      assert.equal(bouncedResult.isError, true);
-      assert.equal(bouncedResult.structuredContent?.code, "CollectorUnknownEvidenceError");
-      assert.equal(prepared.abortSignal?.aborted, false, "pointer correction must not arm infrastructure abort");
-
-      // The same ACP round must surface a retry, never a round infra failure.
-      const closure = await prepared.closeRound();
-      assert.equal(closure.accepted, false);
-      assert.ok("retry" in closure, "correctable pointer bounce must retry in the same ACP session");
-      assert.equal(closure.retry.code, "CollectorUnknownEvidenceError");
-      assert.equal(closure.retry.toolCallIds.length, 1);
-
-      // Durable submission ledger records the rejected attempt as a typed bounce.
-      const outcome = await readLatestSubmissionOutcome(process.cwd(), runId, root);
-      assert.equal(outcome?.outcome, "correctable-rejection");
-      assert.equal(outcome?.code, "typed-bounce");
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
   } finally {
     process.exitCode = priorExitCode;
   }

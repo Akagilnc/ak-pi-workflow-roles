@@ -100,7 +100,9 @@ export type ObserveModelView = {
 /**
  * #641 chain① model-context projection: identical shape to the volume view,
  * with every material body bounded to a head preview. Full bodies remain
- * pointer-reachable (evidenceId/htmlUrl) and stay in the volume (details).
+ * pointer-reachable (evidenceId/htmlUrl) and stay in the ledger volume
+ * (collector-side; provider-visible observe details carry only this bounded
+ * projection), never unconditionally transcribed into model context.
  */
 export function projectObserveContextView(modelView: ObserveModelView): ObserveModelView {
   return {
