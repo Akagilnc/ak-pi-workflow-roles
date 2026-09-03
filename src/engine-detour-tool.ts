@@ -9,7 +9,6 @@ import { Type, type Static } from "typebox";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
 import {
-  ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC,
   ENGINE_DETOUR_TOOL_NAME,
   engineDetourFailureDiagnostic,
   engineNameFromEnv,
@@ -39,13 +38,6 @@ export type EngineDetourHostActions = {
   ): never;
 };
 
-export type EngineDetourToolRegistration = {
-  /** True when the tool definition was installed on this ExtensionAPI. */
-  readonly registered: boolean;
-};
-
-type EngineDetourLatch = { used: boolean };
-
 /** Caller/upper-layer cancellation must propagate unchanged. */
 function isCallerCancellation(
   error: unknown,
@@ -63,24 +55,21 @@ function isCallerCancellation(
 }
 
 /**
- * Build one once-latch detour tool definition for a configured engine name.
- * `latch` is shared so parent registration can reset between activations.
+ * Build one detour tool definition for a configured engine name.
  * `fail` owns host abort (parent) vs throw (evidence child) for tool misuse only.
  * Engine process failures (nonzero/empty/spawn) stop via `fail` with their cause.
  * Caller AbortSignal cancellation propagates unchanged.
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
-  latch?: EngineDetourLatch;
   fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
 }): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
-  const latch = input.latch ?? { used: false };
   const engineName = input.engineName;
   return {
     name: ENGINE_DETOUR_TOOL_NAME,
     label: "劳务引擎",
     description:
-      `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session；每次激活至多一次。`,
+      `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session。`,
     promptSnippet: "运行配置的劳务引擎一次并返回 stdout",
     parameters: engineDetourArgsSchema,
     async execute(
@@ -90,15 +79,6 @@ export function createEngineDetourToolDefinition(input: {
       _onUpdate,
       ctx,
     ): Promise<HostToolResult> {
-      if (latch.used) {
-        input.fail(
-          new Error(ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC),
-          toolCallId,
-          ctx,
-        );
-      }
-      latch.used = true;
-
       const args = params as EngineDetourArgs;
       const argv = Array.isArray(args.argv) ? args.argv : [];
       if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
@@ -147,36 +127,23 @@ export function createEngineDetourToolDefinition(input: {
 /**
  * Register the engine-generic detour tool once for this process when any role has
  * an engine activation signal. Returns whether registration occurred.
- * Once-latch is activation-scoped via the returned reset handle.
  */
 export function registerEngineDetourTool(
   roleHost: RoleHost,
   hostActions: EngineDetourHostActions,
-): EngineDetourToolRegistration & { resetLatch(): void } {
+): boolean {
   const engineName = engineNameFromEnv();
   if (engineName === undefined) {
-    return {
-      registered: false,
-      resetLatch() {
-        /* no-op when unregistered */
-      },
-    };
+    return false;
   }
 
-  const latch: EngineDetourLatch = { used: false };
   const definition = createEngineDetourToolDefinition({
     engineName,
-    latch,
     fail(error, toolCallId, ctx) {
       hostActions.failInfrastructure(error, ctx, toolCallId);
     },
   });
   roleHost.registerTool(definition);
 
-  return {
-    registered: true,
-    resetLatch() {
-      latch.used = false;
-    },
-  };
+  return true;
 }

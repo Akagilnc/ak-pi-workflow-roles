@@ -1009,7 +1009,7 @@ export function createRoleRuntimeExtension(
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
     const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
-    let engineDetourRegistration: ReturnType<typeof registerEngineDetourTool> | undefined;
+    let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
@@ -1543,7 +1543,6 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      engineDetourRegistration?.resetLatch();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
@@ -1684,11 +1683,8 @@ export function createRoleRuntimeExtension(
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
-        if (engineDetourRegistration === undefined) {
-          engineDetourRegistration = registerEngineDetourTool(roleHost, hostActions);
-          if (!engineDetourRegistration.registered) {
-            engineDetourRegistration = undefined;
-          }
+        if (!engineDetourRegistered) {
+          engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
         }
         // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
