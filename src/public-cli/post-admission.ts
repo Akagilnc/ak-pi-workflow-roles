@@ -260,7 +260,7 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
-    // Single authority projectHostTransitionPriorNative owns known-host prior bytes.
+    // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
     const previousHost = await readInvocationHost(admitted.runDirectory);
     const liveHost = env.host;
     const hostTransition =
