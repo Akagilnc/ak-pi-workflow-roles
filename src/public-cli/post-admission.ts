@@ -393,19 +393,13 @@ export async function runPostAdmissionOneShot<
   exitCode: number;
   admitted?: A;
   terminal?: T;
-  staleWriterLeaseReclaimed?: true;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
 
   let lease: RunWriterLease;
-  let staleWriterLeaseReclaimed: true | undefined;
   try {
-    lease = await acquireRunWriterLease(
-      admitted.runDirectory,
-      (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
-        io.stderr(diagnostic);
-        if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
-      },
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) =>
+      io.stderr(diagnostic),
     );
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
@@ -415,7 +409,7 @@ export async function runPostAdmissionOneShot<
     throw error;
   }
 
-  const dispatched = await dispatchPostAdmissionTurn({
+  return await dispatchPostAdmissionTurn({
     admitted,
     env,
     io,
@@ -424,10 +418,6 @@ export async function runPostAdmissionOneShot<
     adapters,
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
-  return {
-    ...dispatched,
-    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
-  };
 }
 
 /**
