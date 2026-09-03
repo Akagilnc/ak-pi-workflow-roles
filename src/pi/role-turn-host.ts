@@ -200,6 +200,8 @@ export type PiSpawnRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    /** Opaque prior-host records; Pi joins piped stdin with the argv prompt. */
+    stdin?: string;
   },
 ) => Promise<{
   code: number | null;
@@ -294,6 +296,7 @@ async function selectedPiIdentity(
  * that exact file. Close settles exactly once for natural return / error / SIGTERM.
  */
 type SpawnedPiChild = ReturnType<typeof spawn> & {
+  stdin: NonNullable<ReturnType<typeof spawn>["stdin"]>;
   stderr: NonNullable<ReturnType<typeof spawn>["stderr"]>;
 };
 
@@ -312,7 +315,7 @@ export function createDefaultPiSpawnRunner(options: {
       const child: SpawnedPiChild = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: [spawnOptions.stdin === undefined ? "ignore" : "pipe", "ignore", "pipe"],
       });
       let stderr = "";
       let timedOut = false;
@@ -338,6 +341,10 @@ export function createDefaultPiSpawnRunner(options: {
       child.once("spawn", () => {
         hasSpawned = true;
         armTimeoutAfterChildReady();
+        if (spawnOptions.stdin !== undefined) {
+          child.stdin.write(spawnOptions.stdin);
+          child.stdin.end();
+        }
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
           typeof runDirectory === "string" &&
@@ -401,25 +408,17 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
-      let effectiveRequest = request;
-      // #617 DK-4: prior native bytes come only from post-admission hostTransition projection.
+      // #617: prior native bytes ride Pi's existing stdin join, not argv (ARG_MAX).
       const priorNative = request.hostTransition?.priorNativeRecords;
-      if (
+      const stdin =
         request.continuation.kind === "resume"
         && priorNative !== undefined
         && priorNative.length > 0
-      ) {
-        effectiveRequest = {
-          ...request,
-          continuation: {
-            ...request.continuation,
-            prompt: `${priorNative}\n\n${request.continuation.prompt}`,
-          },
-        };
-      }
+          ? `${priorNative}\n\n`
+          : undefined;
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(
-        effectiveRequest,
+        request,
         config.principalAuthority,
         config.extraPiArgs ?? [],
       );
@@ -449,6 +448,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         cwd: request.cwd,
         env,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(stdin === undefined ? {} : { stdin }),
       });
     },
   };
