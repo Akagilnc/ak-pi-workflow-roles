@@ -5,7 +5,7 @@
  * initial role facades before entering; manual resume never re-admits.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -18,8 +18,8 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
-import { resolveResumeModel } from "./turn-request.ts";
 import {
   missingCredentialPreDispatchFailure,
   postRunMissingCredentialFailure,
@@ -58,6 +58,19 @@ import {
 } from "./terminal.ts";
 import { runWithAutoResumeLoop } from "./auto-resume.ts";
 
+/** Previous main-session host recorded on invocation.json, if any. */
+async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
+  try {
+    const raw = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as {
+      host?: unknown;
+    };
+    return typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 export type PostAdmissionEnv = {
   home: string;
   agentDir: string;
@@ -67,7 +80,7 @@ export type PostAdmissionEnv = {
   roleTurnHost: RoleTurnHost;
   model?: SeatModelConfig;
   engine?: string;
-  /** Effective main-session host for this run — recorded as birth host (#595). */
+  /** Effective main-session host for this run (#595 admission / #617 resume seat). */
   host?: string;
   credentials?: CredentialProviders;
   timeoutMs?: number;
@@ -246,6 +259,22 @@ export async function dispatchPostAdmissionTurn<
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
+    // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
+    // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
+    const previousHost = await readInvocationHost(admitted.runDirectory);
+    const liveHost = env.host;
+    const hostTransition =
+      previousHost !== undefined && liveHost !== undefined && admitted.principal !== undefined
+        ? await projectHostTransitionPriorNative({
+            previousHost,
+            liveHost,
+            runDirectory: admitted.runDirectory,
+            piSessionFile: env.principalAuthority.decode(admitted.principal).sessionFile,
+          })
+        : undefined;
+    const turnRequest: RoleTurnRequest =
+      hostTransition === undefined ? request : { ...request, hostTransition };
+
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // beforeDispatch (e.g. countersign diarist station) runs after running is
@@ -271,7 +300,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
-      result = await env.roleTurnHost.executeTurn(request);
+      result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       return (await presentControlledFailure(
         admitted,
@@ -489,9 +518,8 @@ export async function runPostAdmissionManualResume<
   terminal?: T;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
-  // Single seam: explicit env model wins; otherwise restore admitted.model
-  // (including thinking) so a model-less manual resume reuses the recorded model.
-  const effectiveModel = resolveResumeModel(env.model, admitted.model);
+  // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
+  const effectiveModel = env.model;
   const shouldPresent =
     adapters.shouldPresentSettled ??
     ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));

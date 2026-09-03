@@ -4,6 +4,12 @@
  * returns typed 429 provider stop → second process executes `ak-role resume <same runId>`
  * and completes with accepted typed Coder terminal + frozen materials + artifacts.
  *
+ * Two real Pi processes under a cold-packed install (24–42s). Ordinary-tier file
+ * parallelism contends past hang detectors — scheduled on heavy concurrency=2
+ * (`scripts/run-test-all.mjs` HEAVYWEIGHT_MANIFEST; #617). Not replaceable by
+ * lower live-seat resume or package-install-only proofs: unique two-process
+ * frozen-materials + sealed-accepted chain.
+ *
  * Deletes §3.A.4 named argv logs/indices, report prose locks, and raw JSONL text checks.
  */
 import assert from "node:assert/strict";
@@ -269,6 +275,23 @@ test(
           installedRoutebook,
           "MUTATED_BETWEEN_PROCESSES_DO_NOT_REREAD\n",
           "utf8",
+        );
+
+        // #617 DK-3: bare resume takes the live seat table (not the birth --model flag).
+        // Point the persistent coder seat at the same offline faux model before resume.
+        const seatResult = await runAkRoleBin(
+          installed.akRoleBin,
+          ["config", "set", "coder", "openai-codex/faux-1"],
+          {
+            home,
+            agentDir: piAgentDir,
+            cwd: project,
+          },
+        );
+        assert.equal(
+          seatResult.code,
+          0,
+          `config set coder faux model failed\nstdout:\n${seatResult.stdout}\nstderr:\n${seatResult.stderr}`,
         );
 
         // Process 2: ak-role resume <same runId> completes lawfully

@@ -612,15 +612,14 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assertNoEngineFlagsInArgv(capturedArgs!);
     }
 
-    // Non-role command with --engine → structural reject (roles only; resume stays off-axis).
+    // Support command with --engine → structural reject (stable exit semantics only).
     {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       const result = await runAkRole(
-        ["resume", "--engine", "opus", "run-not-real"],
+        ["roles", "--engine", "opus"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
-      assert.match(stderr.join(""), /engine axis is role commands only; refused command resume/);
     }
 
     // Syntax-illegal persistent engine on load → structural reject.
@@ -1168,7 +1167,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
   },
 );
 
-test("#391 E4 negative table: navigator / analyst / resume / illegal / model-before-engine / disk navigator",
+test("#391 E4 negative table: navigator / analyst / support / illegal / model-before-engine / disk navigator",
   async () => {
     await withTempHome(async (home) => {
       // navigator set-engine refused with independent-activation reason.
@@ -1254,32 +1253,14 @@ test("#391 E4 negative table: navigator / analyst / resume / illegal / model-bef
         "utf8",
       );
 
-      // analyst --engine structural refuse.
+      // analyst --engine structural refuse (stable exit semantics; no prose lock).
       {
-        const { io, stderr } = captureIo();
+        const { io } = captureIo();
         const result = await runAkRole(
           ["analyst", "--engine", "opus", "--issue", "1"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 2);
-        assert.match(
-          stderr.join(""),
-          /engine axis is role commands only; refused command analyst/,
-        );
-      }
-
-      // resume --engine structural refuse (provenance must not rewrite).
-      {
-        const { io, stderr } = captureIo();
-        const result = await runAkRole(
-          ["resume", "--engine", "opus", "run-not-real"],
-          { packageRoot, home, io },
-        );
-        assert.equal(result.exitCode, 2);
-        assert.match(
-          stderr.join(""),
-          /engine axis is role commands only; refused command resume/,
-        );
       }
 
       // Illegal engine name on set-engine.

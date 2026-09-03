@@ -40,7 +40,7 @@ import {
 import {
   loadResumableCountersignRun,
   markRunAdmitted,
-  selectResumeContinuationPrompt,
+  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -215,7 +215,11 @@ export async function runPublicCountersignResume(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: selectResumeContinuationPrompt(request.message),
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
   });
 
@@ -225,6 +229,7 @@ export async function runPublicCountersignResume(
     io,
     request: turnRequest,
     adapters: countersignAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

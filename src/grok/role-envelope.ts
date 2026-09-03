@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { appendFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -128,6 +127,8 @@ export function createComposedGrokRoleTurnHost(
     prepare: (request) => prepareGrokRoleEnvelope({
       request,
       dependencies: config.roleRuntimeDependencies,
+      // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
+      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-grok-mcp-${randomUUID()}.sock`,
     }),
   });
@@ -137,6 +138,12 @@ export async function prepareGrokRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   readonly socketPath: string;
+  /**
+   * Durable principal session path (header layout only).
+   * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
+   * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
+   */
+  readonly sessionFile?: string;
 }): Promise<GrokPreparedTurn> {
   const { request } = options;
   const flags = projectGrokActivationFlags(request);
@@ -144,7 +151,7 @@ export async function prepareGrokRoleEnvelope(options: {
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
-  /** Truthful parent-session books for first-record-then-audit / navigator lifecycle (#590). */
+  /** In-memory turn books for role lifecycle and audit subjects. */
   const sessionEntries: Array<Record<string, unknown>> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
@@ -163,36 +170,25 @@ export async function prepareGrokRoleEnvelope(options: {
     methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
   }
 
-  // Durable principal layout matches public-cli settlement (session/session.jsonl).
-  // Create the header only when absent; resume must keep every prior byte and append.
-  // Session JSONL is the sole durable books true source: hydrate in-memory entries
-  // from existing bytes so shared lifecycle getEntries sees unfinished markers/history
-  // (#590 grok-resume-session-hydration).
-  let sessionFile = join(request.runDirectory, "session", "session.jsonl");
+  // Durable principal file for isAvailable / resumable settlement (public-cli).
+  // #617 DK-4: header layout only — never Grok conversation/tool writeback into Pi JSONL.
+  let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
-  try {
-    await writeFile(
-      sessionFile,
-      `${JSON.stringify({
-        type: "session",
-        version: 3,
-        id: runId,
-        timestamp: new Date().toISOString(),
-        cwd: request.cwd,
-      })}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
-  }
-  {
-    const raw = await readFile(sessionFile, "utf8");
-    for (const line of raw.split("\n")) {
-      if (line.trim() === "") continue;
-      const entry = JSON.parse(line) as Record<string, unknown>;
-      // Header is owned by getHeader(); Pi getEntries excludes it.
-      if (entry.type === "session") continue;
-      sessionEntries.push(entry);
+  if (request.continuation.kind !== "resume") {
+    try {
+      await writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 3,
+          id: runId,
+          timestamp: new Date().toISOString(),
+          cwd: request.cwd,
+        })}\n`,
+        { encoding: "utf8", flag: "wx" },
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
   const context: HostContext = {
@@ -203,7 +199,7 @@ export async function prepareGrokRoleEnvelope(options: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
       getEntries: () => sessionEntries as ReturnType<HostContext["sessionManager"]["getEntries"]>,
-      getSessionDir: () => join(request.runDirectory, "session"),
+      getSessionDir: () => dirname(sessionFile),
       getSessionFile: () => sessionFile,
       getHeader: () => ({ type: "session", id: runId }),
       setSessionFile(path) { sessionFile = path; },
@@ -211,12 +207,6 @@ export async function prepareGrokRoleEnvelope(options: {
         const entry = { type: "custom", customType, data };
         sessionEntries.push(entry);
         customEntries.push({ customType, data });
-        // Same external face as Pi session custom entries (type/customType/data JSONL).
-        appendFileSync(
-          sessionFile,
-          `${JSON.stringify(entry)}\n`,
-          "utf8",
-        );
       },
     },
     abort() {
@@ -233,9 +223,6 @@ export async function prepareGrokRoleEnvelope(options: {
     const entry = { type: "custom_message", customType, ...payload, message: payload };
     sessionEntries.push(entry);
     customEntries.push({ customType, data: message.details ?? message.content });
-    // Pi custom_message face: type/customType/message.details JSONL so
-    // extractNavigatorFact can read grok-build parent-session books.
-    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`, "utf8");
   };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
@@ -399,6 +386,19 @@ export async function prepareGrokRoleEnvelope(options: {
         isError: "isError" in value && value.isError === true,
       };
     }
+    // Record toolResult in memory for role turn lifecycle.
+    const toolResultEntry = {
+      type: "message",
+      message: {
+        role: "toolResult" as const,
+        toolCallId,
+        toolName,
+        content: projected.content,
+        details: projected.details,
+        isError: projected.isError,
+      },
+    };
+    sessionEntries.push(toolResultEntry);
     if (projected.isError) {
       rememberInfrastructureFailure(projected.details, projected.content);
       rememberProjectedRejection(projected.details, toolCallId);
@@ -440,20 +440,20 @@ export async function prepareGrokRoleEnvelope(options: {
             if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
             const toolCallId = randomUUID();
             calls.push({ toolCallId, toolName: name });
-            // First-record-then-audit: book the tool-call leaf before execute so
+            // First-record-then-audit: book the tool-call leaf in memory before execute so
             // judge/doctor subject gates see the candidate on parent session books.
-            sessionEntries.push({
-              type: "message",
-              message: {
-                role: "assistant",
+            {
+              const message = {
+                role: "assistant" as const,
                 content: [{
                   type: "toolCall",
                   id: toolCallId,
                   name,
                   arguments: params?.arguments ?? {},
                 }],
-              },
-            });
+              };
+              sessionEntries.push({ type: "message", message });
+            }
             try {
               await emit("tool_execution_start", { toolCallId, toolName: name });
               const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))

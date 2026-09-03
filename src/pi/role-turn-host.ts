@@ -5,12 +5,11 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, appendFile, readFile, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { appendFile, readFile } from "node:fs/promises";
 
 import type {
   DurablePrincipal,
@@ -25,6 +24,7 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
+
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -294,10 +294,6 @@ async function selectedPiIdentity(
  * Default child runner: canonically select `pi` on PATH (or PI_BINARY) and launch
  * that exact file. Close settles exactly once for natural return / error / SIGTERM.
  */
-type SpawnedPiChild = ReturnType<typeof spawn> & {
-  stderr: NonNullable<ReturnType<typeof spawn>["stderr"]>;
-};
-
 export function createDefaultPiSpawnRunner(options: {
   recordLaunchedPiIdentity?: (
     runDirectory: string,
@@ -310,11 +306,14 @@ export function createDefaultPiSpawnRunner(options: {
     return await new Promise((resolveResult, reject) => {
       // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
       // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-      const child: SpawnedPiChild = spawn(piIdentity.executable, [...args], {
+      const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: ["ignore", "ignore", "pipe"],
       });
+      if (child.stderr === null) {
+        throw new Error("Pi child stderr pipe was not created");
+      }
       let stderr = "";
       let timedOut = false;
       // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
@@ -402,9 +401,28 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
+      // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
+      let turnRequest = request;
+      const paths =
+        request.hostTransition?.previousHost === "grok-build"
+          ? request.hostTransition.priorNativePaths
+          : undefined;
+      if (
+        request.continuation.kind === "resume"
+        && paths !== undefined
+        && paths.length > 0
+      ) {
+        turnRequest = {
+          ...request,
+          continuation: {
+            ...request.continuation,
+            prompt: `${request.continuation.prompt}\n${paths.join("\n")}`,
+          },
+        };
+      }
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(
-        request,
+        turnRequest,
         config.principalAuthority,
         config.extraPiArgs ?? [],
       );
@@ -419,7 +437,6 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;
       }
-      // Package provenance is known before Pi starts.
       if (
         config.recordLaunchedRolePackageIdentity !== undefined &&
         config.observeLaunchedRolePackageIdentity !== undefined

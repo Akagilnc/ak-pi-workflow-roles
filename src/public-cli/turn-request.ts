@@ -13,19 +13,7 @@ import type {
 import type { SeatModelConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
-/**
- * Single authority for resume model precedence: an explicit CLI/env model wins;
- * otherwise the admitted (originally recorded) model is restored, including its
- * thinking level. `undefined` when neither source carries a model.
- */
-export function resolveResumeModel(
-  explicitModel: ResumeModelConfig | undefined,
-  admittedModel: ResumeModelConfig | undefined,
-): ResumeModelConfig | undefined {
-  return explicitModel ?? admittedModel;
-}
-
-/** Structural model shape shared by the seam so both config sources fit. */
+/** Structural model shape shared by the seam so seat/env sources fit. */
 export type ResumeModelConfig = {
   readonly provider: string;
   readonly model: string;
@@ -49,7 +37,7 @@ export type AdmittedTurnInvocation = {
   repoRoot?: string;
   cwd?: string;
   runDirectory: string;
-  /** Effective model restored on resume; fallback when no CLI/env model is given. */
+  /** Recorded model at admission (provenance); turn model comes from options.model. */
   model?: ResumeModelConfig;
 };
 
@@ -64,16 +52,14 @@ export function projectRoleTurnRequest(
   const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === undefined) throw new Error("admitted invocation missing working directory");
   if (admitted.principal === undefined) throw new Error("admitted invocation missing principal");
-  // Explicit CLI/env model wins on resume; admitted model is the fallback so a
-  // model-less resume restores the originally recorded effective model instead of
-  // silently dropping to the current env default.
-  const effectiveModel = resolveResumeModel(options.model, admitted.model);
+  // #617 DK-3: turn model is the live seat/env model only — never the admitted
+  // birth model. Resume and new legs share this projection.
   return {
     principal: admitted.principal,
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,
-    ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+    ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.engine === undefined ? {} : { engine: options.engine }),
     cwd,
     home: options.home,

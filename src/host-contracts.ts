@@ -135,6 +135,17 @@ export type RoleTurnModelConfig = {
   readonly thinking?: string;
 };
 
+/**
+ * Typed cross-host resume handoff (#617 DK-4).
+ * Present only when post-admission projects a real switch between known hosts.
+ * Cross-host prior volume: previous native record paths for the live host (DK-7).
+ * Target host reads those files itself; projector never copies bytes.
+ */
+export type RoleTurnHostTransition = {
+  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativePaths: readonly string[];
+};
+
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
@@ -149,6 +160,8 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /** Set by post-admission only on a real host switch; never on same-host resume. */
+  readonly hostTransition?: RoleTurnHostTransition;
 };
 
 /** Turn result — only fields upper layers currently consume. */
