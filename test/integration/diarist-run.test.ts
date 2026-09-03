@@ -4,6 +4,7 @@
  * runDiarist enters production composition only: real cc/issue/ADR files + PATH hermes.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   accessSync,
@@ -51,6 +52,51 @@ import {
   type TicketProvenanceWatermarkReason,
 } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
+
+function runConcurrentAppender(
+  project: string,
+  home: string,
+  barrier: string,
+): { readonly ready: Promise<void>; readonly done: Promise<void> } {
+  const script = `
+    import { existsSync } from "node:fs";
+    import { appendTicketProvenanceEntry } from ${JSON.stringify(join(packageRoot, "src/ticket-provenance.ts"))};
+    process.stdout.write("ready\\n");
+    while (!existsSync(${JSON.stringify(barrier)})) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+    }
+    appendTicketProvenanceEntry({
+      ticketNumber: 582,
+      cwd: ${JSON.stringify(project)},
+      home: ${JSON.stringify(home)},
+      entry: {
+        sourceKind: "cc-session",
+        sourceRef: { path: "same-source" },
+        transcript: "same transcript",
+        timestamp: "2026-08-31T00:00:00.000Z",
+        basis: { method: "llm-semantic" },
+      },
+    });
+  `;
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    cwd: packageRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  const ready = new Promise<void>((resolve, reject) => {
+    child.stdout.once("data", () => resolve());
+    child.once("error", reject);
+  });
+  const done = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`concurrent appender exited ${String(code)}: ${stderr}`));
+    });
+  });
+  return { ready, done };
+}
 
 function block(
   partial: Partial<DiaristSourceBlock> &
@@ -117,6 +163,20 @@ async function seedCcSession(
   await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
   return sessionFile;
 }
+
+test("shared Sitian volume commits one row for concurrent identical identities", async () => {
+  await withDiaristProject("diarist-concurrent-", async ({ project, home }) => {
+    const barrier = join(home, "append.barrier");
+    const children = Array.from({ length: 8 }, () =>
+      runConcurrentAppender(project, home, barrier));
+    await Promise.all(children.map(({ ready }) => ready));
+    await writeFile(barrier, "go\n", "utf8");
+    await Promise.all(children.map(({ done }) => done));
+
+    const volume = await readTicketProvenance(582, project, home);
+    assert.equal(volume.entries.length, 1);
+  });
+});
 
 test("runDiarist always establishes volume + md (empty court)", async () => {
   await withDiaristProject("ak-diarist-empty-vol-", async ({ project, home }) => {
