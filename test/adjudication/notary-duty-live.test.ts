@@ -150,6 +150,34 @@ const SCENARIOS: readonly DutyScenario[] = [
     ],
     expect: "pass",
   },
+  {
+    // 验收面 4: 票面条款有原话（DK-3 三轴）→ pass。
+    // Distinct from misaligned: ticket + verdict both rest on the same quoted DK-3.
+    // Ticket/verdict/diary share the same owner quote text (no paraphrase gap).
+    id: "dk3-three-axes-quoted",
+    ticketNumber: 62104,
+    ticketFace: [
+      "#62104 fixture ticket face",
+      "",
+      "## Scope",
+      "1. 所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序（DK-3）。",
+    ].join("\n"),
+    verdict: {
+      judgeStatus: "continue",
+      fixSummary:
+        "所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序（DK-3）。",
+      classes: [{ name: "three-axes-seat-table", disposition: "fix_now" }],
+    },
+    diary: [
+      diaryEntry(
+        ["#62104", "所有的运行。都是根据我现在定的席位", "model host engine"],
+        "dk3",
+        "DK-3：「所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序」",
+        "2026-09-02T05:42:17.000Z",
+      ),
+    ],
+    expect: "pass",
+  },
 ];
 
 function casePack(scenario: DutyScenario): Record<string, unknown> {
@@ -268,10 +296,12 @@ async function withLiveHome<T>(
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const credentials = await loadCredentialProviders(agentDir);
+    // high: low sometimes false-bounces pass legs / false-passes bounce legs
+    // (same reason gate path already uses high on notary).
     const seat =
       credentials["openai-codex"] === true
-        ? { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "low" }
-        : { provider: "xai", model: "grok-4.5", thinking: "low" };
+        ? { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" }
+        : { provider: "xai", model: "grok-4.5", thinking: "high" };
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
@@ -340,7 +370,11 @@ describe(
               findings?: unknown;
               findingsCount?: unknown;
             };
-            assert.equal(status, scenario.expect, scenario.id);
+            assert.equal(
+              status,
+              scenario.expect,
+              `${scenario.id}: status; facts=${JSON.stringify(facts).slice(0, 300)}`,
+            );
             if (scenario.expect === "bounce") {
               if (Array.isArray(facts.findings)) {
                 assertBounceFindings(status, facts.findings, scenario.id);
