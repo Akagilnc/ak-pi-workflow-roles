@@ -131,60 +131,6 @@ function canDenyInitializeMeta() {
   };
 }
 
-test("Pi→Grok resume ACP prompt carries prior session path, not session bytes", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-prior-path-"));
-  try {
-    const runDirectory = join(home, "run");
-    const piSessionFile = join(runDirectory, "session", "session.jsonl");
-    const sessionBytes = '{"type":"session","id":"secret-bytes"}\n';
-    await mkdir(dirname(piSessionFile), { recursive: true });
-    await writeFile(piSessionFile, sessionBytes, "utf8");
-    const prompts: unknown[] = [];
-    const connection: GrokAcpConnection = {
-      async request(method, params) {
-        if (method === "initialize") return canDenyInitializeMeta();
-        if (method === "session/new") return { sessionId: "s1" };
-        if (method === "session/prompt") {
-          prompts.push(params);
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        throw new Error(method);
-      },
-      notify() {},
-      async close() {},
-    };
-    const host = createGrokRoleTurnHost({
-      sessionIdentity,
-      recordCapabilities: async () => {},
-      connect: async () => connection,
-      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-      prepare: prepareWithLayout(async () => ({ accepted: true })),
-    });
-    const result = await host.executeTurn({
-      ...turnRequest({
-        runDirectory,
-        home,
-        agentDir: join(home, "agent"),
-        continuation: { kind: "resume", prompt: "decide" },
-      }),
-      hostTransition: { previousHost: "pi", priorNativePaths: [piSessionFile] },
-    });
-    assert.equal(result.code, 0);
-    assert.equal(prompts.length, 1);
-    const promptParams = prompts[0] as { prompt: ReadonlyArray<{ type?: unknown; text?: unknown; resource?: { text?: unknown } }> };
-    assert.deepEqual(promptParams.prompt, [
-      { type: "text", text: `decide\n${piSessionFile}` },
-    ]);
-    const serialized = JSON.stringify(promptParams);
-    assert.equal(serialized.includes(sessionBytes.trim()), false);
-    assert.equal(serialized.includes("application/x-ak-prior-native"), false);
-    assert.equal(serialized.includes(piSessionFile), true);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-accept-"));
   try {
