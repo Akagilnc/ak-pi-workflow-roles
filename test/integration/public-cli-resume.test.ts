@@ -1393,15 +1393,15 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     );
     await first.release();
 
-    await writeFile(lockPath, "", "utf8");
-    {
-      const { io: ioEmpty } = captureIo();
-      const blockedEmpty = await runAkRole(["resume", runId], {
+    for (const unparseable of ["", "123junk", "123\njunk"]) {
+      await writeFile(lockPath, unparseable, "utf8");
+      const { io: ioUnparseable } = captureIo();
+      const blocked = await runAkRole(["resume", runId], {
         packageRoot,
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        io: ioEmpty,
+        io: ioUnparseable,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
@@ -1417,8 +1417,8 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
         }),
       });
       assert.equal(dispatches, 0);
-      assert.notEqual(blockedEmpty.exitCode, 0);
-      assert.equal(await readFile(lockPath, "utf8"), "");
+      assert.notEqual(blocked.exitCode, 0);
+      assert.equal(await readFile(lockPath, "utf8"), unparseable);
     }
 
     const child = spawn("sleep", ["30"]);
@@ -1428,7 +1428,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
     await writeFile(lockPath, `${pid}\n`, "utf8");
     {
-      const { io: ioDead } = captureIo();
+      const { io: ioDead, stderr: stderrDead } = captureIo();
       const resumed = await runAkRole(["resume", runId], {
         packageRoot,
         home,
@@ -1470,6 +1470,10 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       assert.equal(dispatches, 1);
       assert.equal(resumed.exitCode, 0);
       assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+      const reclaimDiagnostics = stderrDead.filter(
+        (line) => line.includes(lockPath) && line.includes(String(pid)),
+      );
+      assert.equal(reclaimDiagnostics.length, 1);
     }
   });
 });
