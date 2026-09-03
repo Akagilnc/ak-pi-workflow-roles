@@ -21,7 +21,6 @@ import {
   createGrokRoleTurnHost,
   inspectControlledGrok,
   prepareControlledGrokHome,
-  type GrokPreparedTurn,
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -188,55 +187,6 @@ async function runInstalledSeatbeltHook(
   return JSON.parse(stdout) as { decision: string; reason?: string };
 }
 
-function canDenyInitializeMeta() {
-  return {
-    agentCapabilities: { loadSession: true },
-    _meta: {
-      modelState: { availableModels: [{ modelId: "grok-4.5" }] },
-      "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
-    },
-  };
-}
-
-function prepared(
-  closeRound: GrokPreparedTurn["closeRound"],
-  mcpServers: Readonly<Record<string, unknown>>[] = [{}],
-  materials: readonly unknown[] = [],
-  extras: { abortSignal?: AbortSignal } = {},
-): GrokPreparedTurn {
-  return {
-    mcpServers,
-    systemPrompt: { body: "law", materials },
-    prompt: "decide",
-    closeRound,
-    ...(extras.abortSignal === undefined ? {} : { abortSignal: extras.abortSignal }),
-  };
-}
-
-function turnRequest(input: {
-  readonly runDirectory: string;
-  readonly home?: string;
-  readonly agentDir?: string;
-  readonly continuation?: RoleTurnRequest["continuation"];
-  readonly activation?: RoleTurnRequest["activation"] | { readonly role: string };
-  readonly model?: RoleTurnRequest["model"];
-  readonly principal?: RoleTurnRequest["principal"];
-}): RoleTurnRequest {
-  const sessionDirectory = join(input.runDirectory, "session");
-  const sessionFile = join(sessionDirectory, "session.jsonl");
-  return {
-    principal: input.principal ?? fixturePrincipal(sessionDirectory, sessionFile),
-    activation: (input.activation ?? { role: "judge" }) as RoleTurnRequest["activation"],
-    methods: [],
-    continuation: input.continuation ?? { kind: "initial", prompt: "decide" },
-    model: input.model ?? { provider: "xai", model: "grok-4.5" },
-    cwd: "/work",
-    home: input.home ?? "/home/user",
-    agentDir: input.agentDir ?? "/agent",
-    runDirectory: input.runDirectory,
-  } as RoleTurnRequest;
-}
-
 test("installed seatbelt hook denies the representative dangerous command and all four ADR literals", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-seatbelt-hook-"));
   try {
@@ -321,7 +271,15 @@ process.stdout.write(JSON.stringify({
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
-          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "initialize") {
+            return {
+              agentCapabilities: { loadSession: true },
+              _meta: {
+                modelState: { availableModels: [{ modelId: "grok-4.5" }] },
+                "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
+              },
+            };
+          }
           if (method === "session/new") return { sessionId: "resume-s1" };
           if (method === "session/load") return { sessionId: "resume-s1" };
           if (method === "session/prompt") return { stopReason: "end_turn" };
@@ -337,17 +295,26 @@ process.stdout.write(JSON.stringify({
         env: controlledGrokChildEnv({ ...process.env }, req.home),
         packageRoot,
       }),
-      prepare: async () => prepared(async () => ({ accepted: true })),
+      prepare: async () => ({
+        mcpServers: [{}],
+        systemPrompt: { body: "law", materials: [] },
+        prompt: "decide",
+        closeRound: async () => ({ accepted: true }),
+      }),
     });
 
+    const runDirectory = join(home, "run");
+    const sessionDirectory = join(runDirectory, "session");
     const localRequest = {
-      ...turnRequest({
-        runDirectory: join(home, "run"),
-        home,
-        agentDir: join(home, "agent"),
-        activation: { role: "fixer" },
-      }),
+      principal: fixturePrincipal(sessionDirectory, join(sessionDirectory, "session.jsonl")),
+      activation: { role: "fixer" } as RoleTurnRequest["activation"],
+      methods: [],
+      continuation: { kind: "initial", prompt: "decide" },
+      model: { provider: "xai", model: "grok-4.5" },
       cwd: root,
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory,
     } as RoleTurnRequest;
 
     assert.equal((await host.executeTurn(localRequest)).code, 0);
