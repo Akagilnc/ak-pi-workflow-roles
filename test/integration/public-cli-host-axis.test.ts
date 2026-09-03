@@ -3,10 +3,9 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 
 import { createDefaultPiSpawnRunner, createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
-import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
+import type { DurablePrincipal, DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
@@ -377,14 +376,14 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-test("Pi resume prior native survives Pi stdin trim+join as one initial message", async () => {
+test("Pi resume delivers prior native and prompt on stdin, not argv", async () => {
   const captured: { args?: readonly string[]; stdin?: string } = {};
   const host = createPiRoleTurnHost({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
     spawnRunner: async (args, options) => {
       captured.args = args;
-      captured.stdin = options.stdin;
+      if (options.stdin !== undefined) captured.stdin = options.stdin;
       return { code: 0, stderr: "", timedOut: false };
     },
   });
@@ -394,7 +393,7 @@ test("Pi resume prior native survives Pi stdin trim+join as one initial message"
     principal: {
       sessionDirectory: "/tmp/run/session",
       sessionFile: "/tmp/run/session/session.jsonl",
-    },
+    } as DurablePrincipal,
     activation: { role: "judge" },
     methods: [],
     continuation: { kind: "resume", prompt },
@@ -404,25 +403,9 @@ test("Pi resume prior native survives Pi stdin trim+join as one initial message"
     runDirectory: "/tmp/run",
     hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
   });
+  assert.equal(captured.stdin, `${prior}\n\n${prompt}`);
   assert.equal(captured.args?.includes(prior), false);
-  assert.equal(captured.args?.at(-1) === prompt, false);
-  const { buildInitialMessage } = await import(
-    pathToFileURL(
-      join(packageRoot, "node_modules/@earendil-works/pi-coding-agent/dist/cli/initial-message.js"),
-    ).href
-  ) as {
-    buildInitialMessage: (input: {
-      parsed: { messages: string[] };
-      stdinContent?: string;
-    }) => { initialMessage?: string };
-  };
-  const stdinContent = captured.stdin?.trim() || undefined;
-  const assembled = buildInitialMessage({
-    parsed: { messages: [] },
-    stdinContent,
-  });
-  assert.equal(assembled.initialMessage, `${prior}\n\n${prompt}`);
-  assert.equal(assembled.initialMessage?.includes(`}resume-now`), false);
+  assert.equal(captured.args?.includes(prompt), false);
 });
 
 test("default Pi spawn runner settles stdin EPIPE instead of crashing", async () => {

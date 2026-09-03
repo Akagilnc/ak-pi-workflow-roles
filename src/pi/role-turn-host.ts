@@ -296,11 +296,6 @@ async function selectedPiIdentity(
  * Default child runner: canonically select `pi` on PATH (or PI_BINARY) and launch
  * that exact file. Close settles exactly once for natural return / error / SIGTERM.
  */
-type SpawnedPiChild = ReturnType<typeof spawn> & {
-  stdin: NonNullable<ReturnType<typeof spawn>["stdin"]>;
-  stderr: NonNullable<ReturnType<typeof spawn>["stderr"]>;
-};
-
 export function createDefaultPiSpawnRunner(options: {
   recordLaunchedPiIdentity?: (
     runDirectory: string,
@@ -313,11 +308,14 @@ export function createDefaultPiSpawnRunner(options: {
     return await new Promise((resolveResult, reject) => {
       // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
       // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
-      const child: SpawnedPiChild = spawn(piIdentity.executable, [...args], {
+      const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         stdio: [spawnOptions.stdin === undefined ? "ignore" : "pipe", "ignore", "pipe"],
       });
+      if (child.stderr === null) {
+        throw new Error("Pi child stderr pipe was not created");
+      }
       let stderr = "";
       let timedOut = false;
       // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
@@ -375,14 +373,19 @@ export function createDefaultPiSpawnRunner(options: {
         hasSpawned = true;
         armTimeoutAfterChildReady();
         if (spawnOptions.stdin !== undefined) {
-          child.stdin.on("error", (error) => completeStdin(error));
-          child.stdin.write(spawnOptions.stdin, (error) => {
-            if (error) {
-              completeStdin(error);
-              return;
-            }
-            child.stdin.end(() => completeStdin());
-          });
+          const stdin = child.stdin;
+          if (stdin === null) {
+            completeStdin(new Error("Pi child stdin pipe was not created"));
+          } else {
+            stdin.on("error", (error) => completeStdin(error));
+            stdin.write(spawnOptions.stdin, (error) => {
+              if (error) {
+                completeStdin(error);
+                return;
+              }
+              stdin.end(() => completeStdin());
+            });
+          }
         }
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
