@@ -515,5 +515,20 @@ setInterval(() => {}, 1000);
       assert.equal(await readFile(signal, "utf8"), "SIGTERM");
       t.mock.timers.reset();
     }
+    // Stdin EPIPE after a spawned child exits unread must reject through the
+    // same settlement, not crash the parent with an unhandled stream error.
+    {
+      const stub = join(home, "epipe.mjs");
+      await writeExecutableStub(stub, `#!/usr/bin/env node\nprocess.exit(0);\n`);
+      const { runner } = spawnRunnerWithIdentityCapture();
+      await assert.rejects(
+        runner([], {
+          cwd: home,
+          env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
+          stdin: "x".repeat(4 * 1024 * 1024),
+        }),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "EPIPE",
+      );
+    }
   });
 });

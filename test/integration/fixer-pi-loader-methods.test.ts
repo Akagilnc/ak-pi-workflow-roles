@@ -3,8 +3,8 @@
  * optional methods. #526: uses host turn seam + test materialization helper.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -125,3 +125,72 @@ test("Fixer production activation args reach the real Pi loader for both optiona
     }
   });
 });
+
+test(
+  "Pi resume prior native records reach the session user message via stdin",
+  { timeout: 120_000 },
+  async () => {
+    await withActivationHome({ prefix: "ak-pi-prior-stdin-" }, async ({ home, agentDir }) => {
+      const principal = piDurablePrincipalAuthority.issue({
+        cwd: home,
+        runId: "run-pi-prior-stdin",
+        role: "judge",
+        home,
+      });
+      const coords = piDurablePrincipalAuthority.decode(principal);
+      await mkdir(coords.sessionDirectory, { recursive: true });
+      const host = createPiRoleTurnHost({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        extraPiArgs: [
+          "-e",
+          join(packageRoot, "test", "fixtures", "fixer-dual-skill-availability-provider.ts"),
+          "--provider",
+          "ak-fixer-dual-skill-availability",
+          "--model",
+          "faux-1",
+        ],
+      });
+      const prior = '{"grokStructuredId":"seed-grok-1"}\n';
+      const prompt = "resume-now";
+      const result = await host.executeTurn({
+        principal,
+        activation: { role: "judge" },
+        methods: [],
+        continuation: { kind: "resume", prompt },
+        cwd: home,
+        home,
+        agentDir,
+        runDirectory: dirname(coords.sessionDirectory),
+        hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
+      });
+      assert.equal(result.code, 0, result.stderr);
+      const sessionText = await readFile(coords.sessionFile, "utf8");
+      const userTexts = sessionText
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              message?: {
+                role?: string;
+                content?: Array<{ type?: string; text?: string }>;
+              };
+            },
+        )
+        .filter((entry) => entry.message?.role === "user")
+        .map(
+          (entry) =>
+            entry.message?.content
+              ?.filter((part) => part.type === "text")
+              .map((part) => part.text ?? "")
+              .join("\n") ?? "",
+        );
+      const consumed = userTexts.find((text) => text.includes("grokStructuredId"));
+      assert.ok(consumed, sessionText);
+      assert.equal(consumed.includes("seed-grok-1"), true);
+      assert.equal(consumed.includes("resume-now"), true);
+      assert.equal(consumed.includes("}resume-now"), false);
+    });
+  },
+);
