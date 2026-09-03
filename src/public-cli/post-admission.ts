@@ -8,6 +8,13 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  buildResumeContinuationPrompt,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
+import { CliUsageError } from "./cli-errors.ts";
+import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
+
 import type {
   ControlledFailureCause,
   DurablePrincipal,
@@ -400,6 +407,75 @@ export async function dispatchPostAdmissionTurn<
   } finally {
     await lease.release();
   }
+}
+
+/**
+ * Shared resume continuation projection (#471 / #600 / #633): seat-table
+ * model/engine/timeout axes, restored correlation, and the package resume
+ * envelope (message optional). Seats add only their activation projection.
+ */
+export function resumeTurnRequestProjectionOptions(
+  admitted: AdmittedRoleInvocation,
+  request: PublicResumeRequest,
+  env: PostAdmissionEnv,
+): RoleTurnRequestProjectionOptions {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
+    },
+  };
+}
+
+/**
+ * Shared manual-resume orchestration for seats whose continuation is the
+ * package resume envelope (#599 / #633): load → structural rejection → seat
+ * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
+ * turn builder, and adapters stay on the seat.
+ */
+export async function runPostAdmissionSeatResume<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  request: PublicResumeRequest;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  load: () => Promise<{ admitted: A }>;
+  buildTurnRequest: (admitted: A) => RoleTurnRequest;
+  adapters: PostAdmissionAdapters<A, T>;
+  effectiveEngine?: string;
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  let loaded;
+  try {
+    loaded = await input.load();
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, input.io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  return await runPostAdmissionManualResume({
+    admitted: loaded.admitted,
+    env: input.env,
+    io: input.io,
+    request: input.buildTurnRequest(loaded.admitted),
+    adapters: input.adapters,
+    ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
+  });
 }
 
 /**

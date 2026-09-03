@@ -1039,6 +1039,46 @@ export type LoadedResumableGleanerLeftRun = {
 };
 
 /**
+ * Base admitted projection shared by every seat loader: durable identity +
+ * instruction/attachments + principal + restored ticket identity + model (#633).
+ * Seat loaders add only their seat-specific fields on top.
+ */
+function resumedBaseAdmitted(loaded: {
+  readonly run: RoleRunRecord;
+  readonly principal: DurablePrincipal;
+  readonly admittedFields: LoadedAdmittedRequestFields;
+}) {
+  return {
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+}
+
+/** Loaded-run envelope projection; seat loaders add only their seat fields. */
+function seatLoadedResult<R extends AdmittedRoleInvocation>(
+  loaded: {
+    readonly run: RoleRunRecord;
+    readonly observation?: TypedHttp429Observation;
+  },
+  admitted: R,
+): { admitted: R; run: RoleRunRecord; observation?: TypedHttp429Observation } {
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+/**
  * Load a resumable Judge run for resume. Rejects unknown, terminal,
  * non-resumable, and non-Judge IDs without replaying dispatch.
  */
@@ -1055,23 +1095,9 @@ export async function loadResumableJudgeRun(
   }
   const admitted: AdmittedJudgeInvocation = {
     role: "judge",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
+    ...resumedBaseAdmitted(loaded),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 /**
@@ -1109,24 +1135,11 @@ export async function loadResumableCoderRun(
   const admitted: AdmittedCoderInvocation = {
     role: "coder",
     phase,
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
+    ...resumedBaseAdmitted(loaded),
     instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
     taskPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 /**
@@ -1165,28 +1178,15 @@ export async function loadResumableFixerRun(
   const admitted: AdmittedFixerInvocation = {
     role: "fixer",
     phase,
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
+    ...resumedBaseAdmitted(loaded),
     instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
     packetPath,
     ...(loaded.admittedFields.prerequisitesPath === undefined
       ? {}
       : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
     prerequisites,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 /**
@@ -1216,25 +1216,11 @@ export async function loadResumableReviewerRun(
   }
   const admitted: AdmittedReviewerInvocation = {
     role: "reviewer",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...resumedBaseAdmitted(loaded),
     baseRevision,
     authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 /**
@@ -1254,23 +1240,9 @@ export async function loadResumableCountersignRun(
   }
   const admitted: AdmittedCountersignInvocation = {
     role: "countersign",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
+    ...resumedBaseAdmitted(loaded),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 /**
@@ -1296,24 +1268,10 @@ export async function loadResumableGleanerLeftRun(
   }
   const admitted: AdmittedGleanerLeftInvocation = {
     role: "gleaner-left",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...resumedBaseAdmitted(loaded),
     baseRevision,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export type LoadedResumableMergerRun = {
@@ -1356,25 +1314,12 @@ export async function loadResumableMergerRun(
   }
   const admitted: AdmittedMergerInvocation = {
     role: "merger",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
+    ...resumedBaseAdmitted(loaded),
     instructionEmpty: false,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export type LoadedResumableCollectorRun = {
@@ -1418,29 +1363,15 @@ export async function loadResumableCollectorRun(
   }
   const admitted: AdmittedCollectorInvocation = {
     role: "collector",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...resumedBaseAdmitted(loaded),
     prNumber,
     repository: parsedRepository,
     ...(loaded.admittedFields.requestManifestPath === undefined
       ? {}
       : { requestManifestPath: loaded.admittedFields.requestManifestPath }),
     manifestDigest,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export type LoadedResumableDoctorRun = {
@@ -1476,26 +1407,12 @@ export async function loadResumableDoctorRun(
   }
   const admitted: AdmittedDoctorInvocation = {
     role: "doctor",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...resumedBaseAdmitted(loaded),
     issueNumber,
     caseRunsPath,
     caseIdentity,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export type LoadedResumableNotaryRun = {
@@ -1527,25 +1444,11 @@ export async function loadResumableNotaryRun(
   }
   const admitted: AdmittedNotaryInvocation = {
     role: "notary",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
+    ...resumedBaseAdmitted(loaded),
     sourceRunPath,
     sourceRun,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export type LoadedResumableInspectorRun = {
@@ -1568,23 +1471,9 @@ export async function loadResumableInspectorRun(
   }
   const admitted: AdmittedInspectorInvocation = {
     role: "inspector",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
+    ...resumedBaseAdmitted(loaded),
   };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return seatLoadedResult(loaded, admitted);
 }
 
 export async function peekRoleRunRole(
