@@ -1647,13 +1647,21 @@ function extractInfrastructureToolFailure(
   return undefined;
 }
 
-/** Read the bound session principal for a parameterized infrastructure tool failure. */
+/**
+ * Read the bound session principal for a parameterized infrastructure tool failure.
+ * `currentAttemptOnly` bounds the reverse scan to the latest top-level user turn
+ * so a prior attempt's residual cannot mask the current failure (#633).
+ */
 async function readInfrastructureToolFailure(
   sessionFile: string,
   spec: InfrastructureFailureSpec,
+  options: { readonly currentAttemptOnly?: boolean } = {},
 ): Promise<ControlledFailure | undefined> {
   try {
-    const entries = await readBoundSessionEntries(sessionFile);
+    let entries = await readBoundSessionEntries(sessionFile);
+    if (options.currentAttemptOnly === true) {
+      entries = entries.slice(currentAttemptStartIndex(entries));
+    }
     return extractInfrastructureToolFailure(entries, spec);
   } catch {
     return undefined;
@@ -1681,6 +1689,9 @@ export async function readCollectorInfrastructureFailure(
   return readInfrastructureToolFailure(
     sessionFile,
     COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
+    // Multi-attempt resume: only a current-attempt infrastructure failure
+    // may preempt the current failure cause (#633).
+    { currentAttemptOnly: true },
   );
 }
 
@@ -2851,7 +2862,10 @@ async function settleLawfulCollectorTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "collector") {
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
+    // Bounded to the current attempt so multi-attempt resume timeout/no-output
+    // is not masked by a prior wait-tool residual (#633).
+    const scanStart = currentAttemptStartIndex(entries);
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
@@ -3083,11 +3097,11 @@ export async function trySettleDoctorTerminalResult(
 }
 
 /**
- * Shared accepted-settlement skeleton for one-shot seats that scan residual
- * tool candidates then project sealed ledger outcome (#502 DRY).
+ * Shared accepted-settlement skeleton for seats that scan residual tool
+ * candidates then project sealed ledger outcome (#502 DRY).
  * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
  */
-type OneShotAcceptedSettlementSpec = {
+type SeatAcceptedSettlementSpec = {
   readonly role: "notary" | "countersign" | "gleaner-left" | "inspector";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
@@ -3097,9 +3111,9 @@ type OneShotAcceptedSettlementSpec = {
   readonly tryAcceptDetails: (details: unknown) => boolean;
   /**
    * When true, residual reverse-scan is bounded to the current attempt
-   * (entries after the latest top-level user turn). Resumable one-shot seats
-   * need this so a prior attempt residual cannot mask the current provider
-   * failure (#599). Notary stays whole-session (true one-shot).
+   * (entries after the latest top-level user turn). Multi-attempt resume
+   * needs this so a prior attempt residual cannot mask the current provider
+   * failure (#599 / #633).
    */
   readonly residualScanCurrentAttemptOnly?: boolean;
 };
@@ -3115,10 +3129,10 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-async function settleLawfulOneShotAcceptedTerminalResult(
+async function settleLawfulSeatAcceptedTerminalResult(
   admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation | AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
-  spec: OneShotAcceptedSettlementSpec,
+  spec: SeatAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
@@ -3127,8 +3141,8 @@ async function settleLawfulOneShotAcceptedTerminalResult(
   if (roleOutcome?.role !== spec.role) {
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
-    // Resumable seats bound the scan to the current attempt so multi-attempt
-    // resume timeout/no-output is not masked by a prior residual (#599).
+    // Bounded to the current attempt so multi-attempt resume timeout/no-output
+    // is not masked by a prior residual (#599 / #633).
     const scanStart = spec.residualScanCurrentAttemptOnly === true
       ? currentAttemptStartIndex(entries)
       : 0;
@@ -3204,10 +3218,11 @@ async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
+    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
@@ -3256,7 +3271,7 @@ async function settleLawfulCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
@@ -3309,7 +3324,7 @@ async function settleLawfulGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gleaner-left",
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "左拾遗回执无显式 completed",
@@ -3362,10 +3377,11 @@ async function settleLawfulInspectorTerminalResult(
   admitted: AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "inspector",
     toolName: INSPECTOR_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "察院回执无显式 pass/bounce",
+    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedInspectorOutput(sealed.decisiveFacts);

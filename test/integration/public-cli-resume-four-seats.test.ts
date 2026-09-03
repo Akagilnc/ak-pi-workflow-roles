@@ -3,6 +3,10 @@
  * public `ak-role resume <runId>` entry: same session principal reopened, and
  * each seat settles its own typed terminal. Replaces the old resume-rejection
  * negative case (transformed into these four positive tracers, one loop body).
+ *
+ * The failure tracers additionally pin the cross-attempt isolation contract:
+ * a prior attempt's residual must not mask the current resume failure's cause
+ * (#599 / #633).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -10,7 +14,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -18,10 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { writeRoleRunState, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
@@ -33,13 +33,10 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import {
-  COLLECTOR_OUTPUT_TOOL,
-  type CollectorReceipt,
-} from "../../src/package-contracts/collector-output.ts";
+import { COLLECTOR_WAIT_TOOL } from "../../src/collector-ledger.ts";
+import { COLLECTOR_OUTPUT_TOOL, type CollectorReceipt } from "../../src/package-contracts/collector-output.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorOutput,
 } from "../../src/doctor-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
@@ -48,6 +45,8 @@ import {
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
+import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
+import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -89,146 +88,7 @@ function captureIo() {
 
 const DOCTOR_ISSUE_NUMBER = 5;
 
-const doctorSessionRows = [
-  {
-    type: "session",
-    version: 3,
-    id: "real-shape",
-    timestamp: "2026-08-01T05:01:18.580Z",
-    cwd: "/repo",
-  },
-  {
-    type: "message",
-    timestamp: "2026-08-01T05:01:19.000Z",
-    message: {
-      role: "assistant",
-      responseId: "r1",
-      usage: { output: 7 },
-      content: [
-        {
-          type: "toolCall",
-          id: "c1",
-          name: "ak_coder_output",
-          arguments: {},
-        },
-      ],
-    },
-  },
-  {
-    type: "message",
-    timestamp: "2026-08-01T05:01:20.000Z",
-    message: {
-      role: "toolResult",
-      toolCallId: "c1",
-      toolName: "ak_coder_output",
-      isError: false,
-      details: { status: "completed", report: "done" },
-    },
-  },
-];
-
-async function seedDoctorIssueRuns(
-  home: string,
-  bookKey: string,
-  issueNumber: number,
-): Promise<string> {
-  const runs = join(
-    home,
-    ".ak-roles",
-    "books",
-    bookKey,
-    "issues",
-    String(issueNumber),
-    "runs",
-  );
-  await mkdir(join(runs, "review-001", "session"), { recursive: true });
-  await writeFile(
-    join(runs, "review-001", "session", "leg.jsonl"),
-    `${doctorSessionRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
-    "utf8",
-  );
-  return runs;
-}
-
-function sampleCompletedDoctorOutput(
-  identity: { issueNumber: number; runsPath: string },
-): DoctorOutput {
-  return {
-    status: "completed",
-    case: identity,
-    findings: [],
-    cost: {
-      invocations: { count: 1, sources: ["review-001"] },
-      legs: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      modelApiTurns: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      outputTokens: { count: 7, sources: ["review-001/session/leg.jsonl"] },
-      toolCalls: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      retries: {
-        count: 0,
-        sources: [],
-        evidence: "literal run-dir naming",
-      },
-      statuses: [
-        { source: "review-001/session/leg.jsonl", status: "completed" },
-      ],
-      commits: [],
-      sessions: [
-        {
-          source: "review-001/session/leg.jsonl",
-          startedAt: "2026-08-01T05:01:18.580Z",
-          endedAt: "2026-08-01T05:01:20.000Z",
-          wallMilliseconds: 1420,
-          completion: "accepted",
-        },
-      ],
-      outputBytes: {
-        count: 1,
-        sources: ["review-001/session/leg.jsonl"],
-        payload: "raw JSONL bytes",
-        providerWireBytes: "unavailable",
-      },
-    },
-  };
-}
-
-const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-const CANONICAL_SOURCE_ROLE = "judge" as const;
-
-/** Seed a retained source run under the machine ledger book (authoritative path). */
-async function seedCanonicalSourceRun(
-  home: string,
-  project: string,
-): Promise<string> {
-  const coords = issuePiDurablePrincipalCoordinates({
-    cwd: project,
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    home,
-  });
-  await mkdir(coords.sessionDirectory, { recursive: true });
-  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
-  await writeFile(
-    coords.sessionFile,
-    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
-    "utf8",
-  );
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify({ role: CANONICAL_SOURCE_ROLE, runId: CANONICAL_SOURCE_RUN_ID })}\n`,
-    "utf8",
-  );
-  await writeRoleRunState(coords.runDirectory, {
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    state: "terminal",
-    bookKey: coords.bookKey,
-    projectRoot: project,
-    sessionDirectory: coords.sessionDirectory,
-    sessionFile: coords.sessionFile,
-    admittedRequestPath,
-  });
-  return await realpath(coords.runDirectory);
-}
+const DOCTOR_ISSUE = { issueNumber: DOCTOR_ISSUE_NUMBER } as const;
 
 type SeatTracerSpec = {
   readonly role: TerminalRoleName;
@@ -418,3 +278,166 @@ for (const spec of SEAT_SPECS) {
     });
   });
 }
+
+type SeatFailureSpec = {
+  readonly role: TerminalRoleName;
+  readonly firstArgv: (project: string, sourceRunPath: string) => readonly string[];
+  /**
+   * First attempt through the public entry leaves a prior-attempt residual on
+   * the session principal. The public settle projects it — this pins the shape
+   * so the precondition (a live residual) is proven before the resume.
+   */
+  readonly firstOutcome: {
+    readonly kind: string;
+    readonly cause?: string;
+  };
+};
+
+/** Errored collector wait residual whose duration is far beyond the wait cap. */
+const collectorPriorResidualRunner: LegacyFauxPiRunner = async (args) => {
+  const sessionFile = args[args.indexOf("--session") + 1]!;
+  const rows = [
+    { type: "message", id: "user-1", parentId: null, timestamp: "2026-08-30T00:00:00.000Z", message: { role: "user", content: "kickoff", timestamp: 1 } },
+    {
+      type: "message",
+      id: "assistant-1",
+      parentId: "user-1",
+      timestamp: "2026-08-30T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "wait-1", name: COLLECTOR_WAIT_TOOL, arguments: { durationMs: 2_000_000 } }],
+        timestamp: 2,
+      },
+    },
+    {
+      type: "message",
+      id: "result-1",
+      parentId: "assistant-1",
+      timestamp: "2026-08-30T00:00:02.000Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "wait-1",
+        toolName: COLLECTOR_WAIT_TOOL,
+        content: [{ type: "text", text: "PRIOR-attempt-residual-error" }],
+        isError: true,
+        timestamp: 3,
+      },
+    },
+  ];
+  await mkdir(join(sessionFile, ".."), { recursive: true });
+  await writeFile(sessionFile, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+  return { code: 0, timedOut: false, stderr: "", args: [...args] };
+};
+
+const failureRunnerFor = (role: TerminalRoleName): LegacyFauxPiRunner =>
+  role === "collector"
+    ? collectorPriorResidualRunner
+    : scriptedTerminatingToolSession({
+        role,
+        toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : INSPECTOR_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+        isError: true,
+        acceptedText: "PRIOR-attempt-residual-error",
+      });
+
+const FAILURE_SEAT_SPECS: readonly SeatFailureSpec[] = [
+  {
+    role: "collector",
+    firstArgv: (project) => ["collector", "--pr", "42", "--repo", "acme/widgets", "--project", project],
+    // The wait residual's duration is beyond the wait cap — the settle scan
+    // projects it as a residual-incomplete terminal for that first attempt.
+    firstOutcome: { kind: "incomplete" },
+  },
+  {
+    role: "notary",
+    firstArgv: (project, sourceRunPath) => ["notary", "--source-run", sourceRunPath, "--project", project],
+    firstOutcome: { kind: "failure", cause: "output" },
+  },
+  {
+    role: "inspector",
+    firstArgv: (project) => ["inspector", "--project", project, "PRIOR residual material"],
+    firstOutcome: { kind: "failure", cause: "output" },
+  },
+];
+
+test("resume failure keeps the current provider cause instead of a prior-attempt residual", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
+
+    for (const spec of FAILURE_SEAT_SPECS) {
+      const runId = `run-fail-resume-${spec.role}-001`;
+
+      const firstIo = captureIo();
+      const first = await runAkRole(spec.firstArgv(project, sourceRunPath) as string[], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        createRunId: () => runId,
+        io: firstIo.io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: failureRunnerFor(spec.role),
+        }),
+      });
+
+      // Precondition: the first attempt genuinely settled on the prior residual
+      // (it belonged to that attempt), leaving it on the session principal.
+      assert.equal(first.exitCode, 1, `${spec.role} first attempt must fail loudly`);
+      assert.ok(first.terminal);
+      assert.equal(first.terminal!.roleOutcome.kind, spec.firstOutcome.kind);
+      if (spec.firstOutcome.cause !== undefined) {
+        assert.equal(
+          (first.terminal!.roleOutcome as { cause?: string }).cause,
+          spec.firstOutcome.cause,
+          `${spec.role}: first-attempt residual belongs to that attempt`,
+        );
+      }
+
+      // Resume: the prior residual stays on the session (production resume
+      // appends, never wipes); the current attempt times out with no output.
+      const resumeIo = captureIo();
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        io: resumeIo.io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const prior = await readFile(sessionFile, "utf8");
+            const resumeUser = {
+              type: "message",
+              id: "user-resume",
+              parentId: null,
+              timestamp: "2026-08-30T00:01:00.000Z",
+              message: { role: "user", content: "resume kickoff", timestamp: 10 },
+            };
+            await writeFile(
+              sessionFile,
+              `${prior}${JSON.stringify(resumeUser)}\n`,
+              "utf8",
+            );
+            return { code: 1, stderr: "upstream timeout\n", timedOut: true, args: [...args] };
+          },
+        }),
+      });
+
+      assert.equal(resumed.exitCode, 1, resumeIo.stdout.join("") || `${spec.role} resume timeout path failed`);
+      assert.ok(resumed.terminal);
+      assert.equal(resumed.terminal!.roleOutcome.kind, "failure");
+      assert.equal(
+        (resumed.terminal!.roleOutcome as { cause?: string }).cause,
+        "timeout",
+        `${spec.role}: prior-attempt residual must not mask the current resume timeout`,
+      );
+    }
+  });
+});
