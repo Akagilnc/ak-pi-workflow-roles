@@ -67,7 +67,9 @@ async function readGrokNativeSessionRecords(runDirectory: string): Promise<strin
     }
   }
   if (presentUpdates.length === 0) return undefined;
-  return presentUpdates.join("");
+  return presentUpdates
+    .map((record) => (record.endsWith("\n") || record.length === 0 ? record : `${record}\n`))
+    .join("");
 }
 
 /**

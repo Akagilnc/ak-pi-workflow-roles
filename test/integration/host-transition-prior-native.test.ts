@@ -75,3 +75,31 @@ test("grok-build→pi with multiple updates.jsonl delivers all native records de
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("grok-build→pi joins updates.jsonl lacking trailing newline into valid separate records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-no-trailing-nl-"));
+  try {
+    const runDirectory = join(root, "run");
+    const a = join(runDirectory, "grok-home", "sessions", "cwd-a", "s1");
+    const b = join(runDirectory, "grok-home", "sessions", "cwd-b", "s2");
+    await mkdir(a, { recursive: true });
+    await mkdir(b, { recursive: true });
+    await writeFile(join(a, "updates.jsonl"), "{\"a\":1}", "utf8");
+    await writeFile(join(b, "updates.jsonl"), "{\"b\":2}\n", "utf8");
+    const transition = await projectHostTransitionPriorNative({
+      previousHost: "grok-build",
+      liveHost: "pi",
+      runDirectory,
+      piSessionFile: join(runDirectory, "session", "session.jsonl"),
+    });
+    assert.deepEqual(transition, {
+      previousHost: "grok-build",
+      priorNativeRecords: "{\"a\":1}\n{\"b\":2}\n",
+    });
+    const parsed = transition!.priorNativeRecords.trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(parsed, [{ a: 1 }, { b: 2 }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
