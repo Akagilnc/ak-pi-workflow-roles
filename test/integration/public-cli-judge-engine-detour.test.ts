@@ -140,8 +140,6 @@ async function runJudgeWithEngine(input: {
         { stopReason: "toolUse" },
       );
     }
-    const msgs = context.messages ?? [];
-    const lastMsg = msgs[msgs.length - 1];
     // #536 dual-detour dispatch shape is owned by nextDetourCall (shared fixture authority).
     const detourCall = nextDetourCall(context);
     if (detourCall !== undefined) {
