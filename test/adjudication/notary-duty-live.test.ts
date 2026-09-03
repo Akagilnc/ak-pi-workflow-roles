@@ -9,13 +9,12 @@
  * Current soul (a97ee70d). Gate subject matches judge-role: material = JSON.stringify(verdict).
  */
 import assert from "node:assert/strict";
-import { access, copyFile, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import test, { describe } from "node:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 
-import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
 import { runGatekeeper } from "../../src/gatekeeper-role.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -106,7 +105,7 @@ const SCENARIOS: readonly DutyScenario[] = [
     verdict: {
       judgeStatus: "continue",
       fixSummary:
-        "按 Scope 2 / ADR 0077 以 session.jsonl 为唯一真源，用统一转码器协议在目标宿主重建会话（Pi→grok 双向，一次调用一对写回）；条款出处：Scope 2、ADR 0077。",
+        "按 Scope 1 以 session.jsonl 为唯一真源，用统一转码器协议在目标宿主重建会话（Pi→grok 双向，一次调用一对写回）；条款出处：票面 Scope 1。",
       classes: [{ name: "resume-rebuild-transcoder", disposition: "fix_now" }],
     },
     diary: [
@@ -249,36 +248,6 @@ function casePack(scenario: DutyScenario): Record<string, unknown> {
     verdict: scenario.verdict,
     ...(scenario.adr0077Keys === undefined ? {} : { adr0077Keys: scenario.adr0077Keys }),
   };
-}
-
-async function findSessionJsonlFiles(dir: string): Promise<string[]> {
-  const result: string[] = [];
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return result;
-    throw error;
-  }
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      result.push(...(await findSessionJsonlFiles(full)));
-    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-      result.push(full);
-    }
-  }
-  return result;
-}
-
-function characterizeFindings(label: string, findings: unknown): void {
-  if (!Array.isArray(findings)) {
-    console.log(`# ${label} findings characterization: not-array typeof=${typeof findings}`);
-    return;
-  }
-  console.log(
-    `# ${label} findings characterization: count=${findings.length} types=${findings.map((item) => typeof item).join(",")}`,
-  );
 }
 
 async function seedScenarioAuthority(input: {
@@ -529,39 +498,11 @@ describe(
             if (scenario.expect === "bounce") {
               if (Array.isArray(facts.findings)) {
                 assertBounceFindings(status, facts.findings, scenario.id);
-                characterizeFindings(`standalone ${scenario.id}`, facts.findings);
               } else {
                 assert.ok(
                   typeof facts.findingsCount === "number" && facts.findingsCount > 0,
                   `${scenario.id}: bounce findingsCount>0 got ${String(facts.findingsCount)}`,
                 );
-                characterizeFindings(`standalone ${scenario.id}`, facts.findings);
-              }
-            }
-
-            if (scenario.id === "rebuild-session-without-quote") {
-              const machineHome = packageMachineHome();
-              const tempRuns = await findSessionJsonlFiles(join(home, ".ak-roles"));
-              const notarySession = tempRuns.find((f) => f.includes("@notary") && f.endsWith("session.jsonl"));
-              if (notarySession) {
-                const notaryDir = dirname(dirname(notarySession));
-                const runDirName = basename(notaryDir);
-                const durableRunDir = join(
-                  machineHome,
-                  ".ak-roles",
-                  "books",
-                  "ak-pi-workflow-roles",
-                  "runs",
-                  runDirName,
-                );
-                await mkdir(dirname(durableRunDir), { recursive: true });
-                await cp(notaryDir, durableRunDir, { recursive: true });
-                await writeFile(
-                  join(durableRunDir, "findings-characterization.json"),
-                  `${JSON.stringify({ status, findingsCount: facts.findingsCount ?? (Array.isArray(facts.findings) ? facts.findings.length : null) }, null, 2)}\n`,
-                );
-                const durableSession = join(durableRunDir, "session", "session.jsonl");
-                console.log(`# durable standalone bounce session: ${durableSession}`);
               }
             }
           });
@@ -667,7 +608,7 @@ describe(
 
                       // Production judge-role.ts: material is the verdict only.
                       const material = JSON.stringify(scenario.verdict);
-                      const gateResult = await runGatekeeper({
+                      return runGatekeeper({
                         context: {
                           cwd: home,
                           model,
@@ -684,28 +625,6 @@ describe(
                         runDirectory: home,
                         subject: { kind: "judge_draft", material },
                       });
-
-                      if (gateResult.status === "bounce") {
-                        const machineHome = packageMachineHome();
-                        const machineAuditorDir = join(
-                          machineHome,
-                          ".ak-roles",
-                          "books",
-                          "ak-pi-workflow-roles",
-                          "auditor-roles",
-                        );
-                        await mkdir(machineAuditorDir, { recursive: true });
-                        const tempSessions = await findSessionJsonlFiles(join(home, ".ak-roles"));
-                        for (const file of tempSessions) {
-                          const target = join(machineAuditorDir, basename(file));
-                          await copyFile(file, target);
-                          const text = await readFile(target, "utf8").catch(() => "");
-                          if (text.includes("ak_notary_output") || text.includes("notary")) {
-                            console.log(`# durable gatekeeper→notary bounce session: ${target}`);
-                          }
-                        }
-                      }
-                      return gateResult;
                     },
                   );
                 } finally {
@@ -734,7 +653,6 @@ describe(
           if (result.status === "bounce") {
             assert.equal(result.officer, "notary");
             assertBounceFindings(result.status, result.findings, "gatekeeper→notary");
-            characterizeFindings("gatekeeper→notary rebuild-session-without-quote", result.findings);
           }
           break;
         }
