@@ -14,7 +14,8 @@ import {
 } from "../../src/collector-role.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { CollectorClock } from "../../src/collector-evidence.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { readLatestSubmissionOutcome, readSealedSubmission } from "../../src/submission-ledger.ts";
+import { readCollectorInfrastructureFailure } from "../../src/public-cli/settlement.ts";
 import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
@@ -90,7 +91,6 @@ async function runRealCollectorScript(options: {
     const collectorClock = clock();
     const faux = fauxProvider({ api: "collector-real-script", provider: "collector-real-script", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses(options.responses as any);
-    let receipt: any;
     const result = await withInProcessPi({
       activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
       extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
@@ -100,11 +100,15 @@ async function runRealCollectorScript(options: {
       await session.prompt("start");
       const entries = [...sessionManager.getEntries()] as any[];
       const headerId = sessionManager.getHeader?.()?.id;
+      const sessionFile = sessionManager.getSessionFile();
       assert.ok(headerId);
+      assert.ok(sessionFile);
       // #604: sealed volume lives under hermetic package home (session path-derive).
       const sealed = await readSealedSubmission(home, headerId, home);
-      receipt = sealed?.decisiveFacts;
-      return { receipt, entries, transport, elapsed: collectorClock.elapsed() };
+      const receipt: any = sealed?.decisiveFacts;
+      const latestOutcome = await readLatestSubmissionOutcome(home, headerId, home);
+      const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
+      return { receipt, latestOutcome, infrastructureFailure, entries, transport, elapsed: collectorClock.elapsed() };
     });
     return result;
   });
@@ -336,6 +340,10 @@ test("#641 chain② normal completion misdeclaring infrastructureFailure bounces
   assert.equal(bounced.length, 1, "exactly the misdeclared attempt is rejected");
   assert.equal(bounced[0].message.isError, true);
   assert.equal(bounced[0].message.toolName, COLLECTOR_OUTPUT_TOOL);
+  // The bounced attempt is a rejected terminal submission — the real Collector
+  // trunk must record it on the durable ledger as a typed bounce.
+  assert.equal(result.latestOutcome?.outcome, "correctable-rejection");
+  assert.equal(result.latestOutcome?.code, "typed-bounce");
   } finally {
     process.exitCode = priorExitCode;
   }
@@ -351,6 +359,37 @@ test("#641 chain② declaration with an unassemblable receipt keeps the shared h
   assert.equal(result.receipt, undefined, "no receipt may seal on a host failure");
   const failed = result.entries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === true);
   assert.equal(failed.length, 1);
+  } finally {
+    process.exitCode = priorExitCode;
+  }
+});
+
+test("#641 P2 read tool real failure writes the typed host fact settlement classifies", async () => {
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    // Pi executes same-turn tools in parallel. Observe claims the operational slot
+    // before its first transport await; read then deterministically reaches the real
+    // beginOperational overlap failure (not the unknown-pointer correctable path).
+    const result = await runRealCollectorScript({
+      responses: [
+        fauxAssistantMessage([
+          fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe-overlap" }),
+          fauxToolCall(COLLECTOR_READ_TOOL, { evidenceId: "missing0000000000" }, { id: "read-overlap" }),
+        ], { stopReason: "toolUse" }),
+      ],
+    });
+    assert.equal(result.receipt, undefined, "an overlapping operational run must not seal");
+
+    const readEntry = result.entries.find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_READ_TOOL && entry.message.isError === true);
+    assert.ok(readEntry, "the overlapping read must fail as infrastructure");
+    assert.equal((readEntry.message.details as { kind?: string }).kind, "role_infrastructure_failure", "read failure must carry the typed host fact");
+    assert.equal((readEntry.message.details as { reasonCode?: string }).reasonCode, "host_failure");
+
+    const failure = result.infrastructureFailure;
+    assert.ok(failure, "settlement must recover the read infrastructure failure from the durable session");
+    assert.equal(failure.cause, "activation");
+    assert.equal(failure.identity?.name, "CollectorInfrastructureError");
   } finally {
     process.exitCode = priorExitCode;
   }
