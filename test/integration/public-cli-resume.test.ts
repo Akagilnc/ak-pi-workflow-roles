@@ -1381,6 +1381,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       assert.equal(stdout.length, 0);
       assert.equal(stderr.length >= 1, true);
       assert.notEqual(blocked.exitCode, 0);
+      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
     } finally {
       await lease.release();
     }
@@ -1418,6 +1419,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       });
       assert.equal(dispatches, 0);
       assert.notEqual(blocked.exitCode, 0);
+      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
       assert.equal(await readFile(lockPath, "utf8"), unparseable);
     }
 
