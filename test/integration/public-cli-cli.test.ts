@@ -23,10 +23,12 @@ import {
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
+  createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
@@ -336,6 +338,57 @@ test("config persistence round-trips across processes on the typed seat face", a
     });
     assert.equal(unsetGate.exitCode, 0);
     assert.equal((await loadPublicCliConfig(home)).seats.gatekeeper, undefined);
+  });
+});
+
+test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRequest.model", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+      cwd: project,
+      stdio: "ignore",
+    });
+    const attachment = join(project, "material.txt");
+    await writeFile(attachment, "frozen review material", "utf8");
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+          { packageRoot, home, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    await runAkRole(
+      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => "inspector-inherit-620",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
+    );
+    const inherited = captured.current!;
+    assert.equal(inherited.activation.role, "inspector");
+    assert.deepEqual(inherited.model, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
+    });
   });
 });
 

@@ -34,6 +34,10 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   "test/package/doctor-package-lifecycle.test.ts",
   "test/package/public-cli-install.test.ts",
   "test/package/public-cli-cold-matrix.test.ts",
+  // #620: real-Pi malformed-prerequisites case — focused ~4.4s; under ordinary
+  // file-parallelism full-suite localTimeout at 15s (duration_ms ~23s). Schedule
+  // on heavy concurrency=2; do not widen the hang detector.
+  "test/integration/activation-envelope-contract.test.ts",
 ]);
 
 const TIERS = Object.freeze([
