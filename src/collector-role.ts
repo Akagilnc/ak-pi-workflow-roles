@@ -34,6 +34,19 @@ import {
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
 import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
+
+/**
+ * #641 chain②: normal completion must never declare `infrastructureFailure`.
+ * When the runtime can machine-verify a lawful receipt assembly, a declaration
+ * is model misuse — bounce it as correctable guidance instead of host failure.
+ */
+export class CollectorNormalCompletionDeclarationError extends CorrectableSubmissionError {
+  constructor() {
+    super("runtime 已按机器状态核验本局为正常完工（回执可合法组装）：正常完工的交件不得填 infrastructureFailure，请省略该字段后重新提交。");
+    this.name = "CollectorNormalCompletionDeclarationError";
+  }
+}
 
 export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
 export {
@@ -362,6 +375,18 @@ export function createCollectorRoleRuntime(
       label: "通进司输出",
       description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
       promptSnippet: "提交通进司回执",
+      // #641 chain②: the seat owns the normal-completion decision. The probe
+      // runs the exact receipt assembly (validation only, no accept side
+      // effects); success ⇒ machine-verified normal completion ⇒ bounce.
+      bounceInfrastructureDeclaration(params) {
+        if (activation === undefined) return undefined;
+        try {
+          buildCollectorReceipt(activation.ledger, params, activation.clock);
+        } catch {
+          return undefined;
+        }
+        return new CollectorNormalCompletionDeclarationError();
+      },
       parameters: outputSchema,
       async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
         if (activation === undefined) {

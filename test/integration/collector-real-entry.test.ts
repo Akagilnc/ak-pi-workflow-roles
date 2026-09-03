@@ -258,3 +258,40 @@ test("#641 chain① unresolvable finding pointers bounce the receipt without tai
   assert.ok(bounced, "unresolvable pointer must reject the submission");
   assert.match(String(bounced.message.content[0].text), /不可解析|未存储|无法解析/);
 });
+
+test("#641 chain② normal completion misdeclaring infrastructureFailure bounces correctable; retry seals", async () => {
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+  const result = await runRealCollectorScript({
+    responses: [
+      observeOnce,
+      outputCall({ infrastructureFailure: { diagnostic: "未发生基础设施失败；本回执为正常完工提交。快照完整，PR OPEN。" } }, "output-misdeclared"),
+      outputCall({}, "output-retry"),
+    ],
+  });
+  assert.ok(result.receipt, "the retried lawful submission must seal a receipt");
+  assert.equal(result.transport.calls.create, 0);
+
+  const bounced = result.entries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === true);
+  assert.equal(bounced.length, 1, "exactly the misdeclared attempt is rejected");
+  assert.match(String(bounced[0].message.content[0].text), /正常完工/);
+  } finally {
+    process.exitCode = priorExitCode;
+  }
+});
+
+test("#641 chain② declaration with an unassemblable receipt keeps the shared host failure path", async () => {
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+  const result = await runRealCollectorScript({
+    responses: [outputCall({ infrastructureFailure: { diagnostic: "宿主机时钟不可信" } }, "output-failed")],
+  });
+  assert.equal(result.receipt, undefined, "no receipt may seal on a host failure");
+  const failed = result.entries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === true);
+  assert.equal(failed.length, 1);
+  } finally {
+    process.exitCode = priorExitCode;
+  }
+});
