@@ -29,7 +29,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export type NavigatorAdvice = { readonly candidates: readonly unknown[] };
+export type NavigatorAdvice = { readonly status: "advice"; readonly candidates: readonly unknown[] };
 
 /**
  * Project one lawful explicit Navigator advice receipt: candidates array,
@@ -39,7 +39,7 @@ export type NavigatorAdvice = { readonly candidates: readonly unknown[] };
 export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | undefined {
   if (!isRecord(value) || !Array.isArray(value.candidates)) return undefined;
   if (value.status !== "advice") return undefined;
-  return { candidates: value.candidates.filter(isRecord) };
+  return { status: "advice", candidates: value.candidates.filter(isRecord) };
 }
 
 /**

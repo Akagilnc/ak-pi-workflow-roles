@@ -301,7 +301,7 @@ export function setAutoResumeLimit(
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 
-/*
+/**
  * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
  * engine names need only path-safety syntax (no closed material catalog;
  * #376 / #378 / #391 / ADR 0069). Syntax authority = assertLegalEngineName

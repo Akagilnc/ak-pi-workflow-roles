@@ -25,9 +25,9 @@ import type { HostContext, HostGatekeeperActions } from "../../src/host-contract
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
 } from "../../src/gatekeeper-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
