@@ -366,8 +366,10 @@ test("resume with prior native records puts the full payload on stdin and omits 
       hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
     });
     assert.equal(captured.stdin, `${prior}\n\n${prompt}`);
-    assert.equal(captured.args?.includes(prior), false);
-    assert.equal(captured.args?.includes(prompt), false);
+    for (const arg of captured.args ?? []) {
+      assert.equal(arg.includes("seed-grok-1"), false, arg);
+      assert.equal(arg.includes(prompt), false, arg);
+    }
   });
 });
 
