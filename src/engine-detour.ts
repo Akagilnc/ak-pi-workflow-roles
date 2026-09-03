@@ -41,9 +41,6 @@ export function applyEngineChildEnv(
 export const ENGINE_DETOUR_EMPTY_STDOUT_DIAGNOSTIC =
   "劳务引擎 stdout 为空" as const;
 
-export const ENGINE_DETOUR_ALREADY_USED_DIAGNOSTIC =
-  "本激活内劳务引擎已使用" as const;
-
 export type EngineDetourResult = Readonly<{
   code: number;
   stdout: string;

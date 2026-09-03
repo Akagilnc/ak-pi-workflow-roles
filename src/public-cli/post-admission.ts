@@ -35,6 +35,7 @@ import {
   RunWriterLeaseHeldError,
   type RunWriterLease,
   type TypedProviderHttpObservation,
+  type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import {
   classifyPostAdmissionFailure,
@@ -516,6 +517,7 @@ export async function runPostAdmissionManualResume<
   exitCode: number;
   admitted?: A;
   terminal?: T;
+  staleWriterLeaseReclaimed?: true;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
@@ -547,12 +549,27 @@ export async function runPostAdmissionManualResume<
   }
 
   let lease: RunWriterLease;
+  let staleWriterLeaseReclaimed: true | undefined;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
+      // Record the typed fact before the fallible sink: if io.stderr throws
+      // (acquire deliberately swallows diagnostic-sink failures), the reclaim
+      // still happened and must stay observable.
+      if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
+      io.stderr(diagnostic);
+    });
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
+      // A held rejection after our own reclaim must still carry the fact that
+      // this caller reclaimed the stale lock — e.g. another resumer re-locked
+      // before our retry create (#629).
+      return {
+        exitCode: 1,
+        ...(staleWriterLeaseReclaimed === true
+          ? { staleWriterLeaseReclaimed: true as const }
+          : {}),
+      };
     }
     throw error;
   }
@@ -573,5 +590,8 @@ export async function runPostAdmissionManualResume<
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
-  return result;
+  return {
+    ...result,
+    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
 }
