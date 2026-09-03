@@ -1650,6 +1650,40 @@ test("#629 stale reclaim re-autopsies after the EACCES chmod — a contender liv
   });
 });
 
+test("#629 persistent EACCES keeps its identity in the stayed-contested refusal", async () => {
+  // macOS-only construction: a deny-delete ACE on the lock file survives the
+  // reclaim chmod, so every unlink round fails EACCES deterministically. POSIX
+  // mode bits alone cannot build this (the recovery chmod would clear them).
+  if (process.platform !== "darwin") return;
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-reclaim-eacces@judge");
+    await mkdir(runDirectory, { recursive: true });
+    const lockPath = join(runDirectory, "writer.lock");
+    const child = spawn("sleep", ["30"]);
+    const stalePid = child.pid;
+    assert.ok(typeof stalePid === "number" && stalePid > 0);
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    await writeFile(lockPath, `${stalePid}\n`, "utf8");
+    execFileSync("chmod", ["+a", "everyone deny delete", lockPath]);
+    try {
+      const failure = await acquireRunWriterLease(runDirectory).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      assert.ok(failure instanceof RunWriterLeaseHeldError);
+      // The refusal must carry the EACCES errno identity, not just the
+      // dead-pid autopsy — otherwise the true cause is laundered away.
+      assert.ok(String(failure.message).includes("EACCES"));
+      // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
+      assert.equal(existsSync(lockPath), true);
+    } finally {
+      execFileSync("chmod", ["-a#", "0", lockPath]);
+      await rm(lockPath, { force: true });
+    }
+  });
+});
+
 test("settleJudgeFailureTerminalResult attaches resume only for typed 429", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
