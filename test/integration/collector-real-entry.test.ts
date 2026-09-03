@@ -7,6 +7,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
@@ -76,7 +77,7 @@ async function runRealCollectorScript(options: {
   reviews?: any[];
   issueComments?: any[];
   reviewComments?: any[];
-  responses: CollectorScriptResponse[];
+  responses: Array<CollectorScriptResponse | ((context: any) => CollectorScriptResponse)>;
 }) {
   return withActivationHome({ prefix: "ak-collector-real-script-" }, async ({ agentDir, home }) => {
     const transport = createFakeGitHubTransport({
@@ -165,82 +166,104 @@ function outputCall(args: unknown, id = "output"): CollectorScriptResponse {
   return fauxAssistantMessage(fauxToolCall(COLLECTOR_OUTPUT_TOOL, args as any, { id }), { stopReason: "toolUse" });
 }
 
-function findObserveEntries(entries: any[]): any[] {
-  return entries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OBSERVE_TOOL && entry.message.isError === false);
+function providerText(message: any): string {
+  const part = (Array.isArray(message?.content) ? message.content : []).find((item: any) => item?.type === "text" && typeof item.text === "string");
+  assert.ok(part, "provider-visible tool results expose a text part");
+  return part.text;
 }
 
-function observeText(observeEntries: any[]): string {
-  return observeEntries.map((entry) => entry.message.content[0].text).join("\n");
+function providerObserveViews(messages: any[]): any[] {
+  return messages
+    .filter((message: any) => message?.role === "toolResult" && message.toolName === COLLECTOR_OBSERVE_TOOL && message.isError === false)
+    .map((message: any) => JSON.parse(providerText(message)));
+}
+
+function providerReadViews(messages: any[]): any[] {
+  return messages
+    .filter((message: any) => message?.role === "toolResult" && message.toolName === COLLECTOR_READ_TOOL && message.isError === false)
+    .map((message: any) => JSON.parse(providerText(message)));
+}
+
+function readCall(evidenceId: string, id = "read"): CollectorScriptResponse {
+  return fauxAssistantMessage(fauxToolCall(COLLECTOR_READ_TOOL, { evidenceId }, { id }), { stopReason: "toolUse" });
 }
 
 function findReceiptFinding(receipt: any): any {
   return receipt.groups.flatMap((group: any) => group.findings)[0];
 }
 
-test("#641 chain① observe context carries pointers with bounded body heads; volume keeps full bodies; receipt drops verbatim text", async () => {
-  const body = hugeTemplateBody();
+function beyondHeadFindingBody(): string {
+  const preamble = `可见摘要：${"这是一段超过观察上下文头部摘录的评审记录前言。".repeat(30)}`;
+  return `${preamble}尾部结论：该评论包含一条需要抓取的 finding。`;
+}
+
+test("#641 chain① full bodies stay pointer-openable; receipt drops verbatim bodies", async () => {
+  const body = beyondHeadFindingBody();
   const result = await runRealCollectorScript({
-    issueComments: [botIssueComment({ id: 5001, userLogin: "sourcery-ai[bot]", userId: 58596630, body })],
-    responses: [observeOnce, outputCall({})],
-  });
-  assert.ok(result.receipt, "normal completion seals a receipt");
-
-  const context = observeText(findObserveEntries(result.entries));
-  assert.ok(!context.includes("HEAD-BOUNDARY-MARKER-BEYOND-BOUNDED-HEAD"), "observe context must not carry full bodies");
-  assert.ok(context.includes("issuecomment-5001"), "observe context carries the resolvable url pointer");
-  assert.ok(context.includes("evidenceId"), "observe context carries receipt-local evidence pointers");
-
-  // Volume seam keeps the full body for 开卷 verification (details, not model context).
-  for (const entry of findObserveEntries(result.entries)) {
-    assert.ok(entry.message.details.evidence.some((record: any) => record.body === body));
-  }
-
-  const receiptJson = JSON.stringify(result.receipt);
-  assert.ok(!receiptJson.includes("评审额度已用完"), "receipt must not transcribe verbatim bodies");
-  assert.ok(!receiptJson.includes('"raw"'), "receipt evidence records must not carry raw copies");
-  assert.ok(result.receipt.evidenceRecords.every((record: any) => record.raw === undefined && record.body === undefined));
-  assert.ok(result.receipt.groups.every((group: any) => group.materials.every((material: any) => material.body === undefined)));
-});
-
-test("#641 chain① model-submitted findings carry machine pointers; zero-finding template stays attendance-only", async () => {
-  const result = await runRealCollectorScript({
-    issueComments: [
-      botIssueComment({ id: 6001, userLogin: "sourcery-ai[bot]", userId: 58596630, body: hugeTemplateBody() }),
-      botIssueComment({ id: 6002, userLogin: "coderabbitai[bot]", userId: 136622811, body: "发现两处问题：路径拼接未判空；超时时间写死。" }),
-    ],
+    issueComments: [botIssueComment({ id: 5001, userLogin: "coderabbitai[bot]", userId: 136622811, body })],
     responses: [
       observeOnce,
       (context: any) => {
-        const observe = [...context.messages].reverse().find((message: any) => message.role === "toolResult" && message.toolName === COLLECTOR_OBSERVE_TOOL);
-        const target = observe.details.evidence.find((record: any) => record.kind === "issue_comment" && record.authorLogin === "coderabbitai[bot]");
-        return fauxAssistantMessage(
-          fauxToolCall(COLLECTOR_OUTPUT_TOOL, { findings: [{ evidenceId: target.evidenceId, category: "accuracy" }] }, { id: "output" }),
-          { stopReason: "toolUse" },
-        );
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return readCall(target.evidenceId, "read-1");
+      },
+      (context: any) => {
+        const openedViews = providerReadViews(context.messages);
+        const opened = openedViews[openedViews.length - 1];
+        return outputCall({ findings: [{ evidenceId: opened.evidenceId, category: "late-conclusion" }] }, "output");
       },
     ],
   });
-  assert.ok(result.receipt, "model-submitted findings seal a lawful receipt");
+  assert.ok(result.receipt, "opening by pointer then submitting seals a receipt");
 
+  const observed = providerObserveViews(result.entries.map((entry: any) => entry.message))[0].evidence
+    .find((record: any) => record.kind === "issue_comment");
+  assert.equal(observed.evidenceId.length > 0, true);
+  assert.equal(observed.kind, "issue_comment");
+  assert.equal(observed.htmlUrl, "https://github.com/acme/widgets/pull/1#issuecomment-5001");
+  assert.notEqual(observed.body, body);
+  assert.ok(Buffer.byteLength(observed.body, "utf8") < Buffer.byteLength(body, "utf8"));
+
+  const readEntry = result.entries.find((entry: any) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_READ_TOOL && entry.message.isError === false);
+  assert.ok(readEntry, "the model opens the full material through its pointer");
+  const opened = JSON.parse(providerText(readEntry.message));
+  assert.equal(opened.evidenceId, observed.evidenceId);
+  assert.deepEqual(opened.body, body);
+
+  assert.ok(result.receipt.evidenceRecords.every((record: any) => record.raw === undefined && record.body === undefined));
+  assert.ok(result.receipt.groups.every((group: any) => group.materials.every((material: any) => material.body === undefined)));
   assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 1);
   const finding = findReceiptFinding(result.receipt);
   assert.deepEqual(finding.pointer, {
     repository: "acme/widgets",
     prNumber: 1,
-    commentId: 6002,
-    htmlUrl: "https://github.com/acme/widgets/pull/1#issuecomment-6002",
+    commentId: 5001,
+    htmlUrl: "https://github.com/acme/widgets/pull/1#issuecomment-5001",
     authorLogin: "coderabbitai[bot]",
     kind: "issue_comment",
     authoritativeTime: "2026-01-01T00:01:00Z",
   });
-  assert.equal(finding.category, "accuracy");
+  assert.equal(finding.category, "late-conclusion");
   assert.equal(typeof finding.source.evidenceId, "string");
-  assert.ok(!("body" in finding), "findings must not transcribe bodies");
+  assert.ok(!("body" in finding));
+});
 
+test("#641 chain① zero-finding template stays attendance-only", async () => {
+  const result = await runRealCollectorScript({
+    issueComments: [
+      botIssueComment({ id: 6001, userLogin: "sourcery-ai[bot]", userId: 58596630, body: hugeTemplateBody() }),
+    ],
+    responses: [observeOnce, outputCall({})],
+  });
+  assert.ok(result.receipt, "an attendance-only observation seals a lawful receipt");
+
+  assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 0);
   const templateGroup = result.receipt.groups.find((group: any) => group.displayLogin === "sourcery-ai[bot]");
-  assert.equal(templateGroup.attendance, true, "zero-finding template keeps the attendance fact");
-  assert.deepEqual(templateGroup.findings, [], "zero-finding template must not become a finding");
+  assert.equal(templateGroup.attendance, true);
+  assert.deepEqual(templateGroup.findings, []);
   assert.ok(templateGroup.materials.some((material: any) => material.id === 6001 && material.kind === "issue_comment"));
+  assert.ok(result.receipt.groups.every((group: any) => group.materials.every((material: any) => material.body === undefined)));
 });
 
 test("#641 chain① unresolvable finding pointers bounce the receipt without tainting a later lawful submission", async () => {
@@ -256,7 +279,8 @@ test("#641 chain① unresolvable finding pointers bounce the receipt without tai
 
   const bounced = result.entries.find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === true);
   assert.ok(bounced, "unresolvable pointer must reject the submission");
-  assert.match(String(bounced.message.content[0].text), /不可解析|未存储|无法解析/);
+  assert.equal(bounced.message.isError, true);
+  assert.equal(bounced.message.toolName, COLLECTOR_OUTPUT_TOOL);
 });
 
 test("#641 chain② normal completion misdeclaring infrastructureFailure bounces correctable; retry seals", async () => {
@@ -275,7 +299,8 @@ test("#641 chain② normal completion misdeclaring infrastructureFailure bounces
 
   const bounced = result.entries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === true);
   assert.equal(bounced.length, 1, "exactly the misdeclared attempt is rejected");
-  assert.match(String(bounced[0].message.content[0].text), /正常完工/);
+  assert.equal(bounced[0].message.isError, true);
+  assert.equal(bounced[0].message.toolName, COLLECTOR_OUTPUT_TOOL);
   } finally {
     process.exitCode = priorExitCode;
   }

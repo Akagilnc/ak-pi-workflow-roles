@@ -28,18 +28,21 @@ import {
 import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
+  collectorReadArgsSchema,
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
 
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
+export const COLLECTOR_READ_TOOL = "ak_collector_read";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 export { COLLECTOR_OUTPUT_TOOL };
 
 export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 ] as const;
@@ -225,6 +228,8 @@ export function collectorToolArgumentsValid(
   switch (name) {
     case COLLECTOR_OBSERVE_TOOL:
       return Value.Check(collectorObserveArgsSchema, args);
+    case COLLECTOR_READ_TOOL:
+      return Value.Check(collectorReadArgsSchema, args);
     case COLLECTOR_REQUEST_TOOL:
       return Value.Check(collectorRequestArgsSchema, args);
     case COLLECTOR_WAIT_TOOL:
