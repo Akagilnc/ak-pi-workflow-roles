@@ -26,7 +26,6 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
-  type DoctorOutput,
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";

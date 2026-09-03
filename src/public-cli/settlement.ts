@@ -3109,13 +3109,6 @@ type SeatAcceptedSettlementSpec = {
     sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
   ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
   readonly tryAcceptDetails: (details: unknown) => boolean;
-  /**
-   * When true, residual reverse-scan is bounded to the current attempt
-   * (entries after the latest top-level user turn). Multi-attempt resume
-   * needs this so a prior attempt residual cannot mask the current provider
-   * failure (#599 / #633).
-   */
-  readonly residualScanCurrentAttemptOnly?: boolean;
 };
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
@@ -3143,9 +3136,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
     // Bounded to the current attempt so multi-attempt resume timeout/no-output
     // is not masked by a prior residual (#599 / #633).
-    const scanStart = spec.residualScanCurrentAttemptOnly === true
-      ? currentAttemptStartIndex(entries)
-      : 0;
+    const scanStart = currentAttemptStartIndex(entries);
     let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
@@ -3222,7 +3213,6 @@ async function settleLawfulNotaryTerminalResult(
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
@@ -3275,7 +3265,6 @@ async function settleLawfulCountersignTerminalResult(
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
     projectAccepted: (sealed) => {
       const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
@@ -3328,7 +3317,6 @@ async function settleLawfulGleanerLeftTerminalResult(
     role: "gleaner-left",
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "左拾遗回执无显式 completed",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);
@@ -3381,7 +3369,6 @@ async function settleLawfulInspectorTerminalResult(
     role: "inspector",
     toolName: INSPECTOR_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "察院回执无显式 pass/bounce",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedInspectorOutput(sealed.decisiveFacts);
