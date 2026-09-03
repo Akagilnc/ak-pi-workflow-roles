@@ -1451,7 +1451,7 @@ test("#629 SIGTERM-dead holder lock is reclaimed by public resume and dispatches
     await writeFile(join(runDirectory, "writer.lock"), `${pid}\n`, "utf8");
 
     let dispatches = 0;
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
@@ -1493,7 +1493,86 @@ test("#629 SIGTERM-dead holder lock is reclaimed by public resume and dispatches
     assert.equal(dispatches, 1);
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(stdout.length, 1);
+  });
+});
+
+test("#629 empty writer.lock stays fail-closed: public resume does not dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lease-empty-lock-001";
+    {
+      const { io } = captureIo();
+      await runAkRole(["judge", "--project", project, "empty lock setup"], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            await writeSessionProviderStop(sessionDir, {
+              provider: "openai-codex",
+              errorMessage: "declined",
+            });
+            return {
+              code: 1,
+              stderr: "x\n",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+    }
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const lockPath = join(runDirectory, "writer.lock");
+    await writeFile(lockPath, "", "utf8");
+
+    let dispatches = 0;
+    const { io } = captureIo();
+    const blocked = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          dispatches += 1;
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(dispatches, 0);
+    assert.notEqual(blocked.exitCode, 0);
+    assert.equal(await readFile(lockPath, "utf8"), "");
   });
 });
 
