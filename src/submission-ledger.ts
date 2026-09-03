@@ -285,6 +285,9 @@ export function createSubmissionLedgerHost(
           // before any role execute or sole-final work (one owner for every seat).
           // #641 chain②: seats may opt into bouncing a machine-verified normal
           // completion misdeclared as infrastructure failure (correctable) first.
+          // A bounced attempt is a rejected terminal submission — record candidate
+          // + typed-bounce outcome on the durable ledger (same correctable-rejection
+          // path as execute-thrown rejections) before the model-visible throw.
           failOnInfrastructureFailureDeclaration(
             params,
             {
@@ -295,6 +298,23 @@ export function createSubmissionLedgerHost(
             context,
             toolCallId,
             tool.bounceInfrastructureDeclaration,
+            (bounce) => {
+              append({
+                type: "candidate",
+                attemptId,
+                toolCallId,
+                toolName: tool.name,
+                sequence: ++state.sequence,
+              });
+              append({
+                type: "outcome",
+                attemptId,
+                toolCallId,
+                outcome: "correctable-rejection",
+                code: "typed-bounce",
+                diagnostic: bounce.message,
+              });
+            },
           );
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;

@@ -38,6 +38,9 @@ import {
 } from "./collector-tool-schemas.ts";
 import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
 import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submission-correctable-error.ts";
+import { CollectorUnknownEvidenceError } from "./collector-identity.ts";
+
+export { CollectorUnknownEvidenceError } from "./collector-identity.ts";
 
 /**
  * #641 chain②: normal completion must never declare `infrastructureFailure`.
@@ -48,17 +51,6 @@ export class CollectorNormalCompletionDeclarationError extends CorrectableSubmis
   constructor() {
     super("runtime 已按机器状态核验本局为正常完工（回执可合法组装）：正常完工的交件不得填 infrastructureFailure，请省略该字段后重新提交。");
     this.name = "CollectorNormalCompletionDeclarationError";
-  }
-}
-
-/**
- * #641 chain①: pointer-open failures are model misuse, not host failures. The
- * seat rejects them as correctable so the model can retry with a stored pointer.
- */
-export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
-  constructor(evidenceId: string) {
-    super(`未在本局已观测材料中找到 evidenceId ${evidenceId}；请用 observe 返回的指针重试。`);
-    this.name = "CollectorUnknownEvidenceError";
   }
 }
 
@@ -302,7 +294,7 @@ export function createCollectorRoleRuntime(
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
-          const { snapshot, modelView, contextView } = await activation.ledger.observe(
+          const { snapshot, contextView } = await activation.ledger.observe(
             activation.transport,
             activation.clock,
             signal,
@@ -318,11 +310,13 @@ export function createCollectorRoleRuntime(
               // #641 chain①: model context carries bounded body heads + pointers only.
               text: JSON.stringify(contextView),
             }],
-            // Volume seam: full evidence (bodies included) stays openable for 开卷 verification.
-            details: modelView,
+            // #641 the bounded projection is the only provider-visible face on every host
+            // (Grok/ACP relays tool details as MCP structuredContent); full bodies stay
+            // in the ledger volume and enter context only by explicit ak_collector_read.
+            details: contextView,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -359,7 +353,9 @@ export function createCollectorRoleRuntime(
           };
         } catch (error) {
           if (isCorrectableExecuteError(error)) throw error;
-          hostActions.failInfrastructure(error, ctx);
+          // typed toolCallId books the shared infrastructure fact so settlement can
+          // tell a read tool's real host failure from a correctable pointer bounce.
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -391,7 +387,7 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -422,7 +418,7 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
