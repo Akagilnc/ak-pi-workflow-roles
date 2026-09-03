@@ -125,5 +125,25 @@ test("silent detour child is not cut by a package-owned tool idle backstop", asy
   });
 });
 
+test("successful detour projects child stderr verbatim into tool_result details (#536)", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-stderr-"));
+  try {
+    const tool = createEngineDetourToolDefinition({
+      engineName: "agy",
+      fail(error) { throw error; },
+    });
+    const result = await tool.execute(
+      "call-stderr",
+      { argv: [process.execPath, "-e", "process.stdout.write('out-body\\n');process.stderr.write('err-body\\n');"] },
+      undefined,
+      undefined,
+      fakeCtx(cwd),
+    );
+    assert.equal((result.details as { stderr?: unknown }).stderr, "err-body\n");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 // Keep module URL referenced so tsx resolves consistently under some runners.
 void fileURLToPath(import.meta.url);
