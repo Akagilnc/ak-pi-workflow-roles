@@ -1,10 +1,21 @@
 import { COLLECTOR_HOST } from "./collector-config.ts";
 import type { CollectorClock, CollectorEvidenceRecord, CollectorSnapshot } from "./collector-evidence.ts";
 import type { CollectorLedger, CollectorRequestAttempt } from "./collector-ledger.ts";
-import { extractCollectorEvidenceIdentityGroups, type ExtractedCollectorIdentityGroup } from "./collector-identity.ts";
-import { validateAcceptedCollectorReceipt } from "./package-contracts/collector-output.ts";
+import {
+  enrichCollectorFindings,
+  extractCollectorEvidenceIdentityGroups,
+  type ExtractedCollectorIdentityGroup,
+} from "./collector-identity.ts";
+import { validateAcceptedCollectorReceipt, type CollectorEvidenceRecord as ReceiptEvidenceRecord } from "./package-contracts/collector-output.ts";
 
 export { validateAcceptedCollectorReceipt };
+
+/**
+ * #641 chain① receipt-local evidence projection: machine identity, integrity
+ * digest and resolvable pointer fields only. Bodies/raw stay in the volume
+ * (observe details + GitHub pointer); they are never transcribed into the receipt.
+ */
+export type CollectorReceiptEvidenceRecord = ReceiptEvidenceRecord;
 
 export type CollectorReceipt = {
   host: "github.com";
@@ -19,15 +30,15 @@ export type CollectorReceipt = {
   groups: ExtractedCollectorIdentityGroup[];
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
-  evidenceRecords: CollectorEvidenceRecord[];
+  evidenceRecords: CollectorReceiptEvidenceRecord[];
 };
 
 function fail(message: string): never { throw new Error(message); }
 
-/** Runtime output is intentionally empty: observed typed groups are the sole receipt source. */
+/** Runtime output assembles findings pointers from the model submission into the typed receipt. */
 export function buildCollectorReceipt(
   ledger: CollectorLedger,
-  _candidateRaw: unknown,
+  candidateRaw: unknown,
   clock?: CollectorClock,
 ): CollectorReceipt {
   ledger.assertNotFatal();
@@ -46,7 +57,7 @@ export function buildCollectorReceipt(
   if (finalSnapshot === undefined || !finalSnapshot.complete) fail("Collector final snapshot is incomplete");
   if (finalSnapshot.prState !== "OPEN") fail("Collector final snapshot PR state is not OPEN");
 
-  const evidenceRecords = [...ledger.allEvidence()];
+  const evidenceRecords: CollectorEvidenceRecord[] = [...ledger.allEvidence()];
   const snapshots = [...ledger.allSnapshots()];
   const evidenceIndex = new Map(evidenceRecords.map((record) => [record.evidenceId, record]));
   const snapshotIndex = new Map(snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]));
@@ -59,6 +70,16 @@ export function buildCollectorReceipt(
   }
 
   const groups = extractCollectorEvidenceIdentityGroups(evidenceRecords, finalSnapshot.headOid);
+  // #641 chain①: the collector LLM submits findings as pointer refs; the runtime
+  // enriches each with the machine locator from the same stored record.
+  enrichCollectorFindings({
+    candidate: candidateRaw,
+    records: evidenceRecords,
+    groups,
+    targetHead: finalSnapshot.headOid,
+    repository: ledger.config.repository.canonical,
+    prNumber: ledger.config.prNumber,
+  });
   for (const group of groups) {
     if (group.attendance !== true) fail("Collector group lacks attendance");
     for (const material of group.materials) {
@@ -82,6 +103,20 @@ export function buildCollectorReceipt(
     groups,
     requestAttempts: [...ledger.requestAttempts()],
     snapshots,
-    evidenceRecords,
+    evidenceRecords: evidenceRecords.map(toReceiptEvidenceRecord),
+  };
+}
+
+function toReceiptEvidenceRecord(record: CollectorEvidenceRecord): CollectorReceiptEvidenceRecord {
+  return {
+    evidenceId: record.evidenceId,
+    kind: record.kind,
+    versionId: record.versionId,
+    contentDigest: record.contentDigest,
+    firstObservedAt: record.firstObservedAt,
+    ...(record.githubId === undefined ? {} : { githubId: record.githubId }),
+    ...(record.authorLogin === undefined ? {} : { authorLogin: record.authorLogin }),
+    ...(record.htmlUrl === undefined ? {} : { htmlUrl: record.htmlUrl }),
+    ...(record.authoritativeTime === undefined ? {} : { authoritativeTime: record.authoritativeTime }),
   };
 }
