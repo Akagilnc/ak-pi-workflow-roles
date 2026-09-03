@@ -610,7 +610,7 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
  *
  * Returns whether the lock was actually deleted.
  */
-async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
+export async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
   const current = await autopsyWriterLock(lockPath);
   if (current.verdict !== "dead") return false;
   try {
