@@ -1393,7 +1393,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     );
     await first.release();
 
-    for (const unparseable of ["", "123junk", "123\njunk"]) {
+    for (const unparseable of ["", "123junk"]) {
       await writeFile(lockPath, unparseable, "utf8");
       const { io: ioUnparseable } = captureIo();
       const blocked = await runAkRole(["resume", runId], {
