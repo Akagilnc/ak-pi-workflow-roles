@@ -11,6 +11,10 @@ import {
   assertLegalEngineName,
 } from "../package-resources/engine-material.ts";
 import {
+  resolveConfiguredProvinceOfficer,
+  type ConfiguredProvinceOfficerResolution,
+} from "../institutional-resolution.ts";
+import {
   clearPersistentSeatConfig,
   effectiveSeatConfigurations,
   formatModelSpec,
@@ -20,7 +24,6 @@ import {
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
-  seatModelOnly,
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -31,6 +34,7 @@ import {
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
@@ -91,6 +95,7 @@ import {
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
+  type PublicConfigurableSeat,
   listHelpCapabilities,
   type PublicCallableRole,
   type PublicThinkingLevel,
@@ -768,27 +773,101 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-function renderPersistentSeatModel(selection: {
-  provider?: string;
-  model?: string;
-  thinking?: PublicThinkingLevel;
-}): string {
-  const model = seatModelOnly(selection);
-  return model === undefined ? "-" : formatModelSpec(model);
+/**
+ * #620 typed config display row. Non-subordinate seats stay on the persistent
+ * disk face; notary/inspector may surface inherit-gatekeeper without startup.
+ * Presentation formats these fields; tests assert the projection, not TSV.
+ * source reuses the institutional authority domain — no parallel union.
+ */
+export type ConfigDisplaySeat = {
+  readonly seat: PublicConfigurableSeat;
+  readonly source: ConfiguredProvinceOfficerResolution["source"];
+  readonly selection?: EffectiveSeat["selection"];
+  readonly engine?: string;
+  readonly host?: string;
+};
+
+function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
+  engine?: string;
+  host?: string;
+} {
+  return {
+    ...(disk?.engine === undefined ? {} : { engine: disk.engine }),
+    ...(disk?.host === undefined ? {} : { host: disk.host }),
+  };
+}
+
+/**
+ * Single-seat config projection (#620).
+ * - notary/inspector: institutional authority result (own > gatekeeper), never startup
+ * - all other seats: disk model only (persistent face; no startup fill-in)
+ */
+export function projectConfigSeatDisplay(
+  config: PublicCliConfig,
+  seat: PublicConfigurableSeat,
+): ConfigDisplaySeat {
+  const disk = config.seats[seat];
+  if (seat === "notary" || seat === "inspector") {
+    const resolved = resolveConfiguredProvinceOfficer(config, seat);
+    return {
+      seat,
+      source: resolved.source,
+      ...(resolved.selection === undefined ? {} : { selection: resolved.selection }),
+      ...diskAxes(disk),
+    };
+  }
+  const own = seatModelOnly(disk);
+  if (own !== undefined) {
+    return { seat, source: "persistent", selection: own, ...diskAxes(disk) };
+  }
+  if (disk === undefined) {
+    return { seat, source: "unconfigured" };
+  }
+  return { seat, source: "unconfigured", ...diskAxes(disk) };
+}
+
+/**
+ * Bulk config show projection (#620).
+ * Disk seats only, plus notary/inspector inherit rows when gatekeeper supplies a
+ * model and the subordinate has no own pin — never invent province rows from an
+ * unrelated seat like coder.
+ */
+export function projectConfigDisplaySeats(
+  config: PublicCliConfig,
+): readonly ConfigDisplaySeat[] {
+  const diskSeats = (Object.keys(config.seats) as PublicConfigurableSeat[]).filter(
+    (seat) => isPublicConfigurableSeat(seat),
+  );
+  const rows = new Map<PublicConfigurableSeat, ConfigDisplaySeat>();
+  for (const seat of diskSeats) {
+    rows.set(seat, projectConfigSeatDisplay(config, seat));
+  }
+  for (const seat of ["notary", "inspector"] as const) {
+    if (rows.has(seat)) continue;
+    const projected = projectConfigSeatDisplay(config, seat);
+    if (projected.source === "inherit-gatekeeper") {
+      rows.set(seat, projected);
+    }
+  }
+  return [...rows.keys()].sort().map((seat) => rows.get(seat)!);
+}
+
+function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
+  const model =
+    row.selection === undefined ? "-" : formatModelSpec(row.selection);
+  const engine = row.engine === undefined ? "-" : row.engine;
+  const host = row.host === undefined ? "-" : row.host;
+  return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
 }
 
 function renderConfig(config: PublicCliConfig): string {
-  const lines: string[] = ["seat\tmodel\tengine\thost"];
-  const keys = Object.keys(config.seats) as (keyof typeof config.seats)[];
-  if (keys.length === 0) {
+  const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
+  const rows = projectConfigDisplaySeats(config);
+  if (rows.length === 0) {
     lines.push("(empty)");
   } else {
-    for (const seat of keys.sort()) {
-      const selection = config.seats[seat];
-      if (selection === undefined) continue;
-      const engine = selection.engine === undefined ? "-" : selection.engine;
-      const host = selection.host === undefined ? "-" : selection.host;
-      lines.push(`${seat}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}`);
+    for (const row of rows) {
+      lines.push(renderConfigDisplaySeat(row));
     }
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
@@ -808,14 +887,9 @@ async function runConfigCommand(
       if (!isPublicConfigurableSeat(args[1])) {
         throw new CliUsageError(`unknown configurable seat: ${args[1]}`);
       }
-      const selection = config.seats[args[1]];
-      if (selection === undefined) {
-        io.stdout(`${args[1]}\t(unconfigured)\n`);
-      } else {
-        const engine = selection.engine === undefined ? "-" : selection.engine;
-        const host = selection.host === undefined ? "-" : selection.host;
-        io.stdout(`${args[1]}\t${renderPersistentSeatModel(selection)}\t${engine}\t${host}\n`);
-      }
+      io.stdout(
+        `${renderConfigDisplaySeat(projectConfigSeatDisplay(config, args[1]))}\n`,
+      );
       return 0;
     }
     io.stdout(renderConfig(config));

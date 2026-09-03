@@ -1,12 +1,29 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RoleTurnModelConfig } from "./host-contracts.ts";
-import { seatModelOnly, type PublicCliConfig } from "./public-cli/config.ts";
+import type {
+  GateOfficerSeat,
+  PublicCliConfig,
+  SeatModelConfig,
+} from "./public-cli/config.ts";
+import { seatModelOnly } from "./public-cli/registry.ts";
 
 export const INSTITUTIONAL_RESOLUTION_FILE = "institutional-resolution.json" as const;
 
 /** Non-secret per-seat model selection — alias of the single host-neutral RoleTurnModelConfig. */
 export type InstitutionalSeatSelection = RoleTurnModelConfig;
+
+/**
+ * Configured province-officer resolution (#453/#620 authority seam):
+ * officer persistent > gatekeeper persistent > unconfigured.
+ * No startup candidates and no parent-session fallback — parent compose stays
+ * in resolveInstitutionalSeatSelections; direct call and config display consume
+ * this typed result as-is.
+ */
+export type ConfiguredProvinceOfficerResolution = {
+  readonly selection?: SeatModelConfig;
+  readonly source: "persistent" | "inherit-gatekeeper" | "unconfigured";
+};
 
 export type InstitutionalResolutionPage = {
   readonly version: 1;
@@ -51,8 +68,34 @@ function cleanSelection(model?: { provider?: string; model?: string; thinking?: 
 }
 
 /**
- * Resolve effective per-seat institutional selections (#518 §2 Hop 1):
- * - gatekeeper / inspector / notary: seat override > gatekeeper override > parent effective
+ * Authority for configured province-officer model+source (#453/#620):
+ * own persistent > gatekeeper persistent > unconfigured.
+ * Shared by resolveInstitutionalSeatSelections (plus parent fallback),
+ * resolveEffectiveSeat subordinate branch, and roles/config display.
+ * Model-axis projection stays seatModelOnly (single implementation in registry).
+ */
+export function resolveConfiguredProvinceOfficer(
+  config: PublicCliConfig,
+  officer: GateOfficerSeat,
+): ConfiguredProvinceOfficerResolution {
+  const ownModel = seatModelOnly(config.seats[officer]);
+  if (ownModel !== undefined) {
+    return { selection: ownModel, source: "persistent" };
+  }
+  if (officer === "gatekeeper") {
+    return { source: "unconfigured" };
+  }
+  const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
+  if (gatekeeperModel !== undefined) {
+    return { selection: gatekeeperModel, source: "inherit-gatekeeper" };
+  }
+  return { source: "unconfigured" };
+}
+
+/**
+ * Resolve effective per-seat institutional selections (#518 §2 Hop 1; #620):
+ * - gatekeeper / inspector / notary: resolveConfiguredProvinceOfficer then
+ *   parent effective on the province path only
  * - auditor / evidenceChild: parent effective
  * - navigator: explicit config seat only. Navigator model authority stays
  *   `navigator-model.json`; the page never carries a parent-inherited navigator
@@ -65,17 +108,15 @@ export function resolveInstitutionalSeatSelections(
 ): InstitutionalResolutionPage {
   const parentSelection = cleanSelection(parentEffectiveModel);
 
-  const ownInspector = cleanSelection(seatModelOnly(config.seats?.inspector));
-  const ownNotary = cleanSelection(seatModelOnly(config.seats?.notary));
-  const ownGatekeeper = cleanSelection(seatModelOnly(config.seats?.gatekeeper));
-  const ownNavigator = cleanSelection(seatModelOnly(config.seats?.navigator));
-
-  const gatekeeper = ownGatekeeper ?? parentSelection;
-  const inspector = ownInspector ?? ownGatekeeper ?? parentSelection;
-  const notary = ownNotary ?? ownGatekeeper ?? parentSelection;
+  const gatekeeper =
+    resolveConfiguredProvinceOfficer(config, "gatekeeper").selection ?? parentSelection;
+  const inspector =
+    resolveConfiguredProvinceOfficer(config, "inspector").selection ?? parentSelection;
+  const notary =
+    resolveConfiguredProvinceOfficer(config, "notary").selection ?? parentSelection;
   const auditor = parentSelection;
   const evidenceChild = parentSelection;
-  const navigator = ownNavigator;
+  const navigator = cleanSelection(seatModelOnly(config.seats?.navigator));
 
   return {
     version: 1,
