@@ -524,13 +524,24 @@ export async function runPostAdmissionManualResume<
   let staleWriterLeaseReclaimed: true | undefined;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
-      io.stderr(diagnostic);
+      // Record the typed fact before the fallible sink: if io.stderr throws
+      // (acquire deliberately swallows diagnostic-sink failures), the reclaim
+      // still happened and must stay observable.
       if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
+      io.stderr(diagnostic);
     });
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
+      // A held rejection after our own reclaim must still carry the fact that
+      // this caller reclaimed the stale lock — e.g. another resumer re-locked
+      // before our retry create (#629).
+      return {
+        exitCode: 1,
+        ...(staleWriterLeaseReclaimed === true
+          ? { staleWriterLeaseReclaimed: true as const }
+          : {}),
+      };
     }
     throw error;
   }

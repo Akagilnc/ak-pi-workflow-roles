@@ -608,6 +608,13 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
  * the re-read and the unlink itself; POSIX offers no compare-and-delete, and
  * this narrows the window to a single syscall pair.
  *
+ * An EACCES unlink (non-writable run directory) is recovered by restoring the
+ * directory permissions only — never by a blind retrying unlink. After the
+ * chmod the caller loop re-runs the create/autopsy cycle, so any unlink still
+ * follows a fresh verified-dead verdict on the current pathname content; a
+ * contender that installed its live lock inside the recovery window reads as
+ * alive and is left alone (#629).
+ *
  * Returns whether the lock was actually deleted.
  */
 async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
@@ -619,14 +626,11 @@ async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): P
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return false;
     if (errorCodeOf(error) !== "EACCES") throw error;
+    // Restore directory permissions and drop the round: re-unlinking here
+    // without a fresh autopsy could delete a contender's live lock that was
+    // installed while the directory was unwritable (#629 TOCTOU).
     await chmod(runDirectory, 0o755);
-    try {
-      await unlink(lockPath);
-      return true;
-    } catch (retryError) {
-      if (errorCodeOf(retryError) === "ENOENT") return false;
-      throw retryError;
-    }
+    return false;
   }
 }
 
@@ -692,9 +696,11 @@ const WRITER_LEASE_RECLAIM_ROUNDS = 3;
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
  * lock cleanup fails, a contested lock cannot be read, or a stale lock is
  * reclaimed (the #556 orphan-pi residual declaration). Release stays
- * best-effort (a stale lock is reclaimed by the next acquire's autopsy), but
- * the true error identity must still land somewhere observable — silent
- * swallowing is forbidden.
+ * best-effort, but no diagnostic promises that the next acquire reclaims a
+ * residual lock: a release-failed residual carries this process's live pid
+ * (the next acquire rejects it as held), and an unreadable contested lock is
+ * left in place. The true error identity must still land somewhere observable
+ * — silent swallowing is forbidden.
  */
 export async function acquireRunWriterLease(
   runDirectory: string,
@@ -708,9 +714,21 @@ export async function acquireRunWriterLease(
       // diagnostic-sink failure is itself best-effort; never break acquire()/release().
     }
   };
+  /**
+   * Release-time cleanup failure: the release could not remove the lock, so
+   * the residual lock (carrying this process's pid) stays on disk — the next
+   * acquire reads it as live and rejects; nothing here may promise that the
+   * next acquire reclaims it.
+   */
   const reportCleanupFailure = (error: unknown): void => {
     reportDiagnostic(
-      `writer lease lock cleanup failed (best-effort continue; stale lock is reclaimed by the next acquire's holder autopsy) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+    );
+  };
+  /** Contested-lock read failure: nothing was cleaned up; the lock stays exactly where it is. */
+  const reportReadFailure = (error: unknown): void => {
+    reportDiagnostic(
+      `writer lease lock read failed (holder liveness unverifiable; lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
     );
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
@@ -723,7 +741,7 @@ export async function acquireRunWriterLease(
     }
     lastAutopsy = await autopsyWriterLock(lockPath);
     if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
-      reportCleanupFailure(lastAutopsy.readFailure);
+      reportReadFailure(lastAutopsy.readFailure);
     }
     if (lastAutopsy.verdict === "alive") {
       throw new RunWriterLeaseHeldError(
