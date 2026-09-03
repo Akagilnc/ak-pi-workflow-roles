@@ -137,6 +137,7 @@ export function createEngineDetourToolDefinition(input: {
         details: {
           tool: ENGINE_DETOUR_TOOL_NAME,
           code: result.code,
+          stderr: result.stderr,
         },
       };
     },
