@@ -1,8 +1,8 @@
 /**
  * Shared instruction-seat run (#639 repair seam): gatekeeper and navigator are
  * the same admit → turn-request → post-admission → settle shape, parameterized
- * by seat. Same direction as the settlement one-shot shared skeleton. Per-seat
- * files (gatekeeper-run.ts / navigator-run.ts) stay as thin bindings.
+ * by seat. Same direction as the settlement one-shot shared skeleton. cli.ts
+ * calls this parameterized module directly; no per-seat wrappers.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -50,8 +50,6 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
   createRunId?: () => string;
 };
 
-export type ParseInstructionSeatArgvResult = ParseInstructionArgvResult;
-
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
 export function buildInstructionSeatTurnRequest(
   admitted: AdmittedInstructionSeatInvocation,
@@ -87,7 +85,7 @@ export async function runPublicInstructionSeat(
   env: InstructionSeatRunEnv,
   io: CliIo,
   role: "gatekeeper",
-  parseArgv: (args: readonly string[]) => ParseInstructionSeatArgvResult,
+  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedGatekeeperInvocation;
@@ -98,7 +96,7 @@ export async function runPublicInstructionSeat(
   env: InstructionSeatRunEnv,
   io: CliIo,
   role: "navigator",
-  parseArgv: (args: readonly string[]) => ParseInstructionSeatArgvResult,
+  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedNavigatorInvocation;
@@ -109,7 +107,7 @@ export async function runPublicInstructionSeat(
   env: InstructionSeatRunEnv,
   io: CliIo,
   role: InstructionSeatRole,
-  parseArgv: (args: readonly string[]) => ParseInstructionSeatArgvResult,
+  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedInstructionSeatInvocation;
@@ -120,7 +118,7 @@ export async function runPublicInstructionSeat(
   env: InstructionSeatRunEnv,
   io: CliIo,
   role: InstructionSeatRole,
-  parseArgv: (args: readonly string[]) => ParseInstructionSeatArgvResult,
+  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedInstructionSeatInvocation;
