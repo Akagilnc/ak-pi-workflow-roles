@@ -1428,7 +1428,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
     await writeFile(lockPath, `${pid}\n`, "utf8");
     {
-      const { io: ioDead, stderr: stderrDead } = captureIo();
+      const { io: ioDead } = captureIo();
       const resumed = await runAkRole(["resume", runId], {
         packageRoot,
         home,
@@ -1470,10 +1470,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       assert.equal(dispatches, 1);
       assert.equal(resumed.exitCode, 0);
       assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-      const reclaimDiagnostics = stderrDead.filter(
-        (line) => line.includes(lockPath) && line.includes(String(pid)),
-      );
-      assert.equal(reclaimDiagnostics.length, 1);
+      assert.equal(resumed.staleWriterLeaseReclaimed, true);
     }
   });
 });

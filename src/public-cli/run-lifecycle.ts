@@ -515,6 +515,8 @@ export class RunWriterLeaseHeldError extends Error {
 
 export type RunWriterLease = {
   readonly lockPath: string;
+  /** Typed #556 fact: this acquire unlinked a verified-dead holder. */
+  readonly staleHolderReclaimed?: true;
   release(): Promise<void>;
 };
 
@@ -631,6 +633,7 @@ async function createWriterLease(
   lockPath: string,
   runDirectory: string,
   reportCleanupFailure: (error: unknown) => void,
+  staleHolderReclaimed?: true,
 ): Promise<RunWriterLease> {
   const handle = await open(lockPath, "wx");
   try {
@@ -643,6 +646,7 @@ async function createWriterLease(
   let released = false;
   return {
     lockPath,
+    ...(staleHolderReclaimed ? { staleHolderReclaimed: true as const } : {}),
     async release() {
       if (released) return;
       released = true;
@@ -712,9 +716,15 @@ export async function acquireRunWriterLease(
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
+  let staleHolderReclaimed: true | undefined;
   for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
     try {
-      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
+      return await createWriterLease(
+        lockPath,
+        runDirectory,
+        reportCleanupFailure,
+        staleHolderReclaimed,
+      );
     } catch (error) {
       if (errorCodeOf(error) !== "EEXIST") throw error;
     }
@@ -744,6 +754,7 @@ export async function acquireRunWriterLease(
       );
     }
     if (reclaimed) {
+      staleHolderReclaimed = true;
       reportDiagnostic(
         `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
       );

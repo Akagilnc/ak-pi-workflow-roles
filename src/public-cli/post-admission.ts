@@ -392,6 +392,7 @@ export async function runPostAdmissionOneShot<
   exitCode: number;
   admitted?: A;
   terminal?: T;
+  staleWriterLeaseReclaimed?: true;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
 
@@ -408,7 +409,7 @@ export async function runPostAdmissionOneShot<
     throw error;
   }
 
-  return await dispatchPostAdmissionTurn({
+  const dispatched = await dispatchPostAdmissionTurn({
     admitted,
     env,
     io,
@@ -417,6 +418,10 @@ export async function runPostAdmissionOneShot<
     adapters,
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
+  return {
+    ...dispatched,
+    ...(lease.staleHolderReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
 }
 
 /**
@@ -487,6 +492,7 @@ export async function runPostAdmissionManualResume<
   exitCode: number;
   admitted?: A;
   terminal?: T;
+  staleWriterLeaseReclaimed?: true;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
   // Single seam: explicit env model wins; otherwise restore admitted.model
@@ -545,5 +551,8 @@ export async function runPostAdmissionManualResume<
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
-  return result;
+  return {
+    ...result,
+    ...(lease.staleHolderReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
 }
