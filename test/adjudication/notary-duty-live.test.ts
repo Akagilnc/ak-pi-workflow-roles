@@ -9,7 +9,7 @@
  * Current soul (a97ee70d). Gate subject matches judge-role: material = JSON.stringify(verdict).
  */
 import assert from "node:assert/strict";
-import { access, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { describe } from "node:test";
@@ -24,10 +24,7 @@ import {
   appendTicketProvenanceEntry,
   writeTicketProvenanceHumanView,
 } from "../../src/ticket-provenance.ts";
-import type {
-  TicketProvenanceEntry,
-  TicketProvenanceSourceKind,
-} from "../../src/ticket-provenance-contracts.ts";
+import type { TicketProvenanceEntry } from "../../src/ticket-provenance-contracts.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   parentInheritedSeats,
@@ -43,59 +40,37 @@ import {
 
 const LIVE_TIMEOUT_MS = 600_000;
 
-type ScenarioDiaryTemplate = {
-  readonly anchors: readonly string[];
+type SessionAuthority = {
+  readonly sourceKind: "cc-session";
   readonly entryId: string;
-  readonly transcript: string;
-  readonly timestamp: string;
-  readonly sourceKind?: TicketProvenanceSourceKind;
-  readonly path?: string;
-};
-
-type ScenarioTurn = {
-  readonly id: string;
   readonly text: string;
   readonly timestamp: string;
 };
+
+type AdrAuthority = {
+  readonly sourceKind: "adr-decision-key";
+  readonly path: string;
+  readonly timestamp: string;
+};
+
+type AuthorityBlock = SessionAuthority | AdrAuthority;
 
 type DutyScenario = {
   readonly id: string;
   readonly ticketNumber: number;
   readonly ticketFace: string;
   readonly verdict: Record<string, unknown>;
-  readonly diary: readonly ScenarioDiaryTemplate[];
-  readonly sessionTurns: readonly ScenarioTurn[];
-  readonly adr0077Keys?: string;
+  readonly authority: readonly AuthorityBlock[];
   readonly expect: "pass" | "bounce";
 };
-
-function diaryEntry(
-  anchors: readonly string[],
-  entryId: string,
-  transcript: string,
-  timestamp: string,
-  extra?: {
-    readonly sourceKind?: TicketProvenanceSourceKind;
-    readonly path?: string;
-  },
-): ScenarioDiaryTemplate {
-  return {
-    anchors: [...anchors],
-    entryId,
-    transcript,
-    timestamp,
-    ...(extra?.sourceKind !== undefined ? { sourceKind: extra.sourceKind } : {}),
-    ...(extra?.path !== undefined ? { path: extra.path } : {}),
-  };
-}
 
 /** Four 验收面. Oracle expect is test-side only — never injected into role materials. */
 const SCENARIOS: readonly DutyScenario[] = [
   {
     id: "rebuild-session-without-quote",
     ticketNumber: 62101,
-    // #617 shape: ticket Scope invents rebuild protocol; diary only has bare
-    // cross-host feasibility. Verdict cites Scope 2 as if it were authority.
+    // #617 shape: ticket Scope invents rebuild protocol; authority is only the
+    // owner feasibility quote. Verdict restates the invented protocol as Scope 1.
     ticketFace: [
       "#62101 fixture ticket face",
       "",
@@ -108,17 +83,10 @@ const SCENARIOS: readonly DutyScenario[] = [
         "按 Scope 1 以 session.jsonl 为唯一真源，用统一转码器协议在目标宿主重建会话（Pi→grok 双向，一次调用一对写回）；条款出处：票面 Scope 1。",
       classes: [{ name: "resume-rebuild-transcoder", disposition: "fix_now" }],
     },
-    diary: [
-      diaryEntry(
-        ["#62101", "理论上就是一个session文件。跨宿主也能加。"],
-        "dk1",
-        "DK-1：「理论上就是一个session文件。跨宿主也能加。」（仅可行性；无重建协议、无真源路径、无双向、无一次调用一对。）",
-        "2026-09-02T14:39:06.135Z",
-      ),
-    ],
-    sessionTurns: [
+    authority: [
       {
-        id: "dk1",
+        sourceKind: "cc-session",
+        entryId: "dk1",
         text: "理论上就是一个session文件。跨宿主也能加。",
         timestamp: "2026-09-02T14:39:06.135Z",
       },
@@ -134,35 +102,13 @@ const SCENARIOS: readonly DutyScenario[] = [
       fixSummary: "按 ADR 0077 统一全宿主 session 格式并写回；条款出处：ADR 0077。",
       classes: [{ name: "unified-format", disposition: "fix_now" }],
     },
-    diary: [
-      diaryEntry(
-        ["#62102", "不是统一交给司天台存吗"],
-        "adr0077",
-        [
-          "ADR 0077 keys only:",
-          "- record-scope-phase-two = all-host-session-records",
-          "- live-session-in-books = 运行中活卷与终局卷宗同在 books",
-          "No key authorizes「统一格式 / 写回 / 一次调用一对」。",
-        ].join("\n"),
-        "2026-09-02T10:00:00.000Z",
-        {
-          sourceKind: "adr-decision-key",
-          path: "docs/adr/0077-all-host-session-records-unified-direct-write.md",
-        },
-      ),
-    ],
-    sessionTurns: [
+    authority: [
       {
-        id: "adr0077",
-        text: "什么叫grok home？ 不是统一交给司天台存吗？别给我说你把不同的cli的卷宗还分开了！",
+        sourceKind: "adr-decision-key",
+        path: "docs/adr/0077-all-host-session-records-unified-direct-write.md",
         timestamp: "2026-09-02T10:00:00.000Z",
       },
     ],
-    adr0077Keys: [
-      "| key | 值 |",
-      "| record-scope-phase-two | all-host-session-records |",
-      "| live-session-in-books | 运行中活卷与终局卷宗同在 books |",
-    ].join("\n"),
     expect: "bounce",
   },
   {
@@ -176,28 +122,16 @@ const SCENARIOS: readonly DutyScenario[] = [
       fixSummary: "理论上就是一个session文件。跨宿主也能加（DK-1）。",
       classes: [{ name: "cross-host", disposition: "fix_now" }],
     },
-    diary: [
-      diaryEntry(
-        ["#62103", "理论上就是一个session文件。跨宿主也能加。"],
-        "dk1",
-        "DK-1：「理论上就是一个session文件。跨宿主也能加。」",
-        "2026-09-02T14:39:06.135Z",
-      ),
-      diaryEntry(
-        ["#62103", "引擎应该是我想要就要不想要就不要"],
-        "dk2",
-        "DK-2：「引擎应该是我想要就要不想要就不要。」",
-        "2026-09-02T15:21:35.016Z",
-      ),
-    ],
-    sessionTurns: [
+    authority: [
       {
-        id: "dk1",
+        sourceKind: "cc-session",
+        entryId: "dk1",
         text: "理论上就是一个session文件。跨宿主也能加。",
         timestamp: "2026-09-02T14:39:06.135Z",
       },
       {
-        id: "dk2",
+        sourceKind: "cc-session",
+        entryId: "dk2",
         text: "引擎应该是我想要就要不想要就不要。",
         timestamp: "2026-09-02T15:21:35.016Z",
       },
@@ -222,17 +156,10 @@ const SCENARIOS: readonly DutyScenario[] = [
         "所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序（DK-3）。",
       classes: [{ name: "three-axes-seat-table", disposition: "fix_now" }],
     },
-    diary: [
-      diaryEntry(
-        ["#62104", "所有的运行。都是根据我现在定的席位", "model host engine"],
-        "dk3",
-        "DK-3：「所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序」",
-        "2026-09-02T05:42:17.000Z",
-      ),
-    ],
-    sessionTurns: [
+    authority: [
       {
-        id: "dk3",
+        sourceKind: "cc-session",
+        entryId: "dk3",
         text: "所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序",
         timestamp: "2026-09-02T05:42:17.000Z",
       },
@@ -246,7 +173,6 @@ function casePack(scenario: DutyScenario): Record<string, unknown> {
     ticketNumber: scenario.ticketNumber,
     ticketFace: scenario.ticketFace,
     verdict: scenario.verdict,
-    ...(scenario.adr0077Keys === undefined ? {} : { adr0077Keys: scenario.adr0077Keys }),
   };
 }
 
@@ -255,54 +181,76 @@ async function seedScenarioAuthority(input: {
   readonly project: string;
   readonly home: string;
 }): Promise<readonly TicketProvenanceEntry[]> {
-  const sessionsDir = join(input.home, "pi-sessions");
-  await mkdir(sessionsDir, { recursive: true });
-  const sessionFile = join(sessionsDir, `${input.scenario.id}-session.jsonl`);
-  const sessionHeader = {
-    type: "session",
-    version: 3,
-    id: `pi-session-${input.scenario.ticketNumber}`,
-    timestamp: input.scenario.sessionTurns[0]?.timestamp ?? "2026-09-02T00:00:00.000Z",
-    cwd: input.project,
-  };
-  const lines = [JSON.stringify(sessionHeader)];
-  for (const turn of input.scenario.sessionTurns) {
-    lines.push(
-      JSON.stringify({
-        type: "message",
-        id: turn.id,
-        timestamp: turn.timestamp,
-        message: {
-          role: "user",
-          content: [{ type: "text", text: turn.text }],
-        },
-      }),
-    );
-  }
-  await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
+  const sessionBlocks = input.scenario.authority.filter(
+    (block): block is SessionAuthority => block.sourceKind === "cc-session",
+  );
+  const adrBlocks = input.scenario.authority.filter(
+    (block): block is AdrAuthority => block.sourceKind === "adr-decision-key",
+  );
 
-  if (input.scenario.adr0077Keys !== undefined) {
-    const adrRelPath = "docs/adr/0077-all-host-session-records-unified-direct-write.md";
-    const realAdrFile = join(packageRoot, adrRelPath);
-    const projectAdrDir = join(input.project, "docs", "adr");
-    const homeAdrDir = join(input.home, "docs", "adr");
-    await mkdir(projectAdrDir, { recursive: true });
-    await mkdir(homeAdrDir, { recursive: true });
-    await copyFile(realAdrFile, join(projectAdrDir, "0077-all-host-session-records-unified-direct-write.md"));
-    await copyFile(realAdrFile, join(homeAdrDir, "0077-all-host-session-records-unified-direct-write.md"));
+  let sessionFile: string | undefined;
+  if (sessionBlocks.length > 0) {
+    const sessionsDir = join(input.home, "pi-sessions");
+    await mkdir(sessionsDir, { recursive: true });
+    sessionFile = join(sessionsDir, `${input.scenario.id}-session.jsonl`);
+    const sessionHeader = {
+      type: "session",
+      version: 3,
+      id: `pi-session-${input.scenario.ticketNumber}`,
+      timestamp: sessionBlocks[0]!.timestamp,
+      cwd: input.project,
+    };
+    const lines = [JSON.stringify(sessionHeader)];
+    for (const turn of sessionBlocks) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: turn.entryId,
+          timestamp: turn.timestamp,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: turn.text }],
+          },
+        }),
+      );
+    }
+    await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
   }
 
-  const entries: TicketProvenanceEntry[] = input.scenario.diary.map((item) => ({
-    basis: { method: "llm-semantic", anchors: [...item.anchors] },
-    sourceKind: item.sourceKind ?? "cc-session",
-    sourceRef: {
-      entryId: item.entryId,
-      sessionFile,
-      ...(item.path !== undefined ? { path: item.path } : {}),
-    },
-    transcript: item.transcript,
-    timestamp: item.timestamp,
-  }));
+  const adrTranscripts = new Map<string, string>();
+  for (const block of adrBlocks) {
+    const realAdrFile = join(packageRoot, block.path);
+    const body = await readFile(realAdrFile, "utf8");
+    adrTranscripts.set(block.path, body);
+    const destName = block.path.split("/").at(-1)!;
+    for (const root of [input.project, input.home]) {
+      const destDir = join(root, "docs", "adr");
+      await mkdir(destDir, { recursive: true });
+      await copyFile(realAdrFile, join(destDir, destName));
+    }
+  }
+
+  const entries: TicketProvenanceEntry[] = input.scenario.authority.map((block) => {
+    if (block.sourceKind === "cc-session") {
+      if (sessionFile === undefined) {
+        throw new Error("session authority requires a session file");
+      }
+      return {
+        basis: { method: "llm-semantic", anchors: [block.text] },
+        sourceKind: "cc-session",
+        sourceRef: { entryId: block.entryId, sessionFile },
+        transcript: block.text,
+        timestamp: block.timestamp,
+      };
+    }
+    return {
+      basis: { method: "llm-semantic", anchors: [block.path] },
+      sourceKind: "adr-decision-key",
+      sourceRef: { path: block.path },
+      transcript: adrTranscripts.get(block.path) ?? "",
+      timestamp: block.timestamp,
+    };
+  });
 
   for (const entry of entries) {
     appendTicketProvenanceEntry({
