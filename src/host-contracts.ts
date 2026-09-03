@@ -138,13 +138,13 @@ export type RoleTurnModelConfig = {
 /**
  * Typed cross-host resume handoff (#617 DK-4).
  * Present only when post-admission projects a real switch between known hosts.
- * Cross-host prior volume: Pi previous → opaque records for Grok ACP;
- * grok-build previous → on-disk paths for Pi (DK-7).
+ * Cross-host prior volume: previous native record paths for the live host (DK-7).
+ * Target host reads those files itself; projector never copies bytes.
  */
 export type RoleTurnHostTransition =
   | {
       readonly previousHost: "pi";
-      readonly priorNativeRecords: string;
+      readonly priorNativePaths: readonly string[];
     }
   | {
       readonly previousHost: "grok-build";

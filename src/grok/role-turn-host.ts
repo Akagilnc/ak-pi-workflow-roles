@@ -273,12 +273,11 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
 
-          // #617 DK-4: prior native bytes come only from post-admission hostTransition projection.
-          const priorNativeRecords =
+          // #617 DK-7: hand Pi session path once; Grok reads the file itself.
+          const priorNativePaths =
             continuation.kind === "resume"
             && request.hostTransition?.previousHost === "pi"
-            && request.hostTransition.priorNativeRecords.length > 0
-              ? request.hostTransition.priorNativeRecords
+              ? request.hostTransition.priorNativePaths
               : undefined;
           if (continuation.kind === "resume") {
             const boundSessionId = await config.sessionIdentity.load(request.principal);
@@ -326,10 +325,12 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
 
-          let prompt = prepared.prompt;
+          let prompt =
+            priorNativePaths !== undefined && priorNativePaths.length > 0
+              ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
+              : prepared.prompt;
           const abortSignal = prepared.abortSignal;
           const activeConnection = connection;
-          let deliverPriorContext = priorNativeRecords !== undefined;
 
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
           const promptOrAbort = async (
@@ -369,20 +370,9 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           for (let attempt = 0; attempt < 8; attempt += 1) {
             let result: Readonly<Record<string, unknown>>;
             try {
-              const promptParts: Array<Record<string, unknown>> = [];
-              if (deliverPriorContext && priorNativeRecords !== undefined) {
-                deliverPriorContext = false;
-                // Structured opaque resource — typed priorNativeRecords only, no path re-resolve.
-                promptParts.push({
-                  type: "resource",
-                  resource: {
-                    uri: `ak-role:prior-native/${request.hostTransition!.previousHost}`,
-                    mimeType: "application/x-ak-prior-native",
-                    text: priorNativeRecords,
-                  },
-                });
-              }
-              promptParts.push({ type: "text", text: prompt });
+              const promptParts: Array<Record<string, unknown>> = [
+                { type: "text", text: prompt },
+              ];
               result = await promptOrAbort({
                 sessionId,
                 prompt: promptParts,
