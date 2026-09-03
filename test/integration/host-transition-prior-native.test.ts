@@ -38,6 +38,31 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
   }
 });
 
+test("pi→grok-build projects exact Pi session bytes as priorNativeRecords", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-pi-bytes-"));
+  try {
+    const runDirectory = join(root, "run");
+    const piSessionFile = join(runDirectory, "session", "session.jsonl");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const piBytes = "{\"type\":\"session\",\"id\":\"s\"}\n";
+    await writeFile(piSessionFile, piBytes, "utf8");
+    assert.deepEqual(
+      await projectHostTransitionPriorNative({
+        previousHost: "pi",
+        liveHost: "grok-build",
+        runDirectory,
+        piSessionFile,
+      }),
+      {
+        previousHost: "pi",
+        priorNativeRecords: piBytes,
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("grok-build→pi projects every present updates.jsonl path in sorted order", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-host-transition-paths-"));
   try {
