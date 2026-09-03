@@ -209,39 +209,39 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
 test("grok resume reuses native ACP session via session/load when an ACP binding exists", async () => {
   // Fully mocked ACP binding: pure-memory proof on a fixed virtual path, no host resources.
   const runDirectory = "/run/rebind";
-    const sessionCalls: Array<[string, unknown]> = [];
-    const host = createGrokRoleTurnHost({
-      sessionIdentity: {
-        async load() { return "bound-s1"; },
-        async bind() {},
-        resolveSessionFile: sessionIdentity.resolveSessionFile,
+  const sessionCalls: Array<[string, unknown]> = [];
+  const host = createGrokRoleTurnHost({
+    sessionIdentity: {
+      async load() { return "bound-s1"; },
+      async bind() {},
+      resolveSessionFile: sessionIdentity.resolveSessionFile,
+    },
+    recordCapabilities: async () => {},
+    connect: async () => ({
+      async request(method, params) {
+        sessionCalls.push([method, params]);
+        if (method === "session/load") return { sessionId: "bound-s1" };
+        return method === "session/prompt" ? { stopReason: "end_turn" } : {};
       },
-      recordCapabilities: async () => {},
-      connect: async () => ({
-        async request(method, params) {
-          sessionCalls.push([method, params]);
-          if (method === "session/load") return { sessionId: "bound-s1" };
-          return method === "session/prompt" ? { stopReason: "end_turn" } : {};
-        },
-        notify() {},
-        async close() {},
-      }),
-      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-      prepare: prepareWithLayout(async () => ({ accepted: true })),
-    });
+      notify() {},
+      async close() {},
+    }),
+    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+    prepare: prepareWithLayout(async () => ({ accepted: true })),
+  });
 
-    const result = await host.executeTurn(turnRequest({
-      runDirectory,
-      continuation: { kind: "resume", prompt: "again" },
-    }));
-    assert.equal(result.code, 0);
-    const loaded = sessionCalls.find(([m]) => m === "session/load");
-    assert.deepEqual(loaded, ["session/load", {
-      sessionId: "bound-s1",
-      cwd: "/work",
-      mcpServers: [{}],
-      _meta: { systemPromptOverride: "law", yoloMode: false },
-    }]);
+  const result = await host.executeTurn(turnRequest({
+    runDirectory,
+    continuation: { kind: "resume", prompt: "again" },
+  }));
+  assert.equal(result.code, 0);
+  const loaded = sessionCalls.find(([m]) => m === "session/load");
+  assert.deepEqual(loaded, ["session/load", {
+    sessionId: "bound-s1",
+    cwd: "/work",
+    mcpServers: [{}],
+    _meta: { systemPromptOverride: "law", yoloMode: false },
+  }]);
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
