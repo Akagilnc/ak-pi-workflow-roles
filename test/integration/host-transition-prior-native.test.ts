@@ -37,7 +37,7 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
   }
 });
 
-test("pi→grok-build projects the Pi session path without reading bytes", async () => {
+test("pi→grok-build projects the present Pi session path", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-host-transition-pi-path-"));
   try {
     const runDirectory = join(root, "run");
