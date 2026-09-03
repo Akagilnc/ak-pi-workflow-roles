@@ -1,22 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { bindProductionGrokIsolation } from "../../src/grok/production-host.ts";
-import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
-import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
-import type { RoleTurnHost } from "../../src/host-contracts.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import type { DurablePrincipalAuthority } from "../../src/host-contracts.ts";
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import { createProductionGrokRoleTurnHost } from "../../src/grok/production-host.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -402,149 +395,197 @@ function sessionRowsWithoutAttemptHistory(raw: string): unknown[] {
   return rows;
 }
 
-async function presentGrokUpdates(grokHome: string): Promise<string[]> {
-  const sessions = join(grokHome, "sessions");
-  const found: string[] = [];
-  let encoded;
-  try {
-    encoded = await readdir(sessions, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return found;
-    throw error;
-  }
-  for (const cwdEntry of encoded) {
-    if (!cwdEntry.isDirectory()) continue;
-    const sessionDirs = await readdir(join(sessions, cwdEntry.name), { withFileTypes: true });
-    for (const sess of sessionDirs) {
-      if (!sess.isDirectory()) continue;
-      const file = join(sessions, cwdEntry.name, sess.name, "updates.jsonl");
-      try {
-        found.push(await readFile(file, "utf8"));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
-  }
-  return found;
+const FAUX_GROK_SCRIPT = `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const args = process.argv.slice(2);
+if (args[0] === "inspect" && args[1] === "--json") {
+  process.stdout.write(JSON.stringify({}) + "\\n");
+  process.exit(0);
 }
 
-const FAUX_GROK_WRITE = `import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-const grokHome = process.env.GROK_HOME;
-if (typeof grokHome !== "string" || grokHome === "") throw new Error("GROK_HOME missing");
-const file = join(grokHome, "sessions", "cwd", "s1", "updates.jsonl");
-await mkdir(join(file, ".."), { recursive: true });
-await writeFile(file, JSON.stringify({ sessionUpdate: "agent_message_chunk" }) + "\\n");
+if (args[0] === "agent" && args.includes("stdio")) {
+  const rl = createInterface({ input: process.stdin });
+  const grokHome = process.env.GROK_HOME;
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    const msg = JSON.parse(line);
+    if (msg.method === "initialize") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, _meta: {} } }) + "\\n");
+    } else if (msg.method === "session/new" || msg.method === "session/load") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "s1" } }) + "\\n");
+    } else if (msg.method === "session/prompt") {
+      const promptParts = Array.isArray(msg.params?.prompt) ? msg.params.prompt : [];
+      const priorResource = promptParts.find(
+        (p) => p.type === "resource" && p.resource?.mimeType === "application/x-ak-prior-native",
+      );
+      if (priorResource) {
+        const priorText = priorResource.resource?.text ?? "";
+        const rows = priorText.trim().split("\\n").filter(Boolean).map((l) => {
+          try { return JSON.parse(l); } catch { return {}; }
+        });
+        const priorRow = rows.find((r) => r.piStructuredId || r.message?.piStructuredId);
+        const piId = priorRow?.piStructuredId ?? priorRow?.message?.piStructuredId;
+        if (!piId) {
+          process.stderr.write("Grok resume missing required piStructuredId in prior native records\\n");
+          process.exit(1);
+        }
+        if (grokHome) {
+          const sDir = join(grokHome, "sessions", "cwd", "s1");
+          mkdirSync(sDir, { recursive: true });
+          writeFileSync(
+            join(sDir, "updates.jsonl"),
+            JSON.stringify({
+              sessionUpdate: "agent_message_chunk",
+              priorConsumed: true,
+              inheritedPiId: piId,
+            }) + "\\n",
+            "utf8",
+          );
+        }
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "refusal" } }) + "\\n");
+      } else {
+        if (grokHome) {
+          const sDir = join(grokHome, "sessions", "cwd", "s1");
+          mkdirSync(sDir, { recursive: true });
+          writeFileSync(
+            join(sDir, "updates.jsonl"),
+            JSON.stringify({
+              sessionUpdate: "agent_message_chunk",
+              grokStructuredId: "seed-grok-1",
+            }) + "\\n",
+            "utf8",
+          );
+        }
+        const effectiveRunDir = runDir || (grokHome ? join(grokHome, "..") : undefined);
+        if (effectiveRunDir) {
+          writeFileSync(
+            join(effectiveRunDir, "typed-provider-http.json"),
+            JSON.stringify({ httpStatus: 429, provider: "openai-codex" }) + "\\n",
+            "utf8",
+          );
+        }
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "refusal" } }) + "\\n");
+      }
+    } else if (msg.method === "session/close") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+    } else if (typeof msg.id === "number") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+    }
+  });
+}
 `;
 
-const FAUX_PI_APPEND = `import { appendFile } from "node:fs/promises";
-const sessionFile = process.argv[2];
-if (typeof sessionFile !== "string" || sessionFile === "") throw new Error("session file missing");
-await appendFile(sessionFile, JSON.stringify({ type: "message" }) + "\\n");
+async function installFauxGrok(home: string): Promise<string> {
+  const binDir = join(home, ".grok", "bin");
+  await mkdir(binDir, { recursive: true });
+  const binPath = join(binDir, "grok");
+  await writeFile(join(home, ".grok", "auth.json"), "auth-token\n", "utf8");
+  await writeFile(binPath, FAUX_GROK_SCRIPT, { mode: 0o755 });
+  return binPath;
+}
+
+const FAUX_PI_SCRIPT = `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+const sessionIdx = args.indexOf("--session");
+if (sessionIdx === -1 || !args[sessionIdx + 1]) {
+  process.stderr.write("Missing --session in Pi arguments\\n");
+  process.exit(1);
+}
+const sessionFile = args[sessionIdx + 1];
+const hasGrokId = args.some((arg) => arg.includes("seed-grok-1"));
+if (!hasGrokId) {
+  process.stderr.write("Pi faux runner: prompt missing required seed-grok-1 structured identity\\n");
+  process.exit(1);
+}
+const continuationRow = {
+  type: "message",
+  id: "pi-continuation-msg",
+  priorConsumed: true,
+  fromGrokId: "seed-grok-1",
+};
+appendFileSync(sessionFile, JSON.stringify(continuationRow) + "\\n", "utf8");
 `;
 
 test("public resume Pi→Grok writes grok-home via isolation env; Pi volume unchanged", async () => {
   await withHermeticHome({ prefix: "ak-dk4-pi-to-grok-" }, async ({ home }) => {
-    const priorExitCode = process.exitCode;
-    try {
-      const project = join(home, "work");
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      const runId = "run-dk4-pi-to-grok";
-      const PI_SESSION_SEED =
-        `${JSON.stringify({ type: "session", id: runId })}\n`
-        + `${JSON.stringify({ type: "message", id: "m1" })}\n`;
-      const HOST_ISSUED_SESSION_LEAF = "host-issued-principal.jsonl";
-      const hostIssuedPrincipalAuthority: DurablePrincipalAuthority = {
-        issue(request) {
-          const coords = issuePiDurablePrincipalCoordinates(request);
-          return {
-            sessionDirectory: coords.sessionDirectory,
-            sessionFile: join(coords.sessionDirectory, HOST_ISSUED_SESSION_LEAF),
-          };
-        },
-        decode: (value) => piDurablePrincipalAuthority.decode(value),
-        isAvailable: (principal) => piDurablePrincipalAuthority.isAvailable(principal),
-      };
-      await seedResumableJudge({
-        home,
-        project,
-        runId,
-        principalAuthority: hostIssuedPrincipalAuthority,
-        hostAdapters: [{
-          name: "pi",
-          create: () => ({
-            ok: true as const,
-            host: createMinimalHost(async (request) => {
-              const { sessionDirectory, sessionFile } =
-                hostIssuedPrincipalAuthority.decode(request.principal);
-              await mkdir(sessionDirectory, { recursive: true });
-              await writeFile(join(sessionDirectory, "session.jsonl"), "{\"type\":\"session\"}\n", "utf8");
-              await writeFile(sessionFile, PI_SESSION_SEED, "utf8");
-              await observeTyped429ViaProductionHandler({
-                runDirectory: request.runDirectory,
-                provider: "openai-codex",
-              });
-              return { code: 1, stderr: "quota", timedOut: false };
-            }),
-          }),
-        }],
-      });
-      const books = await readdir(join(home, ".ak-roles", "books"));
-      const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
-      const admitted = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as {
-        sessionFile: string;
-      };
-      const piBefore = await readFile(admitted.sessionFile, "utf8");
-      {
-        const { io, stderr } = captureIo();
-        assert.equal((await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], { packageRoot, home, io })).exitCode, 0, stderr.join(""));
-        assert.equal((await runAkRole(["config", "set-host", "judge", "grok-build"], { packageRoot, home, io })).exitCode, 0, stderr.join(""));
-      }
-      await mkdir(join(home, ".grok"), { recursive: true });
-      await writeFile(join(home, ".grok", "auth.json"), "test-auth\n", "utf8");
-      const faux = join(home, "faux-grok-write.mjs");
-      await writeFile(faux, FAUX_GROK_WRITE, "utf8");
-      const grokHost: RoleTurnHost = {
-        async executeTurn(request) {
-          const binding = await bindProductionGrokIsolation(request.runDirectory, request.home, packageRoot);
-          await execFileAsync(process.execPath, [faux], { env: binding.env });
-          await sealAcceptedSubmission({
-            cwd: project,
-            runId,
-            role: "judge",
-            details: { judgeStatus: "converged" },
-            runDirectory: request.runDirectory,
-            home,
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        },
-      };
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-dk4-pi-to-grok";
+    const PI_SESSION_SEED =
+      `${JSON.stringify({ type: "session", id: runId })}\n`
+      + `${JSON.stringify({ type: "message", id: "m1", piStructuredId: "seed-pi-1" })}\n`;
+    await seedResumableJudge({
+      home,
+      project,
+      runId,
+      afterTurn: async (_runDirectory, sessionDirectory) => {
+        await writeFile(join(sessionDirectory, "session.jsonl"), PI_SESSION_SEED, "utf8");
+      },
+    });
+    const books = await readdir(join(home, ".ak-roles", "books"));
+    const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
+    const admitted = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as {
+      sessionFile: string;
+    };
+    const piBefore = await readFile(admitted.sessionFile, "utf8");
+    {
       const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials,
-        io,
-        principalAuthority: hostIssuedPrincipalAuthority,
-        hostAdapters: [
-          { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
-          { name: "grok-build", create() { return { ok: true as const, host: grokHost }; } },
-        ],
-      });
-      assert.equal(resumed.exitCode, 0, stderr.join(""));
-      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-      const updates = await presentGrokUpdates(join(runDirectory, "grok-home"));
-      assert.equal(updates.length, 1);
-      assert.equal((JSON.parse(updates[0]!.trim()) as { sessionUpdate?: unknown }).sessionUpdate, "agent_message_chunk");
-      assert.deepEqual(
-        sessionRowsWithoutAttemptHistory(await readFile(admitted.sessionFile, "utf8")),
-        sessionRowsWithoutAttemptHistory(piBefore),
-      );
-    } finally {
-      process.exitCode = priorExitCode;
+      assert.equal((await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], { packageRoot, home, io })).exitCode, 0, stderr.join(""));
+      assert.equal((await runAkRole(["config", "set-host", "judge", "grok-build"], { packageRoot, home, io })).exitCode, 0, stderr.join(""));
     }
+    await installFauxGrok(home);
+
+    const baseGrok = createProductionGrokRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+    });
+    const grokHost: RoleTurnHost = {
+      async executeTurn(request) {
+        await baseGrok.executeTurn(request);
+        await sealAcceptedSubmission({
+          cwd: project,
+          runId,
+          role: "judge",
+          details: { judgeStatus: "converged" },
+          runDirectory: request.runDirectory,
+          home,
+        });
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+
+    const { io, stderr } = captureIo();
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [
+        { name: "pi", create() { throw new Error("pi must not run on grok-build seat"); } },
+        { name: "grok-build", create() { return { ok: true as const, host: grokHost }; } },
+      ],
+    });
+    assert.equal(resumed.exitCode, 0, stderr.join(""));
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const updatesFile = join(runDirectory, "grok-home", "sessions", "cwd", "s1", "updates.jsonl");
+    const grokContent = await readFile(updatesFile, "utf8");
+    const grokRow = JSON.parse(grokContent.trim()) as { priorConsumed?: unknown; inheritedPiId?: unknown };
+    assert.equal(grokRow.priorConsumed, true);
+    assert.equal(grokRow.inheritedPiId, "seed-pi-1");
+    assert.deepEqual(
+      sessionRowsWithoutAttemptHistory(await readFile(admitted.sessionFile, "utf8")),
+      sessionRowsWithoutAttemptHistory(piBefore),
+    );
   });
 });
 
@@ -554,7 +595,7 @@ test("public resume Grok→Pi writes Pi session via spawn --session; grok-home u
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-dk4-grok-to-pi";
-    const GROK_UPDATES = `${JSON.stringify({ sessionUpdate: "agent_message_chunk" })}\n`;
+    await installFauxGrok(home);
     {
       const { io, stderr } = captureIo();
       assert.equal((await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], { packageRoot, home, io })).exitCode, 0, stderr.join(""));
@@ -570,66 +611,20 @@ test("public resume Grok→Pi writes Pi session via spawn --session; grok-home u
         createRunId: () => runId,
         io,
         principalAuthority: piDurablePrincipalAuthority,
-        hostAdapters: [{
-          name: "grok-build",
-          create: () => ({
-            ok: true as const,
-            host: createGrokRoleTurnHost({
-              sessionIdentity: {
-                async load() { return undefined; },
-                async bind() {},
-                resolveSessionFile(principal) {
-                  return piDurablePrincipalAuthority.decode(principal).sessionFile;
-                },
-              },
-              recordCapabilities: async () => {},
-              connect: async () => ({
-                async request(method) {
-                  if (method === "initialize") return {};
-                  if (method === "session/new") return { sessionId: "grok-birth-s1" };
-                  if (method === "session/prompt") return { stopReason: "end_turn" };
-                  return {};
-                },
-                notify() {},
-                async close() {},
-              }),
-              inspect: async () => ({ privateActive: [], akActive: [JUDGE_OUTPUT_TOOL_NAME] }),
-              prepare: async (request) => {
-                const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-                const prepared = await prepareGrokRoleEnvelope({
-                  request,
-                  sessionFile,
-                  socketPath: join(request.runDirectory, "mcp-birth.sock"),
-                  dependencies: {
-                    loadJudgeSoul: async () => "JUDGE SOUL",
-                    auditSoulCompliance: async () => ({ status: "pass" }),
-                    activationTraceWriter: async () => {},
-                  },
-                });
-                const grokDir = join(request.runDirectory, "grok-home", "sessions", "encoded-cwd", "s1");
-                await mkdir(grokDir, { recursive: true });
-                await writeFile(join(grokDir, "updates.jsonl"), GROK_UPDATES, "utf8");
-                return {
-                  ...prepared,
-                  closeRound: async () => {
-                    await prepared.closeRound();
-                    await observeTyped429ViaProductionHandler({
-                      runDirectory: request.runDirectory,
-                      provider: "openai-codex",
-                    });
-                    return {
-                      accepted: false as const,
-                      failure: {
-                        cause: "provider" as const,
-                        identity: { name: "rate_limit", code: 429 },
-                      },
-                    };
-                  },
-                };
-              },
-            }),
-          }),
-        }],
+        hostAdapters: [
+          {
+            name: "grok-build",
+            create() {
+              return {
+                ok: true as const,
+                host: createProductionGrokRoleTurnHost({
+                  packageRoot,
+                  principalAuthority: piDurablePrincipalAuthority,
+                }),
+              };
+            },
+          },
+        ],
       });
       assert.equal(birth.exitCode, 1, stderr.join(""));
       assert.ok(birth.terminal?.resume);
@@ -640,21 +635,26 @@ test("public resume Grok→Pi writes Pi session via spawn --session; grok-home u
     }
     const books = await readdir(join(home, ".ak-roles", "books"));
     const runDirectory = join(home, ".ak-roles", "books", books[0]!, "runs", `${runId}@judge`);
-    const grokUpdatesFile = join(runDirectory, "grok-home", "sessions", "encoded-cwd", "s1", "updates.jsonl");
+    const grokUpdatesFile = join(runDirectory, "grok-home", "sessions", "cwd", "s1", "updates.jsonl");
     const grokBefore = await readFile(grokUpdatesFile, "utf8");
-    const fauxPi = join(home, "faux-pi-write.mjs");
-    await writeFile(fauxPi, FAUX_PI_APPEND, "utf8");
+    assert.equal((JSON.parse(grokBefore.trim()) as { grokStructuredId?: unknown }).grokStructuredId, "seed-grok-1");
+
+    const fauxPi = join(home, "faux-pi.mjs");
+    await writeFile(fauxPi, FAUX_PI_SCRIPT, "utf8");
     let piSessionWritten: string | undefined;
     const wrappingPi: RoleTurnHost = {
       async executeTurn(request) {
         return createPiRoleTurnHost({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          spawnRunner: async (args) => {
+          spawnRunner: async (args, spawnOptions) => {
             const sessionFile = argvFlagValue(args, "--session");
             assert.ok(sessionFile);
             piSessionWritten = sessionFile;
-            await execFileAsync(process.execPath, [fauxPi, sessionFile]);
+            await execFileAsync(process.execPath, [fauxPi, ...args], {
+              cwd: spawnOptions.cwd,
+              env: spawnOptions.env,
+            });
             await sealAcceptedSubmission({
               cwd: project,
               runId,
@@ -687,7 +687,10 @@ test("public resume Grok→Pi writes Pi session via spawn --session; grok-home u
     }
     assert.ok(piSessionWritten);
     const piRows = sessionRowsWithoutAttemptHistory(await readFile(piSessionWritten, "utf8"));
-    assert.equal(piRows.some((row) => (row as { type?: unknown }).type === "message"), true);
+    const continuationRow = piRows.find(
+      (row) => (row as { fromGrokId?: unknown }).fromGrokId === "seed-grok-1",
+    ) as { priorConsumed?: unknown } | undefined;
+    assert.equal(continuationRow?.priorConsumed, true);
     assert.equal(await readFile(grokUpdatesFile, "utf8"), grokBefore);
   });
 });
