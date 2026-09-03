@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -127,57 +127,5 @@ test("ak-role navigator admits instruction and delivers typed route terminal", a
     assert.deepEqual(candidates, [
       { next: { role: "judge", phase: null }, reason: "converged work needs adjudication" },
     ]);
-  });
-});
-
-test("ak-role navigator manual resume continues the same run", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    // Interrupt first (unsealed), then resume lands a distinct sealed verdict.
-    const first = await runAkRole(["navigator", "--project", project, "下一步？"], {
-      home,
-      packageRoot,
-      cwd: project,
-      io: captureIo().io,
-      createRunId: () => RUN_ID,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await mkdir(join(sessionFile, ".."), { recursive: true });
-          await writeFile(sessionFile, "\n", "utf8");
-          return {
-            code: 1,
-            stderr: "upstream timeout\n",
-            timedOut: true,
-            args: [...args],
-          };
-        },
-      }),
-    });
-    assert.equal(first.exitCode, 1);
-
-    const { io: resumeIo } = captureIo();
-    const resumed = await runAkRole(["resume", RUN_ID, "重估路线"], {
-      home,
-      packageRoot,
-      cwd: project,
-      io: resumeIo,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: scriptedNavigatorSession({
-          status: "advice",
-          candidates: [{ next: { role: "judge", phase: null }, reason: "converged work needs adjudication" }],
-        }),
-      }),
-    });
-    assert.equal(resumed.exitCode, 0, resumed.terminal === undefined ? "no terminal" : "");
-    assert.equal(resumed.terminal?.roleOutcome.role, "navigator");
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
   });
 });

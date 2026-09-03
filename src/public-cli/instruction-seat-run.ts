@@ -17,15 +17,11 @@ import {
   type ParseInstructionArgvResult,
 } from "./invocation.ts";
 import {
-  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
 import {
-  loadResumableInstructionSeatRun,
   markRunAdmitted,
-  buildResumeContinuationPrompt,
-  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -184,97 +180,6 @@ export async function runPublicInstructionSeat(
   });
 
   return await runPostAdmissionOneShot({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
-    adapters: instructionSeatAdapters(),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
-}
-
-/**
- * Resume a previously admitted instruction-seat run (#639 / DK-3).
- * Restores role/attachments/session identity; seat axes follow the live table.
- */
-export async function runPublicInstructionSeatResume(
-  request: PublicResumeRequest,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: "gatekeeper",
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedGatekeeperInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeatResume(
-  request: PublicResumeRequest,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: "navigator",
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedNavigatorInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeatResume(
-  request: PublicResumeRequest,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: InstructionSeatRole,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedInstructionSeatInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeatResume(
-  request: PublicResumeRequest,
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: InstructionSeatRole,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedInstructionSeatInvocation;
-  terminal?: TerminalResult;
-}> {
-  let loaded;
-  try {
-    loaded = await loadResumableInstructionSeatRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-      role,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-  const turnRequest = buildInstructionSeatTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
-    },
-  });
-
-  return await runPostAdmissionManualResume({
     admitted,
     env,
     io,
