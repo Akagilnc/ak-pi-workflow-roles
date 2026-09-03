@@ -2,6 +2,7 @@ import type {
   GitHubMachineIdentity,
 } from "./collector-github.ts";
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
@@ -108,11 +109,35 @@ export function extractCollectorEvidenceIdentityGroups(
 }
 
 /**
+ * #641 chain①: pointer-open failures are model misuse, not host failures. The
+ * seat rejects them as correctable so the model can retry with a stored
+ * evidenceId — on Pi and Grok/ACP alike (第 0 条: 模型提交方式可纠正).
+ */
+export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
+  constructor(evidenceId: string) {
+    super(`未在本局已观测材料中找到 evidenceId ${evidenceId}；请用 observe 返回的指针重试。`);
+    this.name = "CollectorUnknownEvidenceError";
+  }
+}
+
+/**
+ * #641 chain①: any malformed findings submission is a model misuse the model
+ * can correct and resubmit — a branded correctable rejection on every supported
+ * engine, never a round infrastructure failure.
+ */
+export class CollectorFindingsValidationError extends CorrectableSubmissionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CollectorFindingsValidationError";
+  }
+}
+
+/**
  * #641 chain①: turn model-submitted finding pointer refs into receipt findings.
  * Each pointer must resolve to a stored text-bearing evidence record; the
  * machine locator is enriched from the same record so receipt and volume agree
- * (指针可解析、开卷相符) by construction. Throws plain (non-fatal, model-visible)
- * errors for unresolvable or mis-typed pointers.
+ * (指针可解析、开卷相符) by construction. Throws branded correctable
+ * (non-fatal, model-visible) errors for unresolvable or mis-typed findings.
  */
 export function enrichCollectorFindings(input: {
   candidate: unknown;
@@ -125,40 +150,40 @@ export function enrichCollectorFindings(input: {
   const candidate = input.candidate;
   if (candidate === undefined || candidate === null) return;
   if (typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new Error("通进司交件参数必须为对象");
+    throw new CollectorFindingsValidationError("通进司交件参数必须为对象");
   }
   const rawFindings = (candidate as { findings?: unknown }).findings;
   if (rawFindings === undefined) return;
   if (!Array.isArray(rawFindings)) {
-    throw new Error("通进司 findings 必须为数组");
+    throw new CollectorFindingsValidationError("通进司 findings 必须为数组");
   }
   const byEvidenceId = new Map(input.records.map((record) => [record.evidenceId, record]));
   for (const raw of rawFindings) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("通进司 finding 必须为对象");
+      throw new CollectorFindingsValidationError("通进司 finding 必须为对象");
     }
     const evidenceId = (raw as { evidenceId?: unknown }).evidenceId;
     if (typeof evidenceId !== "string" || evidenceId.length === 0) {
-      throw new Error("通进司 finding 缺少可解析的 evidenceId 指针");
+      throw new CollectorFindingsValidationError("通进司 finding 缺少可解析的 evidenceId 指针");
     }
     const record = byEvidenceId.get(evidenceId);
     if (record === undefined) {
-      throw new Error(`通进司 finding 指针不可解析：evidenceId "${evidenceId}" 未存储于本局证据`);
+      throw new CollectorUnknownEvidenceError(evidenceId);
     }
     if (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment") {
-      throw new Error(`通进司 finding 指针指向不可承 finding 的证据种类 ${record.kind}`);
+      throw new CollectorFindingsValidationError(`通进司 finding 指针指向不可承 finding 的证据种类 ${record.kind}`);
     }
     if (record.githubId === undefined) {
-      throw new Error(`通进司 finding 指针证据 ${evidenceId} 缺少 GitHub id`);
+      throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 缺少 GitHub id`);
     }
     const category = (raw as { category?: unknown }).category;
     if (category !== undefined && (typeof category !== "string" || category.trim().length === 0)) {
-      throw new Error("通进司 finding category 必须为非空字符串");
+      throw new CollectorFindingsValidationError("通进司 finding category 必须为非空字符串");
     }
     const identity = record.machineIdentity ?? null;
     const group = input.groups.find((candidateGroup) => identityKey(candidateGroup.identity) === identityKey(identity));
     if (group === undefined) {
-      throw new Error(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
+      throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
     }
     group.findings.push({
       identity,

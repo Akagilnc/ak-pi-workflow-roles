@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { normalizeIssueComment, normalizePullRequestReaction, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
 import { normalizeIssueCommentEvidence, normalizePullRequestReactionEvidence, normalizeReviewCommentEvidence, normalizeReviewEvidence, type CollectorEvidenceRecord } from "../../src/collector-evidence.ts";
-import { enrichCollectorFindings, extractCollectorEvidenceIdentityGroups } from "../../src/collector-identity.ts";
+import { enrichCollectorFindings, extractCollectorEvidenceIdentityGroups, CollectorUnknownEvidenceError, CollectorFindingsValidationError } from "../../src/collector-identity.ts";
+import { isCorrectableSubmissionError } from "../../src/submission-correctable-error.ts";
 
 const reactionFixture = new URL("../fixtures/collector/codex-pr-reaction-1165.json", import.meta.url);
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
@@ -192,18 +193,32 @@ test("#641 chain① enrichment turns model pointer refs into receipt findings wi
   assert.equal(findings[2]!.category, undefined);
 });
 
-test("#641 chain① enrichment fails closed on unresolvable pointers without latching fatal", () => {
+test("#641 chain① enrichment rejects pointer/validation misuses with branded correctable errors", () => {
   const groups = extractCollectorEvidenceIdentityGroups([], "head");
-  assert.throws(
-    () => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: "missing" }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }),
-    /指针不可解析/,
-  );
-  assert.throws(
+  const captureThrown = (run: () => void): unknown => {
+    try {
+      run();
+    } catch (error) {
+      return error;
+    }
+    assert.fail("expected a throw");
+  };
+  // Unknown evidenceId is a retryable pointer correction on every host (Grok/ACP
+  // converts only correctable execute errors into a retry — never infra abort).
+  const unknown = captureThrown(() => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: "missing" }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }));
+  assert.ok(unknown instanceof CollectorUnknownEvidenceError, "unknown pointer must be the shared brand");
+  assert.ok(isCorrectableSubmissionError(unknown), "unknown pointer must be correctable");
+  assert.match((unknown as Error).message, /未在本局已观测材料中找到 evidenceId missing/);
+  assert.match((unknown as Error).message, /请用 observe 返回的指针重试/);
+
+  // Other malformed findings are the same class of model misuse — correctable,
+  // never a round infrastructure failure on any supported engine.
+  for (const misuse of [
     () => enrichCollectorFindings({ candidate: { findings: "nope" }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }),
-    /必须为数组/,
-  );
-  assert.throws(
     () => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: 3 }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }),
-    /缺少可解析的 evidenceId 指针/,
-  );
+  ]) {
+    const thrown = captureThrown(misuse);
+    assert.ok(thrown instanceof CollectorFindingsValidationError, "malformed findings must use the validation brand");
+    assert.ok(isCorrectableSubmissionError(thrown), "malformed findings must be correctable");
+  }
 });

@@ -44,6 +44,7 @@ import {
 // interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "../collector-ledger.ts";
@@ -109,6 +110,7 @@ import {
 import {
   classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
+  hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   NAVIGATOR_INVOCATION_ENTRY,
@@ -1592,6 +1594,7 @@ function boundErroredToolCandidate(
 /** Collector operational tools that fail closed via host infrastructure abort. */
 const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 ]);
@@ -1601,12 +1604,22 @@ type InfrastructureFailureSpec = Readonly<{
   matchTool: (toolName: string) => boolean;
   cause: ControlledFailureCause;
   identityName: string;
+  /**
+   * Errored results only count as infrastructure when the durable details carry
+   * the typed navigator fact. ak_collector_read also rejects known correctable
+   * misuses (CollectorUnknownEvidenceError pointer bounces) as errored tool
+   * results — those must not surface as CollectorInfrastructureError.
+   */
+  requireInfrastructureFact?: (toolName: string) => boolean;
 }>;
 
 const COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
   matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
   cause: "activation",
   identityName: "CollectorInfrastructureError",
+  // read alone has a correctable rejection mode (unknown/non-openable pointers);
+  // only its typed infrastructure-failure fact counts as a real host failure.
+  requireInfrastructureFact: (toolName) => toolName === COLLECTOR_READ_TOOL,
 };
 
 const ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
@@ -1635,6 +1648,9 @@ function extractInfrastructureToolFailure(
       !spec.matchTool(message.toolName)
     ) {
       continue;
+    }
+    if (spec.requireInfrastructureFact?.(message.toolName) === true) {
+      if (!hasNavigatorInfrastructureFailureBase(message.details)) continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;

@@ -18,6 +18,7 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
+import { CorrectableSubmissionError } from "../../src/submission-correctable-error.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
 
@@ -30,6 +31,7 @@ function registerTool(
   }),
   outputTool = JUDGE_OUTPUT_TOOL_NAME,
   role: TerminalRoleName = "judge",
+  bounce?: (params: unknown, toolCallId: string, context: HostContext) => CorrectableSubmissionError | undefined,
 ) {
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -44,7 +46,7 @@ function registerTool(
   const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]), undefined, async (projection) => {
     closedSubmissions.push(projection);
   }, { home: root });
-  pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute });
+  pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute, ...(bounce === undefined ? {} : { bounceInfrastructureDeclaration: bounce }) });
   const context = {
     cwd: root,
     mode: "json",
@@ -195,6 +197,38 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
       assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection", anchor.label);
       assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined, anchor.label);
     }
+  });
+});
+
+test("pipeline ledger records a bounced infra declaration as candidate + typed-bounce", async () => {
+  await withLedgerFixture(async (f) => {
+    class TestBounceError extends CorrectableSubmissionError {
+      constructor() {
+        super("误申报正常完工为基础设施失败");
+        this.name = "TestBounceError";
+      }
+    }
+    const bounce = new TestBounceError();
+    const failing = registerTool(
+      f.root,
+      async () => {
+        throw new Error("must not execute when bounced");
+      },
+      JUDGE_OUTPUT_TOOL_NAME,
+      "judge",
+      () => bounce,
+    );
+    await assert.rejects(
+      failing.tool().execute("bounced", { infrastructureFailure: { diagnostic: "误导性的声明" } }, undefined, undefined, failing.context),
+      (error) => error === bounce,
+    );
+    const records = (await ledgerRecords(f.root)).filter((record) => record.kind === "candidate" || record.kind === "outcome");
+    assert.deepEqual(records.map(({ kind }) => kind), ["candidate", "outcome"]);
+    assert.equal((records[0]?.payload as { toolName?: string }).toolName, JUDGE_OUTPUT_TOOL_NAME);
+    assert.equal((records[1]?.payload as { outcome?: string }).outcome, "correctable-rejection");
+    assert.equal((records[1]?.payload as { code?: string }).code, "typed-bounce");
+    assert.equal(typeof (records[1]?.payload as { diagnostic?: string }).diagnostic, "string");
+    assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined, "a bounced attempt must not seal");
   });
 });
 
