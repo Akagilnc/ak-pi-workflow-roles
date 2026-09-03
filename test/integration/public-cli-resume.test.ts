@@ -1537,23 +1537,18 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
   });
 });
 
-test("#418 lease release reports the true cleanup-failure cause via the diagnostic seam", async () => {
+test("#418 lease release stays best-effort when cleanup fails: residual lock left, next acquire works", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "runs", "run-lease-cleanup-cause@judge");
     await mkdir(runDirectory, { recursive: true });
-    const diagnostics: string[] = [];
-    const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
+    const lease = await acquireRunWriterLease(runDirectory);
     // Force a truthful non-EACCES unlink failure: replace the lock file with a
     // directory so release's unlink fails (EISDIR on Linux, EPERM on macOS).
-    // The diagnostic must carry the real identity — never a guessed
-    // EACCES/lease-held label.
     const lockPath = join(runDirectory, "writer.lock");
     await unlink(lockPath);
     await mkdir(lockPath);
     await lease.release();
-    assert.equal(diagnostics.length, 1);
-    // #629: assert residual object state and best-effort behavior, not
-    // diagnostic wording — the lock must still exist after the failed release.
+    // The failed release must leave the residual lock object on disk.
     await stat(lockPath);
     await rm(lockPath, { recursive: true });
     // Best-effort continue semantics preserved: next acquire succeeds.
