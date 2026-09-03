@@ -1147,7 +1147,6 @@ export async function loadResumableReviewerRun(
 /**
  * Load a resumable instruction-seat run (#639 repair seam): gatekeeper and
  * navigator restore the same identity + attachments shape, keyed by role.
- * Per-seat loaders below stay as thin bindings.
  */
 export async function loadResumableInstructionSeatRun(
   home: string,
@@ -1204,35 +1203,11 @@ export async function loadResumableInstructionSeatRun(
   return { admitted, ...tail };
 }
 
-/**
- * Load a resumable Gatekeeper run for resume (#639). Instruction-seat restore:
- * identity + attachments only; no role-specific admitted fields.
- */
-export async function loadResumableGatekeeperRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableGatekeeperRun> {
-  return loadResumableInstructionSeatRun(home, runId, authority, "gatekeeper");
-}
-
 export type LoadedResumableGatekeeperRun = {
   readonly admitted: AdmittedGatekeeperInvocation;
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
 };
-
-/**
- * Load a resumable Navigator run for resume (#639). Instruction-seat restore:
- * identity + attachments only; no role-specific admitted fields.
- */
-export async function loadResumableNavigatorRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableNavigatorRun> {
-  return loadResumableInstructionSeatRun(home, runId, authority, "navigator");
-}
 
 export type LoadedResumableNavigatorRun = {
   readonly admitted: AdmittedNavigatorInvocation;
