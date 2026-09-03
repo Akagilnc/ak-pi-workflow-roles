@@ -25,9 +25,9 @@ import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import {
   createRoleRuntimeExtension,
-  GATEKEEPER_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "../../src/stream-idle-guard.ts";
 import {
   flushEventLoopTurns,

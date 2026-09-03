@@ -1145,22 +1145,41 @@ export async function loadResumableReviewerRun(
 }
 
 /**
- * Load a resumable Gatekeeper run for resume (#639). Instruction-seat restore:
- * identity + attachments only; no role-specific admitted fields.
+ * Load a resumable instruction-seat run (#639 repair seam): gatekeeper and
+ * navigator restore the same identity + attachments shape, keyed by role.
+ * Per-seat loaders below stay as thin bindings.
  */
-export async function loadResumableGatekeeperRun(
+export async function loadResumableInstructionSeatRun(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableGatekeeperRun> {
+  role: "gatekeeper",
+): Promise<LoadedResumableGatekeeperRun>;
+export async function loadResumableInstructionSeatRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  role: "navigator",
+): Promise<LoadedResumableNavigatorRun>;
+export async function loadResumableInstructionSeatRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  role: "gatekeeper" | "navigator",
+): Promise<LoadedResumableGatekeeperRun | LoadedResumableNavigatorRun>;
+export async function loadResumableInstructionSeatRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  role: "gatekeeper" | "navigator",
+): Promise<LoadedResumableGatekeeperRun | LoadedResumableNavigatorRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "gatekeeper") {
+  if (loaded.run.role !== role) {
     throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not gatekeeper`,
+      `role run ${runId} belongs to ${loaded.run.role}, not ${role}`,
     );
   }
-  const admitted: AdmittedGatekeeperInvocation = {
-    role: "gatekeeper",
+  const shared = {
     runId: loaded.run.runId,
     bookKey: loaded.run.bookKey,
     projectRoot: loaded.run.projectRoot,
@@ -1173,11 +1192,28 @@ export async function loadResumableGatekeeperRun(
     ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
-  return {
-    admitted,
+  const tail = {
     run: loaded.run,
     ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
+  if (role === "gatekeeper") {
+    const admitted: AdmittedGatekeeperInvocation = { role, ...shared };
+    return { admitted, ...tail };
+  }
+  const admitted: AdmittedNavigatorInvocation = { role, ...shared };
+  return { admitted, ...tail };
+}
+
+/**
+ * Load a resumable Gatekeeper run for resume (#639). Instruction-seat restore:
+ * identity + attachments only; no role-specific admitted fields.
+ */
+export async function loadResumableGatekeeperRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableGatekeeperRun> {
+  return loadResumableInstructionSeatRun(home, runId, authority, "gatekeeper");
 }
 
 export type LoadedResumableGatekeeperRun = {
@@ -1195,31 +1231,7 @@ export async function loadResumableNavigatorRun(
   runId: string,
   authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableNavigatorRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "navigator") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not navigator`,
-    );
-  }
-  const admitted: AdmittedNavigatorInvocation = {
-    role: "navigator",
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
-  };
-  return {
-    admitted,
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
+  return loadResumableInstructionSeatRun(home, runId, authority, "navigator");
 }
 
 export type LoadedResumableNavigatorRun = {

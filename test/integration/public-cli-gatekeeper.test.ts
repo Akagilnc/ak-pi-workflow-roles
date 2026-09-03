@@ -17,7 +17,7 @@ import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
-import { GATEKEEPER_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   roleTurnHostFromLegacyPiRunner,

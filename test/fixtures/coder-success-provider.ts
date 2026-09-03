@@ -18,9 +18,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   CODER_OUTPUT_TOOL_NAME,
   INSPECTOR_OUTPUT_TOOL,
-  GATEKEEPER_OUTPUT_TOOL,
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 
 export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({

@@ -73,8 +73,10 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
-import { runPublicGatekeeper, runPublicGatekeeperResume } from "./gatekeeper-run.ts";
-import { runPublicNavigator, runPublicNavigatorResume } from "./navigator-run.ts";
+import {
+  runPublicInstructionSeat,
+  runPublicInstructionSeatResume,
+} from "./instruction-seat-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
@@ -1282,11 +1284,11 @@ export async function runAkRole(
           ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
         };
       }
-      if (resumeRole === "gatekeeper") {
-        const result = await runPublicGatekeeperResume(
+      if (resumeRole === "gatekeeper" || resumeRole === "navigator") {
+        const result = await runPublicInstructionSeatResume(
           resumeRequest,
           createRoleEnvironment(env, {
-            role: "gatekeeper",
+            role: resumeRole,
             home,
             agentDir,
             cwd,
@@ -1295,25 +1297,7 @@ export async function runAkRole(
             config,
           }),
           io,
-        );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
-      }
-      if (resumeRole === "navigator") {
-        const result = await runPublicNavigatorResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "navigator",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
+          resumeRole,
         );
         return {
           exitCode: result.exitCode,
@@ -1617,8 +1601,9 @@ export async function runAkRole(
       };
     }
 
-    // Gatekeeper direct public run path (#639) — a role like any other.
-    if (parsed.command === "gatekeeper") {
+    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
+    // a role like any other; one parameterized branch for both.
+    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
@@ -1626,40 +1611,18 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const seat = resolveEffectiveSeat(
         config,
-        "gatekeeper",
+        parsed.command,
         credentials,
         invocationFromParsed(parsed),
       );
-      const result = await runPublicGatekeeper(
+      const result = await runPublicInstructionSeat(
         parsed.args,
-        createRoleEnvironment(env, { role: "gatekeeper", home, agentDir, cwd, credentials, seat, config }),
+        createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.gatekeeper.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
-    }
-
-    // Navigator direct public run path (#639) — a role like any other.
-    if (parsed.command === "navigator") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "navigator",
-        credentials,
-        invocationFromParsed(parsed),
-      );
-      const result = await runPublicNavigator(
-        parsed.args,
-        createRoleEnvironment(env, { role: "navigator", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.navigator.parse,
+        parsed.command,
+        parsed.command === "gatekeeper"
+          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
+          : PUBLIC_ROLE_ARGV.navigator.parse,
       );
       return {
         exitCode: result.exitCode,

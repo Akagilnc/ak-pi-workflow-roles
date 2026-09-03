@@ -346,7 +346,6 @@ export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,

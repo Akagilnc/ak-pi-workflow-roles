@@ -47,7 +47,8 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# 门下省交卷闸官席（察院/符宝郎交卷自动出席，亦可直调；给事中票庭由调用者直召，见「调用百官」）ak-role config set gatekeeper <provider/model[:thinking]>
+# 门下省交卷闸官席（察院/符宝郎交卷自动出席，亦可直调；给事中票庭由调用者直召，见「调用百官」）
+ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper

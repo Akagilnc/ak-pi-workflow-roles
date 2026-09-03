@@ -14,11 +14,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
   ENGINE_DETOUR_TOOL_NAME,
-  GATEKEEPER_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 /** Fake engine body that exits 0 yet signals an upstream failure (#541 code0 gap). */
