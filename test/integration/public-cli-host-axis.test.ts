@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
-import { createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
+import { createDefaultPiSpawnRunner, createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
@@ -376,7 +377,7 @@ test("bare resume follows live seat table host when it drifts from birth host", 
   });
 });
 
-test("Pi resume delivers prior native records on stdin, not argv", async () => {
+test("Pi resume prior native survives Pi stdin trim+join as one initial message", async () => {
   const captured: { args?: readonly string[]; stdin?: string } = {};
   const host = createPiRoleTurnHost({
     packageRoot,
@@ -403,7 +404,56 @@ test("Pi resume delivers prior native records on stdin, not argv", async () => {
     runDirectory: "/tmp/run",
     hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
   });
-  assert.equal(captured.stdin, `${prior}\n\n`);
-  assert.equal(captured.args?.at(-1), prompt);
   assert.equal(captured.args?.includes(prior), false);
+  assert.equal(captured.args?.at(-1) === prompt, false);
+  const { buildInitialMessage } = await import(
+    pathToFileURL(
+      join(packageRoot, "node_modules/@earendil-works/pi-coding-agent/dist/cli/initial-message.js"),
+    ).href
+  ) as {
+    buildInitialMessage: (input: {
+      parsed: { messages: string[] };
+      stdinContent?: string;
+    }) => { initialMessage?: string };
+  };
+  const stdinContent = captured.stdin?.trim() || undefined;
+  const assembled = buildInitialMessage({
+    parsed: { messages: [] },
+    stdinContent,
+  });
+  assert.equal(assembled.initialMessage, `${prior}\n\n${prompt}`);
+  assert.equal(assembled.initialMessage?.includes(`}resume-now`), false);
+});
+
+test("default Pi spawn runner settles stdin EPIPE instead of crashing", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-pi-epipe-"));
+  try {
+    const stub = join(home, "pi-stub");
+    await writeFile(
+      stub,
+      `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("0.0.0-stub\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+    const runner = createDefaultPiSpawnRunner({});
+    await assert.rejects(
+      () =>
+        runner(["--help"], {
+          cwd: home,
+          env: { ...process.env, PI_BINARY: stub, PATH: `${home}${delimiter}${process.env.PATH ?? ""}` },
+          stdin: "x".repeat(4 * 1024 * 1024),
+        }),
+      (error: unknown) => {
+        assert.equal((error as NodeJS.ErrnoException).code, "EPIPE");
+        return true;
+      },
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

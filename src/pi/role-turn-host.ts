@@ -166,6 +166,7 @@ export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
   authority: DurablePrincipalAuthority,
   extraPiArgs: readonly string[] = [],
+  options: { readonly omitPrompt?: boolean } = {},
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
   const prompt =
@@ -190,7 +191,7 @@ export function buildPiTurnExtraArgs(
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),
-    prompt,
+    ...(options.omitPrompt === true ? [] : [prompt]),
   ];
 }
 
@@ -330,6 +331,9 @@ export function createDefaultPiSpawnRunner(options: {
       // never succeeded so no `close` event will arrive).
       let hasSpawned = false;
       let executionError: Error | undefined;
+      let stdinSettled = spawnOptions.stdin === undefined;
+      let closeCode: number | null | undefined;
+      let closeSeen = false;
       const armTimeoutAfterChildReady = (): void => {
         if (spawnOptions.timeoutMs === undefined) return;
         timer = setTimeout(() => {
@@ -338,12 +342,47 @@ export function createDefaultPiSpawnRunner(options: {
         }, spawnOptions.timeoutMs);
       };
       let identityRecorded: Promise<void> = Promise.resolve();
+      const settleClose = (): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        void identityRecorded.then(
+          () => {
+            if (settled) return;
+            settled = true;
+            if (executionError !== undefined) {
+              reject(executionError);
+              return;
+            }
+            resolveResult({
+              code: closeCode ?? null,
+              stderr,
+              timedOut,
+            });
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          },
+        );
+      };
+      const completeStdin = (error?: Error): void => {
+        if (stdinSettled) return;
+        stdinSettled = true;
+        if (error !== undefined && executionError === undefined) executionError = error;
+        if (closeSeen) settleClose();
+      };
       child.once("spawn", () => {
         hasSpawned = true;
         armTimeoutAfterChildReady();
         if (spawnOptions.stdin !== undefined) {
-          child.stdin.write(spawnOptions.stdin);
-          child.stdin.end();
+          child.stdin.on("error", (error) => completeStdin(error));
+          child.stdin.write(spawnOptions.stdin, (error) => {
+            if (error) {
+              completeStdin(error);
+              return;
+            }
+            child.stdin.end(() => completeStdin());
+          });
         }
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
@@ -370,27 +409,10 @@ export function createDefaultPiSpawnRunner(options: {
         reject(error);
       });
       child.on("close", (code) => {
-        if (timer !== undefined) clearTimeout(timer);
-        void identityRecorded.then(
-          () => {
-            if (settled) return;
-            settled = true;
-            if (executionError !== undefined) {
-              reject(executionError);
-              return;
-            }
-            resolveResult({
-              code,
-              stderr,
-              timedOut,
-            });
-          },
-          (error) => {
-            if (settled) return;
-            settled = true;
-            reject(error);
-          },
-        );
+        closeSeen = true;
+        closeCode = code;
+        if (!stdinSettled) return;
+        settleClose();
       });
     });
   };
@@ -408,19 +430,24 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
-      // #617: prior native bytes ride Pi's existing stdin join, not argv (ARG_MAX).
+      // #617: prior native bytes ride Pi's existing stdin channel, not argv (ARG_MAX).
+      // Full payload stays on stdin so readPipedStdin().trim() cannot eat the mid-stream boundary.
       const priorNative = request.hostTransition?.priorNativeRecords;
+      const resumePrompt =
+        request.continuation.kind === "resume" ? request.continuation.prompt : undefined;
       const stdin =
         request.continuation.kind === "resume"
         && priorNative !== undefined
         && priorNative.length > 0
-          ? `${priorNative}\n\n`
+        && resumePrompt !== undefined
+          ? `${priorNative}\n\n${resumePrompt}`
           : undefined;
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(
         request,
         config.principalAuthority,
         config.extraPiArgs ?? [],
+        stdin === undefined ? {} : { omitPrompt: true },
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
       const env: NodeJS.ProcessEnv = {
