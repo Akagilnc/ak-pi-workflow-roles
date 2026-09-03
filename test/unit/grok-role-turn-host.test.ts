@@ -208,8 +208,7 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
 
 test("grok resume reuses native ACP session via session/load when an ACP binding exists", async () => {
   // Fully mocked ACP binding: pure-memory proof on a fixed virtual path, no host resources.
-  {
-    const runDirectory = "/run/rebind";
+  const runDirectory = "/run/rebind";
     const sessionCalls: Array<[string, unknown]> = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity: {
@@ -236,7 +235,6 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
       continuation: { kind: "resume", prompt: "again" },
     }));
     assert.equal(result.code, 0);
-    assert.equal(sessionCalls.some(([m]) => m === "session/load"), true);
     const loaded = sessionCalls.find(([m]) => m === "session/load");
     assert.deepEqual(loaded, ["session/load", {
       sessionId: "bound-s1",
@@ -244,7 +242,6 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
       mcpServers: [{}],
       _meta: { systemPromptOverride: "law", yoloMode: false },
     }]);
-  }
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
