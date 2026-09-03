@@ -499,16 +499,28 @@ if (sessionIdx === -1 || !args[sessionIdx + 1]) {
   process.exit(1);
 }
 const sessionFile = args[sessionIdx + 1];
-const hasGrokId = args.some((arg) => arg.includes("seed-grok-1"));
-if (!hasGrokId) {
-  process.stderr.write("Pi faux runner: prompt missing required seed-grok-1 structured identity\\n");
+const prompt = args.at(-1) ?? "";
+let grokStructuredId;
+for (const line of prompt.split("\\n")) {
+  if (line.trim() === "") continue;
+  try {
+    const row = JSON.parse(line);
+    if (typeof row.grokStructuredId === "string") {
+      grokStructuredId = row.grokStructuredId;
+      break;
+    }
+  } catch {
+    break;
+  }
+}
+if (typeof grokStructuredId !== "string") {
+  process.stderr.write("Pi faux runner: prompt JSONL missing grokStructuredId field\\n");
   process.exit(1);
 }
 const continuationRow = {
   type: "message",
-  id: "pi-continuation-msg",
   priorConsumed: true,
-  fromGrokId: "seed-grok-1",
+  fromGrokId: grokStructuredId,
 };
 appendFileSync(sessionFile, JSON.stringify(continuationRow) + "\\n", "utf8");
 `;
