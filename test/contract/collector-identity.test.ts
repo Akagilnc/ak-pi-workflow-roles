@@ -17,11 +17,6 @@ async function loadEvidence(name: string, normalize: (raw: any, observedAt: stri
   return raws.map((item: any) => normalize(surface(item), observedAt));
 }
 
-function stripTombstone(records: CollectorEvidenceRecord[]): CollectorEvidenceRecord[] {
-  // GitHub tombstones (user: null) keep their record; grouping assigns null identity.
-  return records;
-}
-
 test("real PR reaction bytes make Codex present with zero findings by stable user id", async () => {
   const raw = JSON.parse(await readFile(reactionFixture, "utf8"));
   const evidence = raw.map((item: any) => normalizePullRequestReactionEvidence(normalizePullRequestReaction(item), observedAt));
@@ -102,8 +97,6 @@ test("#245 full PR 1168 replay keeps typed attendance, pointer materials, eviden
 test("Codex attendance is invariant under no-finding and usage-limit prose", async () => {
   const noFinding = await loadEvidence("codex-nofinding-5234537035.json", normalizeIssueCommentEvidence, normalizeIssueComment);
   const limited = await loadEvidence("codex-usagelimit-5244073043.json", normalizeIssueCommentEvidence, normalizeIssueComment);
-  stripTombstone(noFinding);
-  stripTombstone(limited);
   const noFindingGroups = extractCollectorEvidenceIdentityGroups(noFinding, "target-head");
   const limitedGroups = extractCollectorEvidenceIdentityGroups(limited, "target-head");
   assert.equal(noFindingGroups[0]!.attendance, true);
