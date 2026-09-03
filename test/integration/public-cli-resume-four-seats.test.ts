@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -32,9 +33,13 @@ import {
   type AdmittedRoleInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import {
+  savePublicCliConfig,
+  setPersistentSeatConfig,
+} from "../../src/public-cli/config.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { COLLECTOR_WAIT_TOOL } from "../../src/collector-ledger.ts";
-import { COLLECTOR_OUTPUT_TOOL, type CollectorReceipt } from "../../src/package-contracts/collector-output.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
@@ -110,36 +115,6 @@ type SeatTracerSpec = {
 
 const SEAT_SPECS: readonly SeatTracerSpec[] = [
   {
-    role: "collector",
-    outputTool: COLLECTOR_OUTPUT_TOOL,
-    admit: async ({ home, project, runId }) =>
-      await admitCollectorInvocation({
-        home,
-        principalAuthority: piDurablePrincipalAuthority,
-        cwd: project,
-        prNumber: 42,
-        instruction: "",
-        repo: "acme/widgets",
-        createRunId: () => runId,
-      }),
-    sealedDetails: (admitted) =>
-      ({
-        host: "github.com",
-        repository: admitted.repository as string,
-        prNumber: admitted.prNumber as number,
-        manifestDigest: admitted.manifestDigest as string,
-        activationTime: "2026-09-03T00:00:00.000Z",
-        deadlineTime: "2026-09-03T00:05:00.000Z",
-        finalObservationTime: "2026-09-03T00:04:00.000Z",
-        finalSnapshotId: "snap-resume-001",
-        targetHead: "abc123",
-        groups: [],
-        requestAttempts: [],
-        snapshots: [],
-        evidenceRecords: [],
-      }) satisfies CollectorReceipt,
-  },
-  {
     role: "doctor",
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     admit: async ({ home, project, runId }) => {
@@ -193,6 +168,108 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     originalInstruction: "original admitted inspector instruction",
   },
 ];
+
+test("public resume reopens the Collector principal through real activation and settles its typed terminal", { timeout: 120_000 }, async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    const agentDir = join(home, ".pi", "agent");
+    const binDir = join(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedGitProject(project);
+
+    const gh = join(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('/pulls/42')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:42,state:'open',head:{sha:'resume-head'},updated_at:'2026-09-03T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/42'});
+else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/reactions')) ok([]); else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    await savePublicCliConfig(
+      setPersistentSeatConfig({ seats: {} }, "collector", {
+        provider: "ak-collector-offline",
+        model: "faux-1",
+        thinking: "off",
+      }),
+      home,
+    );
+
+    const runId = "run-resume-collector-real-001";
+    const admitted = await admitCollectorInvocation({
+      home,
+      principalAuthority: piDurablePrincipalAuthority,
+      cwd: project,
+      prNumber: 42,
+      instruction: "",
+      repo: "acme/widgets",
+      createRunId: () => runId,
+      model: { provider: "ak-collector-offline", model: "faux-1", thinking: "off" },
+    });
+    const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
+    await writeRoleRunState(admitted.runDirectory, {
+      runId,
+      role: "collector",
+      state: "resumable",
+      bookKey: admitted.bookKey,
+      projectRoot: admitted.projectRoot,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+    });
+    await mkdir(coordinates.sessionDirectory, { recursive: true });
+    const initialRows = [
+      {
+        type: "session",
+        version: 3,
+        id: "collector-resume-session",
+        timestamp: "2026-09-03T00:00:00.000Z",
+        cwd: project,
+      },
+      {
+        type: "message",
+        id: "collector-initial-user",
+        parentId: null,
+        timestamp: "2026-09-03T00:00:01.000Z",
+        message: { role: "user", content: "kickoff", timestamp: 1 },
+      },
+    ];
+    await writeFile(coordinates.sessionFile, `${initialRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const { io, stderr } = captureIo();
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        agentDir,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", join(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 90_000,
+        io,
+      });
+
+      const errorArtifact = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+      const errorDetail = errorArtifact === undefined ? "" : await readFile(errorArtifact.path, "utf8");
+      const sessionDetail = await readFile(coordinates.sessionFile, "utf8");
+      assert.equal(resumed.exitCode, 0, `${stderr.join("")}\n${errorDetail}\n${sessionDetail}`);
+      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(resumed.terminal?.roleOutcome.role, "collector");
+      assert.equal(resumed.terminal?.runId, runId);
+      const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);
+      assert.equal(durable?.state, "terminal");
+      assert.equal(durable?.sessionFile, coordinates.sessionFile);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
+});
 
 for (const spec of SEAT_SPECS) {
   test(`resume continues the exact ${spec.role} session and settles its typed terminal`, async () => {

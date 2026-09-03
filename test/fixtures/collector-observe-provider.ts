@@ -37,11 +37,11 @@ export default function collectorObserveProvider(pi: ExtensionAPI): void {
         fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "collector-obs-2" }),
         { stopReason: "toolUse" },
       ),
-      fauxAssistantMessage(
-        fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "collector-output" }),
-        { stopReason: "toolUse" },
-      ),
     ] : []),
+    fauxAssistantMessage(
+      fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "collector-output" }),
+      { stopReason: "toolUse" },
+    ),
   ]);
 
   const model = faux.getModel();

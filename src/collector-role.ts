@@ -408,7 +408,6 @@ export function createCollectorRoleRuntime(
           );
         }
         if (
-          event.reason === "resume" ||
           event.reason === "fork" ||
           event.reason === "reload"
         ) {
