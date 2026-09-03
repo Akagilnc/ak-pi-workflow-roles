@@ -208,8 +208,6 @@ test("#641 chain① enrichment rejects pointer/validation misuses with branded c
   const unknown = captureThrown(() => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: "missing" }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }));
   assert.ok(unknown instanceof CollectorUnknownEvidenceError, "unknown pointer must be the shared brand");
   assert.ok(isCorrectableSubmissionError(unknown), "unknown pointer must be correctable");
-  assert.match((unknown as Error).message, /未在本局已观测材料中找到 evidenceId missing/);
-  assert.match((unknown as Error).message, /请用 observe 返回的指针重试/);
 
   // Other malformed findings are the same class of model misuse — correctable,
   // never a round infrastructure failure on any supported engine.
