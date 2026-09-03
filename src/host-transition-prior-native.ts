@@ -73,8 +73,8 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
 
 /**
  * Project one hostTransition only for a real switch between known hosts.
- * Unknown host names → undefined (no inject). Empty native volume → transition
- * with empty priorNativeRecords so adapters still see the typed switch.
+ * Unknown host names → undefined (no inject). Empty native volume still
+ * yields a typed switch (empty records or empty path list).
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
@@ -97,7 +97,6 @@ export async function projectHostTransitionPriorNative(input: {
   const paths = await listGrokNativeRecordPaths(input.runDirectory);
   return {
     previousHost: "grok-build",
-    priorNativeRecords: "",
     priorNativePaths: paths,
   };
 }

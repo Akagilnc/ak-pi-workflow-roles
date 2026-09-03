@@ -403,7 +403,10 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
       let turnRequest = request;
-      const paths = request.hostTransition?.priorNativePaths;
+      const paths =
+        request.hostTransition?.previousHost === "grok-build"
+          ? request.hostTransition.priorNativePaths
+          : undefined;
       if (
         request.continuation.kind === "resume"
         && paths !== undefined
