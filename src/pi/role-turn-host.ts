@@ -24,6 +24,7 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
+import { listGrokNativeRecordPaths } from "../host-transition-prior-native.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -166,7 +167,6 @@ export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
   authority: DurablePrincipalAuthority,
   extraPiArgs: readonly string[] = [],
-  options: { readonly omitPrompt?: boolean } = {},
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
   const prompt =
@@ -191,7 +191,7 @@ export function buildPiTurnExtraArgs(
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),
-    ...(options.omitPrompt === true ? [] : [prompt]),
+    prompt,
   ];
 }
 
@@ -201,8 +201,6 @@ export type PiSpawnRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
-    /** Opaque prior-host records; Pi joins piped stdin with the argv prompt. */
-    stdin?: string;
   },
 ) => Promise<{
   code: number | null;
@@ -311,7 +309,7 @@ export function createDefaultPiSpawnRunner(options: {
       const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
-        stdio: [spawnOptions.stdin === undefined ? "ignore" : "pipe", "ignore", "pipe"],
+        stdio: ["ignore", "ignore", "pipe"],
       });
       if (child.stderr === null) {
         throw new Error("Pi child stderr pipe was not created");
@@ -329,9 +327,6 @@ export function createDefaultPiSpawnRunner(options: {
       // never succeeded so no `close` event will arrive).
       let hasSpawned = false;
       let executionError: Error | undefined;
-      let stdinSettled = spawnOptions.stdin === undefined;
-      let closeCode: number | null | undefined;
-      let closeSeen = false;
       const armTimeoutAfterChildReady = (): void => {
         if (spawnOptions.timeoutMs === undefined) return;
         timer = setTimeout(() => {
@@ -340,53 +335,9 @@ export function createDefaultPiSpawnRunner(options: {
         }, spawnOptions.timeoutMs);
       };
       let identityRecorded: Promise<void> = Promise.resolve();
-      const settleClose = (): void => {
-        if (timer !== undefined) clearTimeout(timer);
-        void identityRecorded.then(
-          () => {
-            if (settled) return;
-            settled = true;
-            if (executionError !== undefined) {
-              reject(executionError);
-              return;
-            }
-            resolveResult({
-              code: closeCode ?? null,
-              stderr,
-              timedOut,
-            });
-          },
-          (error) => {
-            if (settled) return;
-            settled = true;
-            reject(error);
-          },
-        );
-      };
-      const completeStdin = (error?: Error): void => {
-        if (stdinSettled) return;
-        stdinSettled = true;
-        if (error !== undefined && executionError === undefined) executionError = error;
-        if (closeSeen) settleClose();
-      };
       child.once("spawn", () => {
         hasSpawned = true;
         armTimeoutAfterChildReady();
-        if (spawnOptions.stdin !== undefined) {
-          const stdin = child.stdin;
-          if (stdin === null) {
-            completeStdin(new Error("Pi child stdin pipe was not created"));
-          } else {
-            stdin.on("error", (error) => completeStdin(error));
-            stdin.write(spawnOptions.stdin, (error) => {
-              if (error) {
-                completeStdin(error);
-                return;
-              }
-              stdin.end(() => completeStdin());
-            });
-          }
-        }
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
           typeof runDirectory === "string" &&
@@ -412,10 +363,27 @@ export function createDefaultPiSpawnRunner(options: {
         reject(error);
       });
       child.on("close", (code) => {
-        closeSeen = true;
-        closeCode = code;
-        if (!stdinSettled) return;
-        settleClose();
+        if (timer !== undefined) clearTimeout(timer);
+        void identityRecorded.then(
+          () => {
+            if (settled) return;
+            settled = true;
+            if (executionError !== undefined) {
+              reject(executionError);
+              return;
+            }
+            resolveResult({
+              code,
+              stderr,
+              timedOut,
+            });
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          },
+        );
       });
     });
   };
@@ -433,24 +401,28 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
-      // #617: prior native bytes ride Pi's existing stdin channel, not argv (ARG_MAX).
-      // Full payload stays on stdin so readPipedStdin().trim() cannot eat the mid-stream boundary.
-      const priorNative = request.hostTransition?.priorNativeRecords;
-      const resumePrompt =
-        request.continuation.kind === "resume" ? request.continuation.prompt : undefined;
-      const stdin =
+      // #617 DK-7: hand the native-record path, never the bytes, to Pi argv.
+      let turnRequest = request;
+      if (
         request.continuation.kind === "resume"
-        && priorNative !== undefined
-        && priorNative.length > 0
-        && resumePrompt !== undefined
-          ? `${priorNative}\n\n${resumePrompt}`
-          : undefined;
+        && request.hostTransition?.previousHost === "grok-build"
+      ) {
+        const paths = await listGrokNativeRecordPaths(request.runDirectory);
+        if (paths.length > 0) {
+          turnRequest = {
+            ...request,
+            continuation: {
+              ...request.continuation,
+              prompt: `${request.continuation.prompt}\n${paths.join("\n")}`,
+            },
+          };
+        }
+      }
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(
-        request,
+        turnRequest,
         config.principalAuthority,
         config.extraPiArgs ?? [],
-        stdin === undefined ? {} : { omitPrompt: true },
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
       const env: NodeJS.ProcessEnv = {
@@ -463,7 +435,6 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;
       }
-      // Package provenance is known before Pi starts.
       if (
         config.recordLaunchedRolePackageIdentity !== undefined &&
         config.observeLaunchedRolePackageIdentity !== undefined
@@ -478,7 +449,6 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         cwd: request.cwd,
         env,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
-        ...(stdin === undefined ? {} : { stdin }),
       });
     },
   };

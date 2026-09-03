@@ -2,7 +2,7 @@
  * Single authority for #617 DK-4 cross-host prior-native projection.
  * Closed host discriminators only; unknown previous/live hosts never inject.
  */
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RoleTurnHostTransition } from "./host-contracts.ts";
@@ -33,13 +33,14 @@ async function readPiNativeSessionRecords(sessionFile: string): Promise<string |
  * Deterministically delivers all applicable native records sorted by relative path.
  * ENOENT / zero files → undefined.
  */
-async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
+/** Native Grok updates.jsonl paths under runDirectory/grok-home/sessions, sorted. */
+export async function listGrokNativeRecordPaths(runDirectory: string): Promise<string[]> {
   const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
   let encodedCwds;
   try {
     encodedCwds = await readdir(grokSessionsDir, { withFileTypes: true });
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isEnoent(error)) return [];
     throw error;
   }
   const updatesPaths: string[] = [];
@@ -58,16 +59,23 @@ async function readGrokNativeSessionRecords(runDirectory: string): Promise<strin
     }
   }
   updatesPaths.sort();
-  const presentUpdates: string[] = [];
+  const present: string[] = [];
   for (const updatesFile of updatesPaths) {
     try {
-      presentUpdates.push(await readFile(updatesFile, "utf8"));
+      await access(updatesFile);
+      present.push(updatesFile);
     } catch (error) {
       if (!isEnoent(error)) throw error;
     }
   }
+  return present;
+}
+
+async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
+  const presentUpdates = await listGrokNativeRecordPaths(runDirectory);
   if (presentUpdates.length === 0) return undefined;
-  return presentUpdates
+  const records = await Promise.all(presentUpdates.map((updatesFile) => readFile(updatesFile, "utf8")));
+  return records
     .map((record) => (record.endsWith("\n") || record.length === 0 ? record : `${record}\n`))
     .join("");
 }
