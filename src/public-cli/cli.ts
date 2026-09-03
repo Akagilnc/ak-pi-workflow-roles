@@ -71,14 +71,13 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
-import { runPublicCollector } from "./collector-run.ts";
+import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
-import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
-import { runPublicDoctor } from "./doctor-run.ts";
+import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
-import { runPublicNotary } from "./notary-run.ts";
-import { runPublicInspector } from "./inspector-run.ts";
+import { runPublicNotary, runPublicNotaryResume } from "./notary-run.ts";
+import { runPublicInspector, runPublicInspectorResume } from "./inspector-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
@@ -1136,12 +1135,7 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      // One-shot seats refuse resume — single typed owner, not a per-role chain.
-      if (resumeRole !== undefined && ONE_SHOT_ROLES.includes(resumeRole)) {
-        throw new CliUsageError(
-          `${resumeRole} role runs are one-shot and cannot be resumed`,
-        );
-      }
+      // #633: one-shot abolished — every durable role resumes its own seat path.
       const resumeSeatRole =
         resumeRole === "coder"
           ? "coder"
@@ -1155,7 +1149,15 @@ export async function runAkRole(
                   ? "countersign"
                   : resumeRole === "gleaner-left"
                     ? "gleaner-left"
-                    : "judge";
+                    : resumeRole === "collector"
+                      ? "collector"
+                      : resumeRole === "doctor"
+                        ? "doctor"
+                        : resumeRole === "notary"
+                          ? "notary"
+                          : resumeRole === "inspector"
+                            ? "inspector"
+                            : "judge";
       // #617 DK-4: resume resolves model/host/engine from the live seat table
       // exactly as a new leg would (flag → persistent → default). Cross-host
       // resume delivers prior native records as context to the target host.
@@ -1265,6 +1267,82 @@ export async function runAkRole(
           resumeRequest,
           createRoleEnvironment(env, {
             role: "gleaner-left",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "collector") {
+        const result = await runPublicCollectorResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "collector",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "doctor") {
+        const result = await runPublicDoctorResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "doctor",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "notary") {
+        const result = await runPublicNotaryResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "notary",
+            home,
+            agentDir,
+            cwd,
+            credentials,
+            seat,
+            config,
+          }),
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "inspector") {
+        const result = await runPublicInspectorResume(
+          resumeRequest,
+          createRoleEnvironment(env, {
+            role: "inspector",
             home,
             agentDir,
             cwd,

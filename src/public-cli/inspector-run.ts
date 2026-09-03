@@ -1,7 +1,8 @@
 /**
  * Public Inspector Role run: admit instruction/attachments → shared post-admission
- * coordinator → settle Terminal result (#568 / ADR 0074). One-shot: pass/bounce, 无 resume.
- * Dual path with gate-province dispatch; this module is the direct command face.
+ * coordinator → settle Terminal result (#568 / ADR 0074). #633: manual resume
+ * continues the exact session. Dual path with gate-province dispatch; this module
+ * is the direct command face.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -13,10 +14,17 @@ import {
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
 import {
+  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  buildResumeContinuationPrompt,
+  loadResumableInspectorRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleInspectorTerminalResult,
@@ -110,10 +118,72 @@ export async function runPublicInspector(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
-      shouldPresentSettled: () => true,
+    adapters: inspectorAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
+    shouldPresentSettled: () => true,
+  };
+}
+
+/**
+ * Resume a previously admitted Inspector run (#633); the session principal reopens.
+ */
+export async function runPublicInspectorResume(
+  request: PublicResumeRequest,
+  env: InspectorRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedInspectorInvocation;
+  terminal?: TerminalResult;
+}> {
+  let loaded;
+  try {
+    loaded = await loadResumableInspectorRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  const { admitted } = loaded;
+  const turnRequest = buildInspectorTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
+  });
+
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

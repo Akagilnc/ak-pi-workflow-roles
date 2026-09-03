@@ -1216,7 +1216,7 @@ export function createRoleRuntimeExtension(
       if (receiptDelivery.nextAction() === "request-delivery") {
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
-        // one-shot roles must not mistake this delivery request for later caller input.
+        // receipt delivery must not be mistaken for later caller input.
         envelopeHost.appendEntry("ak-receipt-delivery-request");
         try {
           sitianReport({

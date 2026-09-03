@@ -38,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。全局 `--model` / `--host` / `--engine` 仅覆盖本次 resume。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`，Grok：`runDirectory/grok-home`），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、察院仍为一次性，无 resume；给事中、左拾遗可手动 resume（#599）。
+`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。全局 `--model` / `--host` / `--engine` 仅覆盖本次 resume。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`，Grok：`runDirectory/grok-home`），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、察院始于 #633。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -84,23 +84,23 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
 ak-role reviewer --base main "Review the branch."
 
-# 通进司——GitHub PR 收证；一次性
+# 通进司——GitHub PR 收证
 ak-role collector --pr 42 --repo owner/repository
 
 # 修内司——缮修所指 findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 
-# 太医署——单案诊断；一次性
+# 太医署——单案诊断
 ak-role doctor --issue 115 "Diagnose this retained case."
 
 # 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# 符宝郎——文书核验一份留存 source run；一次性；可选 --ticket 调起居录
+# 符宝郎——文书核验一份留存 source run；可选 --ticket 调起居录
 ak-role notary --source-run <runId@role|path>
 ak-role notary --source-run <runId@role|path> --ticket 582
 
-# 察院——直调复杂度与测试质量两轴；一次性
+# 察院——直调复杂度与测试质量两轴
 ak-role inspector --attach ./change.patch "Review this material."
 
 # 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）

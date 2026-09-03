@@ -13,10 +13,17 @@ import {
   type ParseDoctorArgvResult
 } from "./invocation.ts";
 import {
+  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  buildResumeContinuationPrompt,
+  loadResumableDoctorRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleDoctorTerminalResult,
@@ -106,11 +113,74 @@ export async function runPublicDoctor(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
-      shouldPresentSettled: (terminal) =>
-        isLawfulTypedTerminalOutcome(terminal.roleOutcome),
+    adapters: doctorAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function doctorAdapters(): PostAdmissionAdapters<AdmittedDoctorInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
+    shouldPresentSettled: (terminal) =>
+      isLawfulTypedTerminalOutcome(terminal.roleOutcome),
+  };
+}
+
+/**
+ * Resume a previously admitted Doctor run (#633). Issue + retained case
+ * identity restore from the durable admitted request; the session principal reopens.
+ */
+export async function runPublicDoctorResume(
+  request: PublicResumeRequest,
+  env: DoctorRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedDoctorInvocation;
+  terminal?: TerminalResult;
+}> {
+  let loaded;
+  try {
+    loaded = await loadResumableDoctorRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  const { admitted } = loaded;
+  const turnRequest = buildDoctorTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
+  });
+
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: doctorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

@@ -28,6 +28,9 @@ export {
 } from "../typed-provider-http.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
+import { parseCollectorRepository } from "../collector-config.ts";
+import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
+import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
@@ -40,6 +43,10 @@ import {
   requireAuthorityRef,
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
+  type AdmittedCollectorInvocation,
+  type AdmittedDoctorInvocation,
+  type AdmittedInspectorInvocation,
+  type AdmittedNotaryInvocation,
   type AdmittedFixerInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedJudgeInvocation,
@@ -663,6 +670,19 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** Collector — admitted repository/PR identity restored on resume (#633). */
+  readonly prNumber?: number;
+  readonly repository?: string;
+  readonly repositoryDisplay?: string;
+  readonly requestManifestPath?: string;
+  readonly manifestDigest?: string;
+  /** Doctor — admitted single-case identity restored on resume (#633). */
+  readonly issueNumber?: number;
+  readonly caseRunsPath?: string;
+  readonly caseIdentity?: DoctorCaseIdentity;
+  /** Notary — admitted source-run locator restored on resume (#633). */
+  readonly sourceRunPath?: string;
+  readonly sourceRun?: NotarySourceRunLocator;
   /** Effective model restored from the invocation identity page on resume. */
   readonly model?: InvocationEffectiveModel;
 };
@@ -743,6 +763,16 @@ async function loadResumableRunRecord(
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
+  let prNumber: number | undefined;
+  let repository: string | undefined;
+  let repositoryDisplay: string | undefined;
+  let requestManifestPath: string | undefined;
+  let manifestDigest: string | undefined;
+  let issueNumber: number | undefined;
+  let caseRunsPath: string | undefined;
+  let caseIdentity: DoctorCaseIdentity | undefined;
+  let sourceRunPath: string | undefined;
+  let sourceRun: NotarySourceRunLocator | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -781,6 +811,65 @@ async function loadResumableRunRecord(
         record.baseRevision.trim() !== ""
       ) {
         baseRevision = record.baseRevision;
+      }
+      // Collector — admitted repository/PR identity (#633 resume).
+      if (typeof record.prNumber === "number" && Number.isSafeInteger(record.prNumber) && record.prNumber >= 1) {
+        prNumber = record.prNumber;
+      }
+      if (typeof record.repository === "string" && record.repository.trim() !== "") {
+        repository = record.repository;
+      }
+      if (typeof record.repositoryDisplay === "string" && record.repositoryDisplay.trim() !== "") {
+        repositoryDisplay = record.repositoryDisplay;
+      }
+      if (typeof record.requestManifestPath === "string" && record.requestManifestPath.trim() !== "") {
+        requestManifestPath = record.requestManifestPath;
+      }
+      if (typeof record.manifestDigest === "string" && record.manifestDigest.trim() !== "") {
+        manifestDigest = record.manifestDigest;
+      }
+      // Doctor — admitted single-case identity (#633 resume).
+      if (typeof record.issueNumber === "number" && Number.isSafeInteger(record.issueNumber) && record.issueNumber >= 1) {
+        issueNumber = record.issueNumber;
+      }
+      if (typeof record.caseRunsPath === "string" && record.caseRunsPath.trim() !== "") {
+        caseRunsPath = record.caseRunsPath;
+      }
+      if (
+        record.caseIdentity !== null &&
+        typeof record.caseIdentity === "object" &&
+        !Array.isArray(record.caseIdentity)
+      ) {
+        const ci = record.caseIdentity as Record<string, unknown>;
+        if (
+          typeof ci.issueNumber === "number" &&
+          typeof ci.runsPath === "string" &&
+          ci.runsPath.trim() !== ""
+        ) {
+          caseIdentity = { issueNumber: ci.issueNumber, runsPath: ci.runsPath };
+        }
+      }
+      // Notary — admitted source-run locator identity (#633 resume).
+      if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
+        sourceRunPath = record.sourceRunPath;
+      }
+      if (
+        record.sourceRun !== null &&
+        typeof record.sourceRun === "object" &&
+        !Array.isArray(record.sourceRun)
+      ) {
+        const sr = record.sourceRun as Record<string, unknown>;
+        if (
+          typeof sr.runId === "string" &&
+          typeof sr.role === "string" &&
+          typeof sr.runDirectory === "string"
+        ) {
+          sourceRun = {
+            runId: sr.runId,
+            role: sr.role,
+            runDirectory: sr.runDirectory,
+          };
+        }
       }
       if (Array.isArray(record.authorityRefs)) {
         // Reuse unique --authority-ref grammar; blank/inline prose must not resume as authority.
@@ -897,6 +986,16 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(prNumber === undefined ? {} : { prNumber }),
+      ...(repository === undefined ? {} : { repository }),
+      ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
+      ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+      ...(manifestDigest === undefined ? {} : { manifestDigest }),
+      ...(issueNumber === undefined ? {} : { issueNumber }),
+      ...(caseRunsPath === undefined ? {} : { caseRunsPath }),
+      ...(caseIdentity === undefined ? {} : { caseIdentity }),
+      ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
+      ...(sourceRun === undefined ? {} : { sourceRun }),
       ...(model === undefined ? {} : { model }),
     },
   };
@@ -1268,6 +1367,216 @@ export async function loadResumableMergerRun(
     admittedRequestPath: loaded.run.admittedRequestPath,
     mergerInputPath,
     derived,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableCollectorRun = {
+  readonly admitted: AdmittedCollectorInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Collector run for resume (#633). Admitted repository/PR
+ * identity restores from the durable admitted request so the continuation
+ * stays binding-correct.
+ */
+export async function loadResumableCollectorRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableCollectorRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "collector") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not collector`,
+    );
+  }
+  const { prNumber, repository, repositoryDisplay, manifestDigest } = loaded.admittedFields;
+  if (
+    prNumber === undefined ||
+    repository === undefined ||
+    repositoryDisplay === undefined ||
+    manifestDigest === undefined
+  ) {
+    throw new CliUsageError(
+      `role run admitted collector repository identity is missing: ${runId}`,
+    );
+  }
+  const parsedRepository = parseCollectorRepository(repositoryDisplay);
+  if (parsedRepository.canonical !== repository) {
+    throw new CliUsageError(
+      `role run admitted collector repository does not match its canonical form: ${runId}`,
+    );
+  }
+  const admitted: AdmittedCollectorInvocation = {
+    role: "collector",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    prNumber,
+    repository: parsedRepository,
+    ...(loaded.admittedFields.requestManifestPath === undefined
+      ? {}
+      : { requestManifestPath: loaded.admittedFields.requestManifestPath }),
+    manifestDigest,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableDoctorRun = {
+  readonly admitted: AdmittedDoctorInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Doctor run for resume (#633). Issue + retained case
+ * identity restore from the durable admitted request.
+ */
+export async function loadResumableDoctorRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableDoctorRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "doctor") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not doctor`,
+    );
+  }
+  const { issueNumber, caseRunsPath, caseIdentity } = loaded.admittedFields;
+  if (
+    issueNumber === undefined ||
+    caseRunsPath === undefined ||
+    caseIdentity === undefined
+  ) {
+    throw new CliUsageError(
+      `role run admitted doctor case identity is missing: ${runId}`,
+    );
+  }
+  const admitted: AdmittedDoctorInvocation = {
+    role: "doctor",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    issueNumber,
+    caseRunsPath,
+    caseIdentity,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableNotaryRun = {
+  readonly admitted: AdmittedNotaryInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Notary run for resume (#633). Source-run locator restores
+ * from the durable admitted request; the locator is not re-resolved.
+ */
+export async function loadResumableNotaryRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableNotaryRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "notary") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not notary`,
+    );
+  }
+  const { sourceRunPath, sourceRun } = loaded.admittedFields;
+  if (sourceRunPath === undefined || sourceRun === undefined) {
+    throw new CliUsageError(
+      `role run admitted notary source-run locator is missing: ${runId}`,
+    );
+  }
+  const admitted: AdmittedNotaryInvocation = {
+    role: "notary",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    sourceRunPath,
+    sourceRun,
+    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
+    ...restoredTicketFields(loaded.admittedFields),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
+  };
+}
+
+export type LoadedResumableInspectorRun = {
+  readonly admitted: AdmittedInspectorInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/** Load a resumable Inspector run for resume (#633); base admitted identity only. */
+export async function loadResumableInspectorRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableInspectorRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "inspector") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not inspector`,
+    );
+  }
+  const admitted: AdmittedInspectorInvocation = {
+    role: "inspector",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    principal: loaded.principal,
+    admittedRequestPath: loaded.run.admittedRequestPath,
     ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
     ...restoredTicketFields(loaded.admittedFields),
   };
