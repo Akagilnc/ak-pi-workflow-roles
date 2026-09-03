@@ -617,20 +617,26 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
  *
  * Returns whether the lock was actually deleted.
  */
-async function reclaimStaleWriterLock(lockPath: string, runDirectory: string): Promise<boolean> {
+async function reclaimStaleWriterLock(
+  lockPath: string,
+  runDirectory: string,
+): Promise<{ reclaimed: boolean; eaccesFailure?: unknown }> {
   const current = await autopsyWriterLock(lockPath);
-  if (current.verdict !== "dead") return false;
+  if (current.verdict !== "dead") return { reclaimed: false };
   try {
     await unlink(lockPath);
-    return true;
+    return { reclaimed: true };
   } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return false;
+    if (errorCodeOf(error) === "ENOENT") return { reclaimed: false };
     if (errorCodeOf(error) !== "EACCES") throw error;
     // Restore directory permissions and drop the round: re-unlinking here
     // without a fresh autopsy could delete a contender's live lock that was
     // installed while the directory was unwritable (#629 TOCTOU).
     await chmod(runDirectory, 0o755);
-    return false;
+    // A chmod-proof EACCES (e.g. a deny-delete ACE the mode change cannot
+    // clear) recurs every round; hand the identity to the caller so the final
+    // stayed-contested refusal can still name the true cause (#629).
+    return { reclaimed: false, eaccesFailure: error };
   }
 }
 
@@ -692,6 +698,9 @@ const WRITER_LEASE_RECLAIM_ROUNDS = 3;
  * pre-#552 behavior. Reclaim rounds are bounded by
  * WRITER_LEASE_RECLAIM_ROUNDS; a lock that stays contested (e.g. a reclaim
  * race repeatedly lost) surfaces the same typed error instead of spinning.
+ * When every round's unlink fails with a chmod-proof EACCES, the final
+ * refusal additionally carries the last reclaim failure's error identity so
+ * the true cause stays observable (#629).
  *
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
  * lock cleanup fails, a contested lock cannot be read, or a stale lock is
@@ -733,6 +742,7 @@ export async function acquireRunWriterLease(
   };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
   let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
+  let lastReclaimFailure: unknown;
   for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
     try {
       return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
@@ -758,7 +768,11 @@ export async function acquireRunWriterLease(
     if (reclaimsLeft <= 0) break;
     let reclaimed = false;
     try {
-      reclaimed = await reclaimStaleWriterLock(lockPath, runDirectory);
+      const outcome = await reclaimStaleWriterLock(lockPath, runDirectory);
+      reclaimed = outcome.reclaimed;
+      if (!reclaimed && outcome.eaccesFailure !== undefined) {
+        lastReclaimFailure = outcome.eaccesFailure;
+      }
     } catch (reclaimError) {
       throw new RunWriterLeaseHeldError(
         `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
@@ -772,7 +786,9 @@ export async function acquireRunWriterLease(
     }
   }
   throw new RunWriterLeaseHeldError(
-    `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
+    lastReclaimFailure !== undefined
+      ? `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)}; last reclaim failure: ${describeErrorIdentity(lastReclaimFailure)})`
+      : `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
   );
 }
 
