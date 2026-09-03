@@ -35,6 +35,7 @@ import {
   RunWriterLeaseHeldError,
   type RunWriterLease,
   type TypedProviderHttpObservation,
+  type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import {
   classifyPostAdmissionFailure,
@@ -397,9 +398,14 @@ export async function runPostAdmissionOneShot<
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
 
   let lease: RunWriterLease;
+  let staleWriterLeaseReclaimed: true | undefined;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) =>
-      io.stderr(diagnostic),
+    lease = await acquireRunWriterLease(
+      admitted.runDirectory,
+      (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
+        io.stderr(diagnostic);
+        if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
+      },
     );
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
@@ -420,7 +426,7 @@ export async function runPostAdmissionOneShot<
   });
   return {
     ...dispatched,
-    ...(lease.staleHolderReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
   };
 }
 
@@ -525,8 +531,12 @@ export async function runPostAdmissionManualResume<
   }
 
   let lease: RunWriterLease;
+  let staleWriterLeaseReclaimed: true | undefined;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
+      io.stderr(diagnostic);
+      if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
+    });
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
@@ -553,6 +563,6 @@ export async function runPostAdmissionManualResume<
   }
   return {
     ...result,
-    ...(lease.staleHolderReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
   };
 }
