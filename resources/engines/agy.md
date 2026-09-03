@@ -25,18 +25,19 @@ which yields "no output produced" (host-verified 2026-08-26, run
 
 ## Model selection
 
-Pin the model per invocation with `--model <id>`; without it the CLI uses its
-own session default. List installed ids with `agy models`. Examples observed on
-this host (2026-08-26): `gemini-3.7-flash-high`, `gemini-3.7-flash-medium`,
-`gemini-3.7-flash-low`, and 3.6 equivalents.
+Do not pin `--model` unless the dispatch order (owner pool directive) names a
+model. Without `--model` the CLI uses its own session default, which is the
+current Gemini Flash release — that default is the owner's standing choice.
+List the ids this host offers with `agy models` when an order names one.
 
 ```bash
-agy --sandbox --dangerously-skip-permissions --print-timeout 30m --model gemini-3.7-flash-high --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
+agy --sandbox --dangerously-skip-permissions --print-timeout 30m --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
 ```
 
 When the dispatch order names a model, pass it verbatim via `--model`; an
 unknown model id is an engine-process failure (typed failure, stop — per
-`../engine-dispatch.md`).
+`../engine-dispatch.md`). Never copy a model id from this note or from a
+previous run — ids here would go stale.
 
 ## Print-mode timeout
 
