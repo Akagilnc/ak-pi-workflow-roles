@@ -29,9 +29,9 @@ async function readPiNativeSessionRecords(sessionFile: string): Promise<string |
 }
 
 /**
- * Sole Grok native volume for a run: the single updates.jsonl under grok-home/sessions
- * when exactly one exists. Multiple session dirs are out of this projector's contract
- * (no unordered multi-file join). ENOENT / zero files → undefined.
+ * Read Grok native updates.jsonl files under runDirectory/grok-home/sessions.
+ * Deterministically delivers all applicable native records sorted by relative path.
+ * ENOENT / zero files → undefined.
  */
 async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
   const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
@@ -42,27 +42,32 @@ async function readGrokNativeSessionRecords(runDirectory: string): Promise<strin
     if (isEnoent(error)) return undefined;
     throw error;
   }
-  const presentUpdates: string[] = [];
+  const updatesPaths: string[] = [];
   for (const cwdEntry of encodedCwds) {
     if (!cwdEntry.isDirectory()) continue;
-    const sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
+    let sessionDirs;
+    try {
+      sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
+    } catch (error) {
+      if (isEnoent(error)) continue;
+      throw error;
+    }
     for (const sessEntry of sessionDirs) {
       if (!sessEntry.isDirectory()) continue;
-      const updatesFile = join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl");
-      try {
-        // Only present updates.jsonl files count — residual empty session dirs are not candidates.
-        presentUpdates.push(await readFile(updatesFile, "utf8"));
-      } catch (error) {
-        if (!isEnoent(error)) throw error;
-      }
+      updatesPaths.push(join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl"));
+    }
+  }
+  updatesPaths.sort();
+  const presentUpdates: string[] = [];
+  for (const updatesFile of updatesPaths) {
+    try {
+      presentUpdates.push(await readFile(updatesFile, "utf8"));
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
     }
   }
   if (presentUpdates.length === 0) return undefined;
-  if (presentUpdates.length !== 1) {
-    // Ambiguous multi-file tree: no silent join. Caller sees empty prior records.
-    return undefined;
-  }
-  return presentUpdates[0]!;
+  return presentUpdates.join("");
 }
 
 /**
