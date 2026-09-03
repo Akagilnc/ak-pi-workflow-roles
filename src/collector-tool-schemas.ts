@@ -7,6 +7,9 @@ export const collectorRequestArgsSchema = Type.Object({
   requestId: Type.String({ minLength: 1, description: "配置请求身份" }),
   snapshotId: Type.String({ minLength: 1, description: "最新留存观察快照" }),
 }, { additionalProperties: false });
+export const collectorReadArgsSchema = Type.Object({
+  evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
+}, { additionalProperties: false });
 export const collectorWaitArgsSchema = Type.Object({
   durationMs: Type.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "等待毫秒；单次上限五分钟且不超剩余资格" }),
 }, { additionalProperties: false });
@@ -20,7 +23,7 @@ export const collectorWaitArgsSchema = Type.Object({
  */
 export const collectorFindingArgsSchema = Type.Object({
   evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
-  category: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "该 finding 的简短归类标签；由你判读，不得誊写评论正文" })),
+  category: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "该 finding 的简短归类标签；需要头部之外的正文时先用 ak_collector_read 开卷再判读，不得誊写评论正文" })),
 }, { additionalProperties: false });
 
 export const collectorOutputBaseSchema = Type.Object({
@@ -37,5 +40,6 @@ export const collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
 
 export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;
+export type CollectorReadArgs = Static<typeof collectorReadArgsSchema>;
 export type CollectorWaitArgs = Static<typeof collectorWaitArgsSchema>;
 export type CollectorOutputArgs = Static<typeof collectorOutputArgsSchema>;

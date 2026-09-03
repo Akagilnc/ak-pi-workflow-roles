@@ -18,6 +18,7 @@ import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
@@ -30,11 +31,12 @@ import {
 import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
+  collectorReadArgsSchema,
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
 import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
-import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
+import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submission-correctable-error.ts";
 
 /**
  * #641 chain②: normal completion must never declare `infrastructureFailure`.
@@ -48,27 +50,44 @@ export class CollectorNormalCompletionDeclarationError extends CorrectableSubmis
   }
 }
 
-export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
+/**
+ * #641 chain①: pointer-open failures are model misuse, not host failures. The
+ * seat rejects them as correctable so the model can retry with a stored pointer.
+ */
+export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
+  constructor(evidenceId: string) {
+    super(`未在本局已观测材料中找到 evidenceId ${evidenceId}；请用 observe 返回的指针重试。`);
+    this.name = "CollectorUnknownEvidenceError";
+  }
+}
+
+export {
+  COLLECTOR_FIXED_KICKOFF,
+} from "./collector-config.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 };
 
 export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
 const observeSchema = collectorObserveArgsSchema;
+const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
 const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
+type ReadParams = Static<typeof readSchema>;
 type WaitParams = Static<typeof waitSchema>;
 type OutputParams = Static<typeof outputSchema>;
 
@@ -273,7 +292,7 @@ export function createCollectorRoleRuntime(
     pi.registerTool({
       name: COLLECTOR_OBSERVE_TOOL,
       label: "通进司观察",
-      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文以头部摘录加指针呈现，完整正文以 evidenceId/htmlUrl 可达；findings 的拆分与归类由你在交件时完成。",
+      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文在上下文中只给头部摘录加指针；需要头部之外的正文时，用 ak_collector_read 按 evidenceId 开卷；findings 的拆分与归类由你在交件时完成。",
       promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
       async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -302,6 +321,57 @@ export function createCollectorRoleRuntime(
             details: modelView,
           };
         } catch (error) {
+          hostActions.failInfrastructure(error, ctx);
+        }
+      },
+    });
+
+    pi.registerTool({
+      name: COLLECTOR_READ_TOOL,
+      label: "通进司开卷",
+      description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针；只在观察头部摘录不足以判读时调用。",
+      promptSnippet: "按指针开卷读材料",
+      parameters: readSchema,
+      async execute(toolCallId: string, params: ReadParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+        if (activation === undefined) {
+          throw new Error("通进司未激活");
+        }
+        try {
+          activation.ledger.beginOperational(COLLECTOR_READ_TOOL, toolCallId);
+          const record = activation.ledger.getEvidence(params.evidenceId);
+          if (
+            record === undefined ||
+            (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment" && record.kind !== "reaction") ||
+            typeof record.body !== "string"
+          ) {
+            throw new CollectorUnknownEvidenceError(params.evidenceId);
+          }
+          const material = {
+            evidenceId: record.evidenceId,
+            kind: record.kind,
+            authorLogin: record.authorLogin,
+            state: record.state,
+            body: record.body,
+            commitOid: record.commitOid,
+            htmlUrl: record.htmlUrl,
+            path: record.path,
+            line: record.line ?? record.originalLine,
+            side: record.side,
+            authoritativeTime: record.authoritativeTime,
+            windowRelation: record.windowRelation,
+            pullRequestReviewId: record.pullRequestReviewId,
+          };
+          activation.ledger.completeOperational(toolCallId);
+          return {
+            content: [{
+              type: "text" as const,
+              // #641 chain①: full bodies enter provider context only by explicit pointer.
+              text: JSON.stringify(material),
+            }],
+            details: material,
+          };
+        } catch (error) {
+          if (isCorrectableExecuteError(error)) throw error;
           hostActions.failInfrastructure(error, ctx);
         }
       },
