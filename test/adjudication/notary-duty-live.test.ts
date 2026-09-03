@@ -9,12 +9,13 @@
  * Current soul (a97ee70d). Gate subject matches judge-role: material = JSON.stringify(verdict).
  */
 import assert from "node:assert/strict";
-import { access, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test, { describe } from "node:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 
+import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
 import { runGatekeeper } from "../../src/gatekeeper-role.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -24,7 +25,10 @@ import {
   appendTicketProvenanceEntry,
   writeTicketProvenanceHumanView,
 } from "../../src/ticket-provenance.ts";
-import type { TicketProvenanceEntry } from "../../src/ticket-provenance-contracts.ts";
+import type {
+  TicketProvenanceEntry,
+  TicketProvenanceSourceKind,
+} from "../../src/ticket-provenance-contracts.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import {
   parentInheritedSeats,
@@ -40,12 +44,28 @@ import {
 
 const LIVE_TIMEOUT_MS = 600_000;
 
+type ScenarioDiaryTemplate = {
+  readonly anchors: readonly string[];
+  readonly entryId: string;
+  readonly transcript: string;
+  readonly timestamp: string;
+  readonly sourceKind?: TicketProvenanceSourceKind;
+  readonly path?: string;
+};
+
+type ScenarioTurn = {
+  readonly id: string;
+  readonly text: string;
+  readonly timestamp: string;
+};
+
 type DutyScenario = {
   readonly id: string;
   readonly ticketNumber: number;
   readonly ticketFace: string;
   readonly verdict: Record<string, unknown>;
-  readonly diary: readonly TicketProvenanceEntry[];
+  readonly diary: readonly ScenarioDiaryTemplate[];
+  readonly sessionTurns: readonly ScenarioTurn[];
   readonly adr0077Keys?: string;
   readonly expect: "pass" | "bounce";
 };
@@ -55,13 +75,18 @@ function diaryEntry(
   entryId: string,
   transcript: string,
   timestamp: string,
-): TicketProvenanceEntry {
+  extra?: {
+    readonly sourceKind?: TicketProvenanceSourceKind;
+    readonly path?: string;
+  },
+): ScenarioDiaryTemplate {
   return {
-    basis: { method: "llm-semantic", anchors: [...anchors] },
-    sourceKind: "cc-session",
-    sourceRef: { entryId, sessionFile: "fixture-cc" },
+    anchors: [...anchors],
+    entryId,
     transcript,
     timestamp,
+    ...(extra?.sourceKind !== undefined ? { sourceKind: extra.sourceKind } : {}),
+    ...(extra?.path !== undefined ? { path: extra.path } : {}),
   };
 }
 
@@ -92,6 +117,13 @@ const SCENARIOS: readonly DutyScenario[] = [
         "2026-09-02T14:39:06.135Z",
       ),
     ],
+    sessionTurns: [
+      {
+        id: "dk1",
+        text: "理论上就是一个session文件。跨宿主也能加。",
+        timestamp: "2026-09-02T14:39:06.135Z",
+      },
+    ],
     expect: "bounce",
   },
   {
@@ -114,7 +146,18 @@ const SCENARIOS: readonly DutyScenario[] = [
           "No key authorizes「统一格式 / 写回 / 一次调用一对」。",
         ].join("\n"),
         "2026-09-02T10:00:00.000Z",
+        {
+          sourceKind: "adr-decision-key",
+          path: "docs/adr/0077-all-host-session-records-unified-direct-write.md",
+        },
       ),
+    ],
+    sessionTurns: [
+      {
+        id: "adr0077",
+        text: "什么叫grok home？ 不是统一交给司天台存吗？别给我说你把不同的cli的卷宗还分开了！",
+        timestamp: "2026-09-02T10:00:00.000Z",
+      },
     ],
     adr0077Keys: [
       "| key | 值 |",
@@ -148,6 +191,18 @@ const SCENARIOS: readonly DutyScenario[] = [
         "2026-09-02T15:21:35.016Z",
       ),
     ],
+    sessionTurns: [
+      {
+        id: "dk1",
+        text: "理论上就是一个session文件。跨宿主也能加。",
+        timestamp: "2026-09-02T14:39:06.135Z",
+      },
+      {
+        id: "dk2",
+        text: "引擎应该是我想要就要不想要就不要。",
+        timestamp: "2026-09-02T15:21:35.016Z",
+      },
+    ],
     expect: "pass",
   },
   {
@@ -176,6 +231,13 @@ const SCENARIOS: readonly DutyScenario[] = [
         "2026-09-02T05:42:17.000Z",
       ),
     ],
+    sessionTurns: [
+      {
+        id: "dk3",
+        text: "所有的运行。都是根据我现在定的席位，model host engine。额度是我控制的。不是程序",
+        timestamp: "2026-09-02T05:42:17.000Z",
+      },
+    ],
     expect: "pass",
   },
 ];
@@ -189,21 +251,106 @@ function casePack(scenario: DutyScenario): Record<string, unknown> {
   };
 }
 
-function seedDiary(scenario: DutyScenario, project: string, home: string): void {
-  for (const entry of scenario.diary) {
+async function findSessionJsonlFiles(dir: string): Promise<string[]> {
+  const result: string[] = [];
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return result;
+    throw error;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      result.push(...(await findSessionJsonlFiles(full)));
+    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      result.push(full);
+    }
+  }
+  return result;
+}
+
+function characterizeFindings(label: string, findings: unknown): void {
+  if (!Array.isArray(findings)) {
+    console.log(`# ${label} findings characterization: not-array typeof=${typeof findings}`);
+    return;
+  }
+  console.log(
+    `# ${label} findings characterization: count=${findings.length} types=${findings.map((item) => typeof item).join(",")}`,
+  );
+}
+
+async function seedScenarioAuthority(input: {
+  readonly scenario: DutyScenario;
+  readonly project: string;
+  readonly home: string;
+}): Promise<readonly TicketProvenanceEntry[]> {
+  const sessionsDir = join(input.home, "pi-sessions");
+  await mkdir(sessionsDir, { recursive: true });
+  const sessionFile = join(sessionsDir, `${input.scenario.id}-session.jsonl`);
+  const sessionHeader = {
+    type: "session",
+    version: 3,
+    id: `pi-session-${input.scenario.ticketNumber}`,
+    timestamp: input.scenario.sessionTurns[0]?.timestamp ?? "2026-09-02T00:00:00.000Z",
+    cwd: input.project,
+  };
+  const lines = [JSON.stringify(sessionHeader)];
+  for (const turn of input.scenario.sessionTurns) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        id: turn.id,
+        timestamp: turn.timestamp,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: turn.text }],
+        },
+      }),
+    );
+  }
+  await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
+
+  if (input.scenario.adr0077Keys !== undefined) {
+    const adrRelPath = "docs/adr/0077-all-host-session-records-unified-direct-write.md";
+    const realAdrFile = join(packageRoot, adrRelPath);
+    const projectAdrDir = join(input.project, "docs", "adr");
+    const homeAdrDir = join(input.home, "docs", "adr");
+    await mkdir(projectAdrDir, { recursive: true });
+    await mkdir(homeAdrDir, { recursive: true });
+    await copyFile(realAdrFile, join(projectAdrDir, "0077-all-host-session-records-unified-direct-write.md"));
+    await copyFile(realAdrFile, join(homeAdrDir, "0077-all-host-session-records-unified-direct-write.md"));
+  }
+
+  const entries: TicketProvenanceEntry[] = input.scenario.diary.map((item) => ({
+    basis: { method: "llm-semantic", anchors: [...item.anchors] },
+    sourceKind: item.sourceKind ?? "cc-session",
+    sourceRef: {
+      entryId: item.entryId,
+      sessionFile,
+      ...(item.path !== undefined ? { path: item.path } : {}),
+    },
+    transcript: item.transcript,
+    timestamp: item.timestamp,
+  }));
+
+  for (const entry of entries) {
     appendTicketProvenanceEntry({
-      ticketNumber: scenario.ticketNumber,
+      ticketNumber: input.scenario.ticketNumber,
       entry,
-      cwd: project,
-      home,
+      cwd: input.project,
+      home: input.home,
     });
   }
   writeTicketProvenanceHumanView({
-    ticketNumber: scenario.ticketNumber,
-    cwd: project,
-    home,
-    entries: scenario.diary,
+    ticketNumber: input.scenario.ticketNumber,
+    cwd: input.project,
+    home: input.home,
+    entries,
   });
+
+  return entries;
 }
 
 async function seedSourceRun(input: {
@@ -256,7 +403,11 @@ async function seedSourceRun(input: {
     sessionFile: coords.sessionFile,
     admittedRequestPath,
   });
-  seedDiary(input.scenario, input.project, input.home);
+  await seedScenarioAuthority({
+    scenario: input.scenario,
+    project: input.project,
+    home: input.home,
+  });
   return realpath(coords.runDirectory);
 }
 
@@ -378,11 +529,39 @@ describe(
             if (scenario.expect === "bounce") {
               if (Array.isArray(facts.findings)) {
                 assertBounceFindings(status, facts.findings, scenario.id);
+                characterizeFindings(`standalone ${scenario.id}`, facts.findings);
               } else {
                 assert.ok(
                   typeof facts.findingsCount === "number" && facts.findingsCount > 0,
                   `${scenario.id}: bounce findingsCount>0 got ${String(facts.findingsCount)}`,
                 );
+                characterizeFindings(`standalone ${scenario.id}`, facts.findings);
+              }
+            }
+
+            if (scenario.id === "rebuild-session-without-quote") {
+              const machineHome = packageMachineHome();
+              const tempRuns = await findSessionJsonlFiles(join(home, ".ak-roles"));
+              const notarySession = tempRuns.find((f) => f.includes("@notary") && f.endsWith("session.jsonl"));
+              if (notarySession) {
+                const notaryDir = dirname(dirname(notarySession));
+                const runDirName = basename(notaryDir);
+                const durableRunDir = join(
+                  machineHome,
+                  ".ak-roles",
+                  "books",
+                  "ak-pi-workflow-roles",
+                  "runs",
+                  runDirName,
+                );
+                await mkdir(dirname(durableRunDir), { recursive: true });
+                await cp(notaryDir, durableRunDir, { recursive: true });
+                await writeFile(
+                  join(durableRunDir, "findings-characterization.json"),
+                  `${JSON.stringify({ status, findingsCount: facts.findingsCount ?? (Array.isArray(facts.findings) ? facts.findings.length : null) }, null, 2)}\n`,
+                );
+                const durableSession = join(durableRunDir, "session", "session.jsonl");
+                console.log(`# durable standalone bounce session: ${durableSession}`);
               }
             }
           });
@@ -460,8 +639,12 @@ describe(
                         join(home, "attachments", "00-ticket-face.md"),
                         `${scenario.ticketFace}\n`,
                       );
-                      seedDiary(scenario, home, home);
-                      const diaryText = scenario.diary
+                      const entries = await seedScenarioAuthority({
+                        scenario,
+                        project: home,
+                        home,
+                      });
+                      const diaryText = entries
                         .map((entry) => entry.transcript)
                         .join("\n");
                       session.sessionManager.appendMessage({
@@ -484,7 +667,7 @@ describe(
 
                       // Production judge-role.ts: material is the verdict only.
                       const material = JSON.stringify(scenario.verdict);
-                      return runGatekeeper({
+                      const gateResult = await runGatekeeper({
                         context: {
                           cwd: home,
                           model,
@@ -501,6 +684,28 @@ describe(
                         runDirectory: home,
                         subject: { kind: "judge_draft", material },
                       });
+
+                      if (gateResult.status === "bounce") {
+                        const machineHome = packageMachineHome();
+                        const machineAuditorDir = join(
+                          machineHome,
+                          ".ak-roles",
+                          "books",
+                          "ak-pi-workflow-roles",
+                          "auditor-roles",
+                        );
+                        await mkdir(machineAuditorDir, { recursive: true });
+                        const tempSessions = await findSessionJsonlFiles(join(home, ".ak-roles"));
+                        for (const file of tempSessions) {
+                          const target = join(machineAuditorDir, basename(file));
+                          await copyFile(file, target);
+                          const text = await readFile(target, "utf8").catch(() => "");
+                          if (text.includes("ak_notary_output") || text.includes("notary")) {
+                            console.log(`# durable gatekeeper→notary bounce session: ${target}`);
+                          }
+                        }
+                      }
+                      return gateResult;
                     },
                   );
                 } finally {
@@ -529,6 +734,7 @@ describe(
           if (result.status === "bounce") {
             assert.equal(result.officer, "notary");
             assertBounceFindings(result.status, result.findings, "gatekeeper→notary");
+            characterizeFindings("gatekeeper→notary rebuild-session-without-quote", result.findings);
           }
           break;
         }
