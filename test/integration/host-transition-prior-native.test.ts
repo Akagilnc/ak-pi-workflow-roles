@@ -38,7 +38,7 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
   }
 });
 
-test("grok-build→pi with multiple updates.jsonl yields empty priorNativeRecords (no unordered join)", async () => {
+test("grok-build→pi with multiple updates.jsonl delivers all native records deterministically", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-host-transition-multi-grok-"));
   try {
     const runDirectory = join(root, "run");
@@ -56,7 +56,7 @@ test("grok-build→pi with multiple updates.jsonl yields empty priorNativeRecord
     });
     assert.deepEqual(transition, {
       previousHost: "grok-build",
-      priorNativeRecords: "",
+      priorNativeRecords: "{\"a\":1}\n{\"b\":2}\n",
     });
 
     // One real updates.jsonl plus a residual empty session dir still keeps the sole file.
