@@ -178,21 +178,25 @@ test("instruction-seat resume rejects both durable roles before dispatch", async
       assert.equal(fresh.exitCode, 0);
 
       let resumeDispatches = 0;
-      const resumed = await runAkRole(["resume", scenario.runId], {
-        home,
-        packageRoot,
-        cwd: project,
-        io: captureIo().io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+      const resumed = await runAkRole(
+        ["resume", "--host", "missing", scenario.runId],
+        {
+          home,
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async () => {
-            resumeDispatches += 1;
-            throw new Error("one-shot instruction seat must not dispatch resume");
-          },
-        }),
-      });
+          cwd: project,
+          io: captureIo().io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
+              resumeDispatches += 1;
+              throw new Error("one-shot instruction seat must not dispatch resume");
+            },
+          }),
+        },
+      );
       assert.equal(resumed.exitCode, 2);
+      assert.equal(resumed.hostFailure, undefined);
       assert.equal(resumeDispatches, 0);
     }
   });
