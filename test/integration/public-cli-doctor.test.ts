@@ -492,14 +492,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(report.receipt.case.issueNumber, 40);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
-    // ② AK-owned run-state ledger reaches terminal for the one-shot real entry.
+    // ② AK-owned run-state ledger reaches terminal for the real entry.
     const runState = JSON.parse(
       await readFile(
         join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-settle@doctor", "run-state.json"),
         "utf8",
       ),
     ) as { state: string };
-    assert.equal(runState.state, "terminal", "doctor one-shot run must settle run-state terminal");
+    assert.equal(runState.state, "terminal", "doctor run must settle run-state terminal");
 
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
@@ -685,57 +685,5 @@ test("terminal persistence write failure through public entry propagates loudly 
     assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
     assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
     assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
-  });
-});
-
-test("doctor resume is rejected as one-shot", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    await seedIssueRuns(home, bookKey, 5);
-
-    // Create a durable doctor run-state so peek can see the role.
-    const admit = await admitDoctorInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      issueNumber: 5,
-      createRunId: () => "run-doctor-oneshot",
-    });
-    await writeFile(
-      join(admit.runDirectory, "run-state.json"),
-      `${JSON.stringify({
-        runId: admit.runId,
-        role: "doctor",
-        state: "resumable",
-        bookKey: admit.bookKey,
-        projectRoot: admit.projectRoot,
-        sessionDirectory: piDurablePrincipalAuthority.decode(admit.principal).sessionDirectory,
-        sessionFile: piDurablePrincipalAuthority.decode(admit.principal).sessionFile,
-        runDirectory: admit.runDirectory,
-        admittedRequestPath: admit.admittedRequestPath,
-      })}\n`,
-      "utf8",
-    );
-
-    const captured = captureIo();
-    const result = await runAkRole(["resume", "run-doctor-oneshot"], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: false },
-      io: captured.io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async () => {
-        throw new Error("doctor must not resume");
-      },
-          }),
-    });
-    assert.equal(result.exitCode, 2);
-    assert.equal(captured.stdout.join(""), "");
   });
 });

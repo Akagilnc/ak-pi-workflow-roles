@@ -1165,7 +1165,7 @@ const ROLE_COMMAND_HELP = {
   },
   collector: {
     command: "collector",
-    summary: "Collect GitHub PR review evidence (one-shot).",
+    summary: "Collect GitHub PR review evidence.",
     usage: ["ak-role collector --pr <number> [options] [instruction]"],
     examples: [
       "ak-role collector --pr 42 --repo owner/repository",
@@ -1174,7 +1174,7 @@ const ROLE_COMMAND_HELP = {
   },
   doctor: {
     command: "doctor",
-    summary: "Diagnose one retained case (one-shot).",
+    summary: "Diagnose one retained case.",
     usage: ["ak-role doctor --issue <number> [options] [instruction]"],
     examples: [
       'ak-role doctor --issue 115 "Diagnose this retained case."',

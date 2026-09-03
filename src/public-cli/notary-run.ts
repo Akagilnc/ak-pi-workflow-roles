@@ -13,10 +13,17 @@ import {
   type ParseNotaryArgvResult
 } from "./invocation.ts";
 import {
+  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  buildResumeContinuationPrompt,
+  loadResumableNotaryRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleNotaryTerminalResult,
@@ -109,11 +116,74 @@ export async function runPublicNotary(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
-      // Accepted receipts and failure terminals both present via shared path.
-      shouldPresentSettled: () => true,
+    adapters: notaryAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
+    // Accepted receipts and failure terminals both present via shared path.
+    shouldPresentSettled: () => true,
+  };
+}
+
+/**
+ * Resume a previously admitted Notary run (#633). Source-run locator restores
+ * from the durable admitted request (never re-resolved); the session principal reopens.
+ */
+export async function runPublicNotaryResume(
+  request: PublicResumeRequest,
+  env: NotaryRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedNotaryInvocation;
+  terminal?: TerminalResult;
+}> {
+  let loaded;
+  try {
+    loaded = await loadResumableNotaryRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  const { admitted } = loaded;
+  const turnRequest = buildNotaryTurnRequest(admitted, {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(admitted.correlationId === undefined && env.correlationId === undefined
+      ? {}
+      : { correlationId: admitted.correlationId ?? env.correlationId }),
+    continuation: {
+      kind: "resume",
+      prompt: buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(request.message === undefined ? {} : { message: request.message }),
+      }),
     },
+  });
+
+  return await runPostAdmissionManualResume({
+    admitted,
+    env,
+    io,
+    request: turnRequest,
+    adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
