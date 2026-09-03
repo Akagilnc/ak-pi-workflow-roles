@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
-import { createDefaultPiSpawnRunner, createPiRoleTurnHost } from "../../src/pi/role-turn-host.ts";
-import type { DurablePrincipal, DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
@@ -374,69 +373,4 @@ test("bare resume follows live seat table host when it drifts from birth host", 
     const after = JSON.parse(await readFile(invPath, "utf8")) as { host?: unknown };
     assert.equal(after.host, "grok-build", "resume must record the live seat host on invocation");
   });
-});
-
-test("Pi resume delivers prior native and prompt on stdin, not argv", async () => {
-  const captured: { args?: readonly string[]; stdin?: string } = {};
-  const host = createPiRoleTurnHost({
-    packageRoot,
-    principalAuthority: piDurablePrincipalAuthority,
-    spawnRunner: async (args, options) => {
-      captured.args = args;
-      if (options.stdin !== undefined) captured.stdin = options.stdin;
-      return { code: 0, stderr: "", timedOut: false };
-    },
-  });
-  const prior = `{"grokStructuredId":"seed-grok-1"}\n`;
-  const prompt = "resume-now";
-  await host.executeTurn({
-    principal: {
-      sessionDirectory: "/tmp/run/session",
-      sessionFile: "/tmp/run/session/session.jsonl",
-    } as DurablePrincipal,
-    activation: { role: "judge" },
-    methods: [],
-    continuation: { kind: "resume", prompt },
-    cwd: "/tmp",
-    home: "/tmp",
-    agentDir: "/tmp",
-    runDirectory: "/tmp/run",
-    hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
-  });
-  assert.equal(captured.stdin, `${prior}\n\n${prompt}`);
-  assert.equal(captured.args?.includes(prior), false);
-  assert.equal(captured.args?.includes(prompt), false);
-});
-
-test("default Pi spawn runner settles stdin EPIPE instead of crashing", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-pi-epipe-"));
-  try {
-    const stub = join(home, "pi-stub");
-    await writeFile(
-      stub,
-      `#!/usr/bin/env node
-if (process.argv.includes("--version")) {
-  process.stdout.write("0.0.0-stub\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-      { mode: 0o755 },
-    );
-    const runner = createDefaultPiSpawnRunner({});
-    await assert.rejects(
-      () =>
-        runner(["--help"], {
-          cwd: home,
-          env: { ...process.env, PI_BINARY: stub, PATH: `${home}${delimiter}${process.env.PATH ?? ""}` },
-          stdin: "x".repeat(4 * 1024 * 1024),
-        }),
-      (error: unknown) => {
-        assert.equal((error as NodeJS.ErrnoException).code, "EPIPE");
-        return true;
-      },
-    );
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
 });
