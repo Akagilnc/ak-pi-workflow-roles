@@ -276,7 +276,7 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           // #617 DK-4: prior native bytes come only from post-admission hostTransition projection.
           const priorNativeRecords =
             continuation.kind === "resume"
-            && request.hostTransition !== undefined
+            && request.hostTransition?.previousHost === "pi"
             && request.hostTransition.priorNativeRecords.length > 0
               ? request.hostTransition.priorNativeRecords
               : undefined;
