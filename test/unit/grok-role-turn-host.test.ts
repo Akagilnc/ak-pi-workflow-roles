@@ -207,9 +207,9 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
 
 
 test("grok resume reuses native ACP session via session/load when an ACP binding exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-rebind-"));
-  try {
-    const runDirectory = join(root, "run");
+  // Fully mocked ACP binding: pure-memory proof on a fixed virtual path, no host resources.
+  {
+    const runDirectory = "/run/rebind";
     const sessionCalls: Array<[string, unknown]> = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity: {
@@ -244,8 +244,6 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
       mcpServers: [{}],
       _meta: { systemPromptOverride: "law", yoloMode: false },
     }]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
   }
 });
 
