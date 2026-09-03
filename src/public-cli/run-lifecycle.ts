@@ -41,11 +41,9 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedFixerInvocation,
-  type AdmittedGatekeeperInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
-  type AdmittedNavigatorInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
   type CoderPhase,
@@ -1143,77 +1141,6 @@ export async function loadResumableReviewerRun(
     ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
   };
 }
-
-/**
- * Load a resumable instruction-seat run (#639 repair seam): gatekeeper and
- * navigator restore the same identity + attachments shape, keyed by role.
- */
-export async function loadResumableInstructionSeatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-  role: "gatekeeper",
-): Promise<LoadedResumableGatekeeperRun>;
-export async function loadResumableInstructionSeatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-  role: "navigator",
-): Promise<LoadedResumableNavigatorRun>;
-export async function loadResumableInstructionSeatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-  role: "gatekeeper" | "navigator",
-): Promise<LoadedResumableGatekeeperRun | LoadedResumableNavigatorRun>;
-export async function loadResumableInstructionSeatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-  role: "gatekeeper" | "navigator",
-): Promise<LoadedResumableGatekeeperRun | LoadedResumableNavigatorRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== role) {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not ${role}`,
-    );
-  }
-  const shared = {
-    runId: loaded.run.runId,
-    bookKey: loaded.run.bookKey,
-    projectRoot: loaded.run.projectRoot,
-    instruction: loaded.admittedFields.instruction,
-    instructionEmpty: loaded.admittedFields.instructionEmpty,
-    attachments: loaded.admittedFields.attachments,
-    runDirectory: loaded.run.runDirectory,
-    principal: loaded.principal,
-    admittedRequestPath: loaded.run.admittedRequestPath,
-    ...(loaded.admittedFields.model === undefined ? {} : { model: loaded.admittedFields.model }),
-    ...restoredTicketFields(loaded.admittedFields),
-  };
-  const tail = {
-    run: loaded.run,
-    ...(loaded.observation === undefined ? {} : { observation: loaded.observation }),
-  };
-  if (role === "gatekeeper") {
-    const admitted: AdmittedGatekeeperInvocation = { role, ...shared };
-    return { admitted, ...tail };
-  }
-  const admitted: AdmittedNavigatorInvocation = { role, ...shared };
-  return { admitted, ...tail };
-}
-
-export type LoadedResumableGatekeeperRun = {
-  readonly admitted: AdmittedGatekeeperInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableNavigatorRun = {
-  readonly admitted: AdmittedNavigatorInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
 
 /**
  * Load a resumable Countersign run for resume (#599). Ticket binding and

@@ -73,10 +73,7 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
-import {
-  runPublicInstructionSeat,
-  runPublicInstructionSeatResume,
-} from "./instruction-seat-run.ts";
+import { runPublicInstructionSeat } from "./instruction-seat-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
@@ -1156,11 +1153,7 @@ export async function runAkRole(
                   ? "countersign"
                   : resumeRole === "gleaner-left"
                     ? "gleaner-left"
-                    : resumeRole === "gatekeeper"
-                      ? "gatekeeper"
-                      : resumeRole === "navigator"
-                        ? "navigator"
-                        : "judge";
+                    : "judge";
       // #617 DK-4: resume resolves model/host/engine from the live seat table
       // exactly as a new leg would (flag → persistent → default). Cross-host
       // resume delivers prior native records as context to the target host.
@@ -1278,26 +1271,6 @@ export async function runAkRole(
             config,
           }),
           io,
-        );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
-      }
-      if (resumeRole === "gatekeeper" || resumeRole === "navigator") {
-        const result = await runPublicInstructionSeatResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: resumeRole,
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-          resumeRole,
         );
         return {
           exitCode: result.exitCode,
