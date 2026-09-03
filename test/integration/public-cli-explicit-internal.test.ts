@@ -15,7 +15,7 @@ import {
   createPiRoleTurnHost,
   type LaunchedPiIdentity,
 } from "../../src/pi/role-turn-host.ts";
-import type { DurablePrincipal, RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
@@ -340,35 +340,34 @@ test("turn host canonicalizes an aliased role entry once for argv", async () => 
   });
 });
 
-test("resume with prior native records puts the full payload on stdin and omits it from argv", async () => {
+test("Pi resume hands grok native record paths, not record bytes, on argv", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "run");
-    await mkdir(runDirectory, { recursive: true });
-    const captured: { args?: readonly string[]; stdin?: string } = {};
+    const updatesDir = join(runDirectory, "grok-home", "sessions", "cwd", "s1");
+    await mkdir(updatesDir, { recursive: true });
+    const updatesFile = join(updatesDir, "updates.jsonl");
+    const recordBody = '{"grokStructuredId":"seed-grok-1"}\n';
+    await writeFile(updatesFile, recordBody, "utf8");
+    let launchedArgs: readonly string[] = [];
     const host = createPiRoleTurnHost({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      spawnRunner: async (args, options) => {
-        captured.args = args;
-        if (options.stdin !== undefined) captured.stdin = options.stdin;
+      spawnRunner: async (args) => {
+        launchedArgs = args;
         return { code: 0, stderr: "", timedOut: false };
       },
     });
-    const prior = '{"grokStructuredId":"seed-grok-1"}\n';
     const prompt = "resume-now";
     await host.executeTurn({
       ...minimalTurnRequest(home, runDirectory),
-      principal: {
-        sessionDirectory: join(runDirectory, "session"),
-        sessionFile: join(runDirectory, "session", "session.jsonl"),
-      } as DurablePrincipal,
       continuation: { kind: "resume", prompt },
-      hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
+      hostTransition: { previousHost: "grok-build", priorNativeRecords: recordBody },
     });
-    assert.equal(captured.stdin, `${prior}\n\n${prompt}`);
-    for (const arg of captured.args ?? []) {
+    const last = launchedArgs.at(-1) ?? "";
+    assert.equal(last.includes(updatesFile), true);
+    assert.equal(last.includes(prompt), true);
+    for (const arg of launchedArgs) {
       assert.equal(arg.includes("seed-grok-1"), false, arg);
-      assert.equal(arg.includes(prompt), false, arg);
     }
   });
 });
@@ -547,21 +546,6 @@ setInterval(() => {}, 1000);
       assert.equal(result.timedOut, true);
       assert.equal(await readFile(signal, "utf8"), "SIGTERM");
       t.mock.timers.reset();
-    }
-    // Stdin EPIPE after a spawned child exits unread must reject through the
-    // same settlement, not crash the parent with an unhandled stream error.
-    {
-      const stub = join(home, "epipe.mjs");
-      await writeExecutableStub(stub, `#!/usr/bin/env node\nprocess.exit(0);\n`);
-      const { runner } = spawnRunnerWithIdentityCapture();
-      await assert.rejects(
-        runner([], {
-          cwd: home,
-          env: spawnEnv({ env: { PI_BINARY: stub }, home, agentDir: join(home, "a") }),
-          stdin: "x".repeat(4 * 1024 * 1024),
-        }),
-        (error: unknown) => (error as NodeJS.ErrnoException).code === "EPIPE",
-      );
     }
   });
 });
