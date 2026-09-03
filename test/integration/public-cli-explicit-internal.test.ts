@@ -15,7 +15,7 @@ import {
   createPiRoleTurnHost,
   type LaunchedPiIdentity,
 } from "../../src/pi/role-turn-host.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { DurablePrincipal, RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
@@ -337,6 +337,37 @@ test("turn host canonicalizes an aliased role entry once for argv", async () => 
 
     const selectedEntry = launchedArgs[launchedArgs.indexOf("-e") + 1];
     assert.equal(selectedEntry, await realpath(join(packageAlias, "extensions", "role-runtime.ts")));
+  });
+});
+
+test("resume with prior native records puts the full payload on stdin and omits it from argv", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "run");
+    await mkdir(runDirectory, { recursive: true });
+    const captured: { args?: readonly string[]; stdin?: string } = {};
+    const host = createPiRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      spawnRunner: async (args, options) => {
+        captured.args = args;
+        if (options.stdin !== undefined) captured.stdin = options.stdin;
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    });
+    const prior = '{"grokStructuredId":"seed-grok-1"}\n';
+    const prompt = "resume-now";
+    await host.executeTurn({
+      ...minimalTurnRequest(home, runDirectory),
+      principal: {
+        sessionDirectory: join(runDirectory, "session"),
+        sessionFile: join(runDirectory, "session", "session.jsonl"),
+      } as DurablePrincipal,
+      continuation: { kind: "resume", prompt },
+      hostTransition: { previousHost: "grok-build", priorNativeRecords: prior },
+    });
+    assert.equal(captured.stdin, `${prior}\n\n${prompt}`);
+    assert.equal(captured.args?.includes(prior), false);
+    assert.equal(captured.args?.includes(prompt), false);
   });
 });
 
