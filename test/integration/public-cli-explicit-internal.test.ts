@@ -17,6 +17,7 @@ import {
 } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
+import { projectHostTransitionPriorNative } from "../../src/host-transition-prior-native.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
@@ -340,14 +341,22 @@ test("turn host canonicalizes an aliased role entry once for argv", async () => 
   });
 });
 
-test("Pi resume hands grok native record paths, not record bytes, on argv", async () => {
+test("Pi resume argv prompt is resume text plus sorted prior native paths", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "run");
-    const updatesDir = join(runDirectory, "grok-home", "sessions", "cwd", "s1");
-    await mkdir(updatesDir, { recursive: true });
-    const updatesFile = join(updatesDir, "updates.jsonl");
-    const recordBody = '{"grokStructuredId":"seed-grok-1"}\n';
-    await writeFile(updatesFile, recordBody, "utf8");
+    const later = join(runDirectory, "grok-home", "sessions", "z-cwd", "s2", "updates.jsonl");
+    const earlier = join(runDirectory, "grok-home", "sessions", "a-cwd", "s1", "updates.jsonl");
+    await mkdir(join(later, ".."), { recursive: true });
+    await mkdir(join(earlier, ".."), { recursive: true });
+    await writeFile(later, "later-volume", "utf8");
+    await writeFile(earlier, "earlier-volume", "utf8");
+    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const transition = await projectHostTransitionPriorNative({
+      previousHost: "grok-build",
+      liveHost: "pi",
+      runDirectory,
+      piSessionFile: sessionFile,
+    });
     let launchedArgs: readonly string[] = [];
     const host = createPiRoleTurnHost({
       packageRoot,
@@ -358,17 +367,14 @@ test("Pi resume hands grok native record paths, not record bytes, on argv", asyn
       },
     });
     const prompt = "resume-now";
+    assert.ok(transition);
     await host.executeTurn({
       ...minimalTurnRequest(home, runDirectory),
       continuation: { kind: "resume", prompt },
-      hostTransition: { previousHost: "grok-build", priorNativeRecords: recordBody },
+      hostTransition: transition,
     });
-    const last = launchedArgs.at(-1) ?? "";
-    assert.equal(last.includes(updatesFile), true);
-    assert.equal(last.includes(prompt), true);
-    for (const arg of launchedArgs) {
-      assert.equal(arg.includes("seed-grok-1"), false, arg);
-    }
+    const paths = [earlier, later].sort();
+    assert.equal(launchedArgs.at(-1), `${prompt}\n${paths.join("\n")}`);
   });
 });
 

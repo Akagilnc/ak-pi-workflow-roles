@@ -24,7 +24,7 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
-import { listGrokNativeRecordPaths } from "../host-transition-prior-native.ts";
+
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -401,22 +401,21 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
-      // #617 DK-7: hand the native-record path, never the bytes, to Pi argv.
+      // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
       let turnRequest = request;
+      const paths = request.hostTransition?.priorNativePaths;
       if (
         request.continuation.kind === "resume"
-        && request.hostTransition?.previousHost === "grok-build"
+        && paths !== undefined
+        && paths.length > 0
       ) {
-        const paths = await listGrokNativeRecordPaths(request.runDirectory);
-        if (paths.length > 0) {
-          turnRequest = {
-            ...request,
-            continuation: {
-              ...request.continuation,
-              prompt: `${request.continuation.prompt}\n${paths.join("\n")}`,
-            },
-          };
-        }
+        turnRequest = {
+          ...request,
+          continuation: {
+            ...request.continuation,
+            prompt: `${request.continuation.prompt}\n${paths.join("\n")}`,
+          },
+        };
       }
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(

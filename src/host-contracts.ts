@@ -138,12 +138,13 @@ export type RoleTurnModelConfig = {
 /**
  * Typed cross-host resume handoff (#617 DK-4).
  * Present only when post-admission projects a real switch between known hosts.
- * priorNativeRecords are opaque bytes from the previous host's native volume —
- * adapters deliver them as context; they never re-resolve source paths.
+ * priorNativeRecords are opaque bytes when the previous host is Pi (Grok ACP resource).
+ * priorNativePaths are on-disk native files when the previous host is grok-build (DK-7).
  */
 export type RoleTurnHostTransition = {
   readonly previousHost: "pi" | "grok-build";
   readonly priorNativeRecords: string;
+  readonly priorNativePaths?: readonly string[];
 };
 
 /** One main-session turn request over the host-neutral execution seam. */

@@ -71,15 +71,6 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
   return present;
 }
 
-async function readGrokNativeSessionRecords(runDirectory: string): Promise<string | undefined> {
-  const presentUpdates = await listGrokNativeRecordPaths(runDirectory);
-  if (presentUpdates.length === 0) return undefined;
-  const records = await Promise.all(presentUpdates.map((updatesFile) => readFile(updatesFile, "utf8")));
-  return records
-    .map((record) => (record.endsWith("\n") || record.length === 0 ? record : `${record}\n`))
-    .join("");
-}
-
 /**
  * Project one hostTransition only for a real switch between known hosts.
  * Unknown host names → undefined (no inject). Empty native volume → transition
@@ -102,10 +93,11 @@ export async function projectHostTransitionPriorNative(input: {
       priorNativeRecords: records ?? "",
     };
   }
-  // previousHost === "grok-build"
-  const records = await readGrokNativeSessionRecords(input.runDirectory);
+  // previousHost === "grok-build": DK-7 path handoff only — do not read bytes.
+  const paths = await listGrokNativeRecordPaths(input.runDirectory);
   return {
     previousHost: "grok-build",
-    priorNativeRecords: records ?? "",
+    priorNativeRecords: "",
+    priorNativePaths: paths,
   };
 }
