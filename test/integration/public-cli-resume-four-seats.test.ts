@@ -329,16 +329,25 @@ const collectorPriorResidualRunner: LegacyFauxPiRunner = async (args) => {
   return { code: 0, timedOut: false, stderr: "", args: [...args] };
 };
 
-const failureRunnerFor = (role: TerminalRoleName): LegacyFauxPiRunner =>
-  role === "collector"
-    ? collectorPriorResidualRunner
-    : scriptedTerminatingToolSession({
-        role,
-        toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
-        isError: true,
-        acceptedText: "PRIOR-attempt-residual-error",
-      });
+const failureRunnerFor = (role: TerminalRoleName): LegacyFauxPiRunner => {
+  if (role === "collector") return collectorPriorResidualRunner;
+  if (role === "doctor") {
+    return scriptedTerminatingToolSession({
+      role,
+      toolName: DOCTOR_OUTPUT_TOOL_NAME,
+      details: { status: "completed", findings: [] },
+      isError: true,
+      acceptedText: "PRIOR-attempt-residual-error",
+    });
+  }
+  return scriptedTerminatingToolSession({
+    role,
+    toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : INSPECTOR_OUTPUT_TOOL_NAME,
+    details: { status: "pass", findings: [] },
+    isError: true,
+    acceptedText: "PRIOR-attempt-residual-error",
+  });
+};
 
 const FAILURE_SEAT_SPECS: readonly SeatFailureSpec[] = [
   {
@@ -347,6 +356,11 @@ const FAILURE_SEAT_SPECS: readonly SeatFailureSpec[] = [
     // The wait residual's duration is beyond the wait cap — the settle scan
     // projects it as a residual-incomplete terminal for that first attempt.
     firstOutcome: { kind: "incomplete" },
+  },
+  {
+    role: "doctor",
+    firstArgv: (project) => ["doctor", "--issue", String(DOCTOR_ISSUE_NUMBER), "--project", project],
+    firstOutcome: { kind: "failure", cause: "output" },
   },
   {
     role: "notary",
@@ -369,6 +383,9 @@ test("resume failure keeps the current provider cause instead of a prior-attempt
 
     for (const spec of FAILURE_SEAT_SPECS) {
       const runId = `run-fail-resume-${spec.role}-001`;
+      if (spec.role === "doctor") {
+        await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), DOCTOR_ISSUE_NUMBER);
+      }
 
       const firstIo = captureIo();
       const first = await runAkRole(spec.firstArgv(project, sourceRunPath) as string[], {
