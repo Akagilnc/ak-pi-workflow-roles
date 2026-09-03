@@ -4,7 +4,15 @@
  * Owns volume open, torn-tail recovery, entry-level idempotency, and commit boundary.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -25,6 +33,71 @@ import {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const SITIAN_VOLUME_LOCK_TIMEOUT_MS = 30_000;
+const SITIAN_VOLUME_LOCK_RETRY_MS = 10;
+const syncSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+/** Serialize one volume's recovery + identity check + append across processes. */
+function withSitianVolumeLock<T>(recordFile: string, action: () => T): T {
+  const lockFile = `${recordFile}.lock`;
+  const startedAt = Date.now();
+  let descriptor: number;
+  while (true) {
+    try {
+      descriptor = openSync(lockFile, "wx");
+      try {
+        writeFileSync(descriptor, `${process.pid}\n`, "utf8");
+      } catch (error) {
+        try { closeSync(descriptor); } finally { unlinkSync(lockFile); }
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() - startedAt > SITIAN_VOLUME_LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `Sitian volume lock timeout after ${SITIAN_VOLUME_LOCK_TIMEOUT_MS}ms: ${lockFile}`,
+        );
+      }
+      Atomics.wait(syncSleepBuffer, 0, 0, SITIAN_VOLUME_LOCK_RETRY_MS);
+    }
+  }
+
+  let result: T | undefined;
+  let primaryFailure: unknown;
+  try {
+    result = action();
+  } catch (error) {
+    primaryFailure = error;
+  }
+  const cleanupFailures: unknown[] = [];
+  try {
+    closeSync(descriptor!);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  try {
+    unlinkSync(lockFile);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (primaryFailure !== undefined && cleanupFailures.length > 0) {
+    throw new AggregateError(
+      [primaryFailure, ...cleanupFailures],
+      "Sitian volume operation and lock cleanup failed",
+      { cause: primaryFailure },
+    );
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (cleanupFailures.length === 1) throw cleanupFailures[0];
+  if (cleanupFailures.length > 1) {
+    throw new AggregateError(cleanupFailures, "Sitian volume lock cleanup failed", {
+      cause: cleanupFailures[0],
+    });
+  }
+  return result as T;
 }
 
 /** Authorized S4 submission ledger kinds that share a common run submission volume. */
@@ -134,47 +207,48 @@ export function appendSitianRecord(input: SitianRecordInput): RecordPointer {
       ...(input.usage === undefined ? {} : { usage: input.usage }),
     };
 
-    if (existsSync(recordFile)) {
-      const buffer = readFileSync(recordFile);
-      if (buffer.length > 0) {
-        // Torn-tail check: if last byte is not newline, seal the fragment with \n
-        if (buffer[buffer.length - 1] !== 0x0a) {
-          appendFileSync(recordFile, "\n", "utf8");
-        }
+    return withSitianVolumeLock(recordFile, () => {
+      if (existsSync(recordFile)) {
+        const buffer = readFileSync(recordFile);
+        if (buffer.length > 0) {
+          // Torn-tail check: if last byte is not newline, seal the fragment with \n
+          if (buffer[buffer.length - 1] !== 0x0a) {
+            appendFileSync(recordFile, "\n", "utf8");
+          }
 
-        // Self-check volume by canonical identity
-        const text = readFileSync(recordFile, "utf8");
-        for (const line of text.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (isRecord(parsed) && parsed.identity === identity) {
-              // Existing record found (or substate a recovered record) -> return existing pointer
-              return {
-                identity,
-                recordFile,
-                kind: record.kind,
-                level: record.level,
-              };
+          // Self-check volume by canonical identity while holding the same lock as append.
+          const text = readFileSync(recordFile, "utf8");
+          for (const line of text.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (isRecord(parsed) && parsed.identity === identity) {
+                return {
+                  identity,
+                  recordFile,
+                  kind: record.kind,
+                  level: record.level,
+                };
+              }
+            } catch {
+              // Malformed lines (including substate b preserved bad lines) are ignored during self-check
             }
-          } catch {
-            // Malformed lines (including substate b preserved bad lines) are ignored during self-check
           }
         }
       }
-    }
 
-    // Not found -> append new canonical row terminating with newline
-    const row = `${JSON.stringify(record)}\n`;
-    appendFileSync(recordFile, row, "utf8");
+      // Not found -> append new canonical row terminating with newline.
+      const row = `${JSON.stringify(record)}\n`;
+      appendFileSync(recordFile, row, "utf8");
 
-    return {
-      identity,
-      recordFile,
-      kind: record.kind,
-      level: record.level,
-    };
+      return {
+        identity,
+        recordFile,
+        kind: record.kind,
+        level: record.level,
+      };
+    });
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(

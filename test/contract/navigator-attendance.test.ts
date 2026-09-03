@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
+import { openPiInstitutionalSession } from "../../src/pi/in-process-session.ts";
 import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
@@ -84,8 +85,8 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((route as any).data.invocationId, events[0].invocationId);
     assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
     assert.equal(events[0].reason, candidate().candidates[0]!.reason);
-    // Command is registry-rendered from next; model command prose is not authority.
-    assert.equal(events[0].command, "ak-role reviewer");
+    // Required --base cannot be inferred from role/phase, so no unusable bare command is emitted.
+    assert.equal(events[0].command, undefined);
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -593,6 +594,83 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
         await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
       } finally {
         await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("reused native session rethrows a prompt failure that produced no new assistant", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-reused-prompt-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-reused-prompt", api: "openai-completions" });
+    const model = faux.getModel();
+    faux.setResponses([fauxAssistantMessage("prior turn")]);
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-reused"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        await session.prompt("first turn");
+        const originalPrompt = AgentSession.prototype.prompt;
+        AgentSession.prototype.prompt = async function () {
+          throw new Error("second prompt failed before assistant output");
+        };
+        try {
+          await assert.rejects(
+            () => session.prompt("second turn"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.message.includes("second prompt failed before assistant output"),
+          );
+        } finally {
+          AgentSession.prototype.prompt = originalPrompt;
+        }
+      } finally {
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("institutional close removes scratch after session dispose throws", async () => {
+  const root = await mkdtemp(join(tmpdir(), "institutional-close-scratch-"));
+  try {
+    seedGitRepository(root);
+    const scratchParent = join(root, "scratch");
+    await mkdir(scratchParent);
+    const faux = fauxProvider({ provider: "close-scratch", api: "openai-completions" });
+    const model = faux.getModel();
+    await withInstitutionalProviderFixture(faux, async () => {
+      const opened = await openPiInstitutionalSession({
+        cwd: root,
+        selection: { provider: model.provider, model: model.id },
+        systemPrompt: "",
+        credentialScratchParent: scratchParent,
+      });
+      const closeBoom = new Error("dispose failed during close");
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(opened.handle.close(), (error: unknown) => error === closeBoom);
+        assert.deepEqual(await readdir(scratchParent), []);
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
       }
     });
   } catch (error) {

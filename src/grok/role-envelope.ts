@@ -555,16 +555,33 @@ export async function prepareGrokRoleEnvelope(options: {
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
+    const cleanupFailures: unknown[] = [];
     try {
       await emit("session_shutdown", {});
-      // Drop keep-alive / residual MCP relay sockets so test processes exit promptly.
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      restoreAkRoleRunDir();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    // Server closure is unconditional: a shutdown-handler failure must not leave
+    // the listening MCP server keeping the completed invocation alive.
+    try {
       const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
       if (typeof closeAll === "function") closeAll.call(server);
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
-    } finally {
-      restoreAkRoleRunDir();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    if (cleanupFailures.length === 1) throw cleanupFailures[0];
+    if (cleanupFailures.length > 1) {
+      throw new AggregateError(cleanupFailures, "Grok envelope dispose cleanup failures", {
+        cause: cleanupFailures[0],
+      });
     }
   };
 

@@ -353,9 +353,9 @@ export function ensureTicketProvenanceVolume(
 ): TicketProvenanceVolumePath {
   const volume = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   mkdirSync(volume.volumeDir, { recursive: true });
-  if (!existsSync(volume.recordFile)) {
-    writeFileSync(volume.recordFile, "", "utf8");
-  }
+  // Append-open creates an absent volume without ever truncating rows committed
+  // by a concurrent first writer.
+  appendFileSync(volume.recordFile, "", "utf8");
   return volume;
 }
 
