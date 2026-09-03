@@ -141,15 +141,10 @@ export type RoleTurnModelConfig = {
  * Cross-host prior volume: previous native record paths for the live host (DK-7).
  * Target host reads those files itself; projector never copies bytes.
  */
-export type RoleTurnHostTransition =
-  | {
-      readonly previousHost: "pi";
-      readonly priorNativePaths: readonly string[];
-    }
-  | {
-      readonly previousHost: "grok-build";
-      readonly priorNativePaths: readonly string[];
-    };
+export type RoleTurnHostTransition = {
+  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativePaths: readonly string[];
+};
 
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
