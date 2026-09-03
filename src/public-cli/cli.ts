@@ -418,7 +418,21 @@ export type CliResult = {
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
   hostFailure?: HostSelectionFailure;
+  /** Typed #556 fact from public resume/dispatch when a dead holder lock was unlinked. */
+  staleWriterLeaseReclaimed?: true;
 };
+
+function cliResultFromRoleRun(result: {
+  exitCode: number;
+  terminal?: TerminalResult;
+  staleWriterLeaseReclaimed?: true;
+}): CliResult {
+  return {
+    exitCode: result.exitCode,
+    ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+    ...(result.staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
+}
 
 const THINKING_LEVELS = new Set([
   "off",
@@ -1197,10 +1211,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       if (resumeRole === "fixer") {
         const result = await runPublicFixerResume(
@@ -1217,10 +1228,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       if (resumeRole === "reviewer") {
         const result = await runPublicReviewerResume(
@@ -1237,10 +1245,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       if (resumeRole === "merger") {
         const result = await runPublicMergerResume(
@@ -1257,10 +1262,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       if (resumeRole === "countersign") {
         const result = await runPublicCountersignResume(
@@ -1277,10 +1279,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       if (resumeRole === "gleaner-left") {
         const result = await runPublicGleanerLeftResume(
@@ -1297,10 +1296,7 @@ export async function runAkRole(
           }),
           io,
         );
-        return {
-          exitCode: result.exitCode,
-          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-        };
+        return cliResultFromRoleRun(result);
       }
       const result = await runPublicResume(
         resumeRequest,
@@ -1316,10 +1312,7 @@ export async function runAkRole(
         }),
         io,
       );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
+      return cliResultFromRoleRun(result);
     }
 
     if (isPublicCliSupportCommand(parsed.command)) {
