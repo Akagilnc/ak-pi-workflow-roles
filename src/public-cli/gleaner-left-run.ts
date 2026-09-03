@@ -13,14 +13,14 @@ import {
   type ParseGleanerLeftArgvResult,
 } from "./invocation.ts";
 import {
-  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
   loadResumableGleanerLeftRun,
   markRunAdmitted,
-  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -143,47 +143,21 @@ export async function runPublicGleanerLeftResume(
   admitted?: AdmittedGleanerLeftInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableGleanerLeftRun(
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () =>
+      loadResumableGleanerLeftRun(
       env.home,
       request.runId,
       env.principalAuthority,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-  const turnRequest = buildGleanerLeftTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
-    },
-  });
-
-  return await runPostAdmissionManualResume({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
+    ),
+    buildTurnRequest: (admitted) =>
+      buildGleanerLeftTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
     adapters: gleanerLeftAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
