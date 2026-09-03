@@ -283,6 +283,8 @@ export function createSubmissionLedgerHost(
           if (state.sealed) throw new Error("提交账已封账");
           // #541 / #575: shared infra-declaration fail lives on the ledger seam,
           // before any role execute or sole-final work (one owner for every seat).
+          // #641 chain②: seats may opt into bouncing a machine-verified normal
+          // completion misdeclared as infrastructure failure (correctable) first.
           failOnInfrastructureFailureDeclaration(
             params,
             {
@@ -292,6 +294,7 @@ export function createSubmissionLedgerHost(
             },
             context,
             toolCallId,
+            tool.bounceInfrastructureDeclaration,
           );
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
           let result: HostToolResult<unknown>;
