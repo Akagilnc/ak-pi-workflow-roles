@@ -38,6 +38,39 @@ function detourResultText(message: { content?: unknown } | undefined): string {
     : typeof message?.content === "string" ? message.content : "";
 }
 
+/**
+ * Sole authority for the scripted dual-detour dispatch (#536): issue the next
+ * call while every detour so far returned the canned success stdout this fixture
+ * scripts and fewer than two ran; after an engine failure keep calling without
+ * a business receipt so the envelope settles the pending infrastructure failure
+ * as typed failure. Returns the next toolCall arguments, or undefined to stand down.
+ */
+export function nextDetourCall(context: {
+  tools?: Array<{ name?: string }> | null;
+  messages?: Array<any> | null;
+}): { argv: string[]; id: string } | undefined {
+  const names = context.tools?.map((tool) => tool.name) ?? [];
+  if (!names.includes(ENGINE_DETOUR_TOOL_NAME)) return undefined;
+  const msgs = context.messages ?? [];
+  const priorDetourResults = msgs.filter(
+    (message: any) =>
+      message?.role === "toolResult" &&
+      message?.toolName === ENGINE_DETOUR_TOOL_NAME,
+  );
+  const allDetoursSucceeded = priorDetourResults.every(
+    (message: any) =>
+      (DETOUR_STDOUT_ECHOES as readonly string[]).includes(detourResultText(message)),
+  );
+  const keepCalling = allDetoursSucceeded ? priorDetourResults.length < 2 : true;
+  if (!keepCalling) return undefined;
+  const index = priorDetourResults.length + 1;
+  return {
+    // argv first element resolves via PATH (tests inject fake `kimi`).
+    argv: ["kimi", "--call", index === 1 ? "first" : "second"],
+    id: `engine-detour-${index}`,
+  };
+}
+
 export default function fixture(pi: ExtensionAPI): void {
   const faux = fauxProvider({
     api: "ak-engine-detour",
@@ -46,7 +79,6 @@ export default function fixture(pi: ExtensionAPI): void {
   });
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    console.error("FIXTURE-TRACE detour:", names.includes(ENGINE_DETOUR_TOOL_NAME), "judge:", names.includes(JUDGE_OUTPUT_TOOL_NAME), "gatekeeper:", names.includes(GATEKEEPER_OUTPUT_TOOL), "msgs:", context.messages?.length ?? 0);
     // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
     if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
@@ -107,38 +139,14 @@ export default function fixture(pi: ExtensionAPI): void {
         );
       }
     }
-    // Prefer the detour tool when registered (Judge+engine activation).
-    // #536: two detour calls in one activation execute legally — keep calling
-    // while the detours so far succeeded and fewer than two ran; after an engine
-    // failure the scripted model keeps calling without a business receipt, so
-    // the envelope settles the pending infrastructure failure as typed failure.
-    if (names.includes(ENGINE_DETOUR_TOOL_NAME)) {
-      const priorDetourResults = context.messages.filter(
-        (message: any) =>
-          message?.role === "toolResult" &&
-          message?.toolName === ENGINE_DETOUR_TOOL_NAME,
+    // Prefer the detour tool when registered (Judge+engine activation); dispatch
+    // shape is owned by nextDetourCall (#536).
+    const detourCall = nextDetourCall(context);
+    if (detourCall !== undefined) {
+      return fauxAssistantMessage(
+        fauxToolCall(ENGINE_DETOUR_TOOL_NAME, { argv: detourCall.argv }, { id: detourCall.id }),
+        { stopReason: "toolUse" },
       );
-      const allDetoursSucceeded = priorDetourResults.every(
-        (message: any) =>
-          (DETOUR_STDOUT_ECHOES as readonly string[]).includes(detourResultText(message)),
-      );
-      const keepCalling = allDetoursSucceeded
-        ? priorDetourResults.length < 2
-        : true;
-      if (keepCalling) {
-        const index = priorDetourResults.length + 1;
-        return fauxAssistantMessage(
-          fauxToolCall(
-            ENGINE_DETOUR_TOOL_NAME,
-            {
-              // argv first element resolves via PATH (test injects fake `kimi`).
-              argv: ["kimi", "--call", index === 1 ? "first" : "second"],
-            },
-            { id: `engine-detour-${index}` },
-          ),
-          { stopReason: "toolUse" },
-        );
-      }
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
       return fauxAssistantMessage(

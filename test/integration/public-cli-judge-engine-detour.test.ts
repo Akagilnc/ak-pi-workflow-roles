@@ -19,7 +19,7 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { DETOUR_STDOUT_ECHOES } from "../fixtures/engine-detour-provider.ts";
+import { nextDetourCall } from "../fixtures/engine-detour-provider.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL,
@@ -142,41 +142,13 @@ async function runJudgeWithEngine(input: {
     }
     const msgs = context.messages ?? [];
     const lastMsg = msgs[msgs.length - 1];
-    // #536: two detour calls in one activation execute legally — keep calling
-    // while the detours so far succeeded and fewer than two ran; after an engine
-    // failure the scripted model keeps calling without a business receipt, so
-    // the envelope settles the pending infrastructure failure as typed failure.
-    if (names.includes(ENGINE_DETOUR_TOOL_NAME)) {
-      const priorDetourResults = msgs.filter(
-        (message: any) =>
-          message?.role === "toolResult" &&
-          message?.toolName === ENGINE_DETOUR_TOOL_NAME,
+    // #536 dual-detour dispatch shape is owned by nextDetourCall (shared fixture authority).
+    const detourCall = nextDetourCall(context);
+    if (detourCall !== undefined) {
+      return fauxAssistantMessage(
+        fauxToolCall(ENGINE_DETOUR_TOOL_NAME, { argv: detourCall.argv }, { id: detourCall.id }),
+        { stopReason: "toolUse" },
       );
-      const allDetoursSucceeded = priorDetourResults.every(
-        (message: any) => {
-          const text = Array.isArray(message?.content)
-            ? message.content.map((p: any) => (p.type === "text" ? p.text : "")).join("")
-            : typeof message?.content === "string" ? message.content : "";
-          return (DETOUR_STDOUT_ECHOES as readonly string[]).includes(text);
-        },
-      );
-      const keepCalling = allDetoursSucceeded
-        ? priorDetourResults.length < 2
-        : true;
-      if (keepCalling) {
-        const index = priorDetourResults.length + 1;
-        return fauxAssistantMessage(
-          fauxToolCall(
-            ENGINE_DETOUR_TOOL_NAME,
-            {
-              // argv first element resolves via PATH (test injects fake `kimi`).
-              argv: ["kimi", "--call", index === 1 ? "first" : "second"],
-            },
-            { id: `engine-detour-${index}` },
-          ),
-          { stopReason: "toolUse" },
-        );
-      }
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
       return fauxAssistantMessage(
