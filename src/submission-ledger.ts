@@ -56,13 +56,22 @@ function runIdentity(context: HostContext): string {
   throw new Error("提交账需要已受理的 run 身份");
 }
 
-function attemptIdentity(context: HostContext, runId: string): string {
-  const entries = [...context.sessionManager.getEntries?.() ?? []] as Array<{ id?: unknown; message?: { role?: unknown } }>;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
+export function latestUserAttemptId(
+  entries: Iterable<{ readonly id?: unknown; readonly message?: { readonly role?: unknown } }>,
+): string | undefined {
+  const ordered = [...entries];
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const entry = ordered[index];
     if (entry?.message?.role === "user" && typeof entry.id === "string") return entry.id;
   }
-  return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
+  return undefined;
+}
+
+function attemptIdentity(context: HostContext, runId: string): string {
+  return latestUserAttemptId(context.sessionManager.getEntries?.() ?? [])
+    ?? context.sessionManager.getHeader?.()?.id
+    ?? context.sessionManager.getLeafId?.()
+    ?? `${runId}:initial`;
 }
 
 function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {

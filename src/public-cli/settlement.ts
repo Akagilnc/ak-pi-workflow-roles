@@ -13,6 +13,7 @@ import {
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import {
+  latestUserAttemptId,
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
   readSealedSubmission,
@@ -168,13 +169,7 @@ async function auditEscalationLedgerOutcome(
   let currentAttemptId: string | undefined;
   if (role === "coder" || role === "fixer") {
     const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index] as SessionEntry & { id?: string; message?: { role?: string } };
-      if (entry.message?.role === "user" && typeof entry.id === "string") {
-        currentAttemptId = entry.id;
-        break;
-      }
-    }
+    currentAttemptId = latestUserAttemptId(entries);
   }
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
