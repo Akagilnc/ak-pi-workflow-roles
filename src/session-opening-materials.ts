@@ -1,8 +1,8 @@
 /**
  * Session opening materials (#443 / #524). Missing files fail as native readFile
- * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS; gatekeeper seats
- * stay independent except notary (shared NOTARY_SESSION_MATERIALS). Navigator is
- * name-only here, not a public role record. Auditor composition stays in
+ * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS (including
+ * gatekeeper and navigator). Province map reuses that public gatekeeper record
+ * plus officer material constants (notary shared). Auditor composition stays in
  * loadAuditorSoul; loaders share joinPackageMaterials.
  */
 import { existsSync } from "node:fs";

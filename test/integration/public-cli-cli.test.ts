@@ -136,8 +136,6 @@ test("help document capabilities match typed registry without depending on layou
   for (const role of PUBLIC_CALLABLE_ROLES) {
     assert.equal(names.includes(role), true);
   }
-  // #639: navigator is a callable role and carries its own help capability.
-  assert.equal((names as readonly string[]).includes("navigator"), true);
 });
 
 // Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案

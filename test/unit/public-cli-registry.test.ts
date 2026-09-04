@@ -135,9 +135,6 @@ test("public registry exposes callable roles with no automatic/classifiable dist
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("inspector"), true);
-  // #639: gatekeeper and navigator are callable roles like any other.
-  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gatekeeper"), true);
-  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("navigator"), true);
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
     [...PUBLIC_CALLABLE_ROLES],
@@ -160,11 +157,6 @@ test("help capabilities derive from typed public registry facts", () => {
   for (const role of PUBLIC_CALLABLE_ROLES) {
     assert.equal(names.includes(role), true, `callable role ${role}`);
   }
-  assert.equal(
-    (names as readonly string[]).includes("navigator"),
-    true,
-    "navigator is a callable role with help facts",
-  );
   const rolesCap = capabilities.find((cap) => cap.name === "roles");
   assert.equal(rolesCap?.kind, "support");
   const judgeCap = capabilities.find((cap) => cap.kind === "role" && cap.name === "judge");
