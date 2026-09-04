@@ -443,6 +443,7 @@ export function createCollectorLedger(
   };
 
   const replayDossierEntries = (entries: Iterable<unknown>): void => {
+    const interruptedRequests = new Map<string, { attempt: CollectorRequestAttempt; attemptKey: string }>();
     for (const raw of entries) {
       if (typeof raw !== "object" || raw === null) continue;
       const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
@@ -469,6 +470,11 @@ export function createCollectorLedger(
           : [config.repository.canonical, String(config.prNumber), attempt.observedHead, attempt.requestId].join("|");
         const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
         commitRequestAttempt(attempt, attemptKey, commentEvidence);
+        if (attempt.status === "started") {
+          interruptedRequests.set(attempt.attemptId, { attempt, attemptKey });
+        } else {
+          interruptedRequests.delete(attempt.attemptId);
+        }
         continue;
       }
       if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
@@ -476,6 +482,17 @@ export function createCollectorLedger(
         if (wait?.waitId === undefined) continue;
         commitWaitRecord(wait);
       }
+    }
+    for (const { attempt, attemptKey } of interruptedRequests.values()) {
+      commitRequestAttempt(
+        {
+          ...attempt,
+          status: "ambiguous_loss",
+          responseDiagnostics: "request interrupted after dispatch before completion was recorded",
+        },
+        attemptKey,
+        undefined,
+      );
     }
   };
 
