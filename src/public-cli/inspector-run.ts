@@ -1,6 +1,6 @@
 /**
  * Public Inspector Role run: admit instruction/attachments → shared post-admission
- * coordinator → settle Terminal result (#568 / ADR 0074). One-shot: pass/bounce, 无 resume.
+ * coordinator → settle Terminal result (#568 / ADR 0074). One-shot: pass/bounce/escalate, 无 resume.
  * Dual path with gate-province dispatch; this module is the direct command face.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
