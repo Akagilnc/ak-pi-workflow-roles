@@ -34,10 +34,11 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
-  runPostAdmissionManualResume,
   runPostAdmissionResumable,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 
 export type JudgeRunEnv = PostAdmissionEnv & {
@@ -176,43 +177,17 @@ export async function runPublicResume(
   admitted?: AdmittedJudgeInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableJudgeRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-  const turnRequest = buildJudgeTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
-    },
-  });
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
+    load: () =>
+      loadResumableJudgeRun(env.home, request.runId, env.principalAuthority),
+    buildTurnRequest: (admitted) =>
+      buildJudgeTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
     adapters: judgeAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

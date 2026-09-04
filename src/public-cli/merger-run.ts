@@ -53,6 +53,7 @@ import {
   runPostAdmissionResumable,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 
 export type MergerRunEnv = PostAdmissionEnv & {
@@ -403,25 +404,10 @@ export async function runPublicMergerResume(
     )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
   }
 
-  const turnRequest = buildMergerTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
-    },
-  });
+  const turnRequest = buildMergerTurnRequest(
+    admitted,
+    resumeTurnRequestProjectionOptions(admitted, request, env),
+  );
 
   return await runPostAdmissionManualResume({
     admitted,

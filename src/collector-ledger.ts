@@ -116,6 +116,11 @@ export function projectObserveContextView(modelView: ObserveModelView): ObserveM
 
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
 
+export const COLLECTOR_ACTIVATION_ENTRY_TYPE = "ak-collector-activation" as const;
+export const COLLECTOR_SNAPSHOT_ENTRY_TYPE = "ak-collector-snapshot" as const;
+export const COLLECTOR_REQUEST_ENTRY_TYPE = "ak-collector-request" as const;
+export const COLLECTOR_WAIT_ENTRY_TYPE = "ak-collector-wait" as const;
+
 export type CollectorRequestAttempt = {
   attemptId: string;
   requestId: string;
@@ -156,11 +161,23 @@ export type CollectorConfigState = {
   manifest: CollectorManifest;
 };
 
+/** Durable session journal sink owned by the shared execution seam. */
+export type CollectorDurableJournal = {
+  append(customType: string, data: unknown): void;
+};
+
+export type CollectorLedgerOptions = {
+  readonly clock?: CollectorClock | undefined;
+  readonly journal?: CollectorDurableJournal | undefined;
+  /** Prior dossier custom entries; replayed in order through live business transitions. */
+  readonly dossierEntries?: Iterable<unknown> | undefined;
+};
+
 export type CollectorLedger = {
   readonly config: CollectorConfigState;
   readonly fatal: boolean;
   readonly fatalReason: string | undefined;
-  readonly outputAccepted: boolean;
+  readonly outputCandidate: boolean;
   readonly activationRecorded: boolean;
   readonly activationTime: Date | undefined;
   readonly deadlineTime: Date | undefined;
@@ -177,9 +194,9 @@ export type CollectorLedger = {
   latchFatal(reason: string, cause?: unknown): Error;
   assertNotFatal(): void;
   recordActivation(clock: CollectorClock): void;
+  recordOutputCandidate(): void;
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
-  markOutputAccepted(): void;
   noteCutoffObserved(): void;
   assertOutputObservationLaw(clock: CollectorClock): void;
 
@@ -242,10 +259,16 @@ export function collectorToolArgumentsValid(
   }
 }
 
-export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
+export function createCollectorLedger(
+  config: CollectorConfigState,
+  options?: CollectorLedgerOptions,
+): CollectorLedger {
+  const clock = options?.clock;
+  const journal = options?.journal;
   let fatal = false;
   let fatalReason: string | undefined;
-  let outputAccepted = false;
+  let outputCandidate = false;
+  let pendingOutputCallId: string | undefined;
   let activationTime: Date | undefined;
   let deadlineTime: Date | undefined;
   let activationMono: number | undefined;
@@ -349,6 +372,216 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     return { user, prInitial, reviews, reactions, issueComments, reviewComments, prTerminal };
   };
 
+
+  const appendJournal = (customType: string, data: unknown): void => {
+    journal?.append(customType, data);
+  };
+
+  const bindDeadlineMonoFromWall = (): void => {
+    if (clock === undefined || activationTime === undefined || deadlineTime === undefined) return;
+    const wallNow = clock.wallNow().getTime();
+    const monoNow = clock.monoNow();
+    activationMono = monoNow - (wallNow - activationTime.getTime());
+    deadlineMono = monoNow + (deadlineTime.getTime() - wallNow);
+  };
+
+  const rebindSnapshotCompletedMono = (snapshot: CollectorSnapshot): CollectorSnapshot => {
+    const copy: CollectorSnapshot = { ...snapshot, evidenceIds: [...snapshot.evidenceIds] };
+    if (deadlineTime !== undefined && deadlineMono !== undefined && copy.completedAt !== undefined) {
+      const completedWall = new Date(copy.completedAt).getTime();
+      copy.completedMono = deadlineMono + (completedWall - deadlineTime.getTime());
+    }
+    return copy;
+  };
+
+  const commitActivationWindow = (nextActivation: Date, nextDeadline: Date): void => {
+    if (activationTime !== undefined) return;
+    activationTime = nextActivation;
+    deadlineTime = nextDeadline;
+    bindDeadlineMonoFromWall();
+  };
+
+  const recoverAmbiguousRequestLosses = (
+    snapshotId: string,
+    observedRecords: readonly CollectorEvidenceRecord[],
+  ): void => {
+    for (const failure of transportFailures) {
+      if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
+      if (failure.marker === undefined || failure.requestId === undefined) continue;
+      const found = observedRecords.find((record) =>
+        record.kind === "issue_comment" &&
+        record.authorLogin === requesterLogin &&
+        typeof record.body === "string" &&
+        record.body.includes(failure.marker!)
+      );
+      if (found === undefined) continue;
+      failure.recovered = true;
+      const attempt = attempts.find((item) =>
+        item.status === "ambiguous_loss" &&
+        item.requestId === failure.requestId &&
+        item.marker === failure.marker
+      );
+      if (attempt !== undefined) {
+        attempt.status = "recovered";
+        attempt.commentEvidenceId = found.evidenceId;
+        attempt.recoverySnapshotId = snapshotId;
+      }
+    }
+  };
+
+  const finalizeObservedSnapshot = (snapshot: CollectorSnapshot): CollectorSnapshot => {
+    if (requesterLogin === undefined) {
+      for (const id of snapshot.evidenceIds) {
+        const record = evidenceById.get(id);
+        if (record?.kind === "authenticated_user" && record.authorLogin !== undefined) {
+          requesterLogin = record.authorLogin.toLowerCase();
+          break;
+        }
+      }
+    }
+    const stored = rebindSnapshotCompletedMono(snapshot);
+    snapshots.push(stored);
+    latestCompleteSnapshotId = stored.snapshotId;
+    const observedRecords = stored.evidenceIds.flatMap((id) => {
+      const record = evidenceById.get(id);
+      return record === undefined ? [] : [record];
+    });
+    recoverAmbiguousRequestLosses(stored.snapshotId, observedRecords);
+    observedGeneration = mutationGeneration;
+    if (
+      finalObservationRequired &&
+      stored.completedMono !== undefined &&
+      deadlineMono !== undefined &&
+      stored.completedMono >= deadlineMono
+    ) {
+      finalObservationCompleted = true;
+    } else if (
+      clock !== undefined &&
+      deadlineMono !== undefined &&
+      clock.monoNow() >= deadlineMono &&
+      stored.completedMono !== undefined &&
+      stored.completedMono >= deadlineMono
+    ) {
+      finalObservationRequired = true;
+      finalObservationCompleted = true;
+    }
+    return stored;
+  };
+
+  const commitObservedSnapshot = (
+    snapshot: CollectorSnapshot,
+    evidenceRecords: readonly CollectorEvidenceRecord[],
+  ): CollectorSnapshot => {
+    for (const record of evidenceRecords) {
+      storeEvidence(record);
+    }
+    return finalizeObservedSnapshot(snapshot);
+  };
+
+  const commitRequestAttempt = (
+    attempt: CollectorRequestAttempt,
+    attemptKey: string,
+    commentEvidence: CollectorEvidenceRecord | undefined,
+  ): void => {
+    if (commentEvidence !== undefined) {
+      storeEvidence(commentEvidence);
+    }
+    const existing = attempts.find((item) => item.attemptId === attempt.attemptId);
+    if (existing === undefined) {
+      attempts.push({ ...attempt });
+      attemptKeys.add(attemptKey);
+    } else {
+      Object.assign(existing, attempt);
+    }
+    if (attempt.status === "ambiguous_loss" && !transportFailures.some((failure) => failure.requestId === attempt.requestId && failure.observedHead === attempt.observedHead)) {
+      transportFailures.push({
+        failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
+        kind: "ambiguous_request_loss",
+        message: attempt.responseDiagnostics ?? "ambiguous request loss",
+        requestId: attempt.requestId,
+        observedHead: attempt.observedHead,
+        marker: attempt.marker,
+        recovered: false,
+      });
+    }
+    if (attempt.status === "succeeded" || attempt.status === "ambiguous_loss") {
+      mutationGeneration += 1;
+      finalObservationCompleted = false;
+    }
+  };
+
+  const commitWaitRecord = (wait: CollectorWaitRecord): void => {
+    waits.push({ ...wait });
+    if (wait.cutoffReached) finalObservationRequired = true;
+    mutationGeneration += 1;
+    finalObservationCompleted = false;
+  };
+
+  const replayDossierEntries = (entries: Iterable<unknown>): void => {
+    const orderedEntries = Array.from(entries);
+    const finalRequestStatus = new Map<string, CollectorRequestAttempt["status"]>();
+    for (const raw of orderedEntries) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
+      if (entry.type !== "custom" || entry.customType !== COLLECTOR_REQUEST_ENTRY_TYPE || typeof entry.data !== "object" || entry.data === null) continue;
+      const attempt = (entry.data as Record<string, unknown>).attempt as CollectorRequestAttempt | undefined;
+      if (attempt?.attemptId !== undefined) finalRequestStatus.set(attempt.attemptId, attempt.status);
+    }
+    for (const raw of orderedEntries) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
+      if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) continue;
+      const data = entry.data as Record<string, unknown>;
+      if (entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
+        if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
+          commitActivationWindow(new Date(data.activationTime), new Date(data.deadlineTime));
+        }
+        continue;
+      }
+      if (entry.customType === COLLECTOR_SNAPSHOT_ENTRY_TYPE) {
+        const snapshot = data.snapshot as CollectorSnapshot | undefined;
+        if (snapshot?.snapshotId === undefined || !Array.isArray(data.evidence)) continue;
+        // Generations advance only via request/wait commits and observation sync — never from collection sizes or payload counters.
+        commitObservedSnapshot(snapshot, data.evidence as CollectorEvidenceRecord[]);
+        continue;
+      }
+      if (entry.customType === COLLECTOR_REQUEST_ENTRY_TYPE) {
+        const attempt = data.attempt as CollectorRequestAttempt | undefined;
+        if (attempt?.attemptId === undefined) continue;
+        const attemptKey = typeof data.attemptKey === "string"
+          ? data.attemptKey
+          : [config.repository.canonical, String(config.prNumber), attempt.observedHead, attempt.requestId].join("|");
+        const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
+        const replayAttempt = attempt.status === "started" && finalRequestStatus.get(attempt.attemptId) === "started"
+          ? {
+            ...attempt,
+            status: "ambiguous_loss" as const,
+            responseDiagnostics: "request interrupted after dispatch before completion was recorded",
+          }
+          : attempt;
+        commitRequestAttempt(replayAttempt, attemptKey, commentEvidence);
+        continue;
+      }
+      if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
+        const wait = data.waitRecord as CollectorWaitRecord | undefined;
+        if (wait?.waitId === undefined) continue;
+        commitWaitRecord(wait);
+      }
+    }
+  };
+
+  if (options?.dossierEntries !== undefined) {
+    replayDossierEntries(options.dossierEntries);
+  }
+  if (clock !== undefined && deadlineMono !== undefined && clock.monoNow() >= deadlineMono) {
+    finalObservationRequired = true;
+    const lastSnap = snapshots.find((item) => item.snapshotId === latestCompleteSnapshotId);
+    if (lastSnap?.completedMono !== undefined && lastSnap.completedMono >= deadlineMono) {
+      finalObservationCompleted = true;
+    }
+  }
+
+
   const ledger: CollectorLedger = {
     get config() {
       return config;
@@ -359,8 +592,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     get fatalReason() {
       return fatalReason;
     },
-    get outputAccepted() {
-      return outputAccepted;
+    get outputCandidate() {
+      return outputCandidate || pendingOutputCallId !== undefined;
     },
     get activationRecorded() {
       return activationTime !== undefined;
@@ -409,12 +642,28 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       activationMono = clock.monoNow();
       deadlineTime = new Date(activationTime.getTime() + COLLECTOR_ELIGIBILITY_MS);
       deadlineMono = activationMono + COLLECTOR_ELIGIBILITY_MS;
+      appendJournal(COLLECTOR_ACTIVATION_ENTRY_TYPE, {
+        activationTime: activationTime.toISOString(),
+        deadlineTime: deadlineTime.toISOString(),
+      });
+    },
+
+    recordOutputCandidate() {
+      assertNotFatal();
+      outputCandidate = true;
     },
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
-        throw latchFatal("回执已受理，本局不再受理操作");
+      if (
+        toolName !== COLLECTOR_OUTPUT_TOOL &&
+        (outputCandidate || pendingOutputCallId !== undefined)
+      ) {
+        throw new Error("通进司已产出输出候选，本局不再受理操作");
+      }
+      if (toolName === COLLECTOR_OUTPUT_TOOL) {
+        pendingOutputCallId = toolCallId;
+        return;
       }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {
@@ -424,10 +673,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("通进司操作调用已在进行");
       }
 
-      if (toolName === COLLECTOR_OUTPUT_TOOL) {
-        return;
-      }
-
       if (!isOperationalTool(toolName)) {
         throw latchFatal(`未知通进司工具 ${toolName}`);
       }
@@ -435,15 +680,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     },
 
     completeOperational(toolCallId) {
+      if (pendingOutputCallId === toolCallId) {
+        pendingOutputCallId = undefined;
+      }
       if (activeOperationalCallId === toolCallId) {
         activeOperationalCallId = undefined;
       }
-    },
-
-    markOutputAccepted() {
-      assertNotFatal();
-      if (outputAccepted) throw latchFatal("通进司回执为唯一终局");
-      outputAccepted = true;
     },
 
     noteCutoffObserved() {
@@ -584,31 +826,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         `${completedAt}:${pr.headOid}:${storedIds.join(",")}`,
       ).slice(0, 16);
 
-      // Recover ambiguous request markers if present.
-      for (const failure of transportFailures) {
-        if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
-        if (failure.marker === undefined || failure.requestId === undefined) continue;
-        const found = storedRecords.find((record) =>
-          record.kind === "issue_comment" &&
-          record.authorLogin === requesterLogin &&
-          typeof record.body === "string" &&
-          record.body.includes(failure.marker!)
-        );
-        if (found) {
-          failure.recovered = true;
-          const attempt = attempts.find((item) =>
-            item.status === "ambiguous_loss" &&
-            item.requestId === failure.requestId &&
-            item.marker === failure.marker
-          );
-          if (attempt) {
-            attempt.status = "recovered";
-            attempt.commentEvidenceId = found.evidenceId;
-            attempt.recoverySnapshotId = snapshotId;
-          }
-        }
-      }
-
       const snapshot: CollectorSnapshot = {
         snapshotId,
         observedAt,
@@ -624,23 +841,33 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         pageDiagnostics,
         normalizedByteLength,
       };
-      snapshots.push(snapshot);
-      latestCompleteSnapshotId = snapshotId;
-      observedGeneration = mutationGeneration;
-      if (finalObservationRequired && completedMono >= (deadlineMono ?? 0)) {
-        finalObservationCompleted = true;
-      } else if (cutoff) {
-        finalObservationCompleted = true;
+      if (cutoff) {
+        finalObservationRequired = true;
       }
+      const committed = finalizeObservedSnapshot(snapshot);
+      appendJournal(COLLECTOR_SNAPSHOT_ENTRY_TYPE, {
+        snapshot: committed,
+        evidence: committed.evidenceIds.flatMap((id) => {
+          const record = evidenceById.get(id);
+          return record === undefined ? [] : [record];
+        }),
+      });
 
       const modelView = buildObserveModelView({
-        snapshot,
-        records: storedRecords,
+        snapshot: committed,
+        records: committed.evidenceIds.flatMap((id) => {
+          const record = evidenceById.get(id);
+          return record === undefined ? [] : [record];
+        }),
         requesterLogin,
         attempts,
       });
 
-      return { snapshot, contextView: projectObserveContextView(modelView) };
+      return {
+        snapshot: committed,
+        modelView,
+        contextView: projectObserveContextView(modelView),
+      };
     },
 
     async request(input, transport, clock, signal) {
@@ -715,8 +942,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         startedAt,
         status: "started",
       };
-      attempts.push(attempt);
-      attemptKeys.add(attemptKey);
+      commitRequestAttempt(attempt, attemptKey, undefined);
+      appendJournal(COLLECTOR_REQUEST_ENTRY_TYPE, {
+        attempt: { ...attempt },
+        attemptKey,
+      });
 
       const result = await transport.createIssueComment({
         owner: config.repository.owner,
@@ -726,16 +956,26 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         ...(signal === undefined ? {} : { signal }),
       });
 
-      // Successful or ambiguous request completion dirties observation generation.
-      mutationGeneration += 1;
-      finalObservationCompleted = false;
+      const journalRequest = (commentEvidence: CollectorEvidenceRecord | undefined): void => {
+        const attemptKey = [
+          config.repository.canonical,
+          String(config.prNumber),
+          attempt.observedHead,
+          attempt.requestId,
+        ].join("|");
+        appendJournal(COLLECTOR_REQUEST_ENTRY_TYPE, {
+          attempt: { ...attempt },
+          attemptKey,
+          commentEvidence,
+        });
+      };
 
       if (result.kind === "success") {
-        const record = storeEvidence(
-          normalizeIssueCommentEvidence(result.comment, startedAt),
-        );
+        const record = normalizeIssueCommentEvidence(result.comment, startedAt);
         attempt.status = "succeeded";
         attempt.commentEvidenceId = record.evidenceId;
+        commitRequestAttempt(attempt, attemptKey, record);
+        journalRequest(record);
         return {
           status: "succeeded",
           attemptId,
@@ -749,15 +989,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       if (result.kind === "ambiguous_loss") {
         attempt.status = "ambiguous_loss";
         attempt.responseDiagnostics = result.diagnostics;
-        transportFailures.push({
-          failureId: sha256Text(`loss:${attemptId}`).slice(0, 16),
-          kind: "ambiguous_request_loss",
-          message: result.diagnostics,
-          requestId: request.id,
-          observedHead: snapshot.headOid,
-          marker,
-          recovered: false,
-        });
+        commitRequestAttempt(attempt, attemptKey, undefined);
+        journalRequest(undefined);
         return {
           status: "ambiguous_loss",
           attemptId,
@@ -770,6 +1003,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       attempt.status = "rejected";
       attempt.responseDiagnostics = result.diagnostics;
+      commitRequestAttempt(attempt, attemptKey, undefined);
+      journalRequest(undefined);
       throw latchFatal(`通进司请求被拒：${result.diagnostics}`);
     },
 
@@ -804,9 +1039,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       await clock.sleep(effectiveMs, signal);
       const endedAt = clock.wallNow().toISOString();
       const cutoffReached = pastCutoff(clock);
-      if (cutoffReached) finalObservationRequired = true;
-      mutationGeneration += 1;
-      finalObservationCompleted = false;
       const record: CollectorWaitRecord = {
         waitId,
         requestedMs: input.durationMs,
@@ -815,7 +1047,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         endedAt,
         cutoffReached,
       };
-      waits.push(record);
+      commitWaitRecord(record);
+      appendJournal(COLLECTOR_WAIT_ENTRY_TYPE, {
+        waitRecord: record,
+      });
       return {
         waitId,
         requestedMs: input.durationMs,
