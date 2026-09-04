@@ -180,11 +180,8 @@ async function auditEscalationLedgerOutcome(
   role: TerminalRoleName,
   authority: DurablePrincipalAuthority,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
-  let currentAttemptId: string | undefined;
-  if (role === "coder" || role === "fixer") {
-    const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
-    currentAttemptId = latestUserAttemptId(entries);
-  }
+  const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
+  const currentAttemptId = latestUserAttemptId(entries);
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
     admitted.runId,

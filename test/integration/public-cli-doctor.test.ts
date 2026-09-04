@@ -43,6 +43,7 @@ import {
   sampleCompletedDoctorOutput,
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
+import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-doctor-"));
@@ -150,6 +151,38 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     const emptyPatient = await loadDoctorCase(emptyAdmitted.caseRunsPath);
     assert.equal(emptyPatient.evidence.length, 0);
     assert.deepEqual(emptyAdmitted.caseIdentity, emptyPatient.identity);
+  });
+});
+
+test("doctor settlement does not revive a prior-attempt escalation on resume", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    await seedDoctorIssueRuns(home, bookKey, 664);
+    const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
+      issueNumber: 664,
+      createRunId: () => "run-doctor-stale-escalation",
+    });
+    const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
+    await mkdir(coordinates.sessionDirectory, { recursive: true });
+    await writeFile(coordinates.sessionFile, [
+      JSON.stringify({ type: "session", id: "session-id" }),
+      JSON.stringify({ type: "message", id: "current-resume-user", message: { role: "user", content: [{ type: "text", text: "resume" }] } }),
+    ].join("\n") + "\n");
+    await recordAuditEscalationSubmission({
+      cwd: project,
+      home,
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      role: "doctor",
+      details: { kind: "audit_escalation", officer: "inspector", reason: "old" },
+    });
+    assert.equal(await trySettleDoctorTerminalResult(admitted, piDurablePrincipalAuthority), undefined);
   });
 });
 
