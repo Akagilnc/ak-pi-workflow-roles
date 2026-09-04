@@ -152,7 +152,7 @@ export type TerminalResume = {
 /** Current English gate seat faces projected on Terminal (#478). */
 export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
-/** One accepted province dispatch receipt (status/officer + optional reduce-seat reason). */
+/** Direct summons (`direct`) or historical province dispatch, plus officer identity. */
 export type TerminalGateDispatch = {
   readonly status: string;
   readonly officer: "inspector" | "notary";
@@ -167,7 +167,7 @@ export type TerminalGateOfficerReport = {
   readonly findings: readonly string[];
 };
 
-/** One paired dispatch↔officer gate round on the public Terminal. */
+/** One direct or historical paired gate round on the public Terminal. */
 export type TerminalGateRound = {
   readonly roundIndex: number;
   readonly dispatch: TerminalGateDispatch;
@@ -175,12 +175,12 @@ export type TerminalGateRound = {
 };
 
 /**
- * Optional gate province projection (#478).
- * Absent when no accepted paired gate rounds exist (no-gate zero change).
- * Only durable accepted child receipts — never soul-derived expected/missing seats.
+ * Optional gate projection (#478).
+ * Absent when no accepted officer rounds exist. Only durable accepted child
+ * receipts — never soul-derived expected/missing seats.
  */
 export type TerminalGateFact = {
-  /** Seats that actually ran, derived from accepted paired receipts. */
+  /** Seats that actually ran, derived from accepted receipts. */
   readonly actualSeats: readonly TerminalGateSeat[];
   readonly rounds: readonly TerminalGateRound[];
 };
@@ -211,8 +211,8 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * Optional gate province facts (#478). Present only when accepted paired
-   * gate rounds exist under session/auditor-roles; omitted on no-gate runs.
+   * Optional gate facts (#478). Present when accepted direct or historical
+   * paired rounds exist under session/auditor-roles; omitted on no-gate runs.
    */
   gate?: TerminalGateFact;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */

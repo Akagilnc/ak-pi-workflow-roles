@@ -31,7 +31,7 @@ import {
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
 
-/** One completed gate round: province dispatch paired with its officer volume. */
+/** One completed gate round: direct officer receipt or historical province/officer pair. */
 export type AnalystGateCycleRound = {
   /** 1-based chronological order among paired rounds on this leg. */
   readonly roundIndex: number;
@@ -50,8 +50,8 @@ export type AnalystGateCycleRound = {
   readonly findings: readonly string[];
   /** findings.length — retained so metric families need not re-derive. */
   readonly findingsCount: number;
-  /** Accepted dispatch receipt status (paired rounds are always "dispatch"). */
-  readonly dispatchStatus: string;
+  /** `direct` for current summons; `dispatch` for historical province-paired rounds. */
+  readonly dispatchStatus: "direct" | "dispatch";
   /**
    * Optional seat-reduction reason from the accepted dispatch receipt.
    * Absent when the dispatch did not write a non-empty reason — never invented.
@@ -320,12 +320,32 @@ function pairGateRounds(
       officerEndedAt: match.officer.endedAt,
       findings: match.officer.findings,
       findingsCount: match.officer.findingsCount,
-      dispatchStatus: vol.status,
+      dispatchStatus: "dispatch",
       ...(vol.reason === undefined ? {} : { dispatchReason: vol.reason }),
     });
   }
 
-  return rounds;
+  // Current direct-summons volumes have no preceding province dispatch. Every
+  // accepted officer receipt not consumed by a historical pair is its own round.
+  for (let i = 0; i < ordered.length; i += 1) {
+    const vol = ordered[i]!;
+    if (vol.kind !== "officer" || usedOfficerIdx.has(i)) continue;
+    rounds.push({
+      roundIndex: 0,
+      officer: vol.officer,
+      status: vol.status,
+      officerWallMs: vol.officerWallMs,
+      officerStartedAt: vol.startedAt,
+      officerEndedAt: vol.endedAt,
+      findings: vol.findings,
+      findingsCount: vol.findingsCount,
+      dispatchStatus: "direct",
+    });
+  }
+
+  return rounds
+    .sort((a, b) => a.officerStartedAt.localeCompare(b.officerStartedAt))
+    .map((round, index) => ({ ...round, roundIndex: index + 1 }));
 }
 
 /**

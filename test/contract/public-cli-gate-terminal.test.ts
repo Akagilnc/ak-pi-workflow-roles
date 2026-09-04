@@ -89,6 +89,26 @@ async function seedGatePair(
   );
 }
 
+async function seedDirectOfficer(
+  sessionDir: string,
+  officer: "inspector" | "notary",
+  findings: readonly string[] = [],
+): Promise<void> {
+  const auditorDir = join(sessionDir, "auditor-roles");
+  await mkdir(auditorDir, { recursive: true });
+  await writeFile(
+    join(auditorDir, `o01_${officer}.jsonl`),
+    gateToolSessionJsonl({
+      id: "direct-1",
+      startedAt: iso(0),
+      endedAt: iso(10_000),
+      toolName: officer === "inspector" ? "ak_inspector_output" : "ak_notary_output",
+      args: { status: "pass", findings: [...findings] },
+    }),
+    "utf8",
+  );
+}
+
 function acceptedJudgeSessionLine(): string {
   return `${JSON.stringify({
     type: "message",
@@ -291,15 +311,13 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
-        await seedGatePair(sessionDir, {
-          officer: "inspector",
-          findings: [],
-        });
+        await seedDirectOfficer(sessionDir, "inspector");
       },
     });
     assert.ok(terminal.gate !== undefined);
-    assert.deepEqual(terminal.gate!.actualSeats, ["gatekeeper", "inspector"]);
+    assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
     const round = terminal.gate!.rounds[0]!;
+    assert.equal(round.dispatch.status, "direct");
     assert.equal(round.dispatch.officer, "inspector");
     assert.equal(
       Object.prototype.hasOwnProperty.call(round.dispatch, "reason"),

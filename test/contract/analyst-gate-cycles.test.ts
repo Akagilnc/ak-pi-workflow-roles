@@ -119,18 +119,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
 async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
   await mkdir(auditorDir, { recursive: true });
   await writeFile(
-    join(auditorDir, "d01_gatekeeper.jsonl"),
-    gateToolSessionJsonl({
-      id: "disp-cur",
-      startedAt: iso(0),
-      endedAt: iso(1_000),
-      toolName: "ak_gatekeeper_output",
-      args: { status: "dispatch", officer: "inspector" },
-    }),
-    "utf8",
-  );
-  await writeFile(
-    join(auditorDir, "o02_inspector.jsonl"),
+    join(auditorDir, "o01_inspector.jsonl"),
     gateToolSessionJsonl({
       id: "off-cur",
       startedAt: iso(1_000),
@@ -287,7 +276,7 @@ test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblin
 
 test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-result terminals", async () => {
   await withTempHome(async (home) => {
-    // Current-name single accepted round first.
+    // Current direct-summons accepted officer round first.
     await writeCurrentNameSingleRound(judgeAuditorDir(home));
     const current = await runAnalyst({
       mode: "issue",
@@ -305,7 +294,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
       },
     ]);
 
-    // Overlay rejected/no-result terminals: only the one accepted pair remains.
+    // A rejected historical dispatch does not suppress the later accepted direct officer.
     await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({
@@ -314,7 +303,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     }, { home });
     const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(rejectedLeg);
-    assert.equal(rejectedLeg.roundCount, 1, "rejected/no-result terminals must not form rounds");
+    assert.equal(rejectedLeg.roundCount, 2);
     assert.deepEqual(rejectedLeg.rounds, [
       {
         roundIndex: 1,
@@ -323,14 +312,21 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
         officerWallMs: 10_000,
         findingsCount: 0,
       },
+      {
+        roundIndex: 2,
+        officer: "inspector",
+        status: "bounce",
+        officerWallMs: 10_000,
+        findingsCount: 1,
+      },
     ]);
     assert.deepEqual(gateSection(rejected.page).byOfficer, [
       {
         officer: "inspector",
-        rounds: 1,
-        bounceCount: 0,
+        rounds: 2,
+        bounceCount: 1,
         passCount: 1,
-        bounceRate: 0,
+        bounceRate: 0.5,
         meanOfficerWallMs: 10_000,
       },
     ]);
