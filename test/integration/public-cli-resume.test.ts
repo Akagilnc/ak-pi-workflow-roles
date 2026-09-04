@@ -37,6 +37,10 @@ import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlemen
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
+import type { RoleTurnHost } from "../../src/host-contracts.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -99,6 +103,57 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Resume Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+/** Shared plant: seal accepted judge output, then block report.json publication (EISDIR). */
+function sealedPublicationBlockedHost(note: string): {
+  host: RoleTurnHost;
+  dispatches: () => number;
+} {
+  let dispatches = 0;
+  const host = roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: async (args) => {
+      dispatches += 1;
+      const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+      const runDir = join(sessionDir, "..");
+      await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+      await mkdir(sessionDir, { recursive: true });
+      await observeTyped429ViaProductionHandler({
+        runDirectory: runDir,
+        provider: "xai",
+      });
+      await writeFile(
+        join(sessionDir, "session.jsonl"),
+        `${JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: {
+              judgeStatus: "converged",
+              note,
+            },
+          },
+        })}\n`,
+        "utf8",
+      );
+      return {
+        code: 0,
+        stderr: "",
+        timedOut: false,
+        args: [...args],
+        sealedAcceptance: {
+          role: "judge",
+          details: { judgeStatus: "converged", note },
+        },
+      };
+    },
+  });
+  return { host, dispatches: () => dispatches };
+}
+
 
 function writeSessionProviderStop(
   sessionDir: string,
@@ -622,6 +677,9 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io, stdout } = captureIo();
+    const { host, dispatches } = sealedPublicationBlockedHost(
+      "lawful despite later publication failure",
+    );
 
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then publish fails under 429"],
@@ -632,46 +690,7 @@ test("lawful result with publication failure is not resumable even with attempt 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Block report.json publication after a lawful converged verdict.
-          await mkdir(join(runDir, "artifacts", "report.json"), {
-            recursive: true,
-          });
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "xai",
-          });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: {
-                  judgeStatus: "converged",
-                  note: "lawful despite later publication failure",
-                },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "lawful despite later publication failure" } },
-          };
-        },
-        }),
+        roleTurnHost: host,
       },
     );
 
@@ -685,6 +704,9 @@ test("lawful result with publication failure is not resumable even with attempt 
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
+    // Sealed-acceptance publication miss must not auto-redispatch (#648).
+    assert.equal(dispatches(), 1);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -696,8 +718,172 @@ test("lawful result with publication failure is not resumable even with attempt 
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
+    const sealed = await readSealedSubmission(project, runId, home);
+    assert.ok(sealed, "sealed accepted projection must survive publication failure");
+    assert.equal(sealed.role, "judge");
+
+    // Real manual resume entry: sealed + publication miss must not redispatch (#648).
+    let resumeDispatches = 0;
+    const { io: resumeIo } = captureIo();
+    await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch after sealed acceptance\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0);
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must remain readable after manual resume",
+    );
   });
+
+  // Direct throw after seal: settle/present rejects out of dispatch; sealed stop
+  // must still consult ledger before any auto-resume redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-throw-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then dispatch throws after seal",
+    );
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then throw after seal under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            const out = await inner.executeTurn(request);
+            const statePath = join(request.runDirectory, "run-state.json");
+            await rm(statePath, { force: true });
+            await mkdir(statePath);
+            return out;
+          },
+        },
+      },
+    );
+
+    assert.equal(dispatches(), 1);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must survive direct throw after seal",
+    );
+  });
+
+  // Failing ledger authority: read errors must preserve true cause and fail closed —
+  // never wash into "unsealed" and redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-ledger-fail-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then ledger authority fails",
+    );
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then ledger read fails under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            const out = await inner.executeTurn(request);
+            // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
+            const ledgerFile = resolveSitianRecordPathInLedger(
+                {
+                  level: "event",
+                  kind: "candidate",
+                  subject: { runId },
+                  cwd: project,
+                },
+                resolveActivationLedgerHome(home),
+              ).recordFile;
+            await rm(ledgerFile, { force: true });
+            await mkdir(ledgerFile, { recursive: true });
+            await assert.rejects(
+              () => readSealedSubmission(project, runId, home),
+              (error: NodeJS.ErrnoException) => error.code === "EISDIR",
+            );
+            return out;
+          },
+        },
+      },
+    );
+    assert.equal(dispatches(), 1, "ledger authority failure must not redispatch");
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind === "failure") {
+      assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
+    }
+
+    let resumeDispatches = 0;
+    const { io: resumeIo } = captureIo();
+    const resumeResult = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch when ledger authority fails\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0);
+    assert.equal(resumeResult.exitCode, 1);
+    assert.ok(resumeResult.terminal);
+    const resumeOutcome = resumeResult.terminal!.roleOutcome;
+    assert.equal(resumeOutcome.kind, "failure");
+    if (resumeOutcome.kind === "failure") {
+      assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+    }
+  });
+
 });
+
 
 test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
   await withTempHome(async (home) => {

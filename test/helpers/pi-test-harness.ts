@@ -1023,6 +1023,15 @@ export async function runPiSubprocess(
   if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
     env.AK_ROLE_RUN_DIR = injectedRunDir;
   }
+  // Pi's package-manager install/update path does not pass --no-audit/--offline into
+  // npm. On hosts where registry HTTPS is sinkholed (e.g. 198.18.0.0/15 VPN), a local
+  // file: tarball still hangs in npm audit after the package is already cache-resolved.
+  // Hermetic harness installs/updates never need audit/fund network; silence those
+  // side-channels without widening the 120s deadline.
+  if (args[0] === "install" || args[0] === "update") {
+    env.npm_config_audit ??= "false";
+    env.npm_config_fund ??= "false";
+  }
   return runTestSubprocess(piCli, args, {
     cwd: options.cwd,
     env,
