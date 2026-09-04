@@ -111,9 +111,10 @@ function optionalDispatchReason(raw: unknown): string | undefined {
   return raw;
 }
 
-type AcceptedGateToolCall = {
+type GateToolCall = {
   readonly toolName: string;
   readonly args: Record<string, unknown> | undefined;
+  readonly accepted: boolean;
 };
 
 function isGateTerminatingToolName(toolName: string): boolean {
@@ -143,24 +144,23 @@ function acceptedGateReceiptIds(
  * fail loud instead of being skipped as "not a gate volume". Soul-audit and
  * other non-gate tools never qualify.
  */
-function extractLastAcceptedGateToolCall(
+function extractLastGateToolCall(
   rows: readonly LedgerSessionRow[],
-): AcceptedGateToolCall | undefined {
+): GateToolCall | undefined {
   const acceptedIds = acceptedGateReceiptIds(rows);
-  let last: AcceptedGateToolCall | undefined;
+  let last: GateToolCall | undefined;
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (!isRecord(part) || part.type !== "toolCall") continue;
-      // Unpaired / rejected calls have no lawful receipt — skip before reading args.
       if (typeof part.id !== "string" || part.id.length === 0) continue;
-      if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       if (!isGateTerminatingToolName(part.name)) continue;
       last = {
         toolName: part.name,
         args: isRecord(part.arguments) ? part.arguments : undefined,
+        accepted: acceptedIds.has(part.id),
       };
     }
   }
@@ -212,6 +212,11 @@ type ClassifiedVolume =
       readonly reason?: string;
     }
   | {
+      readonly kind: "rejected-dispatch";
+      readonly startedAt: string;
+      readonly officer: "inspector" | "notary";
+    }
+  | {
       readonly kind: "officer";
       readonly startedAt: string;
       readonly endedAt: string;
@@ -229,10 +234,15 @@ async function classifyAuditorVolume(
   const rows = await readLedgerSessionJsonl(filePath);
   // Recognize accepted gate tool first. Non-gate volumes stay omitted; once a
   // gate receipt is present, required typed facts must not silently under-count.
-  const call = extractLastAcceptedGateToolCall(rows);
+  const call = extractLastGateToolCall(rows);
   if (call === undefined) return undefined;
 
   const span = requireAcceptedGateSpan(rows, filePath);
+  if (!call.accepted) {
+    if (!DISPATCH_TOOLS.has(call.toolName)) return undefined;
+    const officer = normalizeOfficerArg(call.args?.officer);
+    return officer === undefined ? undefined : { kind: "rejected-dispatch", startedAt: span.startedAt, officer };
+  }
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
   const findingsCount = findings.length;
@@ -298,7 +308,7 @@ function pairGateRounds(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const vol = ordered[i]!;
-    if (vol.kind !== "dispatch") continue;
+    if (vol.kind !== "dispatch" && vol.kind !== "rejected-dispatch") continue;
     let match: { index: number; officer: Extract<ClassifiedVolume, { kind: "officer" }> } | undefined;
     for (let j = i + 1; j < ordered.length; j += 1) {
       if (usedOfficerIdx.has(j)) continue;
@@ -311,6 +321,7 @@ function pairGateRounds(
     }
     if (match === undefined) continue;
     usedOfficerIdx.add(match.index);
+    if (vol.kind === "rejected-dispatch") continue;
     rounds.push({
       roundIndex: rounds.length + 1,
       officer: match.officer.officer,
