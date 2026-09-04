@@ -37,6 +37,7 @@ import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlemen
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -622,6 +623,7 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io, stdout } = captureIo();
+    let dispatches = 0;
 
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then publish fails under 429"],
@@ -636,6 +638,7 @@ test("lawful result with publication failure is not resumable even with attempt 
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args) => {
+          dispatches += 1;
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           // Block report.json publication after a lawful converged verdict.
@@ -685,6 +688,9 @@ test("lawful result with publication failure is not resumable even with attempt 
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
+    // Sealed-acceptance publication miss must not auto-redispatch (#648).
+    assert.equal(dispatches, 1);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -696,6 +702,9 @@ test("lawful result with publication failure is not resumable even with attempt 
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
+    const sealed = await readSealedSubmission(project, runId, home);
+    assert.ok(sealed, "sealed accepted projection must survive publication failure");
+    assert.equal(sealed.role, "judge");
   });
 });
 
