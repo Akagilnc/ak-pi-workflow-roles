@@ -104,6 +104,57 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+/** Shared plant: seal accepted judge output, then block report.json publication (EISDIR). */
+function sealedPublicationBlockedHost(note: string): {
+  host: RoleTurnHost;
+  dispatches: () => number;
+} {
+  let dispatches = 0;
+  const host = roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: async (args) => {
+      dispatches += 1;
+      const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+      const runDir = join(sessionDir, "..");
+      await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+      await mkdir(sessionDir, { recursive: true });
+      await observeTyped429ViaProductionHandler({
+        runDirectory: runDir,
+        provider: "xai",
+      });
+      await writeFile(
+        join(sessionDir, "session.jsonl"),
+        `${JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: {
+              judgeStatus: "converged",
+              note,
+            },
+          },
+        })}\n`,
+        "utf8",
+      );
+      return {
+        code: 0,
+        stderr: "",
+        timedOut: false,
+        args: [...args],
+        sealedAcceptance: {
+          role: "judge",
+          details: { judgeStatus: "converged", note },
+        },
+      };
+    },
+  });
+  return { host, dispatches: () => dispatches };
+}
+
+
 function writeSessionProviderStop(
   sessionDir: string,
   input: {
@@ -626,7 +677,9 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io, stdout } = captureIo();
-    let dispatches = 0;
+    const { host, dispatches } = sealedPublicationBlockedHost(
+      "lawful despite later publication failure",
+    );
 
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then publish fails under 429"],
@@ -637,47 +690,7 @@ test("lawful result with publication failure is not resumable even with attempt 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          dispatches += 1;
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Block report.json publication after a lawful converged verdict.
-          await mkdir(join(runDir, "artifacts", "report.json"), {
-            recursive: true,
-          });
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "xai",
-          });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: {
-                  judgeStatus: "converged",
-                  note: "lawful despite later publication failure",
-                },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "lawful despite later publication failure" } },
-          };
-        },
-        }),
+        roleTurnHost: host,
       },
     );
 
@@ -692,7 +705,7 @@ test("lawful result with publication failure is not resumable even with attempt 
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
     // Sealed-acceptance publication miss must not auto-redispatch (#648).
-    assert.equal(dispatches, 1);
+    assert.equal(dispatches(), 1);
     assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -747,49 +760,9 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-throw-001";
     const { io } = captureIo();
-    let dispatches = 0;
-
-    const inner: RoleTurnHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args) => {
-        dispatches += 1;
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        const runDir = join(sessionDir, "..");
-        await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
-        await mkdir(sessionDir, { recursive: true });
-        await observeTyped429ViaProductionHandler({
-          runDirectory: runDir,
-          provider: "xai",
-        });
-        await writeFile(
-          join(sessionDir, "session.jsonl"),
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: {
-                judgeStatus: "converged",
-                note: "lawful then dispatch throws after seal",
-              },
-            },
-          })}\n`,
-          "utf8",
-        );
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-          sealedAcceptance: {
-            role: "judge",
-            details: { judgeStatus: "converged", note: "lawful then dispatch throws after seal" },
-          },
-        };
-      },
-    });
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then dispatch throws after seal",
+    );
 
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then throw after seal under 429"],
@@ -800,7 +773,6 @@ test("lawful result with publication failure is not resumable even with attempt 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-
         roleTurnHost: {
           executeTurn: async (request) => {
             const out = await inner.executeTurn(request);
@@ -813,7 +785,7 @@ test("lawful result with publication failure is not resumable even with attempt 
       },
     );
 
-    assert.equal(dispatches, 1);
+    assert.equal(dispatches(), 1);
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
@@ -831,68 +803,24 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-ledger-fail-001";
     const { io } = captureIo();
-    let dispatches = 0;
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then ledger authority fails",
+    );
 
-    const inner: RoleTurnHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args) => {
-        dispatches += 1;
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        const runDir = join(sessionDir, "..");
-        await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
-        await mkdir(sessionDir, { recursive: true });
-        await observeTyped429ViaProductionHandler({
-          runDirectory: runDir,
-          provider: "xai",
-        });
-        await writeFile(
-          join(sessionDir, "session.jsonl"),
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: {
-                judgeStatus: "converged",
-                note: "lawful then ledger authority fails",
-              },
-            },
-          })}\n`,
-          "utf8",
-        );
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-          sealedAcceptance: {
-            role: "judge",
-            details: { judgeStatus: "converged", note: "lawful then ledger authority fails" },
-          },
-        };
-      },
-    });
-
-    let thrown: unknown;
-    let result: Awaited<ReturnType<typeof runAkRole>> | undefined;
-    try {
-      result = await runAkRole(
-        ["judge", "--project", project, "lawful then ledger read fails under 429"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => runId,
-          io,
-
-          roleTurnHost: {
-            executeTurn: async (request) => {
-              const out = await inner.executeTurn(request);
-              // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
-              const ledgerFile = resolveSitianRecordPathInLedger(
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then ledger read fails under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            const out = await inner.executeTurn(request);
+            // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
+            const ledgerFile = resolveSitianRecordPathInLedger(
                 {
                   level: "event",
                   kind: "candidate",
@@ -901,27 +829,22 @@ test("lawful result with publication failure is not resumable even with attempt 
                 },
                 resolveActivationLedgerHome(home),
               ).recordFile;
-              await rm(ledgerFile, { force: true });
-              await mkdir(ledgerFile, { recursive: true });
-              await assert.rejects(
-                () => readSealedSubmission(project, runId, home),
-                (error: NodeJS.ErrnoException) => error.code === "EISDIR",
-              );
-              return out;
-            },
+            await rm(ledgerFile, { force: true });
+            await mkdir(ledgerFile, { recursive: true });
+            await assert.rejects(
+              () => readSealedSubmission(project, runId, home),
+              (error: NodeJS.ErrnoException) => error.code === "EISDIR",
+            );
+            return out;
           },
         },
-      );
-    } catch (error) {
-      thrown = error;
-    }
-    assert.equal(dispatches, 1, "ledger authority failure must not redispatch");
-    assert.equal(thrown, undefined, "authority failure must fail closed via terminal, not raw throw wash");
-    assert.ok(result !== undefined);
-    assert.equal(result!.exitCode, 1);
-    assert.ok(result!.terminal);
-    assert.equal(result!.terminal!.autoResumeCount ?? 0, 0);
-    const outcome = result!.terminal!.roleOutcome;
+      },
+    );
+    assert.equal(dispatches(), 1, "ledger authority failure must not redispatch");
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    const outcome = result.terminal!.roleOutcome;
     assert.equal(outcome.kind, "failure");
     if (outcome.kind === "failure") {
       assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
@@ -929,38 +852,30 @@ test("lawful result with publication failure is not resumable even with attempt 
 
     let resumeDispatches = 0;
     const { io: resumeIo } = captureIo();
-    let resumeThrown: unknown;
-    let resumeResult: Awaited<ReturnType<typeof runAkRole>> | undefined;
-    try {
-      resumeResult = await runAkRole(["resume", runId], {
+    const resumeResult = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: resumeIo,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            resumeDispatches += 1;
-            return {
-              code: 1,
-              stderr: "must not redispatch when ledger authority fails\n",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-        }),
-      });
-    } catch (error) {
-      resumeThrown = error;
-    }
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch when ledger authority fails\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
     assert.equal(resumeDispatches, 0);
-    assert.equal(resumeThrown, undefined, "manual resume authority failure must fail closed via terminal");
-    assert.ok(resumeResult !== undefined);
-    assert.equal(resumeResult!.exitCode, 1);
-    assert.ok(resumeResult!.terminal);
-    const resumeOutcome = resumeResult!.terminal!.roleOutcome;
+    assert.equal(resumeResult.exitCode, 1);
+    assert.ok(resumeResult.terminal);
+    const resumeOutcome = resumeResult.terminal!.roleOutcome;
     assert.equal(resumeOutcome.kind, "failure");
     if (resumeOutcome.kind === "failure") {
       assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
@@ -968,6 +883,7 @@ test("lawful result with publication failure is not resumable even with attempt 
   });
 
 });
+
 
 test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
   await withTempHome(async (home) => {

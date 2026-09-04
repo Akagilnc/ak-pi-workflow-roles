@@ -429,37 +429,59 @@ export async function runWithAutoResumeLoop<
         }
         return result;
       }
+    }
 
-      // Unique sealed acceptance already landed — do not treat publication/settle
-      // failure as a retryable miss (#648 sealed-acceptance publication retry).
-      // Ledger authority failure fail-closes with preserved cause (never wash to unsealed).
-      if (options.shouldStopAutoResume !== undefined) {
-        let sealedStop: boolean;
-        try {
-          sealedStop = await options.shouldStopAutoResume();
-        } catch (authorityError) {
-          const authorityTerminal = dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: authorityError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "sealed-acceptance authority failed closed",
-            everyAttemptThrew,
-          });
-          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-          presentTerminal(authorityTerminal, options.io);
-          return {
-            exitCode: 1,
-            terminal: authorityTerminal,
-          } as T;
-        }
-        if (sealedStop) {
+    // One sealed ledger authority before any redispatch (#648): shared for
+    // non-lawful return and direct throw. Authority throw fail-closes with
+    // preserved cause — never wash into unsealed redispatch. Only the sealed=true
+    // projection differs (present returned terminal vs throw-path synthetic).
+    if (options.shouldStopAutoResume !== undefined) {
+      let sealedStop: boolean;
+      try {
+        sealedStop = await options.shouldStopAutoResume();
+      } catch (authorityError) {
+        const authorityTerminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: authorityError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "sealed-acceptance authority failed closed",
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(authorityTerminal, options.io);
+        return {
+          exitCode: 1,
+          terminal: authorityTerminal,
+        } as T;
+      }
+      if (sealedStop) {
+        if (result !== undefined) {
+          const terminal = (result as { terminal?: TerminalResult }).terminal;
           if (terminal !== undefined) presentTerminal(terminal, options.io);
           return result;
         }
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: "sealed accepted projection already present",
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal,
+        } as T;
       }
+    }
 
+    if (result !== undefined) {
+      const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
@@ -469,47 +491,6 @@ export async function runWithAutoResumeLoop<
         return result;
       }
     } else {
-      // Exception path: same sealed ledger authority before any redispatch (#648).
-      // Authority throw fail-closes with preserved cause — never wash into unsealed redispatch.
-      if (options.shouldStopAutoResume !== undefined) {
-        let sealedStop: boolean;
-        try {
-          sealedStop = await options.shouldStopAutoResume();
-        } catch (authorityError) {
-          const authorityTerminal = dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: authorityError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "sealed-acceptance authority failed closed",
-            everyAttemptThrew,
-          });
-          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-          presentTerminal(authorityTerminal, options.io);
-          return {
-            exitCode: 1,
-            terminal: authorityTerminal,
-          } as T;
-        }
-        if (sealedStop) {
-          const terminal = dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "sealed accepted projection already present",
-            everyAttemptThrew,
-          });
-          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-          presentTerminal(terminal, options.io);
-          return {
-            exitCode: 1,
-            terminal,
-          } as T;
-        }
-      }
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
         const terminal = dispatchExceptionFailureTerminal({
