@@ -51,6 +51,7 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
+  hasSealedAcceptedProjection,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -479,10 +480,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    shouldStopAutoResume: async () => {
-      if (adapters.hasLawfulTerminalResult === undefined) return false;
-      return adapters.hasLawfulTerminalResult(admitted, env.principalAuthority);
-    },
+    shouldStopAutoResume: async () =>
+      hasSealedAcceptedProjection(admitted),
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
@@ -550,10 +549,7 @@ export async function runPostAdmissionManualResume<
   } catch (error) {
     // Sealed accepted + publication/settle throw must fail closed without redispatch
     // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
-    const hasLawful =
-      adapters.hasLawfulTerminalResult !== undefined &&
-      (await adapters.hasLawfulTerminalResult(admitted, env.principalAuthority));
-    if (hasLawful) {
+    if (await hasSealedAcceptedProjection(admitted)) {
       return (await presentControlledFailure(
         admitted,
         {
