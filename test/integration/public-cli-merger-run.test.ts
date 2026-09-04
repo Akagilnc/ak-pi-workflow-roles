@@ -790,30 +790,34 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
       });
       const officerTool = row.role === "judge" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
       let rejectionObservedByModel = false;
-      faux.setResponses([
-        fauxAssistantMessage(
-          [
-            fauxToolCall(row.tool, row.outputArgs, { id: "output" }),
-            fauxToolCall("read", { path: "x" }, { id: "sibling" }),
-          ],
+      const retry = async (context: any) => {
+        rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
+        return fauxAssistantMessage(
+          [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
           { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-1" }),
-          { stopReason: "toolUse" },
-        ),
-        async (context: any) => {
-          rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
-          return fauxAssistantMessage(
-            [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
-            { stopReason: "toolUse" },
-          );
-        },
-        fauxAssistantMessage(
-          fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-2" }),
-          { stopReason: "toolUse" },
-        ),
-      ] as any);
+        );
+      };
+      const initial = fauxAssistantMessage(
+        [
+          fauxToolCall(row.tool, row.outputArgs, { id: "output" }),
+          fauxToolCall("read", { path: "x" }, { id: "sibling" }),
+        ],
+        { stopReason: "toolUse" },
+      );
+      faux.setResponses((row.role === "judge"
+        ? [
+            initial,
+            fauxAssistantMessage(
+              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-1" }),
+              { stopReason: "toolUse" },
+            ),
+            retry,
+            fauxAssistantMessage(
+              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-2" }),
+              { stopReason: "toolUse" },
+            ),
+          ]
+        : [initial, retry]) as any);
       try {
         await withInProcessPi(
         {
@@ -845,6 +849,15 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
             `${row.role} remains pending until typed turn closure`,
           );
           assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
+          if (row.role === "fixer") {
+            assert.equal(
+              entries.some(
+                (entry) => entry.type === "message" && entry.message.toolName === INSPECTOR_OUTPUT_TOOL,
+              ),
+              false,
+              "planned fixer retry never summons Inspector",
+            );
+          }
           const headerId = sessionManager.getHeader?.()?.id;
           const sealed =
             headerId === undefined ? undefined : await readSealedSubmission(work, headerId, home);
