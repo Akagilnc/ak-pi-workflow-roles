@@ -1290,7 +1290,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist.",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding.",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
