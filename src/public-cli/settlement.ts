@@ -4307,35 +4307,55 @@ export function presentFailureTerminal(
   }
 }
 
+/** Optional cancel hook so early settle can release an in-flight grace sleep. */
+export type NavigatorGraceSleep = ((ms: number) => Promise<void>) & {
+  cancel?: () => void;
+};
+
+function defaultNavigatorGraceSleep(): NavigatorGraceSleep {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const sleep = ((ms: number) =>
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timer = undefined;
+        resolve();
+      }, ms);
+    })) as NavigatorGraceSleep;
+  sleep.cancel = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  return sleep;
+}
+
 /**
  * Race a promise against the post-role Navigator grace.
  * On timeout, returns the timeout sentinel; the caller records unavailable and
  * ignores or disposes late completion.
+ * When work settles first, the grace sleep is canceled synchronously so its
+ * timer/resource cannot keep the process alive after the race resolves.
  */
 export function raceNavigatorGrace<T>(
   work: Promise<T>,
   graceMs: number = NAVIGATOR_POST_ROLE_GRACE_MS,
-  sleep: (ms: number) => Promise<void> = (ms) =>
-    new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: NavigatorGraceSleep = defaultNavigatorGraceSleep(),
 ): Promise<{ status: "done"; value: T } | { status: "timeout" }> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    void work.then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        resolve({ status: "done", value });
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      },
-    );
-    void sleep(graceMs).then(() => {
+    const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
-      resolve({ status: "timeout" });
+      sleep.cancel?.();
+      action();
+    };
+    void work.then(
+      (value) => finish(() => resolve({ status: "done", value })),
+      (error) => finish(() => reject(error)),
+    );
+    void sleep(graceMs).then(() => {
+      finish(() => resolve({ status: "timeout" }));
     });
   });
 }
