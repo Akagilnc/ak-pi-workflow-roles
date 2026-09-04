@@ -32,7 +32,7 @@ import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-s
 import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
-import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
+import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
 import {
   assertControlledGrokAuthIsNotSymlink,
@@ -221,6 +221,8 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
+    loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
+    loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),

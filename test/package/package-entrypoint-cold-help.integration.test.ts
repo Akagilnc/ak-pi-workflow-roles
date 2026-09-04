@@ -35,7 +35,6 @@ import {
   fixerPrerequisitesSchema,
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
-  GATEKEEPER_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
@@ -48,6 +47,7 @@ import {
   WORKFLOW_ROLES,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";

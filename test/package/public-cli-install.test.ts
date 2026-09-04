@@ -166,7 +166,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
     }
-    assert.match(roles.stdout, /^navigator\tautomatic\t/m);
+    assert.match(roles.stdout, /^navigator\tstartup\t/m);
     assert.equal(roles.stdout.includes("auditor"), false);
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
@@ -194,7 +194,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       },
     });
     assert.equal(again.code, 0, again.stderr);
-    assert.match(again.stdout, /^coder\tcallable\tpersistent\txai\/grok-4\.5:high$/m);
+    assert.match(again.stdout, /^coder\tpersistent\txai\/grok-4\.5:high$/m);
 
     const before = await readFile(configPath, "utf8");
     const overridden = await runAkRoleBin(
@@ -205,7 +205,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     assert.equal(overridden.code, 0, overridden.stderr);
     assert.match(
       overridden.stdout,
-      /^coder\tcallable\tinvocation\topenai-codex\/gpt-5\.6-luna:high$/m,
+      /^coder\tinvocation\topenai-codex\/gpt-5\.6-luna:high$/m,
     );
     const after = await readFile(configPath, "utf8");
     assert.equal(after, before);

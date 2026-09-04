@@ -34,7 +34,6 @@ import {
   fixerPrerequisitesSchema,
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
-  GATEKEEPER_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
@@ -47,6 +46,7 @@ import {
   WORKFLOW_ROLES,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -872,7 +872,8 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
-        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, GATEKEEPER_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
+        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
+        import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "./src/package-contracts/gatekeeper-output.ts";
         import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi, withAgentDirProviderFixture } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
