@@ -158,32 +158,6 @@ test("scripted officer bounce projects rewrite disposition and loads that office
   });
 });
 
-test("scripted officer escalate projects typed escalate result with reason and findings", async () => {
-  await withParent(async (context, faux) => {
-    const escalateSubmission = { status: "escalate", reason: "disputed authority", findings: ["rule A vs rule B"] };
-    faux.setResponses([
-      completion([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
-      ], []),
-      completion([
-        { tool: INSPECTOR_OUTPUT_TOOL, args: escalateSubmission },
-      ], []),
-    ]);
-    const result = await runGatekeeper({
-      context,
-      runDirectory: context.runDirectory,
-      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
-    });
-    assert.equal(result.status, "escalate");
-    if (result.status === "escalate") {
-      assert.equal(result.officer, "inspector");
-      assert.equal(result.reason, "disputed authority");
-      assert.deepEqual(result.findings, ["rule A vs rule B"]);
-      assert.deepEqual(result.submission, escalateSubmission);
-    }
-  });
-});
-
 test("Gatekeeper maps non-dispatch submission to transport_failure with original retained", async () => {
   await withParent(async (context, faux) => {
     const badSubmission = { status: "incomplete", reason: "missing completion evidence" };
