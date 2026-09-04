@@ -113,9 +113,18 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
     assert.deepEqual(await readSealedSubmission(f.root, "run-ledger", f.root), projection);
     assert.deepEqual(f.closedSubmissions, [projection]);
 
+    await assert.rejects(
+      () => f.tool().execute("dup", {}, undefined, undefined, f.context),
+      /提交账已封账/,
+    );
+
     const resumed = registerTool(f.root);
     await resumed.start("after-seal", "read");
     assert.equal((await ledgerRecords(f.root)).at(-1)?.kind, "post-seal-anomaly");
+    await assert.rejects(
+      () => resumed.tool().execute("dup-restored", {}, undefined, undefined, resumed.context),
+      /提交账已封账/,
+    );
   });
 });
 
