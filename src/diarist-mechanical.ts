@@ -223,7 +223,7 @@ function isNotificationRow(type: string, text: string): boolean {
 }
 
 /**
- * Enumerate cc session user/assistant turns under Claude projects roots.
+ * Enumerate cc session user/assistant turns and human queued-command attachments under Claude projects roots.
  * cc-sessions-first source family (ADR 0075).
  * Directory/file/non-empty JSONL line failures throw DiaristSourceReadError
  * (失败诚实：不得把未读懂洗成没有来源块).
@@ -301,7 +301,7 @@ export function readCcSessionBlocks(
             { cause: error },
           );
         }
-        // Unknown row shape (not user/assistant) is ignored — not a read failure.
+        // Unknown row shape (not user/assistant or a human queued-command attachment) is ignored — not a read failure.
         if (!isRecord(parsed)) continue;
         const type = typeof parsed.type === "string" ? parsed.type : "";
         const queuedCommand =
