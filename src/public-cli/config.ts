@@ -236,7 +236,7 @@ export function setPersistentSeatHost(
  * First engine still requires an existing seat row (model, or residual axes).
  * Clearing engine from an axis-only residual drops the empty row; clearing
  * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
- * (navigator excluded at the type boundary).
+ * (same as PublicConfigurableSeat; navigator included since #639).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
