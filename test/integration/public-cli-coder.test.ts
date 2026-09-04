@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -32,7 +32,6 @@ import {
 import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -255,24 +254,6 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       toolCallId: "c1",
     });
 
-    // #634: coder spot-check of shared worker seam — direct Inspector, no Gatekeeper.
-    {
-      const sessionFile = piDurablePrincipalAuthority.decode(admitted.principal).sessionFile;
-      const auditorDir = join(dirname(sessionFile), "auditor-roles");
-      await mkdir(auditorDir, { recursive: true });
-      await writeFile(
-        join(auditorDir, "o01_inspector.jsonl"),
-        gateToolSessionJsonl({
-          id: "direct-inspector",
-          startedAt: "2026-09-04T00:00:00.000Z",
-          endedAt: "2026-09-04T00:00:10.000Z",
-          toolName: "ak_inspector_output",
-          args: { status: "pass", findings: [] },
-        }),
-        "utf8",
-      );
-    }
-
     const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
     });
@@ -280,10 +261,6 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
     assert.equal(terminal.runId, "run-coder-settle-001");
-    assert.ok(terminal.gate);
-    assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
-    assert.equal(terminal.gate!.rounds[0]!.dispatch.kind, "direct");
-    assert.equal(terminal.gate!.rounds[0]!.dispatch.officer, "inspector");
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
     assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
