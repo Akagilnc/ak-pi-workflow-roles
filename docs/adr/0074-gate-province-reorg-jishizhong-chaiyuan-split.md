@@ -46,7 +46,7 @@ Status: accepted（owner 2026-08-30 两轮 grill 收口，decision keys 与绑�
 
 ### 交卷闸
 
-触发条件与 schema 不变。后出 [ADR 0078](0078-direct-officer-summons-ticket-memory-pointer-input.md) 改为交卷闸按受审物直接传召：将作监/修内司交卷→察院，大理寺判牒与给事中署章→符宝郎，不再先起门下省子 session。`gate-non-mandatory` 描述门下省作为独立角色的派发自由，保持不变。
+触发条件与 schema 不变。后出 [ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md) 改为交卷闸按受审物直接传召：将作监/修内司交卷→察院，大理寺判牒与给事中署章→符宝郎，不再先起门下省子 session。`gate-non-mandatory` 描述门下省作为独立角色的派发自由，保持不变。
 
 ## 影响面
 

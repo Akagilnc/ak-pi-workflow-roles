@@ -303,7 +303,9 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     }, { home });
     const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(rejectedLeg);
-    assert.equal(rejectedLeg.roundCount, 1, "rejected/no-result terminals must not form rounds");
+    // Rejected dispatch is omitted; the later officer is an independent direct round.
+    // Accepted dispatch without an accepted officer receipt still forms no round.
+    assert.equal(rejectedLeg.roundCount, 2, "rejected dispatch must not swallow a later direct officer round");
     assert.deepEqual(rejectedLeg.rounds, [
       {
         roundIndex: 1,
@@ -312,14 +314,21 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
         officerWallMs: 10_000,
         findingsCount: 0,
       },
+      {
+        roundIndex: 2,
+        officer: "inspector",
+        status: "bounce",
+        officerWallMs: 10_000,
+        findingsCount: 1,
+      },
     ]);
     assert.deepEqual(gateSection(rejected.page).byOfficer, [
       {
         officer: "inspector",
-        rounds: 1,
-        bounceCount: 0,
+        rounds: 2,
+        bounceCount: 1,
         passCount: 1,
-        bounceRate: 0,
+        bounceRate: 0.5,
         meanOfficerWallMs: 10_000,
       },
     ]);

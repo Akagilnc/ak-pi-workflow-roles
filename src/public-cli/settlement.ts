@@ -2138,7 +2138,7 @@ export function projectTerminalGateFact(
   if (rounds.length === 0) return undefined;
   const seen = new Set<TerminalGateSeat>();
   for (const round of rounds) {
-    if (round.dispatchStatus === "dispatch") seen.add("gatekeeper");
+    if (round.origin.kind === "historical_dispatch") seen.add("gatekeeper");
     seen.add(round.officer);
   }
   const actualSeats = (["gatekeeper", "inspector", "notary"] as const).filter(
@@ -2148,13 +2148,16 @@ export function projectTerminalGateFact(
     actualSeats,
     rounds: rounds.map((round) => ({
       roundIndex: round.roundIndex,
-      dispatch: {
-        status: round.dispatchStatus,
-        officer: round.officer,
-        ...(round.dispatchReason === undefined
-          ? {}
-          : { reason: round.dispatchReason }),
-      },
+      dispatch:
+        round.origin.kind === "direct"
+          ? { kind: "direct" as const, officer: round.officer }
+          : {
+              kind: "historical_dispatch" as const,
+              officer: round.officer,
+              ...(round.origin.reason === undefined
+                ? {}
+                : { reason: round.origin.reason }),
+            },
       officer: {
         seat: round.officer,
         status: round.status,

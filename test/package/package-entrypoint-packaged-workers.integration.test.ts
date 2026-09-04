@@ -691,7 +691,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
 
           let coderContext: Context | undefined;
           // completed zero-commit: ① bounces once; same payload resubmit confirms + direct officer pass.
-          // unfinished: ① does not apply — single call + scripted officer pass (unfinished 过闸).
+          // unfinished: ① does not apply — single call settles without officer summons (skip-status).
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
@@ -750,7 +750,6 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                officerOrIdle,
                 officerOrIdle,
               ],
           );
@@ -1031,9 +1030,12 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           assert.ok(
             mixed?.type === "message" && mixed.message.role === "toolResult",
           );
-          assert.equal(mixed.message.isError, true);
+          // planned / unfinished settle without an officer summons. Prior isError:true
+          // here was an accidental gate-miss failure, not singleton enforcement.
+          assert.equal(mixed.message.isError, false);
 
-          // Every Fixer status (plan/planned and apply/unfinished) requires Gatekeeper pass.
+          // planned / unfinished skip the officer gate; only DONE statuses summon Inspector.
+          // Parent tool lists may still advertise inspector; do not treat presence as a summons.
           const officerOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
