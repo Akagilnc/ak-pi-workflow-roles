@@ -16,10 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -37,10 +34,7 @@ import {
   buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  readRoleRunState,
-  writeRoleRunState,
-} from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -50,6 +44,11 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import {
+  CANONICAL_SOURCE_RUN_ID,
+  CANONICAL_SOURCE_ROLE,
+  seedCanonicalSourceRun,
+} from "../helpers/notary-fixtures.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
@@ -86,45 +85,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-const CANONICAL_SOURCE_ROLE = "judge" as const;
-
-/** Seed a retained source run under the machine ledger book (authoritative path). */
-async function seedCanonicalSourceRun(
-  home: string,
-  project: string,
-): Promise<string> {
-  const coords = issuePiDurablePrincipalCoordinates({
-    cwd: project,
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    home,
-  });
-  await mkdir(coords.sessionDirectory, { recursive: true });
-  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
-  await writeFile(
-    coords.sessionFile,
-    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
-    "utf8",
-  );
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify({ role: CANONICAL_SOURCE_ROLE, runId: CANONICAL_SOURCE_RUN_ID })}\n`,
-    "utf8",
-  );
-  await writeRoleRunState(coords.runDirectory, {
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    state: "terminal",
-    bookKey: coords.bookKey,
-    projectRoot: project,
-    sessionDirectory: coords.sessionDirectory,
-    sessionFile: coords.sessionFile,
-    admittedRequestPath,
-  });
-  return await realpath(coords.runDirectory);
-}
-
 /** Project-tree fake projection — must be rejected by public locator. */
 async function seedProjectProjection(project: string): Promise<string> {
   const sourceDir = join(
@@ -152,7 +112,8 @@ function scriptedNotarySession(
     details !== null &&
     "status" in details &&
     ((details as { status?: unknown }).status === "pass" ||
-      (details as { status?: unknown }).status === "bounce");
+      (details as { status?: unknown }).status === "bounce" ||
+      (details as { status?: unknown }).status === "escalate");
   return scriptedTerminatingToolSession({
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -442,7 +403,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
   });
 });
 
-test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
+test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -455,6 +416,11 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
         status: "bounce",
         findings: ["quote has no source"],
         disposition: "rewrite",
+      },
+      {
+        status: "escalate",
+        findings: ["quote authority ambiguous"],
+        reason: "need owner clarification",
       },
     ] as const;
 
@@ -478,13 +444,19 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
       assert.ok(result.terminal, `receipt ${receipt.status}`);
-      assert.equal(result.terminal.roleOutcome.kind, "accepted");
+      assert.equal(
+        result.terminal.roleOutcome.kind,
+        receipt.status === "escalate" ? "audit_escalation" : "accepted",
+      );
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(
         result.terminal.roleOutcome.status,
-        receipt.status,
+        receipt.status === "escalate" ? "audit_escalation" : receipt.status,
         `receipt ${receipt.status}`,
       );
+      if ("reason" in receipt) {
+        assert.equal(result.terminal.roleOutcome.decisiveFacts.reason, receipt.reason);
+      }
       assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
     }
   });

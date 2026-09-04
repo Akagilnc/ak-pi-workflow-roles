@@ -14,9 +14,16 @@ import {
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableDoctorRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleDoctorTerminalResult,
@@ -106,11 +113,48 @@ export async function runPublicDoctor(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
-      shouldPresentSettled: (terminal) =>
-        isLawfulTypedTerminalOutcome(terminal.roleOutcome),
-    },
+    adapters: doctorAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function doctorAdapters(): PostAdmissionAdapters<AdmittedDoctorInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
+    shouldPresentSettled: (terminal) =>
+      isLawfulTypedTerminalOutcome(terminal.roleOutcome),
+  };
+}
+
+/**
+ * Resume a previously admitted Doctor run (#633). Issue + retained case
+ * identity restore from the durable admitted request; the session principal reopens.
+ */
+export async function runPublicDoctorResume(
+  request: PublicResumeRequest,
+  env: DoctorRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedDoctorInvocation;
+  terminal?: TerminalResult;
+}> {
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () =>
+      loadResumableDoctorRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    ),
+    buildTurnRequest: (admitted) =>
+      buildDoctorTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
+    adapters: doctorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

@@ -34,6 +34,20 @@ export type AuditEscalationToolResult = {
   usage?: Usage;
 };
 
+export type OfficerAuditEscalationDecision = {
+  readonly status: "escalate";
+  readonly officer?: "inspector" | "notary";
+  readonly reason?: unknown;
+  readonly findings?: unknown;
+  readonly conflicts?: unknown;
+  readonly decisionGate?: unknown;
+  readonly usage?: Usage;
+};
+
+export type AuditEscalationDecision =
+  | Extract<ComplianceDecision, { status: "escalate" }>
+  | OfficerAuditEscalationDecision;
+
 /**
  * Build the escalation delivery face.
  * Role-delivered fields ride under the escalation discriminator (ADR 0055).
@@ -44,17 +58,26 @@ export type AuditEscalationToolResult = {
  * never overwritten (not folded, not dropped, not swapped into the audit home).
  */
 export function buildAuditEscalationResult(
-  decision: Extract<ComplianceDecision, { status: "escalate" }>,
+  decision: AuditEscalationDecision,
   deliveredOutput?: unknown,
 ): AuditEscalationResult {
   const auditOwned: Record<string, unknown> = {
     kind: AUDIT_ESCALATION_KIND,
   };
   if (Object.hasOwn(decision, "conflicts")) {
-    auditOwned.conflicts = decision.conflicts;
+    auditOwned.conflicts = (decision as { conflicts?: unknown }).conflicts;
   }
   if (Object.hasOwn(decision, "decisionGate")) {
-    auditOwned.auditDecisionGate = decision.decisionGate;
+    auditOwned.auditDecisionGate = (decision as { decisionGate?: unknown }).decisionGate;
+  }
+  if (Object.hasOwn(decision, "reason") && (decision as { reason?: unknown }).reason !== undefined) {
+    auditOwned.reason = (decision as { reason?: unknown }).reason;
+  }
+  if (Object.hasOwn(decision, "officer") && (decision as { officer?: unknown }).officer !== undefined) {
+    auditOwned.officer = (decision as { officer?: unknown }).officer;
+  }
+  if (Object.hasOwn(decision, "findings") && (decision as { findings?: unknown }).findings !== undefined) {
+    auditOwned.findings = (decision as { findings?: unknown }).findings;
   }
   const deliveredFields =
     deliveredOutput !== undefined &&
@@ -63,9 +86,14 @@ export function buildAuditEscalationResult(
     !Array.isArray(deliveredOutput)
       ? { ...(deliveredOutput as Record<string, unknown>) }
       : {};
-  // Role output cannot fill an absent audit-owned field.
+  // Role output cannot fill an absent audit/officer-owned field.
   delete deliveredFields.conflicts;
   delete deliveredFields.auditDecisionGate;
+  if (Object.hasOwn(decision, "officer")) {
+    delete deliveredFields.reason;
+    delete deliveredFields.officer;
+    delete deliveredFields.findings;
+  }
   const result = {
     ...deliveredFields,
     ...auditOwned,
@@ -82,10 +110,26 @@ export function isAuditEscalationProjection(
   return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
 }
 
-function humanDecisionText(result: AuditEscalationResult): string {
-  const lines = ["Human decision required: compliance audit escalation."];
+function humanDecisionText(
+  decision: AuditEscalationDecision,
+  result: AuditEscalationResult,
+): string {
+  const officer = Object.hasOwn(decision, "officer")
+    ? (decision as OfficerAuditEscalationDecision).officer
+    : undefined;
+  const lines = [
+    officer === undefined
+      ? "Human decision required: compliance audit escalation."
+      : `Human decision required: ${officer} escalation.`,
+  ];
+  if (officer !== undefined && typeof result.reason === "string") {
+    lines.push(`Reason: ${result.reason}`);
+  }
   if (Array.isArray(result.conflicts)) {
     lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
+  }
+  if (officer !== undefined && Array.isArray(result.findings) && result.findings.length > 0) {
+    lines.push("Findings:", ...result.findings.map((finding) => `- ${finding}`));
   }
   const gate = result.auditDecisionGate;
   if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
@@ -99,12 +143,12 @@ function humanDecisionText(result: AuditEscalationResult): string {
 }
 
 export function projectAuditEscalation(
-  decision: Extract<ComplianceDecision, { status: "escalate" }>,
+  decision: AuditEscalationDecision,
   deliveredOutput?: unknown,
 ): AuditEscalationToolResult {
   const details = buildAuditEscalationResult(decision, deliveredOutput);
   return {
-    content: [{ type: "text", text: humanDecisionText(details) }],
+    content: [{ type: "text", text: humanDecisionText(decision, details) }],
     details,
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),

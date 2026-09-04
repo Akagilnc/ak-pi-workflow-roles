@@ -34,6 +34,13 @@ export type GatekeeperResult =
       readonly findings: readonly string[];
       readonly submission: unknown;
     }
+  | {
+      readonly status: "escalate";
+      readonly officer: "inspector" | "notary";
+      readonly reason?: unknown;
+      readonly findings: unknown;
+      readonly submission: unknown;
+    }
   | { readonly status: "no_receipt"; readonly stage: "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
       readonly status: "transport_failure";
@@ -54,6 +61,15 @@ function gateSeatLabel(stage: "inspector" | "notary"): string {
 
 export { GatekeeperDecisionError } from "./submission-errors.ts";
 
+export class GatekeeperEscalationError extends Error {
+  readonly gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>;
+  constructor(gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>) {
+    super(`门下省${gateSeatLabel(gatekeeper.officer)}上呈`);
+    this.name = "GatekeeperEscalationError";
+    this.gatekeeper = gatekeeper;
+  }
+}
+
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
@@ -73,8 +89,9 @@ export type GatekeeperPassHostActions = {
 // Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
 // Opening goes through the sole openToolObject owner — no parallel transport helper.
 const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce — 形状指引，非 schema 闸" }),
-  findings: Type.Unknown({ description: "string[] findings，随 pass 或 bounce 留存" }),
+  status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }),
+  reason: Type.Optional(Type.Unknown({ description: "status 为 escalate 时的理由" })),
+  findings: Type.Unknown({ description: "string[] findings，随 pass、bounce 或 escalate 留存" }),
 }));
 
 
@@ -112,7 +129,7 @@ function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
 export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   return {
     name,
-    description: "提交一份 typed pass/bounce 决议。",
+    description: "提交一份 typed pass/bounce/escalate 决议。",
     parameters: officerDecisionSchema,
     async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
@@ -170,7 +187,7 @@ function noUsableReleaseFailure(
   return {
     status: "transport_failure",
     stage,
-    reason: "decision 无显式 pass/bounce",
+    reason: "decision 无显式 pass/bounce/escalate",
     submission: retainedSubmission(decision),
   };
 }
@@ -200,6 +217,15 @@ function projectOfficerDecision(
       status: "pass",
       officer,
       findings: asStringArray(record.findings),
+    };
+  }
+  if (record.status === "escalate") {
+    return {
+      status: "escalate",
+      officer,
+      ...(Object.hasOwn(record, "reason") ? { reason: record.reason } : {}),
+      findings: record.findings,
+      submission: retainedSubmission(decision),
     };
   }
   return noUsableReleaseFailure(officer, decision);
@@ -255,6 +281,9 @@ export async function requireGatekeeperPass(options: {
     error.reason = gatekeeper.reason;
     if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
     options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
+  }
+  if (gatekeeper.status === "escalate") {
+    throw new GatekeeperEscalationError(gatekeeper);
   }
   // Envelope owns the execute→tool_result bridge; this module only projects + throws.
   options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);

@@ -78,6 +78,25 @@ test("judge draft directly summons Notary and preserves bounce", async () => {
   });
 });
 
+test("direct officer escalate projects typed escalate result with reason and findings", async () => {
+  await withParent(async (context, faux) => {
+    const escalateSubmission = { status: "escalate", reason: "disputed authority", findings: ["rule A vs rule B"] };
+    faux.setResponses([completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: escalateSubmission }], [])]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "completion" },
+    });
+    assert.equal(result.status, "escalate");
+    if (result.status === "escalate") {
+      assert.equal(result.officer, "inspector");
+      assert.equal(result.reason, "disputed authority");
+      assert.deepEqual(result.findings, ["rule A vs rule B"]);
+      assert.deepEqual(result.submission, escalateSubmission);
+    }
+  });
+});
+
 test("countersign verdict directly summons Notary", async () => {
   await withParent(async (context, faux) => {
     faux.setResponses([completion([{ tool: NOTARY_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], [])]);

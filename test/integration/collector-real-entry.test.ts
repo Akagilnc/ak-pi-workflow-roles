@@ -14,8 +14,9 @@ import {
 } from "../../src/collector-role.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { CollectorClock } from "../../src/collector-evidence.ts";
-import { readLatestSubmissionOutcome, readSealedSubmission } from "../../src/submission-ledger.ts";
+import { createCollectorLedger } from "../../src/collector-ledger.ts";
 import { readCollectorInfrastructureFailure } from "../../src/public-cli/settlement.ts";
+import { readLatestSubmissionOutcome, readSealedSubmission } from "../../src/submission-ledger.ts";
 import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
@@ -78,9 +79,14 @@ async function runRealCollectorScript(options: {
   reviews?: any[];
   issueComments?: any[];
   reviewComments?: any[];
+  requests?: Array<{ id: string; body: string }>;
   responses: Array<CollectorScriptResponse | ((context: any) => CollectorScriptResponse)>;
 }) {
   return withActivationHome({ prefix: "ak-collector-real-script-" }, async ({ agentDir, home }) => {
+    const manifest = resolve(home, "requests.json");
+    if (options.requests !== undefined) {
+      await writeFile(manifest, JSON.stringify({ requests: options.requests }));
+    }
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull({ headOid: "head-1" }),
@@ -95,7 +101,12 @@ async function runRealCollectorScript(options: {
       activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
       extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
       noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
-      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" },
+      flags: {
+        "ak-role": "collector",
+        "ak-collector-repo": "acme/widgets",
+        "ak-collector-pr": "1",
+        ...(options.requests === undefined ? {} : { "ak-collector-request-manifest": manifest }),
+      },
     }, async ({ session, sessionManager }) => {
       await session.prompt("start");
       const entries = [...sessionManager.getEntries()] as any[];
@@ -137,7 +148,7 @@ test("Collector failed reactivation clears a previously successful real role act
   const flags = new Map<string, unknown>([["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"]]);
   const tools = new Map<string, any>(); let active: string[] = [];
   const pi = { registerFlag() {}, getFlag: (name: string) => flags.get(name), getCommands: () => [], getAllTools: () => [...tools.values()], registerTool: (tool: any) => tools.set(tool.name, tool), setActiveTools: (names: string[]) => { active = names; }, getActiveTools: () => active, on() {} };
-  const runtime = createCollectorRoleRuntime(pi as any, { loadSoul: async () => soul, createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }), createClock: clock }, { failInfrastructure(error: unknown): never { throw error; } });
+  const runtime = createCollectorRoleRuntime(pi as any, { loadSoul: async () => soul, createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }), createClock: clock, createLedger: (config, collectorClock) => createCollectorLedger(config, { clock: collectorClock, dossierEntries: [] }) }, { failInfrastructure(error: unknown): never { throw error; } });
   const context = { mode: "print" } as any;
   await runtime.activate(context, { reason: "new" }); flags.delete("ak-collector-repo");
   await assert.rejects(() => runtime.activate(context, { reason: "new" }), /requires --ak-collector-repo/);
@@ -362,6 +373,96 @@ test("#641 chain② declaration with an unassemblable receipt keeps the shared h
   } finally {
     process.exitCode = priorExitCode;
   }
+});
+
+test("Collector activation restores non-empty session dossier before resumed observe and output", async () => {
+  await withActivationHome({ prefix: "ak-collector-session-replay-" }, async ({ agentDir, home }) => {
+    const manifest = resolve(home, "requests.json");
+    await writeFile(manifest, JSON.stringify({ requests: [{ id: "reviewer", body: "Please review." }] }));
+    const sourceClock = clock();
+    const sourceTransport = createFakeGitHubTransport({
+      user: sampleUser(), pullRequest: samplePull({ headOid: "head-1" }), reviews: [], issueComments: [], reviewComments: [],
+      createComment: async () => { throw new Error("interrupted after dispatch"); },
+    });
+    const sourceFaux = fauxProvider({ api: "collector-session-source", provider: "collector-session-source", tokenSize: { min: 1000, max: 1000 } });
+    sourceFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe-source" }), { stopReason: "toolUse" }),
+      (context: any) => {
+        const observed = providerObserveViews(context.messages).at(-1);
+        assert.ok(observed);
+        return fauxAssistantMessage(fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "reviewer", snapshotId: observed.snapshotId }, { id: "request-interrupted" }), { stopReason: "toolUse" });
+      },
+    ] as any);
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const sessionManager = await withInProcessPi({
+      home, cwd: home, agentDir, faux: sourceFaux, modelsPath: null, activationLedgerSession: true,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => sourceTransport, createCollectorClock: () => sourceClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
+      noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
+      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", "ak-collector-request-manifest": manifest },
+    }, async ({ session, sessionManager: sourceSessionManager }) => {
+      await session.prompt("start");
+      return sourceSessionManager;
+    });
+    process.exitCode = priorExitCode;
+    const requestEntry = [...sessionManager.getEntries()].find((entry: any) => entry.type === "custom" && entry.customType === "ak-collector-request") as any;
+    assert.equal(requestEntry?.data?.attempt?.status, "started");
+    const interruptedBody = requestEntry.data.attempt.body as string;
+    const resumedTransport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-1" }),
+      reviews: [], reviewComments: [],
+      issueComments: [botIssueComment({ id: 91, userLogin: sampleUser().login, userId: 199175422, body: interruptedBody })],
+    });
+    const resumedClock = clock();
+    const faux = fauxProvider({ api: "collector-session-replay", provider: "collector-session-replay", tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe-resumed" }), { stopReason: "toolUse" }),
+      outputCall({}, "output-resumed"),
+    ] as any);
+
+    await withInProcessPi({
+      home, cwd: home, agentDir, faux, modelsPath: null, sessionManager,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => resumedTransport, createCollectorClock: () => resumedClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
+      noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
+      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", "ak-collector-request-manifest": manifest },
+    }, async ({ session }) => {
+      await session.prompt("resume");
+    });
+
+    const headerId = sessionManager.getHeader?.()?.id;
+    assert.ok(headerId);
+    const sealed = await readSealedSubmission(home, headerId, home);
+    assert.ok(sealed);
+    const receipt = sealed.decisiveFacts as any;
+    assert.equal(receipt.deadlineTime, "2026-01-01T00:15:00.000Z");
+    assert.equal(receipt.requestAttempts[0].status, "recovered");
+    assert.ok(receipt.snapshots.length >= 2);
+    assert.ok(receipt.evidenceRecords.length > 0);
+    assert.equal(resumedTransport.calls.create, 0);
+  });
+});
+
+test("Collector output candidate blocks a same-turn request before GitHub POST", async () => {
+  const result = await runRealCollectorScript({
+    requests: [{ id: "reviewer", body: "Please review." }],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const observed = providerObserveViews(context.messages).at(-1);
+        assert.ok(observed);
+        return fauxAssistantMessage([
+          fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "output-first" }),
+          fauxToolCall(COLLECTOR_REQUEST_TOOL, {
+            requestId: "reviewer",
+            snapshotId: observed.snapshotId,
+          }, { id: "request-after-output" }),
+        ], { stopReason: "toolUse" });
+      },
+    ],
+  });
+
+  assert.equal(result.transport.calls.create, 0, "the blocked sibling must not reach GitHub POST");
 });
 
 test("#641 P2 read tool real failure writes the typed host fact settlement classifies", async () => {
