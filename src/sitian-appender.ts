@@ -39,9 +39,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const IDENTITY_CLAIM_WAIT_MS = 10;
-const identityWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
-
 function identityClaimPath(recordFile: string, identity: string): string {
   const digest = createHash('sha256').update(identity, 'utf8').digest('hex');
   return `${recordFile}.id-${digest}`;
@@ -61,6 +58,18 @@ type IdentityClaimBody = {
   readonly row: string;
 };
 
+/** Typed claim read: absent ≠ malformed ≠ unreadable (read-failure throws). */
+type IdentityClaimRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "present"; readonly claim: IdentityClaimBody };
+
+/** Typed recovery-holder read: absent ≠ malformed ≠ unreadable (read-failure throws). */
+type RecoveryHolderRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "present"; readonly pid: number };
+
 function parseIdentityClaim(contents: string): IdentityClaimBody | undefined {
   const nl = contents.indexOf('\n');
   if (nl <= 0) return undefined;
@@ -78,37 +87,39 @@ function parseIdentityClaim(contents: string): IdentityClaimBody | undefined {
   return { pid, row };
 }
 
-function readIdentityClaim(claimPath: string): IdentityClaimBody | undefined {
+function readIdentityClaim(claimPath: string): IdentityClaimRead {
   let contents: string;
   try {
     contents = readFileSync(claimPath, 'utf8');
   } catch (error) {
-    if (errorCodeOf(error) === 'ENOENT') return undefined;
+    if (errorCodeOf(error) === 'ENOENT') return { kind: "absent" };
     throw new SitianInfrastructureError(
       `Sitian identity claim is unreadable at ${claimPath}: ${describeErrorIdentity(error)}; holder liveness unverifiable, claim left in place`,
       { cause: error },
     );
   }
-  return parseIdentityClaim(contents);
+  const claim = parseIdentityClaim(contents);
+  if (claim === undefined) return { kind: "malformed" };
+  return { kind: "present", claim };
 }
 
 /** Recovery token carries only a holder pid (no JSONL row). */
-function readRecoveryHolderPid(recoveryPath: string): number | undefined {
+function readRecoveryHolderPid(recoveryPath: string): RecoveryHolderRead {
   let contents: string;
   try {
     contents = readFileSync(recoveryPath, 'utf8');
   } catch (error) {
-    if (errorCodeOf(error) === 'ENOENT') return undefined;
+    if (errorCodeOf(error) === 'ENOENT') return { kind: "absent" };
     throw new SitianInfrastructureError(
       `Sitian identity recovery token is unreadable at ${recoveryPath}: ${describeErrorIdentity(error)}; holder liveness unverifiable, token left in place`,
       { cause: error },
     );
   }
   const line = contents.split('\n', 1)[0] ?? '';
-  if (!/^[1-9]\d*$/.test(line)) return undefined;
+  if (!/^[1-9]\d*$/.test(line)) return { kind: "malformed" };
   const pid = Number.parseInt(line, 10);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
-  return pid;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return { kind: "malformed" };
+  return { kind: "present", pid };
 }
 
 /**
@@ -166,19 +177,19 @@ function findIdentityPointer(
   return undefined;
 }
 
-function unlinkBestEffort(path: string): void {
+function unlinkAbsentOk(path: string): Error | undefined {
   try {
     unlinkSync(path);
+    return undefined;
   } catch (error) {
-    if (errorCodeOf(error) !== 'ENOENT') {
-      // Best-effort cleanup after durable publish; leave residue rather than
-      // laundering a cleanup failure into a false success unwind.
-    }
+    if (errorCodeOf(error) === 'ENOENT') return undefined;
+    return error instanceof Error ? error : new Error(describeErrorIdentity(error));
   }
 }
 
 /**
  * Remove claim/recovery sidecars only after the canonical row is durably visible.
+ * Non-ENOENT unlink failures are aggregated and thrown; the committed row stays.
  * Crash residue may remain while recovery still needs it.
  */
 function releaseIdentityArtifactsAfterPublish(
@@ -195,8 +206,23 @@ function releaseIdentityArtifactsAfterPublish(
       `Sitian identity claim artifacts at ${claimPath} cannot be released: canonical row for identity ${identity} is not durably visible at ${recordFile}`,
     );
   }
-  unlinkBestEffort(identityRecoveryPath(claimPath));
-  unlinkBestEffort(claimPath);
+  const failures: Error[] = [];
+  for (const artifact of [identityRecoveryPath(claimPath), claimPath]) {
+    const failure = unlinkAbsentOk(artifact);
+    if (failure !== undefined) failures.push(failure);
+  }
+  if (failures.length === 1) {
+    throw new SitianInfrastructureError(
+      `Sitian identity claim artifacts at ${claimPath} could not be released after canonical row for identity ${identity} was committed at ${recordFile}: ${describeErrorIdentity(failures[0])}`,
+      { cause: failures[0] },
+    );
+  }
+  if (failures.length > 1) {
+    throw new SitianInfrastructureError(
+      `Sitian identity claim artifacts at ${claimPath} could not be released after canonical row for identity ${identity} was committed at ${recordFile}: ${failures.map(describeErrorIdentity).join('; ')}`,
+      { cause: new AggregateError(failures, 'Sitian identity claim sidecar cleanup failures') },
+    );
+  }
   return published;
 }
 
@@ -221,11 +247,11 @@ function publishIdentityRow(
 }
 
 /**
- * Contended claim: wait only while a live holder may still publish; materialize
- * a dead unpublished claim from the complete row stored in the claim; fail
- * closed when recovery is itself dead residue. Races that observe claim or
- * recovery disappearance rescan the canonical row and fail honestly if neither
- * exists. No pathname compare-and-unlink.
+ * Contended claim: never wait on a live holder (typed live contention — callers
+ * retry after publication). Materialize a dead unpublished claim from the
+ * write-ahead row; fail closed on dead recovery residue. Absent ≠ malformed ≠
+ * read-failure; races that observe true absence rescan the canonical row.
+ * No pathname compare-and-unlink; no wall-clock wait.
  */
 function resolveContendedIdentityClaim(
   recordFile: string,
@@ -234,84 +260,95 @@ function resolveContendedIdentityClaim(
   level: SitianRecord['level'],
   claimPath: string,
 ): RecordPointer {
-  for (;;) {
-    sealTornTail(recordFile);
-    const found = findIdentityPointer(recordFile, identity, kind, level);
-    if (found !== undefined) {
-      return releaseIdentityArtifactsAfterPublish(
-        recordFile,
-        identity,
-        kind,
-        level,
-        claimPath,
-      );
-    }
-
-    const claim = readIdentityClaim(claimPath);
-    if (claim === undefined) {
-      sealTornTail(recordFile);
-      const raced = findIdentityPointer(recordFile, identity, kind, level);
-      if (raced !== undefined) return raced;
-      throw new SitianInfrastructureError(
-        `Sitian identity claim at ${claimPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
-      );
-    }
-
-    if (isProcessAlive(claim.pid)) {
-      Atomics.wait(identityWaitBuffer, 0, 0, IDENTITY_CLAIM_WAIT_MS);
-      continue;
-    }
-
-    const recoveryPath = identityRecoveryPath(claimPath);
-    if (publishExclusiveFile(recoveryPath, `${process.pid}\n`)) {
-      publishIdentityRow(recordFile, identity, kind, level, claim.row);
-      return releaseIdentityArtifactsAfterPublish(
-        recordFile,
-        identity,
-        kind,
-        level,
-        claimPath,
-      );
-    }
-
-    sealTornTail(recordFile);
-    const published = findIdentityPointer(recordFile, identity, kind, level);
-    if (published !== undefined) {
-      return releaseIdentityArtifactsAfterPublish(
-        recordFile,
-        identity,
-        kind,
-        level,
-        claimPath,
-      );
-    }
-
-    const recoveryPid = readRecoveryHolderPid(recoveryPath);
-    if (recoveryPid === undefined) {
-      sealTornTail(recordFile);
-      const raced = findIdentityPointer(recordFile, identity, kind, level);
-      if (raced !== undefined) {
-        return releaseIdentityArtifactsAfterPublish(
-          recordFile,
-          identity,
-          kind,
-          level,
-          claimPath,
-        );
-      }
-      throw new SitianInfrastructureError(
-        `Sitian identity recovery token at ${recoveryPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
-      );
-    }
-    if (isProcessAlive(recoveryPid)) {
-      Atomics.wait(identityWaitBuffer, 0, 0, IDENTITY_CLAIM_WAIT_MS);
-      continue;
-    }
-
-    throw new SitianInfrastructureError(
-      `Sitian identity claim stayed unpublished at ${claimPath} after dead holder pid ${claim.pid}; recovery residue at ${recoveryPath} is not safely reclaimable without pathname compare-and-unlink, claim left in place`,
+  sealTornTail(recordFile);
+  const found = findIdentityPointer(recordFile, identity, kind, level);
+  if (found !== undefined) {
+    return releaseIdentityArtifactsAfterPublish(
+      recordFile,
+      identity,
+      kind,
+      level,
+      claimPath,
     );
   }
+
+  const claimRead = readIdentityClaim(claimPath);
+  if (claimRead.kind === 'absent') {
+    sealTornTail(recordFile);
+    const raced = findIdentityPointer(recordFile, identity, kind, level);
+    if (raced !== undefined) return raced;
+    throw new SitianInfrastructureError(
+      `Sitian identity claim at ${claimPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
+    );
+  }
+  if (claimRead.kind === 'malformed') {
+    throw new SitianInfrastructureError(
+      `Sitian identity claim at ${claimPath} is malformed; refusing to treat as disappeared, claim left in place`,
+    );
+  }
+  const claim = claimRead.claim;
+
+  if (isProcessAlive(claim.pid)) {
+    throw new SitianInfrastructureError(
+      `Sitian identity claim at ${claimPath} is held by live pid ${claim.pid}; typed live contention — retry after the holder publishes`,
+    );
+  }
+
+  const recoveryPath = identityRecoveryPath(claimPath);
+  if (publishExclusiveFile(recoveryPath, `${process.pid}\n`)) {
+    publishIdentityRow(recordFile, identity, kind, level, claim.row);
+    return releaseIdentityArtifactsAfterPublish(
+      recordFile,
+      identity,
+      kind,
+      level,
+      claimPath,
+    );
+  }
+
+  sealTornTail(recordFile);
+  const published = findIdentityPointer(recordFile, identity, kind, level);
+  if (published !== undefined) {
+    return releaseIdentityArtifactsAfterPublish(
+      recordFile,
+      identity,
+      kind,
+      level,
+      claimPath,
+    );
+  }
+
+  const recoveryRead = readRecoveryHolderPid(recoveryPath);
+  if (recoveryRead.kind === 'absent') {
+    sealTornTail(recordFile);
+    const raced = findIdentityPointer(recordFile, identity, kind, level);
+    if (raced !== undefined) {
+      return releaseIdentityArtifactsAfterPublish(
+        recordFile,
+        identity,
+        kind,
+        level,
+        claimPath,
+      );
+    }
+    throw new SitianInfrastructureError(
+      `Sitian identity recovery token at ${recoveryPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
+    );
+  }
+  if (recoveryRead.kind === 'malformed') {
+    throw new SitianInfrastructureError(
+      `Sitian identity recovery token at ${recoveryPath} is malformed; refusing to treat as disappeared, claim left in place`,
+    );
+  }
+  if (isProcessAlive(recoveryRead.pid)) {
+    throw new SitianInfrastructureError(
+      `Sitian identity recovery token at ${recoveryPath} is held by live pid ${recoveryRead.pid}; typed live contention — retry after the holder publishes`,
+    );
+  }
+
+  throw new SitianInfrastructureError(
+    `Sitian identity claim stayed unpublished at ${claimPath} after dead holder pid ${claim.pid}; recovery residue at ${recoveryPath} is not safely reclaimable without pathname compare-and-unlink, claim left in place`,
+  );
 }
 
 /**
@@ -321,11 +358,11 @@ function resolveContendedIdentityClaim(
  * claim holder's pid — uniqueness commit plus write-ahead data so dead-winner
  * recovery does not depend on lost append bytes. The winner appends that row,
  * then removes claim/recovery only after the canonical row is durably visible.
- * Contenders wait only while the holder is live; a dead unpublished claim is
- * materialized once via an exclusive recovery token. Contested dead recovery
- * fails closed with a typed error. Crash residue may remain only while needed
- * for recovery. No indefinite wait; no pathname compare-and-unlink reclaim
- * (#629 fail-closed shape).
+ * A live EEXIST holder fails immediately as typed live contention (uniqueness
+ * forbids duplicate rows; it does not require every concurrent caller to
+ * succeed). Dead unpublished claims recover from write-ahead once. Contested
+ * dead recovery fails closed. Crash residue may remain only while needed for
+ * recovery. No wait loop; no pathname compare-and-unlink reclaim (#629).
  */
 function appendWithIdentityClaim(
   recordFile: string,
@@ -337,9 +374,13 @@ function appendWithIdentityClaim(
   const existing = findIdentityPointer(recordFile, record.identity, record.kind, record.level);
   if (existing !== undefined) {
     // Canonical row already visible — leftover crash sidecars are no longer needed.
-    unlinkBestEffort(identityRecoveryPath(claimPath));
-    unlinkBestEffort(claimPath);
-    return existing;
+    return releaseIdentityArtifactsAfterPublish(
+      recordFile,
+      record.identity,
+      record.kind,
+      record.level,
+      claimPath,
+    );
   }
 
   const acquired = publishExclusiveFile(claimPath, encodeIdentityClaim(row));
