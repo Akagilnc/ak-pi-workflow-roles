@@ -553,7 +553,7 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
       sourceRun: parsed.sourceRun,
       createRunId: () => notaryRunId,
     });
-    assert.equal(admitted.ticketNumber, 582)
+    assert.equal(admitted.ticketNumber, 582);
     assert.equal(admitted.sourceRunPath, sourceRunPath);
 
     // Kickoff ignores ticketNumber — no free-text parallel copy.

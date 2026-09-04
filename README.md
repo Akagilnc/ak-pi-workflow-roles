@@ -102,9 +102,8 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # merger — resolve one merge already in conflict (start it with Git's ort first)
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# notary — document-fidelity check on one retained source run; optional --ticket for court diary
+# notary — document-fidelity check on one retained source run; ticket key inherited from source-run admitted form
 ak-role notary --source-run <runId@role|path>
-ak-role notary --source-run <runId@role|path> --ticket 582
 
 # inspector — direct complexity and test-quality check
 ak-role inspector --attach ./change.patch "Review this material."
@@ -115,8 +114,8 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 # navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
-# countersign — ticket-court five questions; optional --ticket (diarist pipeline refreshes court diary first)
-ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
+# countersign — ticket-court five questions; ticket recognition via instruction
+ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # analyst — deterministic metrics; bare call = whole book
 ak-role analyst
