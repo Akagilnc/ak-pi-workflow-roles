@@ -86,9 +86,12 @@ export function buildAuditEscalationResult(
     !Array.isArray(deliveredOutput)
       ? { ...(deliveredOutput as Record<string, unknown>) }
       : {};
-  // Role output cannot fill an absent audit-owned field.
+  // Role output cannot fill an absent audit/officer-owned field.
   delete deliveredFields.conflicts;
   delete deliveredFields.auditDecisionGate;
+  delete deliveredFields.reason;
+  delete deliveredFields.officer;
+  delete deliveredFields.findings;
   const result = {
     ...deliveredFields,
     ...auditOwned,

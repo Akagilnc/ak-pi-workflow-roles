@@ -722,7 +722,8 @@ test(
       assert.equal(escalated.terminal?.roleOutcome.kind, "audit_escalation");
       assert.equal(escalated.terminal?.roleOutcome.status, "audit_escalation");
       assert.equal(escalated.terminal?.roleOutcome.decisiveFacts.officer, "notary");
-      assert.equal(escalated.terminal?.roleOutcome.decisiveFacts.reason, "third review remains unresolved");
+      assert.deepEqual(escalated.terminal?.roleOutcome.decisiveFacts.findings, ["authority conflict"]);
+      assert.equal(Object.hasOwn(escalated.terminal!.roleOutcome.decisiveFacts, "reason"), false);
 
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);

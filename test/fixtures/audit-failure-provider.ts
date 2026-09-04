@@ -153,7 +153,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
           gateMode === "notary-no-pass"
             ? { status: "ok-enough" }
             : gateMode === "notary-escalate"
-              ? { status: "escalate", reason: "third review remains unresolved", findings: ["authority conflict"] }
+              ? { status: "escalate", findings: ["authority conflict"] }
               : { status: "pass", findings: [] },
         ),
         { stopReason: "toolUse" },
@@ -234,8 +234,14 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
       if (deliveryMode === "silence") {
         return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "silence-judge" }), { stopReason: "toolUse" });
       }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: observedJudgeCallId() }), { stopReason: "toolUse" });
-      return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }), { stopReason: "toolUse" });
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, {
+        judgeStatus: "converged",
+        ...(gateMode === "notary-escalate" ? { reason: "candidate reason must not become officer reason" } : {}),
+      }, { id: observedJudgeCallId() }), { stopReason: "toolUse" });
+      return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, {
+        judgeStatus: "converged",
+        ...(gateMode === "notary-escalate" ? { reason: "candidate reason must not become officer reason" } : {}),
+      }, { id: "fatal-judge" }), { stopReason: "toolUse" });
     }
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
