@@ -47,6 +47,9 @@ export type DiaristTicketResolutionReason =
   | "assertion-uninterpretable"
   | "number-not-in-instruction"
   | "ticket-missing"
+  | "ticket-is-pull-request"
+  | "ticket-unavailable"
+  | "ticket-invalid"
   | "origin-unresolved"
   | "engine-failed";
 
@@ -201,7 +204,33 @@ export function createGhTicketExistenceChecker(options?: {
       ticketNumber: input.ticketNumber,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    return projected.status === "available";
+    if (projected.status === "available") return true;
+    if (
+      projected.status === "unavailable"
+      && projected.reason === "http-non-2xx"
+      && projected.httpStatus === 404
+    ) {
+      return false;
+    }
+    if (projected.status === "unavailable" && projected.reason === "pull-request") {
+      throw new DiaristTicketResolutionError(
+        "ticket-is-pull-request",
+        `ticket #${input.ticketNumber} resolves to a pull request, not an issue`,
+        { cause: projected },
+      );
+    }
+    if (projected.status === "unavailable") {
+      throw new DiaristTicketResolutionError(
+        "ticket-unavailable",
+        `ticket verification unavailable for ${input.owner}/${input.repo}#${input.ticketNumber}`,
+        { cause: projected },
+      );
+    }
+    throw new DiaristTicketResolutionError(
+      "ticket-invalid",
+      `ticket verification returned an invalid issue payload for ${input.owner}/${input.repo}#${input.ticketNumber}`,
+      { cause: projected },
+    );
   };
 }
 
@@ -236,8 +265,9 @@ export async function verifyDiaristTicketAssertion(input: {
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   } catch (error) {
+    if (error instanceof DiaristTicketResolutionError) throw error;
     throw new DiaristTicketResolutionError(
-      "ticket-missing",
+      "ticket-unavailable",
       `diarist ticket assertion #${n} live verification failed`,
       { cause: error },
     );

@@ -102,7 +102,11 @@ const RESUME_SEAT_DISPATCH: Record<
       request: PublicResumeRequest,
       env: PostAdmissionEnv,
       io: CliIo,
-    ) => Promise<{ exitCode: number; terminal?: TerminalResult }>;
+    ) => Promise<{
+      exitCode: number;
+      terminal?: TerminalResult;
+      staleWriterLeaseReclaimed?: true;
+    }>;
   }
 > = {
   judge: { seat: "judge", run: runPublicResume },
@@ -435,7 +439,21 @@ export type CliResult = {
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
   hostFailure?: HostSelectionFailure;
+  /** Typed #556 fact from public resume/dispatch when a dead holder lock was unlinked. */
+  staleWriterLeaseReclaimed?: true;
 };
+
+function cliResultFromRoleRun(result: {
+  exitCode: number;
+  terminal?: TerminalResult;
+  staleWriterLeaseReclaimed?: true;
+}): CliResult {
+  return {
+    exitCode: result.exitCode,
+    ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+    ...(result.staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
+}
 
 const THINKING_LEVELS = new Set([
   "off",
@@ -1193,10 +1211,7 @@ export async function runAkRole(
         }),
         io,
       );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
+      return cliResultFromRoleRun(result);
     }
 
     if (isPublicCliSupportCommand(parsed.command)) {

@@ -3,12 +3,15 @@
 // 真 host 会话装配），不属开发内环快档。契约逐断言不变。
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { basename, dirname, join, resolve } from "node:path";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
+import { seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { openPiInstitutionalSession } from "../../src/pi/in-process-session.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, createRoleRuntimeExtension, publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -21,6 +24,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 
 test("exact-session resume keeps principal; terminal starts next invocation; non-UUIDv7 rejected", async () => {
   const { basename } = await import("node:path");
@@ -849,5 +853,129 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     assert.equal(events.some((event) => event.disposition === "recommendation"), true);
     assert.equal(events.some((event) => event.disposition === "unavailable"), false);
   });
+});
+
+test("reused native session rethrows a prompt failure that produced no new assistant", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-reused-prompt-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-reused-prompt", api: "openai-completions" });
+    const model = faux.getModel();
+    faux.setResponses([fauxAssistantMessage("prior turn")]);
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-reused"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        await session.prompt("first turn");
+        const originalPrompt = AgentSession.prototype.prompt;
+        const promptBoom = new Error("second prompt failed before assistant output");
+        AgentSession.prototype.prompt = async function () {
+          throw promptBoom;
+        };
+        try {
+          await assert.rejects(
+            () => session.prompt("second turn"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.originalCause === promptBoom,
+          );
+        } finally {
+          AgentSession.prototype.prompt = originalPrompt;
+        }
+      } finally {
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("institutional close removes scratch after session dispose throws", async () => {
+  const root = await mkdtemp(join(tmpdir(), "institutional-close-scratch-"));
+  try {
+    seedGitRepository(root);
+    const scratchParent = join(root, "scratch");
+    await mkdir(scratchParent);
+    const faux = fauxProvider({ provider: "close-scratch", api: "openai-completions" });
+    const model = faux.getModel();
+    await withInstitutionalProviderFixture(faux, async () => {
+      const opened = await openPiInstitutionalSession({
+        cwd: root,
+        selection: { provider: model.provider, model: model.id },
+        systemPrompt: "",
+        credentialScratchParent: scratchParent,
+      });
+      const closeBoom = new Error("dispose failed during close");
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(opened.handle.close(), (error: unknown) => error === closeBoom);
+        assert.deepEqual(await readdir(scratchParent), []);
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("native navigator dispose settles handle.close rejection on the caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-close-reject-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-close-reject", api: "openai-completions" });
+    const model = faux.getModel();
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    const closeBoom = new Error("navigator handle.close failed");
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-close"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => {
+            assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
+            assert.equal((error as AggregateError).errors[0], closeBoom);
+            assert.equal((error as AggregateError).cause, closeBoom);
+            return true;
+          },
+        );
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => error instanceof AggregateError && error.cause === closeBoom,
+        );
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
 });
 
