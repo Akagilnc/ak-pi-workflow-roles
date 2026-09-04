@@ -7,11 +7,13 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { navigatorChildOrUndefined } from "../helpers/navigator-child-fixture.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 
-export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
+export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Promise<void> {
   const runsPath = process.env.AK_DOCTOR_FRESH_CASE_PATH;
   const issueNumber = Number(process.env.AK_DOCTOR_FRESH_ISSUE);
   if (typeof runsPath !== "string" || !runsPath || !Number.isInteger(issueNumber)) {
@@ -24,33 +26,40 @@ export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
     provider: "ak-doctor-fresh",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   let captured = false;
   const capture = (context: Context) => {
     if (captured || typeof capturePath !== "string" || capturePath.trim() === "") return;
     captured = true;
     writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
   };
-  faux.setResponses([
-    (context: Context) => {
-      capture(context);
+  // Deterministic dispatch by real tool names: Navigator institutional child may
+  // consume a turn before Doctor output/audit (#590).
+  const respond = (context: Context) => {
+    const navigator = navigatorChildOrUndefined(context, { role: "doctor", phase: null });
+    if (navigator !== undefined) return navigator;
+    capture(context);
+    const names = context.tools?.map((tool) => tool.name) ?? [];
+    if (names.includes(DOCTOR_AUDIT_TOOL_NAME)) {
       return fauxAssistantMessage(
         fauxToolCall(
-          DOCTOR_OUTPUT_TOOL_NAME,
-          { status: "completed", case: { issueNumber, runsPath }, findings: [] },
-          { id: "doctor-output" },
+          DOCTOR_AUDIT_TOOL_NAME,
+          { status: "pass", violations: [], conflicts: [], decisionGate: null },
+          { id: "doctor-audit" },
         ),
         { stopReason: "toolUse" },
       );
-    },
-    fauxAssistantMessage(
+    }
+    return fauxAssistantMessage(
       fauxToolCall(
-        DOCTOR_AUDIT_TOOL_NAME,
-        { status: "pass", violations: [], conflicts: [], decisionGate: null },
-        { id: "doctor-audit" },
+        DOCTOR_OUTPUT_TOOL_NAME,
+        { status: "completed", case: { issueNumber, runsPath }, findings: [] },
+        { id: "doctor-output" },
       ),
       { stopReason: "toolUse" },
-    ),
-  ]);
+    );
+  };
+  faux.setResponses(Array.from({ length: 8 }, () => respond));
 
   const model = faux.getModel();
   const provider: Provider = {
@@ -69,6 +78,6 @@ export default function doctorFreshProcessProvider(pi: ExtensionAPI): void {
   };
   pi.registerProvider(provider);
   pi.on("session_shutdown", () => {
-    console.error(`DOCTOR_FRESH_PROVIDER_CALLS=${faux.state.callCount}`);
+    void seeded.close();
   });
 }

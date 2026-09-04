@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
+为 [Pi](https://pi.dev) 打包的工作流角色：大理寺（judge）、给事中（countersign）、左拾遗（gleaner-left）、修内司（fixer）、将作监（coder）、御史台（reviewer）、通进司（collector）、太医署（doctor）、校书郎（merger）、符宝郎（notary）、察院（inspector）、太史（analyst）。English: [README.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.md)。
 
 ## 安装
 
@@ -15,11 +15,10 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 ### 测试通道（`next`）
 
-家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；测试面自有 `HOME`，其下的 AK config／ledger／book 与 `PI_CODING_AGENT_DIR` 一并独立，不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
+家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；Pi 安装面经 `PI_CODING_AGENT_DIR` 隔离（包配置、账本与 book 仍属于机器用户家目录，不随 `HOME` 漂移），不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
 
 ```bash
-export HOME=/path/to/test-home          # 测试面自有 HOME
-export PI_CODING_AGENT_DIR="$HOME/.pi/agent"
+export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
 export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
 ```
 
@@ -39,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 重开该次运行的同一 Pi session。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 session，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎仍为一次性，无 resume。模型解析自**现行席位配置**；在乎身份的续跑显式带 `--model` 钉住（#552 裁定口径）。
+`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。全局 `--model` / `--host` / `--engine` 仅覆盖本次 resume。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`，Grok：`runDirectory/grok-home`），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。通进司、太医署、符宝郎、察院仍为一次性，无 resume；给事中、左拾遗可手动 resume（#599）。
 
 大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -48,7 +47,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# 门下省官席（交卷自动出席；除直调符宝郎外无独立命令）
+# 门下省交卷闸官席（察院/符宝郎交卷自动出席，亦可直调；给事中票庭由调用者直召，见「调用百官」）
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -56,10 +55,15 @@ ak-role config unset gatekeeper
 # 持久劳务引擎（可调用角色；不含 navigator）；一次性覆盖仍用 --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
+# 持久主会话宿主（可调用角色）；一次性覆盖仍用 --host
+ak-role config set-host judge grok-build
+ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。
+**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、游奕使、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
+
+门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
@@ -92,8 +96,18 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# 符宝郎——文书核验一份留存 source run；一次性
+# 符宝郎——文书核验一份留存 source run；一次性；可选 --ticket 调起居录
 ak-role notary --source-run <runId@role|path>
+ak-role notary --source-run <runId@role|path> --ticket 582
+
+# 察院——直调复杂度与测试质量两轴；一次性
+ak-role inspector --attach ./change.patch "Review this material."
+
+# 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
+ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
+
+# 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction
+ak-role gleaner-left --base main
 
 # 太史——确定性指标；裸调＝整簿
 ak-role analyst
@@ -115,9 +129,11 @@ ak-role resume <runId> "<裁定>"
 | **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
-| **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **质量保证省。** 交卷时判断受审物、够不够审、该谁审，派给事中或符宝郎；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。 |
-| **给事中** | inspector（无独立 CLI；可由门下省派发） | **复杂度与测试质量两轴质检。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。 |
-| **符宝郎** | notary | **引语真伪与票面对齐。** 受审物是大理寺拟判等文书；可被门下省派发，也可 `ak-role notary` 单独调。 |
+| **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召（皆非闸派）；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。票庭流水线在本席 turn 前跑起居郎工序（调用者无感）；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
+| **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
+| **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
+| **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
 | **游奕使** | navigator（无 CLI，自动出席） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
@@ -128,8 +144,8 @@ ak-role resume <runId> "<裁定>"
 | --- | --- | --- | --- |
 | doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
-| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
-| gleaner-left | **左拾遗** | 合并前以无锚定冷眼审全幅合并候选，只上弹章、不封驳不裁决（风闻） | soul 已落＋[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案；机器席位待建 |
+| — | **司天台** | 记候簿——只打点、只指针，不分析不执法；二期含每票起居录 kind `ticket-provenance` | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；起居录见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
+| — | **起居郎** | 票庭流水线前序工序：LLM 语义收集＋机械保全，按票刷新起居录 | **非公开席位**（无 soul 开府、不出席闸；[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `diarist`） |
 | marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
 | — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |
@@ -145,8 +161,128 @@ ak-role resume <runId> "<裁定>"
 
 开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
 
+<!-- BEGIN GENERATED: public-cli-options -->
+## 公开 CLI 选项（生成）
+
+本表由 `src/public-cli/option-definitions.ts` 生成；以 `ak-role help <command>` 为准。勿手改本区。
+
+### `global`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
+| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
+| `--engine` | — | `name` | 否 | 否 | option | — | 本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
+| `--host` | — | `name` | 否 | 否 | option | — | 为本调用选择具名主会话宿主适配器。 |
+| `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
+
+### `judge`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `coder`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `fixer`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--prerequisites` | — | `path` | 否 | 否 | option | — | {id, requirement} 前置条件 JSON 数组路径。 |
+
+### `reviewer`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--base` | — | `revision` | 是 | 否 | option | — | 必填；钉住审查目标的 fixed-point revision。 |
+| `--authority-ref` | — | `ref` | 否 | 是 | option | — | 持久 authority 引用/URL（可重复；仅 ref，非内联散文）。 |
+
+### `collector`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--pr` | — | `number` | 是 | 否 | option | — | 必填；正整数 GitHub PR 号。 |
+| `--repo` | — | `owner/repo` | 否 | 否 | option | — | GitHub owner/repo 覆盖（默认取 github.com origin）。 |
+| `--request-manifest` | — | `path` | 否 | 否 | option | — | 可选 request manifest JSON 路径（{requests:[{id,body}]}）。 |
+
+### `doctor`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+| `--issue` | — | `number` | 是 | 否 | option | — | 必填；留存病例的正整数 issue 号。 |
+| `--runs` | — | `path` | 否 | 否 | option | — | 可选项目相对 .ak-roles/books/<book>/issues/<n>/runs 覆盖，且须匹配 --issue。 |
+
+### `merger`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 已有进行中 ordinary merge 的项目根（默认 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `inspector`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
+
+### `notary`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
+| `--source-run` | — | `runId@role\|path` | 是 | 否 | option | — | 必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。 |
+| `--ticket` | — | `number` | 否 | 否 | option | — | 可选票号：符宝郎按票键调取起居录时使用。 |
+
+
+### `countersign`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份的项目根（默认 process cwd）。 |
+| `--attach` | — | `path` | 否 | 是 | option | — | 附卷普通文件；受理时冻结（可重复）。 |
+| `--ticket` | — | `number` | 否 | 否 | option | — | 票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。 |
+
+### `gleaner-left`
+
+可选自由 positional `instruction` 可空。调用者不得传方向性 instruction；本席按 `--base` 自取合并候选 diff。
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份的项目根（默认 process cwd）。 |
+| `--base` | — | `revision` | 是 | 否 | option | — | 必填；无锚定合并候选 diff 的比较基线 revision。 |
+
+### `analyst`
+
+| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
+| `--ticket` | — | `number` | 否 | 否 | option | modes=issue | 票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。 |
+| `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
+| `--cohort` | — | — | 否 | 否 | option | modes=cohort | 选择 cohort 模式。 |
+| `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
+| `--group-a-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
+| `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
+| `--group-b-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
+<!-- END GENERATED: public-cli-options -->
+
 ## 规范指针
 
 - 命令用法与拒绝文案：`ak-role help <command>`、`ak-role help config`（唯一权威）。
-- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071 等，未尽举）。
+- 决策与法理：`docs/adr/`（组合与顺序 ADR 0010、公开 CLI 面 ADR 0052、交卷闸 ADR 0066/0067/0070/0072、劳务引擎 ADR 0069/0071、起居录 ADR 0075 等，未尽举）。
 - 术语表：[CONTEXT.md](CONTEXT.md)。编程契约：`src/package-contracts/` 导出。

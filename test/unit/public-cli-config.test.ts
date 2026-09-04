@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
+import {
+  projectConfigDisplaySeats,
+  projectConfigSeatDisplay,
+} from "../../src/public-cli/cli.ts";
 import {
   buildSeatModelCliArgs,
   clearPersistentSeatConfig,
@@ -13,7 +17,6 @@ import {
   parseModelSpec,
   publicCliConfigPath,
   resolveEffectiveSeat,
-  resolveGateOfficerModelSelection,
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
@@ -141,48 +144,86 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "doctor",
     "merger",
     "notary",
+    "countersign",
+    "gleaner-left",
     "inspector",
     "gatekeeper",
     "navigator",
   ]);
   assert.equal(seats.includes("auditor" as never), false);
 
-  // Gate officers do not receive hard-coded startup candidates.
+  // #453/#620: gatekeeper stays automatic with no startup; subordinates have no package startup.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.automatic, true);
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.selection, undefined);
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.automatic, false);
+  assert.equal(codexOnly.find((s) => s.seat === "notary")?.source, "unconfigured");
+  assert.equal(codexOnly.find((s) => s.seat === "notary")?.selection, undefined);
+  assert.equal(codexOnly.find((s) => s.seat === "notary")?.automatic, false);
 });
 
-// #453: province model selection is persistent-only with gatekeeper inheritance.
-test("gate officer selection: own persistent > gatekeeper > unset inherit", () => {
+const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };
+
+// #620 config display projection boundaries (persistent face; inherit only when earned).
+test("#620 config display: inherit only under gatekeeper; coder-only stays disk face", () => {
+  const coderOnly = projectConfigDisplaySeats({
+    seats: {
+      coder: { provider: "xai", model: "grok-4.5", thinking: "high" },
+    },
+  });
+  assert.deepEqual(
+    coderOnly.map((row) => row.seat),
+    ["coder"],
+  );
+  assert.equal(coderOnly[0]?.source, "persistent");
+  assert.equal(projectConfigSeatDisplay({ seats: {} }, "notary").source, "unconfigured");
+  assert.equal(projectConfigSeatDisplay({ seats: {} }, "judge").source, "unconfigured");
+
+  const withGate = projectConfigDisplaySeats({
+    seats: {
+      gatekeeper: { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "low" },
+    },
+  });
+  assert.equal(
+    withGate.find((row) => row.seat === "notary")?.source,
+    "inherit-gatekeeper",
+  );
+  assert.deepEqual(withGate.find((row) => row.seat === "inspector")?.selection, {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "low",
+  });
+  // judge absent from disk and not a subordinate — not invented on config face.
+  assert.equal(
+    withGate.some((row) => row.seat === "judge"),
+    false,
+  );
+});
+
+// #620: direct path consumes institutional authority (own > gatekeeper > unconfigured).
+test("#620 subordinate seats: own persistent > inherit-gatekeeper > unconfigured (no startup)", () => {
   const empty: PublicCliConfig = { seats: {} };
-  assert.equal(resolveGateOfficerModelSelection(empty, "gatekeeper"), undefined);
-  assert.equal(resolveGateOfficerModelSelection(empty, "inspector"), undefined);
-  assert.equal(resolveGateOfficerModelSelection(empty, "notary"), undefined);
+  assert.equal(resolveEffectiveSeat(empty, "notary", CODEX_CREDS).source, "unconfigured");
+  assert.equal(resolveEffectiveSeat(empty, "inspector", CODEX_CREDS).source, "unconfigured");
+  assert.equal(resolveEffectiveSeat(empty, "notary", CODEX_CREDS).selection, undefined);
 
   const gateOnly = setPersistentSeatConfig(empty, "gatekeeper", {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "low",
   });
-  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "gatekeeper"), {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
+  const inheritedNotary = resolveEffectiveSeat(gateOnly, "notary", CODEX_CREDS);
+  assert.equal(inheritedNotary.source, "inherit-gatekeeper");
+  assert.deepEqual(inheritedNotary.selection, {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "low",
   });
-  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "inspector"), {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
-  });
-  assert.deepEqual(resolveGateOfficerModelSelection(gateOnly, "notary"), {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
-  });
+  const inheritedInspector = resolveEffectiveSeat(gateOnly, "inspector", CODEX_CREDS);
+  assert.equal(inheritedInspector.source, "inherit-gatekeeper");
+  assert.deepEqual(inheritedInspector.selection, inheritedNotary.selection);
 
   let both = setPersistentSeatConfig(gateOnly, "inspector", {
     provider: "openai-codex",
@@ -190,36 +231,38 @@ test("gate officer selection: own persistent > gatekeeper > unset inherit", () =
     thinking: "medium",
   });
   both = setPersistentSeatConfig(both, "notary", {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "high",
-  });
-  assert.deepEqual(resolveGateOfficerModelSelection(both, "gatekeeper"), {
     provider: "xai",
     model: "grok-4.5",
     thinking: "high",
   });
-  assert.deepEqual(resolveGateOfficerModelSelection(both, "inspector"), {
+  assert.equal(resolveEffectiveSeat(both, "gatekeeper", CODEX_CREDS).source, "persistent");
+  assert.deepEqual(resolveEffectiveSeat(both, "inspector", CODEX_CREDS).selection, {
     provider: "openai-codex",
     model: "gpt-5.6-sol",
     thinking: "medium",
   });
-  assert.deepEqual(resolveGateOfficerModelSelection(both, "notary"), {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
+  assert.equal(resolveEffectiveSeat(both, "inspector", CODEX_CREDS).source, "persistent");
+  assert.deepEqual(resolveEffectiveSeat(both, "notary", CODEX_CREDS).selection, {
+    provider: "xai",
+    model: "grok-4.5",
     thinking: "high",
   });
+  assert.equal(resolveEffectiveSeat(both, "notary", CODEX_CREDS).source, "persistent");
 
-  // Direct notary startup must not leak into province selection (persistent-only).
-  const startupNotary = resolveEffectiveSeat(empty, "notary", {
-    "openai-codex": true,
-    xai: false,
+  // Gatekeeper change must not move an explicit subordinate pin.
+  const gateMoved = setPersistentSeatConfig(both, "gatekeeper", {
+    provider: "openai-codex",
+    model: "gpt-5.6-sol",
+    thinking: "xhigh",
   });
-  assert.equal(startupNotary.source, "startup");
-  assert.equal(resolveGateOfficerModelSelection(empty, "notary"), undefined);
+  assert.deepEqual(resolveEffectiveSeat(gateMoved, "notary", CODEX_CREDS).selection, {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
 });
 
-test("clearing a persistent seat restores unconfigured inheritance", async () => {
+test("#620 clearing subordinate model restores gatekeeper inheritance on direct path", async () => {
   await withTempHome(async (home) => {
     let config = setPersistentSeatConfig(
       { seats: {} },
@@ -242,7 +285,9 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
       model: "grok-4.5",
       thinking: "high",
     });
-    assert.deepEqual(resolveGateOfficerModelSelection(reloaded, "inspector"), {
+    const inspector = resolveEffectiveSeat(reloaded, "inspector", CODEX_CREDS);
+    assert.equal(inspector.source, "inherit-gatekeeper");
+    assert.deepEqual(inspector.selection, {
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
@@ -252,21 +297,26 @@ test("clearing a persistent seat restores unconfigured inheritance", async () =>
     await savePublicCliConfig(config, home);
     const cleared = await loadPublicCliConfig(home);
     assert.equal(cleared.seats.gatekeeper, undefined);
-    assert.equal(resolveGateOfficerModelSelection(cleared, "gatekeeper"), undefined);
-    assert.equal(resolveGateOfficerModelSelection(cleared, "inspector"), undefined);
+    assert.equal(resolveEffectiveSeat(cleared, "gatekeeper", CODEX_CREDS).source, "unconfigured");
+    assert.equal(resolveEffectiveSeat(cleared, "inspector", CODEX_CREDS).source, "unconfigured");
 
     // Idempotent clear of an already-absent seat.
     assert.deepEqual(clearPersistentSeatConfig(cleared, "gatekeeper"), cleared);
   });
 });
 
-test("#453 clear notary model keeps engine; unset-engine drops residual row", async () => {
+test("#453/#620 clear notary model keeps engine; inherits gatekeeper; no startup fallback", async () => {
   await withTempHome(async (home) => {
     let config = setPersistentSeatConfig(
       { seats: {} },
-      "notary",
-      { provider: "xai", model: "grok-4.5", thinking: "high" },
+      "gatekeeper",
+      { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "low" },
     );
+    config = setPersistentSeatConfig(config, "notary", {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
     config = setPersistentSeatEngine(config, "notary", "opus");
     await savePublicCliConfig(config, home);
 
@@ -276,13 +326,14 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
 
     // Model axis cleared; engine residual remains.
     assert.deepEqual(reloaded.seats.notary, { engine: "opus" });
-    assert.equal(resolveGateOfficerModelSelection(reloaded, "notary"), undefined);
 
-    const direct = resolveEffectiveSeat(reloaded, "notary", {
-      "openai-codex": true,
-      xai: true,
+    const direct = resolveEffectiveSeat(reloaded, "notary", CODEX_CREDS);
+    assert.equal(direct.source, "inherit-gatekeeper");
+    assert.deepEqual(direct.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
     });
-    assert.equal(direct.source, "startup");
     assert.equal(direct.engine, "opus");
     assert.equal(direct.engineSource, "persistent");
 
@@ -296,17 +347,8 @@ test("#453 clear notary model keeps engine; unset-engine drops residual row", as
   });
 });
 
-// Direct Inspector keeps its engine independently of the inherited model axis.
-test("clearing inspector model preserves its direct-call engine", () => {
-  let config = setPersistentSeatConfig({ seats: {} }, "inspector", {
-    provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium",
-  });
-  config = setPersistentSeatEngine(config, "inspector", "cursor");
-  const cleared = clearPersistentSeatConfig(config, "inspector");
-  assert.deepEqual(cleared.seats.inspector, { engine: "cursor" });
-});
-
-test("#453 judge engine-only residual is rejected on persist boundary", async () => {
+// #453: engine-only residual ownership is notary/inspector at the persist boundary.
+test("#453 non-notary engine-only residual is rejected on persist boundary", async () => {
   await withTempHome(async (home) => {
     await assert.rejects(
       () => savePublicCliConfig({ seats: { judge: { engine: "opus" } } }, home),
@@ -447,6 +489,154 @@ test("persistent bare provider/model stores as-is without inventing thinking", a
       false,
     );
     assert.equal(formatModelSpec(effective.selection!), "kimi-coding/k3-256k");
+  });
+});
+
+// #592: shared public-cli.json may carry seat keys a newer CLI wrote that this
+// build does not know. Read path skips them; known seats still resolve.
+test("load skips unknown seat keys without failing the shared config", async () => {
+  await withTempHome(async (home) => {
+    const path = publicCliConfigPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        {
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+            // Seat key no build of this package ever ships — stands in for a
+            // newer-line row (e.g. countersign before this build knew it).
+            "future-seat-from-newer-cli": {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadPublicCliConfig(home);
+    assert.deepEqual(loaded.seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(loaded.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+
+    const credentials: CredentialProviders = {
+      "openai-codex": true,
+      xai: false,
+    };
+    const effective = resolveEffectiveSeat(loaded, "judge", credentials);
+    assert.equal(effective.source, "persistent");
+    assert.deepEqual(effective.selection, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+
+    // Unknown key must not appear among effective seats this CLI owns.
+    const all = effectiveSeatConfigurations(loaded, credentials);
+    assert.equal(
+      all.some((entry) => (entry.seat as string) === "future-seat-from-newer-cli"),
+      false,
+    );
+    assert.equal(all.find((entry) => entry.seat === "judge")?.source, "persistent");
+  });
+});
+
+// #592 write-path: unknown seat rows must survive load→set→save the same way
+// #422 keeps sibling top-level keys — shared-file neighbor lines must not be
+// silently erased by any config write from this build.
+test("unknown seat rows survive set→save without entering resolve/enum", async () => {
+  await withTempHome(async (home) => {
+    const path = publicCliConfigPath(home);
+    await mkdir(dirname(path), { recursive: true });
+    const foreignRow = {
+      provider: "openai-codex",
+      model: "gpt-future",
+      thinking: "high",
+      // Extra field a newer line may write; must round-trip byte-faithful as JSON value.
+      futureAxis: "keep-me",
+    };
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        {
+          seats: {
+            judge: {
+              provider: "openai-codex",
+              model: "gpt-5.6-sol",
+              thinking: "high",
+            },
+            "future-seat-from-newer-cli": foreignRow,
+          },
+          autoResumeLimit: 4,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    let config = await loadPublicCliConfig(home);
+    // Read consumption still skips unknown seats from the owned seats map.
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(config.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+
+    // Real write path used by `config set`: mutate a known seat, then save.
+    config = setPersistentSeatConfig(config, "judge", {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    await savePublicCliConfig(config, home);
+
+    const raw = JSON.parse(await readFile(path, "utf8")) as {
+      seats: Record<string, unknown>;
+      autoResumeLimit?: number;
+      unknownSeats?: unknown;
+    };
+    // Disk shape stays seats-only for foreign rows — no parallel top-level dump.
+    assert.equal(Object.prototype.hasOwnProperty.call(raw, "unknownSeats"), false);
+    assert.deepEqual(raw.seats["future-seat-from-newer-cli"], foreignRow);
+    assert.deepEqual(raw.seats.judge, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    // #422 sibling must still survive the same write.
+    assert.equal(raw.autoResumeLimit, 4);
+
+    const reloaded = await loadPublicCliConfig(home);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(reloaded.seats, "future-seat-from-newer-cli"),
+      false,
+    );
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+    assert.equal(
+      effectiveSeatConfigurations(reloaded, credentials).some(
+        (entry) => (entry.seat as string) === "future-seat-from-newer-cli",
+      ),
+      false,
+    );
+    assert.equal(
+      resolveEffectiveSeat(reloaded, "judge", credentials).source,
+      "persistent",
+    );
   });
 });
 

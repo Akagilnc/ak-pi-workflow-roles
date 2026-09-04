@@ -29,11 +29,12 @@ import {
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  createRoleRuntimeExtension,
   type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   buildDispatchStubFact,
   reconcileInvocation,
@@ -95,7 +96,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
   const oid = (ch: string) => ch.repeat(40);
   const base = {
     loadJudgeSoul: law,
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" as const }),
     activationClock: () => "2025-06-01T12:00:00.000Z",
     activationTraceWriter: () => {},
@@ -252,6 +252,10 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
           role: "judge",
         }),
       };
+    case "countersign":
+      return { ...base, loadCountersignSoul: law };
+    case "gleaner-left":
+      return { ...base, loadGleanerLeftSoul: law };
     case "inspector":
       return { ...base, loadInspectorSoul: law };
     default:
@@ -282,6 +286,8 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
       return { "ak-merger-input": "/lawful/merger.json" };
     case "notary":
       return { "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge" };
+    case "gleaner-left":
+      return { "ak-gleaner-left-base": "HEAD" };
     default:
       return {};
   }
@@ -304,6 +310,8 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
       case "notary": return ["status", "findings", "infrastructureFailure"];
+      case "countersign": return ["countersignStatus", "fix", "note", "evidence", "decisionGate", "infrastructureFailure"];
+      case "gleaner-left": return ["status", "findings", "infrastructureFailure"];
       case "inspector": return ["status", "findings", "infrastructureFailure"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
@@ -330,7 +338,7 @@ test("packaged terminating tools expose the provider-open registration inventory
         ...admissionFlagsForRole(entry.role, fixtureRoot),
       }).map(([name, value]) => [name, String(value)]));
       let registrationApi: ExtensionAPI | undefined;
-      const productionFactory = createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
+      const productionFactory = createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: home,
@@ -406,7 +414,7 @@ test("remaining support tools expose their actual registration inventory", async
         ? []
         : [(pi: ExtensionAPI) => {
             registrationApi = pi;
-            createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
+            createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
           }];
 
       await withInProcessPi({
@@ -474,7 +482,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
           systemPrompt: `ADMIT ${entry.role}`,
           mode: "print",
           flags: roleFlags,
-          extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
+          extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
         }, async ({ sessionManager }) => {
           const sessionFile = sessionManager.getSessionFile();
           assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
@@ -527,7 +535,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
         systemPrompt: "ADMIT ABSENT",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
       }, async () => {
         const afterAbsent = readAcceptedActivationFacts(home, bookKey);
         assert.equal(afterAbsent.length, beforeAbsent + 1);
@@ -545,7 +553,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
         systemPrompt: "ADMIT BARRIER",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
       }, async ({ session }) => {
         await session.extensionRunner.emitBeforeAgentStart("go", undefined, "BASE", { cwd: home });
       });
@@ -570,9 +578,8 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       systemPrompt: "UNSELECTED",
       mode: "print",
       flags: {},
-      extensionFactories: [createRoleRuntimeExtension({
+      extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
       })],
     }, async () => {
@@ -590,9 +597,8 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
       systemPrompt: "UNSUPPORTED",
       mode: "print",
       flags: { "ak-role": "router" },
-      extensionFactories: [createRoleRuntimeExtension({
+      extensionFactories: [createPiRoleRuntimeExtension({
         loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
         auditSoulCompliance: async () => ({ status: "pass" }),
       })],
     }, async () => {
@@ -618,6 +624,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
         "ak-doctor-case": "/lawful/case",
         "ak-merger-input": "/lawful/merger.json",
         "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "ak-gleaner-left-base": "HEAD",
       };
       await withInProcessPi({
         activationLedgerSession: true,
@@ -629,7 +636,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
         systemPrompt: `REJECT ${entry.role}`,
         mode: "print",
         flags,
-        extensionFactories: [createRoleRuntimeExtension({
+        extensionFactories: [createPiRoleRuntimeExtension({
           loadJudgeSoul: reject,
           loadFixerSoul: reject,
           loadCoderSoul: reject,
@@ -637,10 +644,11 @@ test("every registered whole-activation rejection terminates nonzero with a name
           loadCollectorSoul: reject,
           loadDoctorSoul: reject,
           loadNotarySoul: reject,
+          loadCountersignSoul: reject,
+          loadGleanerLeftSoul: reject,
           loadInspectorSoul: reject,
           loadMergerSoul: reject,
           createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationClock: () => "2025-01-01T00:00:00.000Z",
           activationTraceWriter: (record) => { traces.push(record); },
@@ -800,12 +808,13 @@ test("mixed concurrent O_APPEND producers keep intact records with exact cardina
   // Shared-ledger contract: package append and a foreign O_APPEND producer must not
   // overwrite one another. No private lock / positional rewrite / truncate ownership.
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-mixed-"));
-  const ledgerHome = join(root, "home");
-  const bookKey = "mixed-book";
-  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-  const packageWorker = join(root, "package-worker.mjs");
-  const foreignWorker = join(root, "foreign-worker.mjs");
-  writeFileSync(packageWorker, `
+  try {
+    const ledgerHome = join(root, "home");
+    const bookKey = "mixed-book";
+    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+    const packageWorker = join(root, "package-worker.mjs");
+    const foreignWorker = join(root, "foreign-worker.mjs");
+    writeFileSync(packageWorker, `
 import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
 const index = Number(process.argv[2]);
 const ledgerPath = process.argv[3];
@@ -818,7 +827,7 @@ appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   correlation: { kind: "caller", id: "pkg-" + index },
 }), { ledgerHome });
 `);
-  writeFileSync(foreignWorker, `
+    writeFileSync(foreignWorker, `
 import { constants, closeSync, openSync, writeSync } from "node:fs";
 const index = Number(process.argv[2]);
 const ledgerPath = process.argv[3];
@@ -831,53 +840,56 @@ try {
   closeSync(fd);
 }
 `);
-  // Ensure parent tree exists so foreign O_APPEND open does not race mkdir.
-  mkdirSync(dirname(ledgerPath), { recursive: true });
-  const packageCount = 8;
-  const foreignCount = 8;
-  const children = await Promise.all([
-    ...Array.from({ length: packageCount }, (_, index) =>
-      runNodeSubprocess(
-        ["--import", "tsx", packageWorker, String(index), ledgerPath, ledgerHome],
-        { cwd: packageRoot, timeoutMs: 15_000 },
-      )),
-    ...Array.from({ length: foreignCount }, (_, index) =>
-      runNodeSubprocess(
-        ["--import", "tsx", foreignWorker, String(index), ledgerPath],
-        { cwd: packageRoot, timeoutMs: 15_000 },
-      )),
-  ]);
-  for (const child of children) {
-    assert.equal(child.code, 0, child.stderr);
-  }
-  const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
-  assert.equal(lines.length, packageCount + foreignCount);
-  const packageIds: string[] = [];
-  const foreignIds: string[] = [];
-  for (const line of lines) {
-    const row = JSON.parse(line) as Record<string, unknown>;
-    if (row.event === ACCEPTED_ACTIVATION_EVENT) {
-      const fact = row as unknown as AcceptedActivationFact;
-      assert.equal(fact.bookKey, bookKey);
-      assert.equal(fact.correlation.kind, "caller");
-      if (fact.correlation.kind === "caller") packageIds.push(fact.correlation.id);
-      continue;
+    // Ensure parent tree exists so foreign O_APPEND open does not race mkdir.
+    mkdirSync(dirname(ledgerPath), { recursive: true });
+    const packageCount = 8;
+    const foreignCount = 8;
+    const children = await Promise.all([
+      ...Array.from({ length: packageCount }, (_, index) =>
+        runNodeSubprocess(
+          ["--import", "tsx", packageWorker, String(index), ledgerPath, ledgerHome],
+          { cwd: packageRoot, timeoutMs: 15_000 },
+        )),
+      ...Array.from({ length: foreignCount }, (_, index) =>
+        runNodeSubprocess(
+          ["--import", "tsx", foreignWorker, String(index), ledgerPath],
+          { cwd: packageRoot, timeoutMs: 15_000 },
+        )),
+    ]);
+    for (const child of children) {
+      assert.equal(child.code, 0, child.stderr);
     }
-    assert.equal(row.producer, "foreign");
-    assert.equal(typeof row.id, "string");
-    foreignIds.push(row.id as string);
+    const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
+    assert.equal(lines.length, packageCount + foreignCount);
+    const packageIds: string[] = [];
+    const foreignIds: string[] = [];
+    for (const line of lines) {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      if (row.event === ACCEPTED_ACTIVATION_EVENT) {
+        const fact = row as unknown as AcceptedActivationFact;
+        assert.equal(fact.bookKey, bookKey);
+        assert.equal(fact.correlation.kind, "caller");
+        if (fact.correlation.kind === "caller") packageIds.push(fact.correlation.id);
+        continue;
+      }
+      assert.equal(row.producer, "foreign");
+      assert.equal(typeof row.id, "string");
+      foreignIds.push(row.id as string);
+    }
+    assert.deepEqual(packageIds.sort(), Array.from({ length: packageCount }, (_, i) => `pkg-${i}`).sort());
+    assert.deepEqual(foreignIds.sort(), Array.from({ length: foreignCount }, (_, i) => `foreign-${i}`).sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
-  assert.deepEqual(packageIds.sort(), Array.from({ length: packageCount }, (_, i) => `pkg-${i}`).sort());
-  assert.deepEqual(foreignIds.sort(), Array.from({ length: foreignCount }, (_, i) => `foreign-${i}`).sort());
-  rmSync(root, { recursive: true, force: true });
 });
 
 test("concurrent first-time ledger directory creation across books stays race-safe", async () => {
   // Fresh home: workers race on creating shared ledgerHome/books components plus distinct books.
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-mkdir-race-"));
-  const ledgerHome = join(root, "home");
-  const worker = join(root, "mkdir-race-worker.mjs");
-  writeFileSync(worker, `
+  try {
+    const ledgerHome = join(root, "home");
+    const worker = join(root, "mkdir-race-worker.mjs");
+    writeFileSync(worker, `
 import { appendAcceptedActivationToBook, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
 const index = Number(process.argv[2]);
 const ledgerHome = process.argv[3];
@@ -893,30 +905,32 @@ appendAcceptedActivationToBook({
   }),
 });
 `);
-  const workerCount = 16;
-  // Native type stripping keeps this filesystem race under the child deadline even
-  // when the full suite is concurrently compiling elsewhere; one tsx service per
-  // worker made loader contention, rather than ledger creation, decide the result.
-  const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
-    runNodeSubprocess(
-      ["--experimental-strip-types", worker, String(index), ledgerHome],
-      { cwd: packageRoot, timeoutMs: 15_000 },
-    )));
-  for (const child of children) {
-    assert.equal(child.code, 0, child.stderr);
+    const workerCount = 16;
+    // Native type stripping keeps this filesystem race under the child deadline even
+    // when the full suite is concurrently compiling elsewhere; one tsx service per
+    // worker made loader contention, rather than ledger creation, decide the result.
+    const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
+      runNodeSubprocess(
+        ["--experimental-strip-types", worker, String(index), ledgerHome],
+        { cwd: packageRoot, timeoutMs: 15_000 },
+      )));
+    for (const child of children) {
+      assert.equal(child.code, 0, child.stderr);
+    }
+    for (let index = 0; index < workerCount; index += 1) {
+      const bookKey = `book-${index}`;
+      const lines = readFileSync(activationWaitingLedgerPath(ledgerHome, bookKey), "utf8")
+        .split("\n")
+        .filter(Boolean);
+      assert.equal(lines.length, 1, `${bookKey} must keep exactly one accepted fact`);
+      const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
+      assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
+      assert.equal(row.bookKey, bookKey);
+      assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
-  for (let index = 0; index < workerCount; index += 1) {
-    const bookKey = `book-${index}`;
-    const lines = readFileSync(activationWaitingLedgerPath(ledgerHome, bookKey), "utf8")
-      .split("\n")
-      .filter(Boolean);
-    assert.equal(lines.length, 1, `${bookKey} must keep exactly one accepted fact`);
-    const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
-    assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
-    assert.equal(row.bookKey, bookKey);
-    assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
-  }
-  rmSync(root, { recursive: true, force: true });
 });
 
 // Symlink escape matrix (#420 整改并一)：四条同根同形「ledger append 拒绝符号链接
@@ -1148,9 +1162,8 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
         systemPrompt: "JUDGE",
         mode: "print",
         flags: { "ak-role": "judge" },
-        extensionFactories: [createRoleRuntimeExtension({
+        extensionFactories: [createPiRoleRuntimeExtension({
           loadJudgeSoul: async () => "LAW",
-          transcriptFromContext: () => "",
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationClock: () => "2025-01-01T00:00:00.000Z",
           activationTraceWriter: () => {},
@@ -1239,14 +1252,15 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           snapshotIdentity: Object.freeze({ text: raw }),
         },
         invocation: (request: string) => `/skill:code-review ${request}`,
-        captureExpansion: (prompt: string, request: string) => {
-          if (prompt !== lawfulExpansion || request !== originalRequest) return undefined;
-          return Object.freeze({
-            name: "code-review" as const,
-            location: skillPath,
-            content: expectedContent,
-            userMessage: request,
-          });
+        captureExpansion: (evidence, request: string) => {
+          if (
+            evidence?.name !== "code-review"
+            || evidence.location !== skillPath
+            || evidence.content !== expectedContent
+            || evidence.userMessage !== originalRequest
+            || request !== originalRequest
+          ) return undefined;
+          return Object.freeze({ ...evidence, name: "code-review" as const });
         },
       };
     };
@@ -1268,7 +1282,7 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           "ak-role": "reviewer",
           "ak-review-base": "main~1",
         },
-        extensionFactories: [createRoleRuntimeExtension(deps)],
+        extensionFactories: [createPiRoleRuntimeExtension(deps)],
       }, async ({ session }) => {
         // Envelope owns input transform for package code-review invocation.
         const inputResult = await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
@@ -1311,7 +1325,7 @@ test("shared envelope owns Reviewer skill expansion capture on before_agent_star
           "ak-role": "reviewer",
           "ak-review-base": "main~1",
         },
-        extensionFactories: [createRoleRuntimeExtension(deps)],
+        extensionFactories: [createPiRoleRuntimeExtension(deps)],
       }, async ({ session }) => {
         await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
         // Do not re-bindExtensions here: that re-emits session_start and is a different seam.

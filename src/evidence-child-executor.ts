@@ -7,28 +7,25 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createAssistantMessageEventStream,
-  InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
   type Context,
   type Model,
-  type Provider,
   type ProviderStreamOptions,
   type Usage,
 } from "@earendil-works/pi-ai";
 import type {
   ExtensionContext,
-  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
 import {
   AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  prepareComplianceDispatch,
   type AuditorParentAttemptBinding,
 } from "./compliance-transport.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { sitianReport } from "./sitian-facade.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -38,15 +35,30 @@ import {
 } from "./package-resources/engine-material.ts";
 import { readPackageMaterial } from "./session-opening-materials.ts";
 import {
-  formatModelSpec,
-  loadPublicCliConfig,
-  resolveGateOfficerModelSelection,
   type GateOfficerSeat,
 } from "./public-cli/config.ts";
-import type { PublicThinkingLevel } from "./public-cli/registry.ts";
+import { readInstitutionalSeatSelection } from "./institutional-resolution.ts";
+import type {
+  OpenPiInstitutionalSessionOptions,
+  OpenPiInstitutionalSessionResult,
+} from "./pi/in-process-session.ts";
+import type { HostAssistantTurnResult, HostContext } from "./host-contracts.ts";
+import {
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
+  navigatorModelSettingPath,
+  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
+  navigatorUnavailableError,
+  parseNavigatorModelSetting,
+  resolveNavigatorSeatSelection,
+  type NavigatorProviderFailureFact,
+  type NavigatorSessionFactory,
+} from "./navigator-session-contracts.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT, type NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
-import { createStreamIdleGuard, isStreamIdleTimeoutError } from "./stream-idle-guard.ts";
+import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import {
   hasUpstreamErrorTestimony,
   isNonSuccessHttpStatus,
@@ -95,11 +107,6 @@ export class AuditorTurnLimitError extends Error {
     this.name = "AuditorTurnLimitError";
   }
 }
-export type AuditorCompletion = (
-  model: Model<Api>,
-  context: Context,
-  options: ProviderStreamOptions,
-) => Promise<AssistantMessage>;
 export type AuditorDecisionTool = {
   name: string;
   description: string;
@@ -136,288 +143,40 @@ export async function withInProcessScratch<T>(
   }
 }
 
-export type InheritedRuntimeOptions = {
-  readonly context: ExtensionContext;
-  readonly label: string;
-  readonly runCompletion?: AuditorCompletion;
-  readonly injectedSystemPrompt?: string;
-  readonly signal?: AbortSignal;
-  /** When true, wrap provider streams with ADR 0059 idle-only retry. */
-  readonly idleRetry?: boolean;
-  /**
-   * Explicit child model. When set, auth/availability failures do not fall back
-   * to the parent session model (#453 gate overrides).
-   */
-  readonly model?: Model<Api>;
-};
-
-export type InheritedRuntime = {
-  readonly runtime: ModelRuntime;
-  readonly model: Model<Api>;
-  readonly dispatch: Awaited<ReturnType<typeof prepareComplianceDispatch>>;
-  /** Present when a stream failed under idle-retry instrumentation. */
-  streamFailure: unknown;
-};
-
 /**
- * Build an inherited ModelRuntime + provider. Optional idle-only retry is the
- * ADR 0059 provider-stream seam (not package-owned-tool idle).
+ * Run every child cleanup, aggregating failures so one throwing cleanup never
+ * skips the rest (e.g. handle.close must still run when unsubscribe throws).
+ * If a primary failure is supplied and cleanup also failed, the two are combined
+ * into an AggregateError; otherwise only the failing branch is surfaced.
  */
-export async function createInheritedRuntime(options: InheritedRuntimeOptions): Promise<InheritedRuntime> {
-  const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
-  // Explicit override wins; never silent-fallback to parent when override is set (#453).
-  const activeModel = options.model ?? options.context.model;
-  if (activeModel === undefined) throw new Error(`${options.label} requires an active model`);
-  const dispatch = await prepareComplianceDispatch(activeModel, options.context, options.label);
-  const parentProvider = options.runCompletion === undefined
-    ? options.context.modelRegistry.getProvider(activeModel.provider)
-    : undefined;
-  if (parentProvider === undefined && options.runCompletion === undefined) {
-    throw new Error(`${options.label} provider not found: ${activeModel.provider}`);
-  }
-  const runtime = await ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
-    modelsPath: null,
-  });
-  // Injected completions historically accepted the minimal model exposed by an
-  // ExtensionContext. AgentSession crosses ModelRuntime first, so complete the
-  // model metadata required by that runtime without changing provider identity.
-  const inheritedModel: Model<Api> = options.runCompletion === undefined
-    ? dispatch.model
-    : {
-      ...dispatch.model,
-      name: dispatch.model.name ?? dispatch.model.id,
-      baseUrl: dispatch.model.baseUrl ?? "",
-      reasoning: dispatch.model.reasoning ?? false,
-      input: dispatch.model.input ?? ["text"],
-      cost: dispatch.model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: dispatch.model.contextWindow ?? 1,
-      maxTokens: dispatch.model.maxTokens ?? 1,
-    };
-  const state: InheritedRuntime = {
-    runtime,
-    model: inheritedModel,
-    dispatch,
-    streamFailure: undefined,
-  };
-
-  const abortReason = (signal: AbortSignal): unknown =>
-    signal.reason ?? new Error(`${options.label} provider stream aborted`);
-
-  async function waitForStream<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-    if (signal.aborted) throw abortReason(signal);
-    let onAbort: (() => void) | undefined;
+async function runChildCleanup(
+  cleanups: ReadonlyArray<() => void | Promise<void>>,
+  primaryFailure: unknown,
+  label: string,
+): Promise<void> {
+  let cleanupFailure: unknown;
+  for (const cleanup of cleanups) {
     try {
-      return await Promise.race([
-        promise,
-        new Promise<never>((_resolve, reject) => {
-          onAbort = () => reject(abortReason(signal));
-          signal.addEventListener("abort", onAbort, { once: true });
-        }),
-      ]);
-    } finally {
-      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+      await cleanup();
+    } catch (failure) {
+      cleanupFailure = cleanupFailure === undefined
+        ? failure
+        : new AggregateError([cleanupFailure, failure], `${label} cleanup failed`, {
+          cause: cleanupFailure,
+        });
     }
   }
-
-  const createRetriedStream = (
-    simple: boolean,
-    model: Model<Api>,
-    context: Context,
-    request?: ProviderStreamOptions,
-  ): ReturnType<Provider["stream"]> => {
-    const wrapped = createAssistantMessageEventStream();
-    void (async () => {
-      for (let attempt = 0; ; attempt += 1) {
-        const idle = createStreamIdleGuard(
-          options.signal === undefined ? {} : { parentSignal: options.signal },
-        );
-        // Typed HTTP status observed via onResponse — never inferred from prose.
-        let observedHttpStatus: number | undefined;
-        try {
-          const requestSignal = request?.signal;
-          const streamSignal = requestSignal === undefined
-            ? idle.signal
-            : AbortSignal.any([idle.signal, requestSignal]);
-          const priorOnResponse = request?.onResponse;
-          const inheritedRequest = {
-            ...(request ?? {}),
-            ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-            signal: streamSignal,
-            onResponse: async (
-              response: { status: number; headers: Record<string, string> },
-              model: Model<Api>,
-            ) => {
-              if (typeof response?.status === "number") observedHttpStatus = response.status;
-              await priorOnResponse?.(response, model);
-            },
-          } as ProviderStreamOptions;
-          if (options.runCompletion !== undefined) {
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            if (streamSignal.aborted) throw abortReason(streamSignal);
-            const completed = await waitForStream(
-              options.runCompletion(
-                model,
-                options.injectedSystemPrompt === undefined
-                  ? context
-                  : { ...context, systemPrompt: options.injectedSystemPrompt },
-                inheritedRequest,
-              ),
-              streamSignal,
-            );
-            const response: AssistantMessage = attachObservedHttpStatus({
-              ...completed,
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-            }, observedHttpStatus);
-            if (response.stopReason === "error" || response.stopReason === "aborted") {
-              wrapped.push({ type: "error", reason: response.stopReason, error: response });
-            } else {
-              wrapped.end(response);
-            }
-            return;
-          }
-          const source = simple
-            ? parentProvider!.streamSimple(model, context, inheritedRequest as any)
-            : parentProvider!.stream(model, context, inheritedRequest as any);
-          let sawEvent = false;
-          const iterator = source[Symbol.asyncIterator]();
-          while (true) {
-            const next = await waitForStream(iterator.next(), idle.signal);
-            if (next.done) break;
-            sawEvent = true;
-            idle.poke();
-            wrapped.push(enrichStreamEvent(next.value, observedHttpStatus) as any);
-          }
-          const response = attachObservedHttpStatus(
-            await waitForStream(source.result(), idle.signal),
-            observedHttpStatus,
-          );
-          if (!sawEvent) wrapped.end(response);
-          return;
-        } catch (error) {
-          if (request?.signal?.aborted) {
-            const response: AssistantMessage = {
-              role: "assistant",
-              content: [],
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-              usage: emptyUsage(),
-              stopReason: "aborted",
-              errorMessage: "Auditor session aborted",
-              timestamp: Date.now(),
-            };
-            wrapped.push({ type: "error", reason: "aborted", error: response });
-            wrapped.end(response);
-            return;
-          }
-          const failure = isStreamIdleTimeoutError(idle.signal.reason) ? idle.signal.reason : error;
-          if (
-            options.idleRetry === true
-            && isStreamIdleTimeoutError(failure)
-            && attempt < DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES
-            && options.signal?.aborted !== true
-          ) {
-            continue;
-          }
-          state.streamFailure = failure;
-          const projected = projectStructuredRemote(failure);
-          // Prefer structured fields on the thrown failure; fall back to onResponse observation.
-          const httpStatus = projected.httpStatus ?? numericHttpStatus(observedHttpStatus);
-          const response = {
-            role: "assistant" as const,
-            content: [] as [],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: emptyUsage(),
-            stopReason: "error" as const,
-            // Preserve the held failure message bytes — do not rewrite.
-            errorMessage: failure instanceof Error ? failure.message : String(failure),
-            timestamp: Date.now(),
-            ...(projected.diagnostics === undefined ? {} : { diagnostics: projected.diagnostics }),
-            ...(httpStatus === undefined ? {} : { status: httpStatus, statusCode: httpStatus }),
-            ...(projected.body === undefined ? {} : { body: projected.body }),
-            ...(projected.code === undefined ? {} : { code: projected.code }),
-            ...(projected.errno === undefined ? {} : { errno: projected.errno }),
-          } as unknown as AssistantMessage;
-          wrapped.push({ type: "error", reason: "error", error: response });
-          wrapped.end(response);
-          return;
-        } finally {
-          idle.dispose();
-        }
-      }
-    })();
-    return wrapped as ReturnType<Provider["stream"]>;
-  };
-
-  // Provider id must match activeModel.provider so ModelRuntime auth lookup
-  // finds this registration when a gate override changes provider (#453).
-  const provider: Provider = options.idleRetry === true || options.runCompletion !== undefined
-    ? {
-      id: activeModel.provider,
-      name: parentProvider?.name ?? options.label,
-      auth: {
-        apiKey: {
-          name: `Inherited ${options.label} authentication`,
-          async resolve() {
-            const { env, ...auth } = dispatch.auth;
-            return {
-              auth: {
-                ...auth,
-                ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }),
-              },
-              ...(env === undefined ? {} : { env }),
-            };
-          },
-        },
-      },
-      getModels() { return [inheritedModel]; },
-      stream(model, context, request) {
-        return createRetriedStream(false, model, context, request as ProviderStreamOptions | undefined);
-      },
-      streamSimple(model, context, request) {
-        return createRetriedStream(true, model, context, request as ProviderStreamOptions | undefined);
-      },
-    }
-    : {
-      id: parentProvider!.id,
-      name: parentProvider!.name,
-      ...(parentProvider!.baseUrl === undefined ? {} : { baseUrl: parentProvider!.baseUrl }),
-      ...(parentProvider!.headers === undefined ? {} : { headers: parentProvider!.headers }),
-      auth: {
-        apiKey: {
-          name: `Inherited ${options.label} authentication`,
-          async resolve() {
-            return {
-              auth: {
-                ...(dispatch.auth.apiKey === undefined ? {} : { apiKey: dispatch.auth.apiKey }),
-                ...(dispatch.auth.headers === undefined ? {} : { headers: dispatch.auth.headers }),
-                ...(dispatch.model.baseUrl === undefined ? {} : { baseUrl: dispatch.model.baseUrl }),
-              },
-              ...(dispatch.auth.env === undefined ? {} : { env: dispatch.auth.env }),
-            };
-          },
-        },
-      },
-      getModels() { return [inheritedModel]; },
-      stream(model, childContext, streamOptions) {
-        return parentProvider!.stream(model, childContext, streamOptions);
-      },
-      streamSimple(model, childContext, streamOptions) {
-        return parentProvider!.streamSimple(model, childContext, streamOptions);
-      },
-    };
-
-  runtime.registerNativeProvider(provider);
-  // registerNativeProvider fires a background refresh; await it so child
-  // AgentSession.prompt sees configured auth without racing void refresh
-  // (mock timers / slow CI otherwise stall before the compliance stream).
-  await runtime.refresh({ allowNetwork: false });
-  return state;
+  if (cleanupFailure === undefined) return;
+  if (primaryFailure !== undefined) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      `${label} execution and cleanup failed`,
+      { cause: primaryFailure },
+    );
+  }
+  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
+    cause: cleanupFailure,
+  });
 }
 
 type EvidenceChildFailureClassification = "provider" | "child" | "unknown";
@@ -542,6 +301,22 @@ function classifiedError(error: unknown, evidenceChildFailure: EvidenceChildFail
   return Object.assign(wrapped, { evidenceChildFailure: classification });
 }
 
+/** Extract the first text diagnostic from a flattened toolResult error `details`. */
+function extractToolResultText(details: unknown): string | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const record = details as Record<string, unknown>;
+  const content = record.content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === "object" && part !== null) {
+        const text = (part as Record<string, unknown>).text;
+        if (typeof text === "string" && text.trim() !== "") return text;
+      }
+    }
+  }
+  return undefined;
+}
+
 function emptyUsage(): Usage {
   return {
     input: 0,
@@ -568,10 +343,14 @@ function addUsage(total: Usage, next: Usage): void {
 
 // ── evidence child (reviewer legs) ────────────────────────────────────────
 
+/** Evidence child execution options. */
 export type EvidenceChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
   credentialScratchParent?: string;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  runDirectory?: string;
   /**
    * Package root for optional engine method-material resolution (#378).
    * Required only when AK_ROLE_ENGINE is set and packaged notes should attach.
@@ -582,10 +361,15 @@ export type EvidenceChildExecuteOptions = Readonly<{
 export async function executeEvidenceChild(
   workspace: string,
   prompt: ReviewerPromptText,
-  context: ExtensionContext,
+  context: ExtensionContext | HostContext,
   options: EvidenceChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   const signal = options.signal;
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+  if (runDirectory === undefined) {
+    throw new Error("Evidence child requires a run directory carrying the institutional resolution page");
+  }
+  const selection = await readInstitutionalSeatSelection(runDirectory, "evidenceChild");
   return withInProcessScratch(
     {
       prefix: "ak-evidence-child-",
@@ -594,17 +378,8 @@ export async function executeEvidenceChild(
         : { parentDirectory: options.credentialScratchParent }),
     },
     async (childConfigDir) => {
-      const { openInProcessAgentSession } = await import("./in-process-session.ts");
+      const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
       const { createRecordSession } = await import("./archivist-record-entry.ts");
-      let inherited: InheritedRuntime;
-      try {
-        inherited = await createInheritedRuntime({
-          context,
-          label: "Evidence child",
-        });
-      } catch (error) {
-        throw classifiedError(error, "provider");
-      }
       // #378: when labor engine is configured, legs get the same detour tool + material
       // dual-path as the parent seat (ADR 0069 detour-rejoins-main-road).
       const engineName = engineNameFromEnv();
@@ -632,37 +407,44 @@ export async function executeEvidenceChild(
               },
             });
       // No tools allowlist — Pi defaults + unrestricted evidence surface (ADR 0064).
-      // Single createAgentSession owner: in-process-session.ts.
-      const { session, dispose } = await openInProcessAgentSession({
-        cwd: workspace,
-        agentDir: childConfigDir,
-        model: inherited.model,
-        thinkingLevel: context.thinkingLevel ?? "off",
-        modelRuntime: inherited.runtime,
-        systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
-        ...(engineDetourTool === undefined
-          ? {}
-          : { customTools: [engineDetourTool] }),
-        sessionManager: createRecordSession({
+      // Single open seam owner: pi/in-process-session.ts.
+      let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
+      try {
+        opened = await openPiInstitutionalSession({
           cwd: workspace,
-          kind: "evidence-children",
-          ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
-        }),
-      });
+          agentDir: childConfigDir,
+          selection,
+          systemPrompt: await buildEvidenceChildSystemPrompt(engineMaterial),
+          ...(engineDetourTool === undefined
+            ? {}
+            : { customTools: [engineDetourTool] }),
+          sessionManager: createRecordSession({
+            cwd: workspace,
+            kind: "evidence-children",
+            ...(context.sessionManager === undefined ? {} : { parent: context.sessionManager }),
+          }),
+          ...(signal === undefined ? {} : { signal }),
+          label: "Evidence child",
+        });
+      } catch (error) {
+        throw classifiedError(error, "provider");
+      }
+      const { handle } = opened;
       const usage = emptyUsage();
-      const unsubscribe = session.subscribe((event) => {
-        if (event.type === "message_end" && event.message.role === "assistant") {
-          addUsage(usage, event.message.usage);
+      const unsubscribe = handle.subscribe((event) => {
+        if (event.type === "message_end" && event.role === "assistant") {
+          if (event.usage) addUsage(usage, event.usage);
         }
       });
-      const abortChild = () => { void session.abort(); };
+      const abortChild = () => { handle.abort(); };
       if (signal?.aborted) abortChild();
       else signal?.addEventListener("abort", abortChild, { once: true });
       let primaryFailure: unknown;
       try {
         const delivered = prompt;
+        let turnResult: HostAssistantTurnResult;
         try {
-          await session.prompt(delivered);
+          turnResult = await handle.prompt(delivered);
         } catch (error) {
           if (engineDetourFailure !== undefined) {
             throw classifiedError(engineDetourFailure, "child");
@@ -673,30 +455,31 @@ export async function executeEvidenceChild(
           throw classifiedError(engineDetourFailure, "child");
         }
         if (signal?.aborted) throw new Error("Evidence child was cancelled");
-        const lastAssistant = [...session.messages]
-          .reverse()
-          .find((message) => message.role === "assistant");
+        const lastAssistant = turnResult.messages !== undefined
+          ? [...turnResult.messages].reverse().find((message: any) => message?.role === "assistant") as AssistantMessage | undefined
+          : undefined;
         // error|aborted assistant stops share the upstream-testimony rule: provider only
         // with direct HTTP/SDK testimony, otherwise existing unknown. child is reserved
         // for real local child/report failures (no assistant / blank report / cleanup).
         if (
-          lastAssistant?.role === "assistant"
-          && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")
+          turnResult.stopReason === "error" || turnResult.stopReason === "aborted"
+          || (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted"))
         ) {
+          const errMsg = turnResult.errorMessage ?? lastAssistant?.errorMessage ?? "";
           throw classifiedError(
-            new Error(lastAssistant.errorMessage ?? "", { cause: lastAssistant }),
-            projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
+            new Error(errMsg, { cause: lastAssistant }),
+            lastAssistant && projectStructuredRemote(lastAssistant).hasTestimony ? "provider" : "unknown",
           );
         }
-        if (lastAssistant?.role !== "assistant") {
+        if (lastAssistant !== undefined && lastAssistant.role !== "assistant") {
           throw classifiedError(
             new Error("Evidence child child terminated without a report", {
-              cause: lastAssistant ?? session.messages,
+              cause: lastAssistant ?? turnResult.messages,
             }),
             "child",
           );
         }
-        const report = session.getLastAssistantText() ?? "";
+        const report = turnResult.text;
         if (report.trim().length === 0) {
           throw new Error("Evidence child returned a blank child report");
         }
@@ -706,30 +489,7 @@ export async function executeEvidenceChild(
         throw primaryFailure;
       } finally {
         signal?.removeEventListener("abort", abortChild);
-        let cleanupFailure: unknown;
-        for (const cleanup of [() => unsubscribe(), () => dispose()]) {
-          try {
-            cleanup();
-          } catch (failure) {
-            cleanupFailure = cleanupFailure === undefined
-              ? failure
-              : new AggregateError([cleanupFailure, failure], "Reviewer child cleanup failed", {
-                cause: cleanupFailure,
-              });
-          }
-        }
-        if (cleanupFailure !== undefined) {
-          if (primaryFailure !== undefined) {
-            throw new AggregateError(
-              [primaryFailure, cleanupFailure],
-              "Reviewer child execution and cleanup failed",
-              { cause: primaryFailure },
-            );
-          }
-          throw new AggregateError([cleanupFailure], "Reviewer child cleanup failed", {
-            cause: cleanupFailure,
-          });
-        }
+        await runChildCleanup([() => unsubscribe(), () => handle.close()], primaryFailure, "Reviewer child");
       }
     },
   );
@@ -743,45 +503,25 @@ export type AuditorRoleOptions = {
   tool: AuditorDecisionTool;
   dossierTool: AuditorDecisionTool;
   roleLabel: string;
-  context: ExtensionContext;
+  context: ExtensionContext | HostContext;
   signal?: AbortSignal;
-  runCompletion?: AuditorCompletion;
   retainResponse?(response: AssistantMessage): void;
-  /**
-   * Province seat identity only — shared executor owns config load, registry
-   * resolve, and loud auth/availability failure (#453 / ADR 0018).
-   */
+  /** Province seat identity only — shared executor owns seat resolution, and
+   * loud auth/availability failure (#453 / ADR 0018). */
   gateSeat?: GateOfficerSeat;
+  /** Run directory carrying the institutional resolution page (#518). Derives
+   * from context when absent. */
+  runDirectory?: string;
 };
 
-/**
- * Resolve province child model from public-cli persistent config (#453).
- * Own override > gatekeeper override > unset (inherit parent). Availability
- * failures throw — createInheritedRuntime must not silent-fallback to parent.
- */
-async function resolveGateSeatModelOptions(
-  context: ExtensionContext,
-  seat: GateOfficerSeat,
-  roleLabel: string,
-): Promise<{ model?: Model<Api>; thinkingLevel?: PublicThinkingLevel }> {
-  const selection = resolveGateOfficerModelSelection(await loadPublicCliConfig(), seat);
-  if (selection === undefined) return {};
-  const find = context.modelRegistry.find?.bind(context.modelRegistry);
-  if (typeof find !== "function") {
-    throw new Error(`${roleLabel} model registry cannot resolve models`);
-  }
-  const model = find(selection.provider, selection.model);
-  if (model === undefined) {
-    throw new Error(`${roleLabel} model is unavailable: ${formatModelSpec(selection)}`);
-  }
-  return {
-    model,
-    ...(selection.thinking === undefined ? {} : { thinkingLevel: selection.thinking }),
-  };
+/** Resolution-page seat key for an auditor invocation: province gate seats map
+ * to their own page seats; doctor/judge compliance audits use the auditor seat. */
+function auditorSeatKey(gateSeat: GateOfficerSeat | undefined): string {
+  return gateSeat ?? "auditor";
 }
 
 /**
- * Auditor lifecycle via the shared in-process helper.
+ * Auditor lifecycle via the shared institutional sub-session adapter.
  * Adapter keeps role label / soul / decision tool / result projection only.
  * No tools allowlist (ADR 0064). Provider-stream idle-only retry (ADR 0059).
  * Durable child session via ADR 0065 archivist entry.
@@ -790,27 +530,14 @@ export async function executeAuditorChild(
   options: AuditorRoleOptions,
 ): Promise<{ decision: unknown; response: AssistantMessage; noReceiptLifecycle?: NoReceiptLifecycleFacts }> {
   const { createRecordSession } = await import("./archivist-record-entry.ts");
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === undefined) {
+    throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
+  }
+  const seat = auditorSeatKey(options.gateSeat);
+  const selection = await readInstitutionalSeatSelection(runDirectory, seat);
 
   return withInProcessScratch({ prefix: "ak-auditor-role-" }, async (scratch) => {
-    const gate =
-      options.gateSeat === undefined
-        ? {}
-        : await resolveGateSeatModelOptions(
-            options.context,
-            options.gateSeat,
-            options.roleLabel,
-          );
-    const inherited = await createInheritedRuntime({
-      context: options.context,
-      label: options.roleLabel,
-      idleRetry: true,
-      ...(gate.model === undefined ? {} : { model: gate.model }),
-      ...(options.runCompletion === undefined
-        ? {}
-        : { runCompletion: options.runCompletion, injectedSystemPrompt: options.systemPrompt }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-
     const cwd = options.context.cwd ?? process.cwd();
 
     let decision: unknown;
@@ -833,12 +560,15 @@ export async function executeAuditorChild(
         try {
           const result = await options.tool.execute(...args);
           delivery.recordAccepted();
-          decision = args[1];
+          const rawDecision = args[1];
+          const isMissingArgs = rawDecision === undefined
+            || (typeof rawDecision === "object" && rawDecision !== null && !Array.isArray(rawDecision) && Object.keys(rawDecision).length === 0);
+          decision = isMissingArgs ? undefined : rawDecision;
           decisionCallId = args[0];
           decisionToolFailure = undefined;
           decisionToolFailures.delete(args[0]);
           decisionSubmitted = true;
-          return result;
+          return { ...result, terminate: true };
         } catch (error) {
           decisionToolFailure = error;
           decisionToolFailures.set(args[0], error);
@@ -857,18 +587,34 @@ export async function executeAuditorChild(
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 
-    // Shared session open — no tools allowlist (ADR 0064).
-    const { openInProcessAgentSession: openSession } = await import("./in-process-session.ts");
-    const { session, dispose } = await openSession({
+    // Shared session open — no tools allowlist (ADR 0064). Auth resolved
+    // child-locally from the explicit seat selection; adapter owns runtime/provider.
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    const evidenceToolFailures = new Map<string, unknown>();
+    const wrappedDossierTool = {
+      ...options.dossierTool,
+      label: options.roleLabel,
+      async execute(...args: any[]) {
+        try {
+          return await options.dossierTool.execute(...args);
+        } catch (error) {
+          evidenceToolFailures.set(args[0], error);
+          throw error;
+        }
+      },
+    };
+    const opened = await openPiInstitutionalSession({
       cwd,
       agentDir: scratch,
-      model: inherited.model,
-      thinkingLevel: gate.thinkingLevel ?? options.context.thinkingLevel ?? "off",
-      modelRuntime: inherited.runtime,
+      selection,
       systemPrompt: options.systemPrompt,
-      customTools: [{ ...options.dossierTool, label: options.roleLabel }, tool],
+      customTools: [wrappedDossierTool, tool],
       sessionManager: auditorSessionManager,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      idleRetry: true,
+      label: options.roleLabel,
     });
+    const { handle } = opened;
 
     const binding: AuditorParentAttemptBinding = {
       version: 1,
@@ -883,6 +629,16 @@ export async function executeAuditorChild(
     // Durable binding is a prerequisite: never observe the provider when its
     // response could not later be tied to the current parent attempt.
     auditorSessionManager.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
+    try {
+      sitianReport({
+        level: "event",
+        kind: "auditor",
+        cwd,
+        sessionParent: parentSessionFile,
+        payload: { type: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, ...binding },
+        source: "evidence-child-executor",
+      });
+    } catch {}
 
     let turns = 0;
     const sessionUsage = emptyUsage();
@@ -892,31 +648,13 @@ export async function executeAuditorChild(
     let rejectedDecisionResponse: AssistantMessage | undefined;
     let promptNeighboringFailure: unknown;
     let promptDecisionFailures: unknown[] = [];
-    const registeredToolNames = new Set(session.getAllTools().map((entry) => entry.name));
-    const evidenceToolFailures = new Map<string, unknown>();
-    for (const name of registeredToolNames) {
-      if (name === tool.name) continue;
-      const definition = session.getToolDefinition(name);
-      if (definition === undefined) continue;
-      const execute = definition.execute.bind(definition);
-      definition.execute = async (...args: any[]) => {
-        try {
-          return await (execute as (...executeArgs: any[]) => Promise<any>)(...args);
-        } catch (error) {
-          evidenceToolFailures.set(args[0], error);
-          throw error;
-        }
-      };
-    }
     const findToolFailure = (response: AssistantMessage): unknown => {
       const callIds = response.content.flatMap((part) =>
-        part.type === "toolCall" && part.name !== tool.name && registeredToolNames.has(part.name) ? [part.id] : []);
+        part.type === "toolCall" && part.name !== tool.name ? [part.id] : []);
       for (const callId of callIds) {
         if (evidenceToolFailures.has(callId)) return evidenceToolFailures.get(callId);
       }
-      const callIdSet = new Set(callIds);
-      return [...session.messages].reverse().find((message) =>
-        message.role === "toolResult" && callIdSet.has(message.toolCallId) && message.isError);
+      return undefined;
     };
     const drainRejectedDecisionFailures = (response: AssistantMessage) => {
       for (const part of response.content) {
@@ -926,29 +664,74 @@ export async function executeAuditorChild(
         decisionToolFailures.delete(part.id);
       }
     };
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_end" && event.message.role === "assistant" && boundaryResponse === undefined) {
+    const retainedAssistants: AssistantMessage[] = [];
+    const unsubscribe = handle.subscribe((event) => {
+      // Capture evidence-tool (non-decision) failures from the handle's real
+      // tool_result events. The old runCompletion path wrapped every child tool's
+      // execute to observe failures; through the real handle the adapter forwards
+      // tool_execution_end isError. Record the errored tool call id so an adjacent
+      // evidence failure can outrank a settled/correctable decision feedback.
+      if (event.type === "tool_result" && event.isError === true && event.toolName !== tool.name) {
+        // Through the real handle the child flattens a throwing evidence tool
+        // into a toolResult error whose content text carries the diagnostic
+        // (e.g. "ENOENT: no such file or directory..."). Recover that text so
+        // the adjacent evidence failure outranks a settled decision feedback
+        // with its original diagnostic, mirroring the pre-migration wrapped
+        // execute capture (which held the raw error object).
+        const detailText = extractToolResultText(event.details);
+        // A native unknown-tool receipt ("Tool <name> not found") is not an
+        // evidence-tool failure: the child session has no such tool registered,
+        // so its errored toolResult must not short-circuit the auditor (it keeps
+        // prompting to the turn limit, mirroring the pre-migration
+        // registeredToolNames exclusion in findToolFailure).
+        if (detailText !== undefined && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
+        const failure = detailText === undefined
+          ? new Error(event.toolName ?? "evidence tool failed")
+          : new Error(detailText);
+        // Recover the errno code from the flattened diagnostic so an evidence
+        // failure's identity (e.g. code "ENOENT") is preserved across the real
+        // HTTP round-trip, mirroring the pre-migration raw error object.
+        const errno = /^([A-Z_]+):/.exec(detailText ?? "");
+        if (errno !== null && errno[1] !== undefined) (failure as NodeJS.ErrnoException).code = errno[1];
+        evidenceToolFailures.set(event.toolCallId, failure);
+      }
+      if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
         turns += 1;
-        addUsage(sessionUsage, event.message.usage);
-        retainedResponse = event.message;
-        try { options.retainResponse?.(event.message); } catch (error) { retentionFailure = error; }
-        // A tool call in assistant output is only an observation. Preserve its
-        // candidate for typed malformed-decision settlement, but the wrapped
-        // execute path above is the sole owner of accepted-receipt state; a
-        // rejected execution must remain retryable in this same session.
-        for (const part of event.message.content) {
-          if (part.type === "toolCall" && part.name === tool.name) {
-            rejectedDecisionResponse = event.message;
-            if (decision === undefined) {
-              decision = part.arguments;
-              decisionCallId = part.id;
-              // Pi can reject malformed root arguments before invoking execute;
-              // that remains the existing unreadable-candidate failure path.
-              if (part.arguments === undefined) decisionSubmitted = true;
+        if (event.usage) addUsage(sessionUsage, event.usage);
+        const msg = event.message as AssistantMessage | undefined;
+        retainedResponse = msg;
+        if (msg) {
+          retainedAssistants.push(msg);
+          try { options.retainResponse?.(msg); } catch (error) { retentionFailure = error; }
+          // A tool call in assistant output is only an observation. Preserve its
+          // candidate for typed malformed-decision settlement, but the wrapped
+          // execute path above is the sole owner of accepted-receipt state; a
+          // rejected execution must remain retryable in this same session.
+          for (const part of msg.content) {
+            if (part.type === "toolCall" && part.name === tool.name) {
+              rejectedDecisionResponse = msg;
+              if (decision === undefined) {
+                decision = (part.arguments === undefined
+                  || (typeof part.arguments === "object" && part.arguments !== null
+                    && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0))
+                  ? undefined
+                  : part.arguments;
+                decisionCallId = part.id;
+                // Pi can reject malformed root arguments before invoking execute;
+                // that remains the existing unreadable-candidate failure path.
+                // A missing root argument reaches the real provider adapter as an
+                // empty object after serialization — treat it as missing too so a
+                // one-shot typed missing-args settlement does not solicit another turn.
+                if (part.arguments === undefined
+                  || (typeof part.arguments === "object" && part.arguments !== null
+                    && !Array.isArray(part.arguments) && Object.keys(part.arguments).length === 0)) {
+                  decisionSubmitted = true;
+                }
+              }
             }
           }
+          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
         }
-        if (turns >= AUDITOR_TURN_LIMIT) boundaryResponse = event.message;
       }
       if (event.type === "turn_end") {
         if (rejectedDecisionResponse !== undefined) {
@@ -958,14 +741,15 @@ export async function executeAuditorChild(
         if (decisionSubmitted || promptNeighboringFailure !== undefined
           || (boundaryResponse !== undefined && rejectedDecisionResponse === undefined)
           || retentionFailure !== undefined) {
-          void session.abort();
+          handle.abort();
         }
       }
     });
-    const abort = () => { void session.abort(); };
+    const abort = () => { handle.abort(); };
     if (options.signal?.aborted) abort();
     else options.signal?.addEventListener("abort", abort, { once: true });
 
+    let auditorFailure: unknown;
     try {
       try {
         const promptAllowingRejectedDecision = async (prompt: string) => {
@@ -975,7 +759,7 @@ export async function executeAuditorChild(
           promptDecisionFailures = [];
           let promptFailure: unknown;
           try {
-            await session.prompt(prompt);
+            await handle.prompt(prompt);
           } catch (error) {
             promptFailure = error;
           }
@@ -997,6 +781,8 @@ export async function executeAuditorChild(
             return;
           }
           if (decisionToolFailure !== undefined) return;
+          if (retentionFailure !== undefined) return;
+          if (opened.streamFailure !== undefined) throw opened.streamFailure;
           if (promptFailure !== undefined) throw promptFailure;
         };
         const chargeAndClearRejectedDecisionFailures = (failures: unknown[]) => {
@@ -1007,8 +793,8 @@ export async function executeAuditorChild(
           promptDecisionFailures = [];
         };
         await promptAllowingRejectedDecision(options.prompt);
-        while (!decisionSubmitted && (boundaryResponse === undefined || decisionToolFailure !== undefined)
-          && inherited.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
+        while (!decisionSubmitted && retentionFailure === undefined && (boundaryResponse === undefined || decisionToolFailure !== undefined)
+          && opened.streamFailure === undefined && delivery.nextAction() === "request-delivery") {
           if (decisionToolFailure !== undefined) {
             const failures = promptDecisionFailures.length === 0
               ? [decisionToolFailure]
@@ -1028,7 +814,7 @@ export async function executeAuditorChild(
             await promptAllowingRejectedDecision(RECEIPT_DELIVERY_PROMPT);
           }
         }
-        if (!decisionSubmitted && inherited.streamFailure === undefined
+        if (!decisionSubmitted && retentionFailure === undefined && opened.streamFailure === undefined
           && delivery.nextAction() === "no-receipt") {
           const runPointer = options.context.sessionManager.getSessionFile() ?? options.context.cwd ?? process.cwd();
           const attemptPointer = binding.parent.attemptEntryId ?? binding.parent.sessionId ?? `current:${runPointer}`;
@@ -1038,28 +824,44 @@ export async function executeAuditorChild(
           // charged this prompt to the exhausted shared budget.
           decisionToolFailure = undefined;
           auditorSessionManager.appendCustomEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, ...facts },
+              source: "evidence-child-executor",
+            });
+          } catch {}
           // Provenance is granted only after the lifecycle owner persisted the
           // current child record; accepted model arguments can never set it.
           noReceiptLifecycle = facts;
         }
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
-        if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
-        throw error;
+        if (retentionFailure === undefined && opened.streamFailure !== undefined) throw opened.streamFailure;
+        if (retentionFailure === undefined) throw error;
       }
       if (options.signal?.aborted) throw options.signal.reason;
-      if (inherited.streamFailure !== undefined) throw inherited.streamFailure;
+      if (retentionFailure === undefined && opened.streamFailure !== undefined) throw opened.streamFailure;
       if (!decisionSubmitted && decisionToolFailure !== undefined) throw decisionToolFailure;
       const relevantResponse = !decisionSubmitted
         ? boundaryResponse
-        : [...session.messages].reverse().find((message): message is AssistantMessage =>
-          message.role === "assistant" && message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+        : (retainedResponse && retainedResponse.role === "assistant" && retainedResponse.content.some((part) => part.type === "toolCall" && part.name === tool.name)
+          ? retainedResponse
+          : undefined);
       if (relevantResponse !== undefined) {
         const toolFailure = findToolFailure(relevantResponse);
         if (toolFailure !== undefined) throw toolFailure;
       }
-      if (retentionFailure !== undefined && retainedResponse?.stopReason !== "error") throw retentionFailure;
-      if (boundaryResponse !== undefined && !decisionSubmitted && noReceiptLifecycle === undefined) {
+      const assistants = [...retainedAssistants].reverse();
+      const response = !decisionSubmitted
+        ? assistants[0]
+        : assistants.find((message) =>
+          message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
+
+      if (boundaryResponse !== undefined && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === undefined) {
         const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
         throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
           stopReason: boundaryResponse.stopReason,
@@ -1067,18 +869,10 @@ export async function executeAuditorChild(
         });
       }
 
-      const assistants = [...session.messages]
-        .reverse()
-        .filter((message): message is AssistantMessage => message.role === "assistant");
-      const response = !decisionSubmitted
-        ? assistants[0]
-        : assistants.find((message) =>
-          message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-
       if (response !== undefined) {
         try {
+          if (retentionFailure !== undefined) throw retentionFailure;
           if (retainedResponse === undefined) options.retainResponse?.(response);
-          else if (retentionFailure !== undefined) throw retentionFailure;
         } catch (retentionFailure) {
           if (response.stopReason !== "error") throw retentionFailure;
           // Do not trim/rewrite the held errorMessage bytes.
@@ -1133,8 +927,8 @@ export async function executeAuditorChild(
                 }),
             },
           };
-          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
-            version: 1,
+          const failureData = {
+            version: 1 as const,
             parent: binding.parent,
             failure: {
               cause: failure.knownCause,
@@ -1142,7 +936,18 @@ export async function executeAuditorChild(
               ...(failure.message === "" ? {} : { diagnostic: failure.message }),
               details: failure.details,
             },
-          });
+          };
+          auditorSessionManager.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, failureData);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "auditor",
+              cwd,
+              sessionParent: parentSessionFile,
+              payload: { type: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, ...failureData },
+              source: "evidence-child-executor",
+            });
+          } catch {}
           throw failure;
         }
       }
@@ -1150,20 +955,215 @@ export async function executeAuditorChild(
       if (
         response === undefined
         || response.stopReason === "error"
-        || response.stopReason === "aborted"
-        || (!decisionSubmitted && decision === undefined)
+        || (!decisionSubmitted && (response.stopReason === "aborted" || decision === undefined))
       ) {
-        throw new Error(`${options.roleLabel} exited without a readable decision receipt`);
+        throw new Error(response?.errorMessage ?? `${options.roleLabel} exited without a readable decision receipt`);
       }
       return {
         decision,
         response: { ...response, usage: sessionUsage },
         ...(noReceiptLifecycle === undefined ? {} : { noReceiptLifecycle }),
       };
+    } catch (error) {
+      auditorFailure = error;
+      throw error;
     } finally {
       options.signal?.removeEventListener("abort", abort);
-      unsubscribe();
-      dispose();
+      await runChildCleanup([() => unsubscribe(), () => handle.close()], auditorFailure, options.roleLabel);
     }
   });
+}
+
+function exactRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Navigator institutional child on this unique lifecycle seam (#590 / ADR 0018).
+ * Owns record-session / open / subscribe / close. Caller keeps tool, label, and
+ * failure projection only.
+ */
+export function createNativeNavigatorSessionFactory(
+  defaultModelSettingPath = navigatorModelSettingPath(),
+): NavigatorSessionFactory {
+  return async ({ context, subject, modelSettingPath, tool }) => {
+    const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
+    let selection = resolved.selection;
+    let thinkingLevel = resolved.thinkingLevel;
+    let configuredLabel = resolved.configuredLabel;
+
+    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    const sessionManager = createRecordSession({
+      cwd: context.cwd,
+      kind: "navigator",
+      subject,
+      parent: context.sessionManager,
+    });
+
+    let providerFailure: NavigatorProviderFailureFact | undefined;
+    let observationWrite: Promise<void> = Promise.resolve();
+    const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
+      if (fact !== undefined) providerFailure = fact;
+    };
+    const classifyTerminalMessage = (message: unknown): void => {
+      if (!exactRecord(message)) {
+        assignProviderFailure(navigatorProviderFailureFromError(message));
+        return;
+      }
+      assignProviderFailure(navigatorProviderFailureFromDiagnostics(message.diagnostics));
+      if (providerFailure !== undefined) return;
+      if (message.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(message));
+      if (providerFailure !== undefined) return;
+      const status = typeof message.statusCode === "number"
+        ? message.statusCode
+        : typeof message.status === "number"
+          ? message.status
+          : typeof message.httpStatus === "number"
+            ? message.httpStatus
+            : undefined;
+      if (typeof status === "number") {
+        assignProviderFailure(navigatorProviderFailureFromStatus(status));
+        if (providerFailure === undefined && status >= 400 && status < 600) {
+          assignProviderFailure({ source: "transport", cause: "transport" });
+        }
+        const runDir = process.env.AK_ROLE_RUN_DIR;
+        const provider = typeof message.provider === "string" && message.provider.trim() !== ""
+          ? message.provider
+          : selection.provider;
+        if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
+          observationWrite = observationWrite.then(() =>
+            recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider }),
+          );
+        }
+      }
+    };
+
+    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
+    let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
+    try {
+      opened = await openPiInstitutionalSession({
+        cwd: context.cwd,
+        selection,
+        systemPrompt: "",
+        noTools: "all",
+        toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
+        customTools: [tool],
+        sessionManager,
+        label: "Navigator",
+      });
+    } catch (error) {
+      const fact = navigatorProviderFailureFromError(error);
+      throw navigatorUnavailableError(fact?.source ?? "session", error, fact?.cause ?? "session");
+    }
+
+    const unsubscribe = opened.handle.subscribe((event) => {
+      if (event.type === "message_end" && event.message !== undefined) {
+        const message = event.message;
+        if (exactRecord(message) && (message.stopReason === "error" || message.stopReason === "aborted")) {
+          classifyTerminalMessage(message);
+        }
+      }
+    });
+
+    let disposal: Promise<void> | undefined;
+    const dispose = (): Promise<void> => {
+      if (disposal === undefined) {
+        disposal = runChildCleanup(
+          [() => unsubscribe(), () => opened.handle.close()],
+          undefined,
+          "Navigator",
+        );
+      }
+      return disposal;
+    };
+
+    return {
+      prompt: async (text) => {
+        providerFailure = undefined;
+        observationWrite = Promise.resolve();
+        const failFrom = (error: unknown): never => {
+          if (providerFailure === undefined) {
+            assignProviderFailure({ source: "transport", cause: "transport" });
+          }
+          const fact = providerFailure!;
+          throw navigatorUnavailableError(fact.source, error, fact.cause);
+        };
+        let terminal: unknown;
+        try {
+          const turn = await opened.handle.prompt(text);
+          if (turn.stopReason === "error" || turn.stopReason === "aborted") {
+            const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
+            if (providerFailure === undefined && opened.streamFailure !== undefined) {
+              classifyTerminalMessage(opened.streamFailure);
+            }
+            if (providerFailure === undefined) {
+              assignProviderFailure(navigatorProviderFailureFromError(
+                typeof cause === "object" && cause !== null ? cause : new Error(String(cause)),
+              ));
+            }
+            terminal = cause;
+          } else if (opened.streamFailure !== undefined) {
+            if (providerFailure === undefined) classifyTerminalMessage(opened.streamFailure);
+            terminal = opened.streamFailure;
+          }
+        } catch (error) {
+          if (error instanceof NavigatorUnavailableError) throw error;
+          if (providerFailure === undefined) classifyTerminalMessage(error);
+          terminal = error;
+        }
+        await observationWrite;
+        if (terminal !== undefined) failFrom(terminal);
+      },
+      providerFailure: () => providerFailure,
+      appendEntry: (customType, data) => {
+        sessionManager.appendCustomEntry(customType, data);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "attendance",
+            cwd: context.cwd,
+            sessionParent: sessionManager.getSessionFile(),
+            payload: { customType, data },
+            source: "evidence-child-executor",
+          });
+        } catch {
+          // best-effort
+        }
+      },
+      entries: () => sessionManager.getEntries(),
+      setModel: async (next, nextThinking) => {
+        let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
+        try {
+          nextParsed = parseNavigatorModelSetting(next);
+        } catch (error) {
+          throw navigatorUnavailableError("model", error);
+        }
+        if (
+          nextParsed.provider !== selection.provider
+          || nextParsed.model !== selection.model
+        ) {
+          throw new NavigatorUnavailableError(
+            "model",
+            `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
+          );
+        }
+        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
+          throw new NavigatorUnavailableError(
+            "thinking",
+            `Navigator thinking level ${nextThinking} is unavailable for ${next}`,
+          );
+        }
+        selection = {
+          provider: nextParsed.provider,
+          model: nextParsed.model,
+          thinking: nextParsed.thinkingLevel,
+        };
+        thinkingLevel = nextParsed.thinkingLevel;
+        configuredLabel = next;
+      },
+      getThinkingLevel: () => thinkingLevel,
+      recordPointer: () => sessionManager.getSessionDir(),
+      dispose,
+    };
+  };
 }

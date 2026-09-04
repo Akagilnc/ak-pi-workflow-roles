@@ -4,7 +4,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
@@ -22,20 +22,68 @@ export class ActivationLedgerError extends Error {
   }
 }
 
+/** Real machine home via passwd/user profile — never process.env.HOME. */
+export function packageMachineHome(): string {
+  return resolve(userInfo().homedir);
+}
+
+/**
+ * Soft derive: package home owning a path under `.ak-roles/`, or undefined when
+ * the path is not ledger topology. Single parse authority — callers must not
+ * reimplement marker splitting.
+ */
+export function tryHomeFromAkRolesPath(path: string): string | undefined {
+  const match = /(^|[\\/])\.ak-roles(?=[\\/]|$)/.exec(path);
+  if (!match) return undefined;
+  if (match.index === 0) {
+    return match[1] === "" ? "" : match[1];
+  }
+  return path.slice(0, match.index);
+}
+
+/**
+ * Hard derive: package home owning a run/session path under `.ak-roles/`.
+ * Fails typed when the path is not ledger topology (no HOME fallback).
+ */
+export function homeFromRunDirectory(runDirectory: string): string {
+  const home = tryHomeFromAkRolesPath(runDirectory);
+  if (home === undefined || home.length === 0) {
+    throw new ActivationLedgerError(
+      `cannot resolve home from runDirectory: ${runDirectory}`,
+    );
+  }
+  return home;
+}
+
 /**
  * Sole package-owned machine home (ADR 0048 / #78): one enumerable family under
- * the process home directory. No env override — relative or invocation-varying
+ * the user passwd/profile home directory. No env override — relative or invocation-varying
  * homes would split the family and can write into a consumer repository.
- * Process home must already be absolute; relative HOME is rejected before any write.
+ * Process home must already be absolute; relative home is rejected before any write.
  */
-export function resolveActivationLedgerHome(home: () => string = homedir): string {
-  const processHome = home();
+export function resolveActivationLedgerHome(home?: string): string {
+  const processHome = typeof home === "string" ? home : packageMachineHome();
   if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
     throw new ActivationLedgerError(
       `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`,
     );
   }
   return resolve(processHome, ".ak-roles");
+}
+
+/**
+ * Ledger home for a session/run path: derive package home from `.ak-roles` topology
+ * when present, otherwise the passwd/profile machine home. Single authority for
+ * "path → ledger home" (call sites pass the path only).
+ */
+export function resolveActivationLedgerHomeForPath(path?: string | null): string {
+  if (typeof path === "string" && path.length > 0) {
+    const derived = tryHomeFromAkRolesPath(path);
+    if (derived !== undefined && derived.length > 0) {
+      return resolveActivationLedgerHome(derived);
+    }
+  }
+  return resolveActivationLedgerHome();
 }
 
 /** Enumerable book directory for one basename key. */

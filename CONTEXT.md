@@ -17,16 +17,19 @@
 - **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
 - **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。规范见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
 - **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
-- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
+- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。票庭审读（开工前的方案听证）归给事中（[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)）;本席专事后判卷。
 - **Fixer(修内司)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
 - **Coder(将作监)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提（ADR 0024）；`completed` 零 commit 仅触发防忘提醒闸一次（ADR 0066），`planned`/`refused`/`unfinished` 零 commit 合法。拒绝可零 commit 直接交调用方处置。
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态，语义为**受阻求援**——仅当前置条件缺失或违宪导致本次调用无法完成时可用，回执必须说明理由；缺待拍决策/答复＝前置缺失的一种(2026-08-12 收窄与执法位见 ADR 0050 Amendment / #292)。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
 - **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **门下省(Gate province)**:质量保证省部级席位。内部入口在一次省内政中按受审物派给事中或符宝郎；省不是纯分类词，也不是外层编排器。给事中与符宝郎仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 与 [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。
+- **门下省(Gate province)**:审署诏敕与质量保证的省部级席位。交卷闸内部入口在一次省内政中按受审物派察院或符宝郎；给事中（票庭）亦属本省，由调用者开工前传召，非闸派。省不是纯分类词，也不是外层编排器。各官仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md) 与 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。
 _Avoid_:把「门下省」当作通进司的公开角色名。
-- **给事中(Quality-gate officer)**:门下省下的**独立**质检角色（寺监级）。只审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。不改大理寺灵魂。可被门下省在一次省内政里派发，也可被外层调用者单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
-- **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。只审**引语真伪**与**票面对齐**；受审物是大理寺拟判；形态比照审刑院硬闸（封驳＝当场打回重写拟判，不是本局失败）。进单、交卷是拟判的两种场合，不是两个官。可被门下省派发，也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)。
+- **给事中(Countersign)**:门下省下的**票庭审读官**。凡开工前的票面——派单、方案、处置案——先过给事中，裁决五问：①是否符合既定制度②授权是否真实（以起居录为据）③文书是否与原意一致④是否存在必须退回重议的问题⑤是否具备正式发布与执行资格。票庭流水线在本席 turn 前先跑起居郎工序（调用者无感）。交卷闸出席符宝郎内闸。读码取证是本职；把实现细节过早堆上票面是失职；实质听证为传召取证之权，裁决落法度与事实，不落施工设计。三态判词映射：署（converged，放行开工）／封驳（continue，退回重议）／上呈（escalate）。非闸派——由调用者开工前传召。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **察院(Inspector)**:事后察举官（原给事中，[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 分立）。审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。机器键仍为 `inspector`。可被门下省交卷闸派发，也可被外层调用者单独派发；挂靠御史台一案挂起。
+- **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。首责唯一：**核实实际授权出处**——乱编乱扩、伪造或过度解释授权，无条件驳。行事两步：读该票起居录→以录核旨。引语真伪与票面对齐为其手段；受审物是大理寺拟判与给事中署章。形态比照审刑院硬闸（封驳＝当场打回重写，不是本局失败）。可被门下省派发，也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **起居录(ticket-provenance)**:每票一份、票键组织的司天台记录 kind；整块誊录决策相关对话，JSONL 权威、md 人读派生。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **起居郎(diarist)**:票庭流水线在给事中前的一站（非公开席位、无 soul 开府、不出席闸）。LLM 语义收集＋机械保全（来源枚举、去重滤噪、引语逐字反验）；调用者无感；每次过庭增量刷新。生成者唯一；其余席位只读。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
@@ -50,7 +53,7 @@ _Avoid_:门下省（那是省名）。
 - **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
 - **引擎（Engine）**: 角色劳动的执行后端。默认=角色 session 在 pi 内自跑；可经**外包**把最重的推理段交给本地 CLI（cc/codex/cursor/kimi 等），内容交回同一 session 提交——治理面（票庭/soul/typed 交卷/审刑院/案卷）永远在 pi，一套逻辑。引擎选择与模型同法，唯一真源=池令（ADR 0069）。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
-- **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。
+- **三态判词**:`converged` / `continue` / `escalate`。给事中票庭语义映射:署／封驳／上呈。环境/工具链故障不是判词,以非零退出走故障通道。
 - **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环；次序是合同的推论，非规定流程。
 - **Merger（校书郎）**：只调和调用方指定、已开始的一次 Git merge 的完整冲突集，创建该次普通双亲候选 commit 或在需要新意图/权力决定时升级；不发起、不发布、不编排 merge。
 - **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。调用方递票号与 baseline，尚书省驱动御史台取证、大理寺裁决、修内司修理滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛。canonical 英文名 `marshal`；席位待落地。

@@ -3,14 +3,18 @@
 // 真 host 会话装配），不属开发内环快档。契约逐断言不变。
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { validateToolArguments } from "@earendil-works/pi-ai";
-import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
+import { basename, dirname, join, resolve } from "node:path";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
+import { seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { openPiInstitutionalSession } from "../../src/pi/in-process-session.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { buildNavigatorInfrastructureFailureFact, createRoleRuntimeExtension, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import {
   context,
@@ -20,13 +24,14 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 
 test("exact-session resume keeps principal; terminal starts next invocation; non-UUIDv7 rejected", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
   const {
     NAVIGATOR_INVOCATION_ENTRY,
+    bindCurrentDurableTerminalToMarker,
     buildNavigatorInfrastructureFailureFact,
     classifyPackagedRoleTerminalResult,
     currentInvocationPrincipalFromSession,
@@ -154,6 +159,11 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         isError: true,
         details: { kind: "role_infrastructure_failure", source: "other", reasonCode: "host_failure" },
       };
+      const pendingRoundClosureMsg = {
+        toolName: entry.outputTool,
+        isError: false,
+        details: { submissionDisposition: "pending-round-closure" },
+      };
       assert.equal(classifyPackagedRoleTerminalResult(acceptedMsg).kind, "accepted", `${entry.role}:${String(phase)}:classify-accepted`);
       assert.equal(classifyPackagedRoleTerminalResult(infraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:classify-infra`);
       assert.equal(classifyPackagedRoleTerminalResult(retryableMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:classify-retryable`);
@@ -165,6 +175,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       assert.equal(isDurablePackagedRoleTerminalResult(extraKeyInfraMsg), true, `${entry.role}:${String(phase)}:extra-key-infra-durable`);
       assert.equal(classifyPackagedRoleTerminalResult(extraKeyInfraMsg).kind, "infrastructure", `${entry.role}:${String(phase)}:extra-key-infra-classify`);
       assert.equal(isDurablePackagedRoleTerminalResult(malformedInfraMsg), false, `${entry.role}:${String(phase)}:malformed-infra`);
+      assert.equal(classifyPackagedRoleTerminalResult(pendingRoundClosureMsg).kind, "nonterminal", `${entry.role}:${String(phase)}:pending-round-closure`);
+      assert.equal(publicNavigatorSettlement(entry.role, phase, pendingRoundClosureMsg), undefined, `${entry.role}:${String(phase)}:pending-settlement`);
       assert.equal(isNavigatorInfrastructureFailureFact(extraKeyInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-extras`);
       assert.equal(isNavigatorInfrastructureFailureFact(malformedInfraMsg.details), false, `${entry.role}:${String(phase)}:closed-fact-wrong-source`);
 
@@ -389,6 +401,8 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     const roleSessionEntries: Array<{ type: string; customType?: string; data?: unknown; message?: unknown }> = [];
     let attendanceInvocationId: string | undefined;
     let settleEvent: { invocationId?: string; disposition?: string } | undefined;
+    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
+    const sentMessages: Array<{ customType?: string }> = [];
     const modelSettingPath = join(home, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }));
 
@@ -403,7 +417,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
         handlers.set(name, handler);
       },
-      registerTool() {},
+      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+        if (tool.name === JUDGE_OUTPUT_TOOL_NAME) outputTool = tool;
+      },
       getAllTools() {
         return [];
       },
@@ -414,6 +430,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         sessionManager.appendCustomEntry(customType, data);
       },
       async sendMessage(message: { customType?: string; details?: unknown }) {
+        sentMessages.push(message);
         if (message.customType === "ak-navigator-attendance") {
           roleSessionEntries.push({
             type: "custom_message",
@@ -424,9 +441,9 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
       },
     };
 
+    const { createPiRoleHostAdapter } = await import("../../src/pi/adapter.ts");
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
       loadNavigatorWorkContext: async () => ({
         subjectKey: `${home}/.ak/work`,
@@ -438,6 +455,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         attendanceInvocationId = options.invocationId;
         const nav = createNavigatorAttendance({
           ...options,
+          context: context(),
           modelSettingPath,
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -468,7 +486,10 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
         });
         return nav;
       },
-    })(pi as never);
+    })((() => {
+      const adapter = createPiRoleHostAdapter(pi as never);
+      return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
+    })());
 
     const sessionDir = join(
       home,
@@ -538,28 +559,26 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    await handlers.get("tool_result")?.({
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "judge-out",
-      isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
-      details: { judgeStatus: "converged" },
-    }, ctx);
-    // Persist packaged role terminal onto the admitted session (completes the invocation).
-    sessionManager.appendMessage({
-      role: "toolResult",
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      toolCallId: "judge-out",
-      isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
-      timestamp: Date.now(),
-      details: { judgeStatus: "converged" },
-    } as never);
+    // Registered output execute creates only a candidate; typed turn_end owns closure.
+    assert.ok(outputTool);
+    await handlers.get("tool_execution_start")?.({ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "judge-out" }, ctx);
+    const pending = await outputTool.execute("judge-out", { judgeStatus: "converged" }, undefined, undefined, ctx);
+    assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
+    assert.equal(sessionManager.getEntries().some((entry: any) => entry.type === "custom" && entry.customType === "ak-role-submission-closure"), false);
+    await handlers.get("turn_end")?.({ turnIndex: 0, toolResults: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "judge-out" }] }, ctx);
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
     await handlers.get("agent_settled")?.({}, ctx);
 
     assert.ok(settleEvent);
     assert.equal(settleEvent?.invocationId, markerId);
     assert.equal(settleEvent?.disposition, "recommendation");
+    assert.equal(sentMessages.some((message) => message.customType === "ak-receipt-delivery-prompt"), false, "accepted closure suppresses receipt催交");
+    const closureNavigator = extractNavigatorFact([
+      ...sessionManager.getEntries(),
+      ...roleSessionEntries.filter((entry) => entry.type === "custom_message"),
+    ] as never);
+    assert.equal(closureNavigator.disposition, "recommendation", "public Navigator consumes the same typed closure as restart");
+    assert.equal(bindCurrentDurableTerminalToMarker(sessionManager.getEntries()).kind, "bound", "typed closure binds the accepted terminal");
 
     // Same session after accepted role terminal is a new invocation → fresh principal.
     await handlers.get("session_start")?.({}, ctx);
@@ -680,7 +699,7 @@ test("exact-session resume keeps principal; terminal starts next invocation; non
 test("healthy Navigator preparation survives mid-turn agent_settled for later accepted terminal", async () => {
   const { basename } = await import("node:path");
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { createPiRoleHostAdapter } = await import("../../src/pi/adapter.ts");
   const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
   const { JUDGE_OUTPUT_TOOL_NAME } = await import("../../src/package-contracts/judge-output.ts");
 
@@ -689,6 +708,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     const emit = async (name: string, event: unknown, ctx: unknown) => {
       for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
     };
+    let outputTool: { execute: (...args: any[]) => Promise<any> } | undefined;
     const pi = {
       registerFlag() {},
       getFlag(name: string) {
@@ -699,7 +719,9 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
         list.push(handler);
         handlers.set(name, list);
       },
-      registerTool() {},
+      registerTool(tool: { name: string; execute: (...args: any[]) => Promise<any> }) {
+        if (tool.name === JUDGE_OUTPUT_TOOL_NAME) outputTool = tool;
+      },
       getAllTools() {
         return [];
       },
@@ -718,7 +740,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
 
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      transcriptFromContext: () => "",
       auditSoulCompliance: async () => ({ status: "pass" }),
       loadNavigatorWorkContext: async () => ({
         subjectKey: "/repo/.ak/work/issues/11",
@@ -729,6 +750,7 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
       createNavigatorAttendance: (options) => {
         const nav = createNavigatorAttendance({
           ...options,
+          context: context(),
           modelSettingPath: join(home, "navigator-model.json"),
           loadSoul: async () => "route law",
           loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
@@ -777,7 +799,10 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
           },
         };
       },
-    })(pi as never);
+    })((() => {
+      const adapter = createPiRoleHostAdapter(pi as never);
+      return { ...adapter, host: { ...adapter.host, requireGatekeeperPass: async () => undefined } };
+    })());
 
     await writeFile(join(home, "navigator-model.json"), JSON.stringify({ model: "provider/model" }));
     const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "survive", "session");
@@ -798,12 +823,28 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
+    await emit("tool_execution_start", {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      toolCallId: "accepted-1",
+    }, ctx);
+    assert.ok(outputTool);
+    const pending = await outputTool.execute(
+      "accepted-1",
+      { judgeStatus: "converged" },
+      undefined,
+      undefined,
+      ctx,
+    );
     await emit("tool_result", {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       toolCallId: "accepted-1",
       isError: false,
-      content: [{ type: "text", text: "Judge verdict accepted" }],
-      details: { judgeStatus: "converged" },
+      content: pending.content,
+      details: pending.details,
+    }, ctx);
+    await emit("turn_end", {
+      turnIndex: 0,
+      toolResults: [{ toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "accepted-1" }],
     }, ctx);
     await emit("agent_settled", {}, ctx);
 
@@ -812,5 +853,129 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     assert.equal(events.some((event) => event.disposition === "recommendation"), true);
     assert.equal(events.some((event) => event.disposition === "unavailable"), false);
   });
+});
+
+test("reused native session rethrows a prompt failure that produced no new assistant", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-reused-prompt-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-reused-prompt", api: "openai-completions" });
+    const model = faux.getModel();
+    faux.setResponses([fauxAssistantMessage("prior turn")]);
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-reused"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        await session.prompt("first turn");
+        const originalPrompt = AgentSession.prototype.prompt;
+        const promptBoom = new Error("second prompt failed before assistant output");
+        AgentSession.prototype.prompt = async function () {
+          throw promptBoom;
+        };
+        try {
+          await assert.rejects(
+            () => session.prompt("second turn"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.originalCause === promptBoom,
+          );
+        } finally {
+          AgentSession.prototype.prompt = originalPrompt;
+        }
+      } finally {
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("institutional close removes scratch after session dispose throws", async () => {
+  const root = await mkdtemp(join(tmpdir(), "institutional-close-scratch-"));
+  try {
+    seedGitRepository(root);
+    const scratchParent = join(root, "scratch");
+    await mkdir(scratchParent);
+    const faux = fauxProvider({ provider: "close-scratch", api: "openai-completions" });
+    const model = faux.getModel();
+    await withInstitutionalProviderFixture(faux, async () => {
+      const opened = await openPiInstitutionalSession({
+        cwd: root,
+        selection: { provider: model.provider, model: model.id },
+        systemPrompt: "",
+        credentialScratchParent: scratchParent,
+      });
+      const closeBoom = new Error("dispose failed during close");
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(opened.handle.close(), (error: unknown) => error === closeBoom);
+        assert.deepEqual(await readdir(scratchParent), []);
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("native navigator dispose settles handle.close rejection on the caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-close-reject-"));
+  try {
+    seedGitRepository(root);
+    const faux = fauxProvider({ provider: "nav-close-reject", api: "openai-completions" });
+    const model = faux.getModel();
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    const closeBoom = new Error("navigator handle.close failed");
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-close"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      const originalDispose = AgentSession.prototype.dispose;
+      AgentSession.prototype.dispose = function (...args) {
+        originalDispose.apply(this, args);
+        throw closeBoom;
+      };
+      try {
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => {
+            assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
+            assert.equal((error as AggregateError).errors[0], closeBoom);
+            assert.equal((error as AggregateError).cause, closeBoom);
+            return true;
+          },
+        );
+        await assert.rejects(
+          () => Promise.resolve(session.dispose()),
+          (error: unknown) => error instanceof AggregateError && error.cause === closeBoom,
+        );
+      } finally {
+        AgentSession.prototype.dispose = originalDispose;
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
 });
 

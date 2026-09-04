@@ -454,9 +454,10 @@ export async function scanAnalystIssueRuns(input: {
    * When bookKey absent: git common-dir → whole book; else path filter.
    */
   readonly projectRoot?: string;
+  readonly home?: string;
 }): Promise<AnalystScopedRunScan> {
-  // Package-owned machine home only (ADR 0048) — no invocation-varying override.
-  const ledgerHome = resolveActivationLedgerHome();
+  // Package-owned machine home only (ADR 0048) — caller may supply explicit home for isolation.
+  const ledgerHome = resolveActivationLedgerHome(input.home);
   const scopeTicketNumber = input.ticketNumber;
   const booksRoot = join(ledgerHome, "books");
 

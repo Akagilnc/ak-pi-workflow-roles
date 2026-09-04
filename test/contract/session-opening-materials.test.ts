@@ -1,7 +1,7 @@
 /**
- * #443 / #495 S4 — session opening materials: ticket-oracle path rosters at the
- * three loader families (no soul-prose byte pin). Pack/default-wiring real entries
- * live in package + gatekeeper integration trunks.
+ * #443 / #495 S4 / #524 — session opening materials: ticket-oracle path rosters
+ * at the three loader families (no soul-prose byte pin). Pack/default-wiring
+ * real entries live in package + gatekeeper integration trunks.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -49,6 +49,14 @@ const TICKET_MAIN_MATERIALS = {
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
   notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md"],
+  "gleaner-left": ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
+  inspector: [
+    "CLAUDE.md",
+    "souls/inspector.md",
+    "souls/quality-law.md",
+    "souls/gate-output-guide.md",
+  ],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 

@@ -17,12 +17,27 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   // real CLI child (~41s); keep it concurrency=2 heavy, never duplicating the
   // subprocess in an ordinary-tier sibling.
   "test/integration/public-cli-judge-engine-detour.test.ts",
+  // #617: cold-installed coder 429→resume chain — two real Pi processes under
+  // packed install (24–42s / ~17–29% of full wall). Ordinary parallelism misclass;
+  // unique frozen-materials + sealed-accepted proof, not covered by lower resume
+  // or install-only suites. No timeout widening.
+  "test/integration/public-cli-coder-installed-run.test.ts",
   // #319 Batch 4 R1: package-entrypoint split — all thematic files stay in heavy
   // manifest (庭定『先拆且全留 heavy』; Batch 5 R9: heavy child concurrency=2).
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",
   "test/package/package-entrypoint-packaged-workers.integration.test.ts",
+  // #567: cold Doctor lifecycle + install surface — real pack/Pi under ordinary
+  // file-parallelism contended past hang detectors; schedule on heavy concurrency=2
+  // instead of widening wait windows (full-suite #567 evidence).
+  "test/package/doctor-package-lifecycle.test.ts",
+  "test/package/public-cli-install.test.ts",
+  "test/package/public-cli-cold-matrix.test.ts",
+  // #620: real-Pi malformed-prerequisites case — focused ~4.4s; under ordinary
+  // file-parallelism full-suite localTimeout at 15s (duration_ms ~23s). Schedule
+  // on heavy concurrency=2; do not widen the hang detector.
+  "test/integration/activation-envelope-contract.test.ts",
 ]);
 
 const TIERS = Object.freeze([

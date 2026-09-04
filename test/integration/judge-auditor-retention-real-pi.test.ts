@@ -31,7 +31,20 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   const handleRequest = async (request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
+    let raw = Buffer.concat(chunks);
+    if (raw.length === 0) {
+      response.writeHead(200);
+      response.end();
+      return;
+    }
+    if (request.headers["content-encoding"] === "gzip" || (raw[0] === 0x1f && raw[1] === 0x8b)) {
+      const { gunzipSync } = await import("node:zlib");
+      raw = gunzipSync(raw);
+    } else if (request.headers["content-encoding"] === "zstd" || (raw[0] === 0x28 && raw[1] === 0xb5 && raw[2] === 0x2f && raw[3] === 0xfd)) {
+      const { zstdDecompressSync } = await import("node:zlib");
+      raw = (zstdDecompressSync as any)(raw);
+    }
+    const body = JSON.parse(raw.toString("utf8")) as any;
     requestCount += 1;
     const toolNames = (body.tools ?? []).map((tool: any) => tool.function?.name);
     // Judge draft province gate runs before auditor; pass so retention still hits auditor stop.
@@ -78,37 +91,62 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         }
       }
       if (parentFile === undefined) throw new Error("reported parent session principal was not created");
+      // Production retain is Sitian under dirname(sessionParent)/auditor/records.jsonl.
+      // Binding may already have created auditor/; replace records.jsonl with a directory
+      // so retainComplianceResponse fails with EISDIR (legacy targeted session custom entry).
+      const sitianAuditorPath = join(reportedParentDirectory, "auditor");
+      const sitianRecordsPath = join(sitianAuditorPath, "records.jsonl");
+      await mkdir(sitianAuditorPath, { recursive: true });
+      await rm(sitianRecordsPath, { recursive: true, force: true });
+      await mkdir(sitianRecordsPath);
       const parentBytes = await readFile(parentFile);
+      // Also replace parent principal with a directory so any residual session write still EISDIR.
       await rm(parentFile, { force: true });
       await mkdir(parentFile);
       let restored = false;
+      let watcher: import("node:fs").FSWatcher | undefined;
       restoreParent = async () => {
         if (restored) return;
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
+        try { watcher?.close(); } catch {}
         await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
+        try { await rm(sitianRecordsPath, { recursive: true, force: true }); } catch {}
       };
-      restoreInterval = setInterval(() => {
-        void (async () => {
-          try {
-            const childDir = join(parentFile, "..", "auditor-roles");
-            const names = await (await import("node:fs/promises")).readdir(childDir);
-            for (const name of names) {
-              const text = await readFile(join(childDir, name), "utf8");
-              if (text.includes("ak_auditor_compliance_failure")) await restoreParent?.();
-            }
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
-            retainFailure(error);
+      const checkAndRestore = async () => {
+        try {
+          const childDir = join(reportedParentDirectory, "auditor-roles");
+          const names = await (await import("node:fs/promises")).readdir(childDir);
+          for (const name of names) {
+            const targetPath = name.endsWith(".jsonl") ? join(childDir, name) : join(childDir, name, "session.jsonl");
             try {
-              await restoreParent?.();
-            } catch (restoreError) {
-              retainFailure(restoreError);
+              const text = await readFile(targetPath, "utf8");
+              if (text.includes("ak_auditor_compliance_failure")) {
+                await restoreParent?.();
+              }
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException)?.code === "ENOENT" || (err as NodeJS.ErrnoException)?.code === "EISDIR") continue;
+              throw err;
             }
           }
-        })();
-      }, 5);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT" || (error as NodeJS.ErrnoException)?.code === "EISDIR") return;
+          retainFailure(error);
+          try {
+            await restoreParent?.();
+          } catch (restoreError) {
+            retainFailure(restoreError);
+          }
+        }
+      };
+      try {
+        const { watch } = await import("node:fs");
+        watcher = watch(reportedParentDirectory, { recursive: true }, () => {
+          void checkAndRestore();
+        });
+      } catch {}
+      restoreInterval = setInterval(() => { void checkAndRestore(); }, 5);
       response.writeHead(500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { message: "WebSocket error" } }));
       return;
@@ -130,10 +168,35 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("test provider did not listen");
+  const agentDirGuardUrl = new URL("../helpers/test-agent-dir-guard.ts", import.meta.url).href;
   await writeFile(extension, `
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { assertWritableTestAgentDir } from ${JSON.stringify(agentDirGuardUrl)};
 export default function (pi) {
   console.error("[ak-patch] normal activation banner");
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  assertWritableTestAgentDir(agentDir);
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "models.json"), JSON.stringify({
+    providers: {
+      "openai-codex": {
+        baseUrl: "http://127.0.0.1:${address.port}/v1",
+        apiKey: "test",
+        api: "openai-completions",
+        models: [{
+          id: "faux-1",
+          name: "faux-1",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 4096,
+          compat: { requiresToolResultName: true },
+        }],
+      },
+    },
+  }, null, 2), "utf8");
   pi.registerProvider("openai-codex", {
     name: "Retention tracer", baseUrl: "http://127.0.0.1:${address.port}/v1", apiKey: "test", api: "openai-completions",
     models: [{ id: "faux-1", name: "faux-1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096 }]
@@ -164,7 +227,9 @@ export default function (pi) {
 test("Judge publicly retains a real default-Pi auditor provider stop across retention failure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj-judge-retention");
+    const agentDir = join(home, ".pi", "agent");
     await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
     seedGitProject(project);
     const retentionIo = captureIo();
     const tracer = await createJudgeAuditorRetentionTracer(home);
@@ -173,7 +238,7 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       retentionResult = await runAkRole(
         ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "audit provider stop"],
         {
-          packageRoot, home, cwd: project, io: retentionIo.io,
+          packageRoot, home, agentDir, cwd: project, io: retentionIo.io,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-judge-auditor-retention-failure",
           judgeExtraPiArgs: ["-e", tracer.extension],
@@ -184,19 +249,18 @@ test("Judge publicly retains a real default-Pi auditor provider stop across rete
       await tracer.close();
     }
     assert.notEqual(retentionResult.exitCode === 1 && retentionResult.terminal?.roleOutcome.kind === "failure" ? retentionResult.terminal.roleOutcome.cause : undefined, "timeout");
-    // openai-completions throws APIError before onResponse, so non-2xx never becomes
-    // typed HTTP testimony at this seam (r3-A: onResponse only, no fetch wrap).
-    // Held errorMessage still reaches error.json; cause stays the honest unknown.
+    // Institutional fetch records the structured 500 Response as upstream testimony
+    // (5xx wire observation). errorMessage still carries the SDK-folded body;
+    // cause follows the observed Response, not prose.
     const retentionSettlement = await assertPublicFailureSettlement({
       result: retentionResult,
       stdout: retentionIo.stdout,
       stderr: retentionIo.stderr,
-      expectedCause: "unrecognized",
-      diagnosticIncludes: "WebSocket error",
+      expectedCause: "provider",
     });
     const retentionArtifact = JSON.parse(await readFile(retentionSettlement.errorRef.path, "utf8")) as any;
-    assert.equal(retentionArtifact.details?.errorMessage?.includes("WebSocket error") || retentionArtifact.diagnostic?.includes("WebSocket error"), true);
-    assert.equal(retentionArtifact.details?.provider, undefined);
+    // Typed 500 contract only — no free-text oracle on SDK/HTTP body (#590).
+    assert.equal(retentionArtifact.details?.httpStatus, 500);
     assert.equal(retentionArtifact.details.retentionFailure.name, "ComplianceResponseRetentionError");
     assert.equal(retentionArtifact.details.retentionFailure.cause.code, "EISDIR");
   });

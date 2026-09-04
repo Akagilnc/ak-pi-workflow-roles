@@ -171,14 +171,14 @@ export async function runPublicAnalyst(
 ): Promise<{ exitCode: number }> {
   try {
     const parsed = parseAnalystArgv(argv);
-    // Machine home is package-owned (ADR 0048) — same primitive runAnalyst uses.
-    const ledgerHome = resolveActivationLedgerHome();
+    // Machine home is package-owned (ADR 0048) — caller may supply explicit home in env.
+    const ledgerHome = resolveActivationLedgerHome(_env.home);
 
     if (parsed.query === "sweep") {
       const input = await buildAnalystSweepModeInputFromAttachmentPaths(
         parsed.attachmentPaths,
       );
-      const result = await runAnalyst(input);
+      const result = await runAnalyst(input, { home: _env.home });
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return { exitCode: 0 };
     }
@@ -211,14 +211,14 @@ export async function runPublicAnalyst(
             issues: parsed.groups[1].issues.map(resolveIssue),
           },
         ],
-      });
+      }, { home: _env.home });
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return { exitCode: 0 };
     }
 
     // issue query — compute-if-missing (#338); sole kernel on miss.
     const input = await buildAnalystIssueModeInputFromPublicArgv(parsed, ledgerHome);
-    const result = await readOrComputeAnalystIssuePage(input);
+    const result = await readOrComputeAnalystIssuePage(input, { home: _env.home });
     io.stdout(`${JSON.stringify(result, null, 2)}\n`);
     return { exitCode: 0 };
   } catch (error) {

@@ -1,3 +1,4 @@
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -7,9 +8,11 @@
  * runAkRole(config set-auto-resume-limit) / runWithAutoResumeLoop(injected limit).
  */
 import assert from "node:assert/strict";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -24,6 +27,7 @@ import {
   setPersistentSeatConfig,
 } from "../../src/public-cli/config.ts";
 import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
@@ -49,11 +53,13 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:4,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       // Loop contract (#416): the dispatcher owns the per-round lease release.
       dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
     });
@@ -68,11 +74,13 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
     let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
-      admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
       io,
       autoResumeLimit:0,
-      buildInitialArgs: ()=>["--initial"],
-      buildResumeArgs: ()=>["--resume"],
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
       dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,1);
@@ -88,7 +96,11 @@ test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N
     const runId="422-e2e-n1";const callsRef={n:0};
     const {io}=captureIo();
     const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
-      piRunner:failingJudgeRunner(callsRef)});
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: failingJudgeRunner(callsRef),
+          })});
     assert.equal(callsRef.n,2);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,1);
@@ -103,7 +115,11 @@ test("#422 configured autoResumeLimit=0 disables auto resume via real entry (jud
     const runId="422-e2e-zero";const callsRef={n:0};
     const {io}=captureIo();
     const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
-      piRunner:failingJudgeRunner(callsRef)});
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: failingJudgeRunner(callsRef),
+          })});
     assert.equal(callsRef.n,1);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,0);
@@ -228,11 +244,13 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
       let calls=0;const {io}=captureIo();
       await assert.rejects(
         ()=>runWithAutoResumeLoop({
-          admitted:{sessionFile,runDirectory:runDir,role:"judge",runId:runDir},
+    principalAuthority: piDurablePrincipalAuthority,
+    sessionAppender: appendPiSessionCustomEntry,
+          admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
           io,
           autoResumeLimit:bad,
-          buildInitialArgs: ()=>["--initial"],
-          buildResumeArgs: ()=>["--resume"],
+          buildInitialPayload: ()=>["--initial"],
+          buildResumePayload: ()=>["--resume"],
           dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
         }),
         /non-negative integer/,
@@ -251,13 +269,19 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
     await assert.rejects(
       ()=>runPublicJudge(["--project",project,"auto"],{
         home,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
         agentDir:join(home,".ak-roles","agent"),
         packageRoot,
         cwd:project,
         credentials:{"openai-codex":true,xai:true},
         createRunId:()=>runId,
         autoResumeLimit:Number.NaN,
-        piRunner:async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
+          }),
       },io,PUBLIC_ROLE_ARGV.judge.parse),
       (error:unknown)=>error instanceof Error &&
         /non-negative integer/.test(error.message) &&

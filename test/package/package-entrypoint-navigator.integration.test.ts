@@ -13,7 +13,6 @@ import test from "node:test";
 
 import {
   type Context,
-  createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -53,7 +52,6 @@ import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -65,6 +63,7 @@ import {
   machineLedgerHome,
   withActivationHome,
   withHermeticHome,
+  withAgentDirProviderFixture,
   withInProcessPi,
   withColdInstalledPackage,
   writeTestSkill,
@@ -101,24 +100,30 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
   assert.equal(current.result.code, 0, `ordinary invocation must succeed: ${current.result.stderr}`);
   const accepted = current.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
   assert.equal(accepted.length, 1, "must persist the accepted Judge output result");
-  assert.deepEqual(accepted[0]?.message?.details, { judgeStatus: "converged" });
+  assert.deepEqual(accepted[0]?.message?.details, { submissionDisposition: "pending-round-closure" });
+  const closureRows = current.roleEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+  assert.equal(closureRows.length, 1, "must persist the sealed Judge submission closure");
+  assert.deepEqual(closureRows[0]?.data?.details, { judgeStatus: "converged" });
 
   const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
   const currentSettlement = current.navigatorEntries.find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
   const currentVisible = current.roleEntries.find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-  const currentAccepted = current.roleEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+  // #575 sole-final barrier: the accepted settlement is the sealed closure,
+  // not the pending-round-closure execute toolResult.
+  const currentAccepted = closureRows[0];
   assert.ok(currentPreparation?.timestamp, "current invocation must persist Navigator preparation completion");
   assert.ok(currentSettlement?.timestamp, "current invocation must persist Navigator settlement");
   assert.ok(currentVisible?.timestamp, "current invocation must persist the visible custom message");
-  assert.ok(currentAccepted?.timestamp, "current invocation must persist the actual accepted role output result");
+  assert.ok(currentAccepted?.timestamp, "current invocation must persist the sealed accepted role output settlement");
   const preparationAt = Date.parse(currentPreparation.timestamp!);
   const settlementAt = Date.parse(currentSettlement.timestamp!);
   const visibleAt = Date.parse(currentVisible.timestamp!);
   const acceptedAt = Date.parse(currentAccepted.timestamp!);
   assert.ok(Number.isFinite(preparationAt) && Number.isFinite(settlementAt) && Number.isFinite(visibleAt) && Number.isFinite(acceptedAt));
-  assert.ok(preparationAt <= acceptedAt, "Navigator preparation must finish before the actual accepted role-output/tool-result settlement");
-  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the actual accepted role-output/tool-result settlement");
+  assert.ok(acceptedAt <= settlementAt, "sealed accepted settlement must precede Navigator settlement");
+  assert.ok(preparationAt <= settlementAt, "Navigator preparation must drain before settlement");
   assert.ok(visibleAt >= settlementAt, "persisted visible custom-message must follow Navigator settlement");
+  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the sealed accepted settlement");
   assert.ok(visibleAt - acceptedAt <= 1000, `persisted visible custom-message must follow accepted settlement within 1s (actual ${visibleAt - acceptedAt}ms)`);
   const currentEvents = current.result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
   assert.equal(currentEvents.some((event) => event.type === "message_end" && event.message?.role === "custom" && event.message.customType === "ak-navigator-attendance"), true, "current ordinary invocation must display the typed attendance event");
@@ -213,17 +218,19 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           roleModelCalls = 0;
           invalidJudge = true;
           faux.setResponses(Array.from({ length: 10 }, () => response));
-          await withInProcessPi({
-            activationLedgerSession: true,
-            cwd: issueRoot,
-            agentDir,
-            faux,
-            additionalExtensionPaths: [packageEntrypoint(manifest)],
-            systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE",
-            mode,
-            flags: { "ak-role": "judge" },
-            noTools: "builtin",
-          }, async ({ session, sessionManager }) => {
+          await withAgentDirProviderFixture(faux, agentDir, () =>
+            withInProcessPi({
+              activationLedgerSession: true,
+              cwd: issueRoot,
+              agentDir,
+              faux,
+              modelsPath: null,
+              additionalExtensionPaths: [packageEntrypoint(manifest)],
+              systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE",
+              mode,
+              flags: { "ak-role": "judge" },
+              noTools: "builtin",
+            }, async ({ session, sessionManager }) => {
             await session.prompt("Run the unchanged normal role entrypoint with Navigator attendance.");
             const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
             assert.equal(attendance.length, 1);
@@ -238,7 +245,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, revisedRoute
               ? { role: "fixer", phase: "apply" }
               : { role: "reviewer", phase: null });
-          });
+          })
+          );
           assert.equal(navigatorCalls, 1, "a correctable role-output error must reuse one Navigator model call");
           void preparedAt;
           // #443: first presentation sample is enough to lock pack default wiring bytes.
@@ -254,24 +262,27 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         roleModelCalls = 0;
         invalidJudge = false;
         faux.setResponses(Array.from({ length: 10 }, () => response));
-        await withInProcessPi({
-          activationLedgerSession: true,
-          cwd: issueRoot,
-          agentDir,
-          faux,
-          additionalExtensionPaths: [packageEntrypoint(manifest)],
-          systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE ROUTE REVISION",
-          mode: "print",
-          flags: { "ak-role": "judge" },
-          noTools: "builtin",
-        }, async ({ session, sessionManager }) => {
-          await session.prompt("Exercise a revised route through the unchanged entrypoint.");
-          const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-          assert.equal(attendance.length, 1);
-          const event = (attendance[0] as { details: { route?: unknown; next?: unknown } }).details;
-          assert.deepEqual(event.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
-          assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
-        });
+        await withAgentDirProviderFixture(faux, agentDir, () =>
+          withInProcessPi({
+            activationLedgerSession: true,
+            cwd: issueRoot,
+            agentDir,
+            faux,
+            modelsPath: null,
+            additionalExtensionPaths: [packageEntrypoint(manifest)],
+            systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE ROUTE REVISION",
+            mode: "print",
+            flags: { "ak-role": "judge" },
+            noTools: "builtin",
+          }, async ({ session, sessionManager }) => {
+            await session.prompt("Exercise a revised route through the unchanged entrypoint.");
+            const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+            assert.equal(attendance.length, 1);
+            const event = (attendance[0] as { details: { route?: unknown; next?: unknown } }).details;
+            assert.deepEqual(event.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
+            assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
+          })
+        );
         assert.equal(navigatorCalls, 1);
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
@@ -353,18 +364,20 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
           };
           faux.setResponses(Array.from({ length: 10 }, () => response));
-          await withInProcessPi({
-            activationLedgerSession: true,
-            cwd: issueRoot,
-            agentDir,
-            faux,
-            model,
-            additionalExtensionPaths: [packageEntrypoint(manifest)],
-            systemPrompt: `NAVIGATOR DRAIN ${outcome}`,
-            mode: "json",
-            flags: { "ak-role": "judge" },
-            noTools: "builtin",
-          }, async ({ session, sessionManager }) => {
+          await withAgentDirProviderFixture(faux, agentDir, () =>
+            withInProcessPi({
+              activationLedgerSession: true,
+              cwd: issueRoot,
+              agentDir,
+              faux,
+              model,
+              modelsPath: null,
+              additionalExtensionPaths: [packageEntrypoint(manifest)],
+              systemPrompt: `NAVIGATOR DRAIN ${outcome}`,
+              mode: "json",
+              flags: { "ak-role": "judge" },
+              noTools: "builtin",
+            }, async ({ session, sessionManager }) => {
             const prompt = session.prompt(`Exercise ${outcome} settlement while Navigator preparation is in flight.`);
             await navigatorStartedPromise;
             while (!roleOutputReturned) await new Promise<void>((resolve) => setImmediate(resolve));
@@ -392,7 +405,8 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
                 "accepted Judge escalation must not request receipt delivery",
               );
             }
-          });
+          })
+          );
         }
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
@@ -453,7 +467,8 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
       };
       faux.setResponses(Array.from({ length: 10 }, () => response));
-      await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+      await withAgentDirProviderFixture(faux, agentDir, () =>
+        withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
         const first = session.prompt("first role turn fails before output");
         await navigatorStarted;
         await roleFailed;
@@ -474,7 +489,8 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         assert.equal(settlements.length, 1);
         assert.equal(settlements[0]?.data?.kind, "accepted");
         assert.equal(invocations.length, 1);
-      });
+      })
+      );
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
@@ -521,60 +537,51 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                 ? `${model.provider}/${model.id}:max`
                 : `${model.provider}/${model.id}`;
             await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
+            // Institutional Navigator child resolves auth/stream via agentDir models.json
+            // mock HTTP (not the parent session provider). Script navigator failures on
+            // the faux response queue so the mock server mirrors typed HTTP status /
+            // transport diagnostics into the child (#590 host-neutral path).
             const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
-            const provider = streamFailure
-              ? {
-                ...faux.provider,
-                getModels() { return [model]; },
-                stream(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-                  const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-                  if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-                    return faux.provider.stream(requestModel, streamContext, options as never);
-                  }
-                  const stream = createAssistantMessageEventStream();
-                  const human = scenario.name === "transport"
-                    ? {
-                      ...fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic }),
-                      diagnostics: [{
-                        type: "provider_transport_failure",
-                        timestamp: Date.now(),
-                        error: { message: diagnostic, code: "transport_error" },
-                      }],
-                    }
-                    : fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-                  queueMicrotask(() => {
-                    void (async () => {
-                      if ("status" in scenario) {
-                        await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
-                      }
-                      stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-                      stream.push({ type: "error", reason: "error", error: human });
-                    })();
-                  });
-                  return stream;
-                },
-                streamSimple(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-                  return this.stream(requestModel, streamContext, options);
-                },
-              }
-              : undefined;
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeProvincePass(names);
               if (province !== undefined) return province;
               if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+                if (streamFailure) {
+                  const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
+                  if (scenario.name === "transport") {
+                    return {
+                      ...base,
+                      diagnostics: [{
+                        type: "provider_transport_failure",
+                        timestamp: Date.now(),
+                        error: { message: diagnostic, code: "transport_error" },
+                      }],
+                    };
+                  }
+                  return {
+                    ...base,
+                    ...("status" in scenario
+                      ? { statusCode: scenario.status, status: scenario.status }
+                      : {}),
+                  };
+                }
                 return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
               }
               if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
             faux.setResponses(Array.from({ length: 10 }, () => response));
-            await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+            await withAgentDirProviderFixture(faux, agentDir, () =>
+              withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
               assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic}`);
-              assert.deepEqual(receipt.message.details, { judgeStatus: "converged" }, `${scenario.name}:${diagnostic}`);
+              assert.deepEqual(receipt.message.details, { submissionDisposition: "pending-round-closure" }, `${scenario.name}:${diagnostic}`);
+              const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+              assert.equal(closure.length, 1, `${scenario.name}:${diagnostic}`);
+              assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, { judgeStatus: "converged" }, `${scenario.name}:${diagnostic}`);
               const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
               assert.equal(attendance.length, 1, `${scenario.name}:${diagnostic}`);
               const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
@@ -582,7 +589,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               assert.equal(event.unavailableSource, scenario.source, `${scenario.name}:${diagnostic}`);
               assert.equal(event.unavailableCause, scenario.source, `${scenario.name}:${diagnostic}`);
               assert.notEqual(event.unavailableReason, undefined, `${scenario.name}:${diagnostic}`);
-            });
+            })
+            );
           }
         }
       } finally {
@@ -659,17 +667,19 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       };
 
       faux.setResponses(Array.from({ length: 10 }, () => response));
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: issueRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "CROSS ROLE CODER",
-        mode: "json",
-        flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": coderTask },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
+      await withAgentDirProviderFixture(faux, agentDir, () =>
+        withInProcessPi({
+          activationLedgerSession: true,
+          cwd: issueRoot,
+          agentDir,
+          faux,
+          modelsPath: null,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "CROSS ROLE CODER",
+          mode: "json",
+          flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": coderTask },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
         await session.prompt("coder starts the same ad-hoc journey");
         const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(messages.length, 1);
@@ -678,27 +688,31 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         assert.ok(sharedSubjectKey.includes(issueRoot));
         assert.deepEqual(event.next, { role: "fixer", phase: "plan" }, JSON.stringify(event));
         assert.equal(event.subjectKey, sharedSubjectKey);
-      });
+      })
+      );
 
       faux.setResponses(Array.from({ length: 10 }, () => response));
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: issueRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "CROSS ROLE FIXER",
-        mode: "json",
-        flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": fixerPacket },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
+      await withAgentDirProviderFixture(faux, agentDir, () =>
+        withInProcessPi({
+          activationLedgerSession: true,
+          cwd: issueRoot,
+          agentDir,
+          faux,
+          modelsPath: null,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "CROSS ROLE FIXER",
+          mode: "json",
+          flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": fixerPacket },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
         await session.prompt("fixer continues the same ad-hoc journey");
         const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(messages.length, 1, JSON.stringify(sessionManager.getEntries()));
         const event = (messages[0] as { details: { subjectKey: string; next?: unknown } }).details;
         assert.equal(event.subjectKey, sharedSubjectKey);
         assert.deepEqual(event.next, { role: "reviewer", phase: null });
-      });
+      })
+      );
 
       assert.ok(sharedSubjectKey);
       const navigatorSession = await uniqueObservedNavigatorSession(home, sharedSubjectKey, issueRoot);
@@ -724,17 +738,19 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       ]);
 
       faux.setResponses(Array.from({ length: 10 }, () => response));
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: otherRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "ISOLATED SUBJECT JUDGE",
-        mode: "json",
-        flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": otherTask },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
+      await withAgentDirProviderFixture(faux, agentDir, () =>
+        withInProcessPi({
+          activationLedgerSession: true,
+          cwd: otherRoot,
+          agentDir,
+          faux,
+          modelsPath: null,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "ISOLATED SUBJECT JUDGE",
+          mode: "json",
+          flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": otherTask },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
         await session.prompt("coder starts a different subject");
         const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(messages.length, 1);
@@ -742,7 +758,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         isolatedSubjectKey = event.subjectKey;
         assert.notEqual(isolatedSubjectKey, sharedSubjectKey);
         assert.deepEqual(event.next, { role: "fixer", phase: "plan" });
-      });
+      })
+      );
       const isolatedSession = await uniqueObservedNavigatorSession(home, isolatedSubjectKey!, otherRoot);
       assert.equal(
         isolatedSession.directory,
@@ -794,17 +811,19 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "outside-work plan" }), { stopReason: "toolUse" });
         };
         faux.setResponses(Array.from({ length: 10 }, () => response));
-        await withInProcessPi({
-          activationLedgerSession: true,
-          cwd: outsideRoot,
-          agentDir,
-          faux,
-          additionalExtensionPaths: [packageEntrypoint(manifest)],
-          systemPrompt: "OUTSIDE WORK ROLE INPUT",
-          mode: "json",
-          flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": packetPath },
-          noTools: "builtin",
-        }, async ({ session, sessionManager }) => {
+        await withAgentDirProviderFixture(faux, agentDir, () =>
+          withInProcessPi({
+            activationLedgerSession: true,
+            cwd: outsideRoot,
+            agentDir,
+            faux,
+            modelsPath: null,
+            additionalExtensionPaths: [packageEntrypoint(manifest)],
+            systemPrompt: "OUTSIDE WORK ROLE INPUT",
+            mode: "json",
+            flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": packetPath },
+            noTools: "builtin",
+          }, async ({ session, sessionManager }) => {
           await session.prompt("fixer packet lives outside /.ak/work/ with no authority file");
           const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
           assert.equal(attendance.length, 1, JSON.stringify(sessionManager.getEntries()));
@@ -819,7 +838,8 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           assert.ok(contexts.length >= 1, JSON.stringify(entries));
           assert.equal(contexts[0]?.data?.authority, packetBytes);
           assert.equal(contexts[0]?.data?.subject, packetBytes);
-        });
+        })
+        );
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
@@ -853,7 +873,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
         import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, GATEKEEPER_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
-        import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi } from "./test/helpers/pi-test-harness.ts";
+        import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi, withAgentDirProviderFixture } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
         const input = process.env.AK_INPUT;
@@ -882,11 +902,13 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         const manifest = await loadRawPackageManifest();
         faux.setResponses(Array.from({ length: 10 }, () => response));
         let result;
-        await withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+        await withAgentDirProviderFixture(faux, agentDir, () =>
+          withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
           await session.prompt("fresh process role invocation");
           const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
           result = messages[0]?.type === "custom_message" ? messages[0].details : undefined;
-        });
+        })
+        );
         process.stdout.write(JSON.stringify(result));
       `;
       const run = async (role: "coder" | "fixer", cwd: string, input: string) => {

@@ -10,6 +10,7 @@ import test from "node:test";
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
 import { COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL } from "../../src/collector-role.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import {
   packageRoot,
   seedGitRepository,
@@ -55,7 +56,8 @@ else if(path.includes('/comments') || path.includes('/reactions')) ok([]); else 
       ]);
       try {
         await withInProcessPi({
-          activationLedgerSession: true, cwd: fixture, agentDir, faux, modelsPath: null,
+          // #604: nest session under hermetic home .ak-roles for sitian/submission seal.
+          activationLedgerSession: true, cwd: fixture, home, agentDir, faux, modelsPath: null,
           additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")],
           noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
           flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "3" },
@@ -79,10 +81,16 @@ else if(path.includes('/comments') || path.includes('/reactions')) ok([]); else 
           );
           const output = [...sessionManager.getEntries()].reverse().find((entry: any) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === false) as any;
           assert.ok(output, "installed Collector must accept its receipt");
-          assert.equal(output.message.details.repository, "acme/widgets");
-          assert.equal(output.message.details.targetHead, "deadbeef");
-          assert.equal(output.message.details.groups.length, 1);
-          assert.equal(output.message.details.groups[0].identity.userId, 77);
+          assert.deepEqual(output.message.details, { submissionDisposition: "pending-round-closure" });
+          const headerId = sessionManager.getHeader?.()?.id;
+          assert.ok(headerId);
+          const sealed = await readSealedSubmission(fixture, headerId, home);
+          assert.ok(sealed, "installed Collector must seal its receipt");
+          const receipt = sealed.decisiveFacts as any;
+          assert.equal(receipt.repository, "acme/widgets");
+          assert.equal(receipt.targetHead, "deadbeef");
+          assert.equal(receipt.groups.length, 1);
+          assert.equal(receipt.groups[0].identity.userId, 77);
         });
       } finally {
         if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;

@@ -110,14 +110,10 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-336-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -235,7 +231,7 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         projectRoot: physicalPathIdentity(repo),
         ticketNumber: TICKET_C4,
         issueNumber: TICKET_C4,
-      });
+      }, { home });
       await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
       const previousCwd = process.cwd();

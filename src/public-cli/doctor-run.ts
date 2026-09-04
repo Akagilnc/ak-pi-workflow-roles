@@ -1,24 +1,22 @@
 /**
- * Public Doctor Role run: admit Issue → retained case via #78 → shared one-shot
- * dispatch → settle Terminal result (#113). Lifecycle is the shared
- * Doctor-isomorphic seam; this module keeps only Doctor adapters.
+ * Public Doctor Role run: admit Issue → retained case via #78 → shared post-admission
+ * coordinator → settle Terminal result (#113 / #517). Lifecycle is the shared
+ * post-admission seam; this module keeps only Doctor adapters.
  */
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDoctorInvocation,
   buildDoctorTransportPrompt,
   type AdmittedDoctorInvocation,
-  type ParseDoctorArgvResult,
+  type ParseDoctorArgvResult
 } from "./invocation.ts";
 import {
-  buildSeatModelCliArgs,
-  type SeatModelConfig,
-} from "./config.ts";
-import {
-  runAdmittedOneShotRole,
-  type OneShotRunEnv,
-} from "./one-shot-dispatch.ts";
+  runPostAdmissionOneShot,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
+import { markRunAdmitted } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleDoctorTerminalResult,
@@ -28,49 +26,28 @@ import {
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
 } from "./terminal.ts";
+import {
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
 
-export type DoctorRunEnv = OneShotRunEnv & {
+export type DoctorRunEnv = PostAdmissionEnv & {
+  principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  extraPiArgs?: readonly string[];
 };
 
-/**
- * Build Internal activation extra-args for an admitted Doctor run.
- * Always --no-skills (Doctor forbids every Skill). Session under #78 book.
- * Case path is the retained runs root — never a legacy case packet.
- */
-export function buildDoctorActivationExtraArgs(
+/** Project admitted invocation onto the host-neutral turn request. */
+export function buildDoctorTurnRequest(
   admitted: AdmittedDoctorInvocation,
-  options: {
-    model?: SeatModelConfig;
-    engine?: string;
-    packageRoot?: string;
-    extraPiArgs?: readonly string[];
-  } = {},
-): string[] {
-  const prompt = buildDoctorTransportPrompt(
+  options: RoleTurnRequestProjectionOptions,
+): RoleTurnRequest {
+  return projectRoleTurnRequest(
     admitted,
-    engineSessionMaterialFromOptions(options),
+    {
+      activation: { role: "doctor" as const, casePath: admitted.caseRunsPath },
+    },
+    options,
   );
-  return [
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--session",
-    admitted.sessionFile,
-    "--session-dir",
-    admitted.sessionDirectory,
-    ...(options.extraPiArgs ?? []),
-    "--ak-role",
-    "doctor",
-    "--ak-doctor-case",
-    admitted.caseRunsPath,
-    "--mode",
-    "json",
-    ...buildSeatModelCliArgs(options.model),
-    prompt,
-  ];
 }
 
 export async function runPublicDoctor(
@@ -88,6 +65,7 @@ export async function runPublicDoctor(
     const parsed = parseDoctorArgv(argv);
     admitted = await admitDoctorInvocation({
       home: env.home,
+      principalAuthority: env.principalAuthority,
       cwd: env.cwd,
       issueNumber: parsed.issueNumber,
       instruction: parsed.instruction,
@@ -105,20 +83,31 @@ export async function runPublicDoctor(
     throw error;
   }
 
-  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+  await markRunAdmitted(admitted, env.principalAuthority);
+
+  const turnRequest = buildDoctorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.extraPiArgs === undefined ? {} : { extraPiArgs: env.extraPiArgs }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    continuation: {
+      kind: "initial",
+      prompt: buildDoctorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+    },
   });
 
-  return await runAdmittedOneShotRole({
+  return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
-    extraArgs,
+    request: turnRequest,
     adapters: {
-      trySettle: trySettleDoctorTerminalResult,
+      trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
       shouldPresentSettled: (terminal) =>
         isLawfulTypedTerminalOutcome(terminal.roleOutcome),
     },

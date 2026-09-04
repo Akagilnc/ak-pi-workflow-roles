@@ -1,11 +1,8 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   createComplianceDecisionTool,
   runComplianceAudit,
-  type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import {
@@ -13,11 +10,12 @@ import {
   requireAuditMaterials,
   resolveAuditDossier,
 } from "./dossier-resolution.ts";
+import type { HostContext } from "./host-contracts.ts";
 
 export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 
 export type DoctorAuditOptions = {
-  context: ExtensionContext;
+  context: HostContext;
   signal?: AbortSignal;
 };
 
@@ -30,9 +28,7 @@ const tool = createComplianceDecisionTool(
  * Doctor auditor: zero hand-delivered materials.
  * Candidate testimony must already be on the parent-session books.
  */
-export function createPiDoctorAuditor(
-  runCompletion?: ComplianceCompletion,
-): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
+export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
     const dossier = resolveAuditDossier();
     requireAuditMaterials(dossier);
@@ -47,7 +43,6 @@ export function createPiDoctorAuditor(
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(runCompletion === undefined ? {} : { runCompletion }),
     });
   };
 }

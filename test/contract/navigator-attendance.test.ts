@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -20,6 +21,7 @@ import {
   type NavigatorPreparationSession,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
+  navigatorProviderFailureFromError,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   selectNavigatorCandidate,
@@ -31,7 +33,6 @@ import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
@@ -40,6 +41,7 @@ import {
 } from "../../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 import {
   context,
   candidate,
@@ -82,8 +84,8 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((route as any).data.invocationId, events[0].invocationId);
     assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
     assert.equal(events[0].reason, candidate().candidates[0]!.reason);
-    // Command is registry-rendered from next; model command prose is not authority.
-    assert.equal(events[0].command, "ak-role reviewer");
+    // Required --base cannot be inferred from role/phase, so no unusable bare command is emitted.
+    assert.equal(events[0].command, undefined);
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -386,6 +388,27 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
   }
 });
 
+test("navigator open failures classify typed reason/status/code, not Error.message prose", () => {
+  assert.equal(navigatorProviderFailureFromError(new Error("authentication failed")), undefined);
+  assert.equal(navigatorProviderFailureFromError(new Error("provider not found: missing")), undefined);
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { reason: "auth" })),
+    { source: "auth", cause: "auth" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { reason: "model" })),
+    { source: "model", cause: "model" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError(Object.assign(new Error("opaque"), { statusCode: 401 })),
+    { source: "auth", cause: "auth" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromError({ cause: Object.assign(new Error("nested"), { reason: "quota" }) }),
+    { source: "quota", cause: "quota" },
+  );
+});
+
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
   assert.deepEqual(parseNavigatorModelSetting("openai-codex/gpt-5.6-luna:max"), { provider: "openai-codex", model: "gpt-5.6-luna", thinkingLevel: "max" });
   assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
@@ -394,171 +417,169 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+  assert.deepEqual(publicNavigatorSettlement("countersign", null, { toolName: "ak_countersign_output", isError: false, details: { countersignStatus: "escalate" } }), { kind: "human_decision", role: "countersign", phase: null, status: "escalate" });
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-test("native session uses the saved model exactly and rejects unsupported thinking without fallback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-model-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
+test("host-neutral native factory opens without parent modelRegistry and reports thinking from setting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));
   try {
-    process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
-    const faux = fauxProvider({ provider: "native-model", api: "native-model" });
+    const faux = fauxProvider({ provider: "nav-host-model", api: "openai-completions" });
     const model = faux.getModel();
+    // Pi only keeps thinking "max" when the model declares reasoning and maps max.
+    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
+    // Explicit path: withInstitutionalProviderFixture owns PI_CODING_AGENT_DIR.
     const setting = join(root, "navigator-model.json");
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
-    const nativeContext = {
-      cwd: root,
-      modelRegistry: {
-        find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-        getProvider: (provider: string) => provider === model.provider ? faux.provider : undefined,
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-      },
-    } as never;
-    const factory = createNativeNavigatorSessionFactory();
-    const tool = createNavigatorPrepareTool(() => {});
-    await assert.rejects(
-      factory({ context: nativeContext, subject: join(root, "session"), tool }),
-      (error: unknown) => error instanceof NavigatorUnavailableError
-        && error.unavailableSource === "thinking"
-        && error.unavailableCause === "thinking",
-    );
+    await withInstitutionalProviderFixture(faux, async () => {
+      const factory = createNativeNavigatorSessionFactory();
+      const tool = createNavigatorPrepareTool(() => {});
+      const session = await factory({
+        context: hostContextFor(root),
+        subject: join(root, "session"),
+        modelSettingPath: setting,
+        tool,
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await assert.rejects(
+          async () => {
+            await session.setModel?.(`${model.provider}/other-model`, "off");
+          },
+          (error: unknown) => error instanceof NavigatorUnavailableError
+            && error.unavailableSource === "model"
+            && error.unavailableCause === "model",
+        );
+      } finally {
+        await session.dispose();
+      }
+    });
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    const session = await factory({ context: nativeContext, subject: join(root, "session"), tool });
-    assert.equal(session.getThinkingLevel?.(), "off");
-    session.dispose();
-    await writeFile(setting, JSON.stringify({ model: "missing/provider" }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-off"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "off");
+      } finally {
+        await session.dispose();
+      }
+    });
+    await writeFile(setting, JSON.stringify({ model: "missing/provider-absent" }));
     await assert.rejects(
-      factory({ context: nativeContext, subject: join(root, "session"), tool }),
+      () => createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root),
+        subject: join(root, "session-missing"),
+        modelSettingPath: setting,
+        tool: createNavigatorPrepareTool(() => {}),
+      }),
+      // Unknown provider is typed unavailable/model (pre-#590 Navigator contract);
+      // auth runs only after the selection resolves to a known provider surface.
       (error: unknown) => error instanceof NavigatorUnavailableError
         && error.unavailableSource === "model"
         && error.unavailableCause === "model",
     );
   } catch (error) {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
     await cleanupTempDir(root, error);
     throw error;
   }
-  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = previous;
   await cleanupTempDir(root);
 });
 
-test("native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-stream-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
+test("host-neutral native factory classifies auth/quota/transport from institutional HTTP status", async () => {
+  // fetch side-channel records Response.status (structured); no errorMessage parse.
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-stream-"));
   try {
-    process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
+    const setting = join(root, "navigator-model.json");
     const cases = [
-      { name: "auth", source: "auth" as const, status: 401, diagnostics: ["auth key unavailable", "login expired differently"] },
-      { name: "quota", source: "quota" as const, status: 429, diagnostics: ["quota exhausted", "billing limit reached differently"] },
-      { name: "transport", source: "transport" as const, diagnostics: ["transport unavailable", "socket reset differently"] },
+      { name: "auth", source: "auth" as const, status: 401 },
+      { name: "quota", source: "quota" as const, status: 429 },
+      { name: "transport", source: "transport" as const, status: 503 },
     ] as const;
     for (const scenario of cases) {
-      // One session per source; two diagnostics prove prose-independence without rebuilding native sessions.
-      const faux = fauxProvider({ provider: `native-stream-${scenario.name}`, api: `native-stream-${scenario.name}` });
+      const faux = fauxProvider({ provider: `nav-stream-${scenario.name}`, api: "openai-completions" });
       const model = faux.getModel();
-      const setting = join(root, "navigator-model.json");
       await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      let currentDiagnostic: string = scenario.diagnostics[0]!;
-      const observedCallbacks: number[] = [];
-      const failingProvider = {
-        ...faux.provider,
-        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
-          const stream = createAssistantMessageEventStream();
-          const human = scenario.source === "transport"
-            ? {
-              ...fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic }),
-              diagnostics: [{
-                type: "provider_transport_failure",
-                timestamp: Date.now(),
-                error: { message: currentDiagnostic, code: "transport_error" },
-              }],
-            }
-            : fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic });
-          queueMicrotask(() => {
-            void (async () => {
-              if ("status" in scenario) {
-                await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
-                observedCallbacks.push(scenario.status);
-              }
-              stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-              stream.push({ type: "error", reason: "error", error: human });
-            })();
-          });
-          return stream;
-        },
-        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          return this.stream(requestModel, streamContext, options);
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-          getProvider: (provider: string) => provider === model.provider ? failingProvider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const factory = createNativeNavigatorSessionFactory();
-      const tool = createNavigatorPrepareTool(() => {});
-      const session = await factory({ context: nativeContext, subject: join(root, `session-${scenario.name}`), tool });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      for (const diagnostic of scenario.diagnostics) {
-        currentDiagnostic = diagnostic;
-        observedCallbacks.length = 0;
-        await session.prompt("prepare routes");
-        assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source }, `${scenario.name}:${diagnostic}`);
-        const assistant = [...session.entries()].reverse().find((entry: any) => entry?.type === "message" && entry?.message?.role === "assistant") as any;
-        assert.equal(assistant?.message?.errorMessage, diagnostic, `${scenario.name}:${diagnostic}`);
-        // Classification still comes from onResponse/diagnostics — not statusCode as oracle.
-        // Held upstream status remains on the durable session message when the provider supplied it.
-        if ("status" in scenario) {
-          assert.equal(assistant?.message?.statusCode, scenario.status, `${scenario.name}:${diagnostic}`);
-          assert.deepEqual(observedCallbacks, [scenario.status], `${scenario.name}:${diagnostic}`);
-        } else {
-          assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
+      faux.setResponses([
+        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }), {
+          statusCode: scenario.status,
+          status: scenario.status,
+        }),
+      ]);
+      await withInstitutionalProviderFixture(faux, async () => {
+        const session = await createNativeNavigatorSessionFactory()({
+          context: hostContextFor(root),
+          subject: join(root, `session-${scenario.name}`),
+          modelSettingPath: setting,
+          tool: createNavigatorPrepareTool(() => {}),
+        });
+        try {
+          await session.setModel?.(`${model.provider}/${model.id}`, "off");
+          await assert.rejects(
+            () => session.prompt("prepare routes"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === scenario.source
+              && error.unavailableCause === scenario.source,
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source });
+        } finally {
+          await session.dispose();
         }
-        assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
-      }
-      session.dispose();
+      });
     }
   } catch (error) {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
     await cleanupTempDir(root, error);
     throw error;
   }
-  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = previous;
   await cleanupTempDir(root);
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+test("host-neutral native factory prefers institutional-resolution navigator seat over model file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-institutional-seat-"));
+  try {
+    seedGitRepository(root);
+    const bookKey = basename(root);
+    const runDirectory = join(root, ".ak-roles", "books", bookKey, "runs", "page-seat");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const faux = fauxProvider({ provider: "nav-page-seat", api: "openai-completions" });
+    const model = faux.getModel();
+    // Page seat requests thinking max — model must declare the level map.
+    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
+    await writeFile(
+      join(runDirectory, "institutional-resolution.json"),
+      `${JSON.stringify({
+        version: 1,
+        seats: {
+          navigator: { provider: model.provider, model: model.id, thinking: "max" },
+        },
+      }, null, 2)}\n`,
+    );
+    // File would open a different provider; page must win.
+    await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: "file-provider/file-model" }));
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root, join(runDirectory, "session", "session.jsonl")),
+        subject: join(runDirectory, "session"),
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        assert.equal(session.getThinkingLevel?.(), "max");
+        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
+      } finally {
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});

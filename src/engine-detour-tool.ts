@@ -5,13 +5,8 @@
  * Engine process failures stop through the host infrastructure-failure seam.
  * Caller AbortSignal cancellation propagates unchanged.
  */
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
 import {
   ENGINE_DETOUR_TOOL_NAME,
@@ -33,10 +28,12 @@ const engineDetourArgsSchema = Type.Object(
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 
+type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort">;
+
 export type EngineDetourHostActions = {
   failInfrastructure(
     error: unknown,
-    ctx: ExtensionContext,
+    ctx: EngineDetourContext,
     toolCallId?: string,
   ): never;
 };
@@ -65,8 +62,8 @@ function isCallerCancellation(
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
-  fail: (error: Error, toolCallId: string, ctx: ExtensionContext) => never;
-}): ToolDefinition {
+  fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
+}): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
   const engineName = input.engineName;
   return {
     name: ENGINE_DETOUR_TOOL_NAME,
@@ -81,7 +78,7 @@ export function createEngineDetourToolDefinition(input: {
       signal,
       _onUpdate,
       ctx,
-    ): Promise<AgentToolResult<unknown>> {
+    ): Promise<HostToolResult> {
       const args = params as EngineDetourArgs;
       const argv = Array.isArray(args.argv) ? args.argv : [];
       if (argv.length === 0 || argv.some((part) => typeof part !== "string" || part.length === 0)) {
@@ -124,7 +121,7 @@ export function createEngineDetourToolDefinition(input: {
         },
       };
     },
-  } as ToolDefinition;
+  };
 }
 
 /**
@@ -132,7 +129,7 @@ export function createEngineDetourToolDefinition(input: {
  * an engine activation signal. Returns whether registration occurred.
  */
 export function registerEngineDetourTool(
-  pi: ExtensionAPI,
+  roleHost: RoleHost,
   hostActions: EngineDetourHostActions,
 ): boolean {
   const engineName = engineNameFromEnv();
@@ -146,7 +143,7 @@ export function registerEngineDetourTool(
       hostActions.failInfrastructure(error, ctx, toolCallId);
     },
   });
-  pi.registerTool(definition);
+  roleHost.registerTool(definition);
 
   return true;
 }

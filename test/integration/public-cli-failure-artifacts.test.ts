@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -58,7 +60,10 @@ test("Error Artifact publication collisions retain original cause via durable fa
           cwd: project,
           createRunId: () => row.runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             const runDir = join(sessionDir, "..");
             await row.plant(runDir);
@@ -71,6 +76,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
               args: [...args],
             };
           },
+          }),
         },
       );
 
@@ -121,7 +127,10 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
         cwd: project,
         createRunId: () => "run-malformed-session-jsonl-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           // Invalid JSONL must not wash into cause=output generic absence.
@@ -133,6 +142,7 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
             args: [...args],
           };
         },
+          }),
       },
     );
 
@@ -181,7 +191,10 @@ test("unwritable run directory retains activation cause with durable Error Artif
           cwd: project,
           createRunId: () => "run-unwritable-run-dir-001",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             runDir = join(sessionDir, "..");
             await mkdir(sessionDir, { recursive: true });
@@ -197,6 +210,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
               args: [...args],
             };
           },
+          }),
         },
       );
 
@@ -254,7 +268,10 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
         cwd: project,
         createRunId: () => "run-stderr-log-eisdir-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           // stderr.log as a directory makes the post-admission writeFile raise EISDIR.
@@ -269,6 +286,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
             args: [...args],
           };
         },
+          }),
       },
     );
     const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -317,11 +335,15 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
         cwd: project,
         createRunId: () => "run-multiline-throw-001",
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           const error = new Error(multiline);
           error.name = "UpstreamProviderError";
           throw error;
         },
+          }),
       },
     );
     const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -381,7 +403,10 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-reviewer-evidence-child-provider-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const sessionFile = args[args.indexOf("--session") + 1]!;
           const childDir = join(sessionDir, "evidence-children");
@@ -428,6 +453,7 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
             args: [...args],
           };
         },
+          }),
       },
     );
     const { terminal, errorRef } = await assertPublicFailureSettlement({
@@ -470,7 +496,10 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-typed-output-host-failure-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(sessionFile, [
             { type: "session", id: "parent-session" },
@@ -488,6 +517,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
           ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
           return { code: 1, stderr: "VARIABLE DECOY service tier switched successfully\n", timedOut: false, args: [...args] };
         },
+          }),
       },
     );
 
@@ -537,21 +567,71 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
             cwd: project,
             createRunId: () => `run-${row.role}-discriminator-${status}`,
             io,
+            roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
               const sessionFile = args[args.indexOf("--session") + 1]!;
               await mkdir(join(sessionFile, ".."), { recursive: true });
+              const toolCallId = `${row.role}-terminal`;
+              // Status-bearing details need a report for worker contracts; missing stays unsealed.
+              const sealDetails =
+                status === "missing"
+                  ? details
+                  : row.role === "fixer" && (status === "completed" || status === "partially_completed")
+                    ? {
+                        ...details,
+                        report: `${row.role} ${status}`,
+                        classResults: [{
+                          name: "discriminator",
+                          disposition: "completed" as const,
+                          searchScope: "discriminator",
+                          exceptions: [],
+                          commitSha: "0".repeat(40),
+                        }],
+                      }
+                    : row.role === "fixer" && status === "refused"
+                      ? {
+                          ...details,
+                          report: `${row.role} ${status}`,
+                          remainingScope: "blocked",
+                          blocker: { cause: "authority_violation" as const, evidence: "fixture" },
+                        }
+                      : row.role === "fixer" && status === "unfinished"
+                        ? {
+                            ...details,
+                            report: `${row.role} ${status}`,
+                            remainingScope: "left",
+                            reason: "prerequisite_unmet",
+                          }
+                        : { ...details, report: `${row.role} ${status}` };
               await writeFile(sessionFile, `${JSON.stringify({
                 type: "message",
                 message: {
                   role: "toolResult",
-                  toolCallId: `${row.role}-terminal`,
+                  toolCallId,
                   toolName: row.tool,
                   isError: false,
-                  details,
+                  details: sealDetails,
                 },
               })}\n`, "utf8");
-              return { code: 0, stderr: "", timedOut: false, args: [...args] };
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                ...(status === "missing"
+                  ? {}
+                  : {
+                      sealedAcceptance: {
+                        role: row.role,
+                        details: sealDetails,
+                        toolCallId,
+                      },
+                    }),
+              };
             },
+          }),
           },
         );
 
@@ -594,7 +674,10 @@ test("unbound output failure remains nonzero even after an older provider error 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-stale-provider-error-001",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
@@ -637,6 +720,7 @@ test("unbound output failure remains nonzero even after an older provider error 
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.notEqual(result.exitCode, 0);

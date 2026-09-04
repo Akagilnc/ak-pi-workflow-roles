@@ -151,14 +151,10 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-c3-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }
@@ -179,11 +175,11 @@ function assertGroupEqual(actual: AnalystModelGroupRow, expected: AnalystModelGr
 
 test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-only no merge; no-model excluded", async () => {
   await withBusinessRepo(async () => {
-    await withTempHome(async () => {
+    await withTempHome(async (home) => {
       const raw = await runAnalyst({
         mode: "model-groups",
         projectRoots: [C3_SCOPE],
-      });
+      }, { home });
       assert.equal(raw.mode, "model-groups");
       const page: AnalystModelGroupsPage = raw.page;
       assert.equal(page.kind, "analyst-model-groups");
@@ -225,7 +221,7 @@ test("analyst C3 model-groups: fixture mixed+singles hand-equal; mapping alias-o
         mode: "model-groups",
         projectRoots: [C3_SCOPE],
         combinationMapping: COMBINATION_MAPPING,
-      });
+      }, { home });
       assert.equal(aliased.mode, "model-groups");
       const aliasedPage = aliased.page;
       // Same raw groups + dens — mapping must not merge or change stats.
