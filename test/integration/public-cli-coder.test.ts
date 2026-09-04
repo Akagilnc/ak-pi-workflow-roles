@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -32,7 +32,7 @@ import {
 import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, runPiSubprocess, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
@@ -188,6 +188,62 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
     }
+  });
+});
+
+test("public coder gate escalation reaches one durable typed terminal", async () => {
+  await withActivationHome({ prefix: "ak-public-coder-gate-escalate-" }, async ({ home, agentDir }) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const captured = captureIo();
+    const result = await runAkRole([
+      "coder", "--model", "openai-codex/faux-1", "--thinking", "off",
+      "--project", project, "Submit the completed implementation.",
+    ], {
+      packageRoot,
+      home,
+      agentDir,
+      cwd: project,
+      createRunId: () => "run-coder-gate-escalate-001",
+      io: captured.io,
+      credentials: { "openai-codex": true, xai: false },
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        extraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/coder-success-provider.ts")],
+        piRunner: async (args, options) => {
+          const subprocess = await runPiSubprocess([...args], {
+            cwd: options.cwd,
+            env: { ...options.env, PI_OFFLINE: "1", AK_TEST_GATE_ESCALATE: "1" },
+            timeoutMs: options.timeoutMs ?? 90_000,
+          });
+          return {
+            code: subprocess.code,
+            stderr: subprocess.stderr,
+            timedOut: subprocess.localTimeout,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(result.exitCode, 0, captured.stderr.join(""));
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    if (result.terminal?.roleOutcome.kind !== "audit_escalation") {
+      throw new Error("expected typed audit escalation");
+    }
+    assert.equal(result.terminal.roleOutcome.role, "coder");
+    assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.reason, {
+      source: "third-review-limit",
+    });
+    assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.findings, [
+      "authority conflict",
+      { source: "original-finding" },
+    ]);
+    assert.equal(
+      result.terminal.roleOutcome.decisiveFacts.officerNote,
+      "retain the complete officer submission",
+    );
   });
 });
 
