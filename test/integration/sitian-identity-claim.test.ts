@@ -4,16 +4,25 @@
  * append exactly once (no test-side retry/poll). Assert typed results, exactly
  * one parsed canonical row, and no normal claim sidecar residue. At most one
  * failure-path proof that a throwing append cleans its own identity claim.
+ * Deterministic contention: FIFO holds the claim-owner between claim acquire
+ * and publish so one real contender append hits failureDisposition contention.
  */
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
+  watch,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -96,6 +105,96 @@ function claimSidecarNames(sessionDir: string, recordFile: string): string[] {
     .sort();
 }
 
+function tryCreateFifo(path: string): boolean {
+  try {
+    unlinkSync(path);
+  } catch {
+    // absent is fine
+  }
+  const result = spawnSync("mkfifo", [path], { encoding: "utf8" });
+  return result.status === 0 && existsSync(path);
+}
+
+/** One writer open/write/close cycle so a blocked FIFO reader reaches EOF. */
+function feedFifoEof(path: string): void {
+  const fd = openSync(path, fsConstants.O_RDWR);
+  try {
+    writeSync(fd, "\n");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+
+/** Resolve once a reader has the FIFO open (holder blocked in seal/find read). */
+function waitForFifoReader(args: {
+  readonly path: string;
+  readonly holderExit: Promise<number | null>;
+}): Promise<void> {
+  const { path: fifoPath, holderExit } = args;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    const tryOpen = () => {
+      if (settled) return;
+      try {
+        const fd = openSync(
+          fifoPath,
+          fsConstants.O_WRONLY | fsConstants.O_NONBLOCK,
+        );
+        closeSync(fd);
+        finish(() => resolve());
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENXIO" && code !== "EINTR") {
+          finish(() => reject(error));
+          return;
+        }
+      }
+      setImmediate(tryOpen);
+    };
+    holderExit.then(
+      () =>
+        finish(() =>
+          reject(new Error("holder exited before opening the FIFO reader")),
+        ),
+      (error) => finish(() => reject(error)),
+    );
+    tryOpen();
+  });
+}
+
+function waitForClaimAppearance(args: {
+  readonly sessionDir: string;
+  readonly recordFile: string;
+  readonly holderExit: Promise<number | null>;
+}): Promise<"claim" | "holder-exit"> {
+  const { sessionDir, recordFile, holderExit } = args;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (outcome: "claim" | "holder-exit") => {
+      if (settled) return;
+      settled = true;
+      watcher.close();
+      resolve(outcome);
+    };
+    const hasClaim = () => claimSidecarNames(sessionDir, recordFile).length > 0;
+    const watcher = watch(sessionDir, () => {
+      if (hasClaim()) finish("claim");
+    });
+    watcher.on("error", reject);
+    holderExit.then(
+      () => finish(hasClaim() ? "claim" : "holder-exit"),
+      reject,
+    );
+    if (hasClaim()) finish("claim");
+  });
+}
 
 type ChildAppendResult =
   | { readonly ok: true; readonly identity: string }
@@ -234,6 +333,117 @@ test("healthy cross-process concurrent same-identity append: one call each, one 
       },
       async () => {
         await Promise.all(children.map((child) => settleSpawnedChild(child)));
+      },
+    );
+  });
+});
+
+test("FIFO-held identity claim forces typed contention on one real contender append", async (t) => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "fifo-held-contention";
+    const kind = "identity-claim-fifo-contention";
+    const holderInput: SitianRecordInput = {
+      level: "event",
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "fifo-holder" },
+    };
+    const contenderInput: SitianRecordInput = {
+      level: "event",
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "fifo-contender" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(holderInput);
+    mkdirSync(sessionDir, { recursive: true });
+
+    if (!tryCreateFifo(recordFile)) {
+      t.skip("FIFO unsupported on this platform");
+      return;
+    }
+
+    const fifoHoldPath = `${recordFile}.fifo-hold`;
+    const holder = spawnAppendChild({
+      home,
+      cwd,
+      identity,
+      kind,
+      marker: "fifo-holder",
+    });
+    const holderExit = waitChildExit(holder);
+    holderExit.catch(() => undefined);
+
+    await withPrimaryAwareCleanup(
+      async () => {
+        // Each waitForFifoReader open/close completes one FIFO readFileSync.
+        // First: sealTornTail. Second: findIdentityPointer, after which the
+        // holder acquires the claim and blocks on post-claim sealTornTail.
+        // Wait for the claim surface before renaming — otherwise we race the
+        // holder past claim onto a regular file.
+        await waitForFifoReader({ path: recordFile, holderExit });
+        await waitForFifoReader({ path: recordFile, holderExit });
+
+        const appearance = await waitForClaimAppearance({
+          sessionDir,
+          recordFile,
+          holderExit,
+        });
+        assert.equal(
+          appearance,
+          "claim",
+          "holder must acquire a real identity claim before contender runs",
+        );
+        assert.ok(
+          claimSidecarNames(sessionDir, recordFile).length > 0,
+          "claim sidecar must be visible on the volume surface",
+        );
+
+        // Move the FIFO aside so the contender sees a normal empty record path
+        // while the holder remains blocked on the still-open FIFO inode.
+        renameSync(recordFile, fifoHoldPath);
+        writeFileSync(recordFile, "", "utf8");
+
+        assert.throws(
+          () => appendSitianRecord(contenderInput),
+          (error: unknown) => {
+            assert.ok(error instanceof SitianInfrastructureError);
+            assert.equal(error.failureDisposition, "contention");
+            return true;
+          },
+        );
+
+        // Release the holder through the remaining sealTornTail; append lands
+        // on the regular record file created for the contender path.
+        feedFifoEof(fifoHoldPath);
+
+        const holderResult = await readChildResult(holder);
+        assert.equal(holderResult.ok, true);
+        if (holderResult.ok) {
+          assert.equal(holderResult.identity, identity);
+        }
+
+        assert.equal(countIdentityRows(recordFile, identity), 1);
+        const read = await readSitianRecords(recordFile);
+        assert.equal(read.records.filter((row) => row.identity === identity).length, 1);
+        assert.deepEqual(
+          volumeSurfaceNames(sessionDir, recordFile).filter(
+            (name) => name !== basename(fifoHoldPath),
+          ),
+          [basename(recordFile)],
+          "contention proof must leave one canonical row and no claim sidecars",
+        );
+      },
+      async () => {
+        await settleSpawnedChild(holder);
+        try {
+          unlinkSync(fifoHoldPath);
+        } catch {
+          // absent is fine
+        }
       },
     );
   });
