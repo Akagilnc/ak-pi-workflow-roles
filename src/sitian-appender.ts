@@ -7,7 +7,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
-  linkSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -44,23 +43,12 @@ function identityClaimPath(recordFile: string, identity: string): string {
 }
 
 /**
- * Publish `contents` at `path` exactly once across processes.
- * Temp file + linkSync is the portable exclusive-create primitive: link fails
- * with EEXIST when the destination already exists (unlike rename, which
- * replaces an existing destination on POSIX).
+ * Exclusive create at `path` exactly once across processes.
+ * Reuses the package's existing `wx` / O_EXCL zero-content occupancy primitive
+ * (same shape as activation-ledger-session / archivist-record-entry).
  */
-function publishExclusiveFile(path: string, contents: string): void {
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, contents, "utf8");
-  try {
-    linkSync(temporary, path);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch (error) {
-      if (errorCodeOf(error) !== "ENOENT") throw error;
-    }
-  }
+function createExclusiveFile(path: string, contents: string): void {
+  writeFileSync(path, contents, { encoding: "utf8", flag: "wx" });
 }
 
 function sealTornTail(recordFile: string): void {
@@ -104,27 +92,10 @@ function unlinkAbsentOk(path: string): Error | undefined {
   }
 }
 
-
-/**
- * Non-public test sync after exclusive claim acquisition.
- *
- * Claim→append→unlink is microseconds; fs.watch + SIGSTOP cannot keep a
- * holder inside that window race-free. When set, this env names a path whose
- * synchronous read blocks the winner exactly once after linkSync succeeds and
- * before seal/append/cleanup — so an observer can watch the real claim appear,
- * run a second real appendSitianRecord into forced EEXIST overlap, then release
- * the hold. Not a public API, injectable FS callback, or IO-count lock.
- */
-function holdAfterExclusiveIdentityClaimForTests(): void {
-  const holdPath = process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD;
-  if (holdPath === undefined || holdPath.length === 0) return;
-  readFileSync(holdPath);
-}
-
 /**
  * Same-identity uniqueness under normal concurrent writers.
  *
- * Exclusive per-identity claim (linkSync) makes check+append atomic for one
+ * Exclusive per-identity claim (`wx`) makes check+append atomic for one
  * identity. The winner appends under the claim and always releases it on both
  * normal and throwing exits. A loser that already sees the published row
  * returns that pointer; a loser that hits claim EEXIST without a published row
@@ -152,7 +123,7 @@ function appendWithIdentityClaim(
   }
 
   try {
-    publishExclusiveFile(claimPath, "");
+    createExclusiveFile(claimPath, "");
   } catch (error) {
     if (errorCodeOf(error) !== "EEXIST") throw error;
     sealTornTail(recordFile);
@@ -176,9 +147,6 @@ function appendWithIdentityClaim(
   let result: RecordPointer | undefined;
   let cleanupFailure: Error | undefined;
   try {
-    // Hold must share this try/finally so a hold read/open failure still
-    // releases the claim and surfaces its real cause via primaryFailure wrap.
-    holdAfterExclusiveIdentityClaimForTests();
     sealTornTail(recordFile);
     const raced = findIdentityPointer(
       recordFile,
