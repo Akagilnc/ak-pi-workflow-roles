@@ -126,13 +126,8 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
           : ["--ak-notary-ticket-number", String(activation.ticketNumber)]),
       ];
     case "countersign":
-      return [
-        "--ak-role",
-        "countersign",
-        ...(activation.ticketNumber === undefined
-          ? []
-          : ["--ak-countersign-ticket-number", String(activation.ticketNumber)]),
-      ];
+      // ticketNumber rides activation/admission/invocation only (#632: no private flag).
+      return ["--ak-role", "countersign"];
     case "gleaner-left":
       return [
         "--ak-role",
