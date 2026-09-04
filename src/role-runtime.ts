@@ -46,6 +46,7 @@ import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
@@ -389,6 +390,7 @@ export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";

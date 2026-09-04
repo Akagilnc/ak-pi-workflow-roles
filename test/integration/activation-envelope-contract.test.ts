@@ -306,7 +306,7 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason", "infrastructureFailure"];
       case "reviewer": return ["status", "diagnostic", "amendments", "infrastructureFailure"];
       case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate", "infrastructureFailure"];
-      case "collector": return ["infrastructureFailure"];
+      case "collector": return ["findings", "infrastructureFailure"];
       case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
       case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
       case "notary": return ["status", "findings", "infrastructureFailure"];

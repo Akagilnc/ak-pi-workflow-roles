@@ -48,12 +48,18 @@ const TICKET_MAIN_MATERIALS = {
   collector: ["CLAUDE.md", "souls/collector.md"],
   doctor: ["CLAUDE.md", "souls/doctor.md"],
   merger: ["CLAUDE.md", "souls/merger.md"],
-  notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
+  notary: [
+    "CLAUDE.md",
+    "souls/notary.md",
+    "souls/audit-law.md",
+    "souls/gate-output-guide.md",
+  ],
   countersign: ["CLAUDE.md", "souls/countersign.md"],
   "gleaner-left": ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
   inspector: [
     "CLAUDE.md",
     "souls/inspector.md",
+    "souls/audit-law.md",
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
   ],
@@ -70,10 +76,16 @@ const TICKET_GATEKEEPER_MATERIALS = {
   inspector: [
     "CLAUDE.md",
     "souls/inspector.md",
+    "souls/audit-law.md",
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
   ],
-  notary: ["CLAUDE.md", "souls/notary.md", "souls/gate-output-guide.md"],
+  notary: [
+    "CLAUDE.md",
+    "souls/notary.md",
+    "souls/audit-law.md",
+    "souls/gate-output-guide.md",
+  ],
 } as const;
 
 const TICKET_AUDITOR_MATERIALS = {
