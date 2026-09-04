@@ -20,7 +20,7 @@ import {
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
-  createCollectorLedger,
+  type CollectorConfigState,
   type CollectorLedger,
 } from "./collector-ledger.ts";
 import {
@@ -63,6 +63,7 @@ export type CollectorRoleDependencies = {
   loadSoul(): Promise<string>;
   createTransport(): CollectorGitHubTransport;
   createClock?(): CollectorClock;
+  createLedger(config: CollectorConfigState, clock: CollectorClock, ctx: HostContext): CollectorLedger;
   packageExtensionPath?: string;
 };
 
@@ -503,26 +504,10 @@ export function createCollectorRoleRuntime(
         const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
         const transport = dependencies.createTransport();
 
-        const journal =
-          ctx.sessionManager?.appendCustomEntry === undefined
-            ? undefined
-            : {
-              append(customType: string, data: unknown): void {
-                ctx.sessionManager?.appendCustomEntry?.(customType, data);
-              },
-            };
-
-        const ledger = createCollectorLedger(
-          {
-            repository,
-            prNumber,
-            manifest,
-          },
-          {
-            clock,
-            ...(journal === undefined ? {} : { journal }),
-            dossierEntries: ctx.sessionManager?.getEntries?.() ?? [],
-          },
+        const ledger = dependencies.createLedger(
+          { repository, prNumber, manifest },
+          clock,
+          ctx,
         );
 
         if (ledger.activationRecorded) {
