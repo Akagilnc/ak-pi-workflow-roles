@@ -527,6 +527,10 @@ export type RunWriterLease = {
   release(): Promise<void>;
 };
 
+/** Kind of a writer-lease diagnostic sent on the existing sink. */
+export type WriterLeaseDiagnosticKind = "stale-reclaimed";
+
+
 /**
  * True error identity for diagnostics — name/code/message as-is, never a
  * guessed label (failure-honesty constitution).
@@ -548,77 +552,255 @@ export function describeErrorIdentity(error: unknown): string {
   return `${name}${code}${message}`;
 }
 
+function errorCodeOf(error: unknown): unknown {
+  return (error as { code?: unknown }).code;
+}
+
 /**
- * Acquire the one-writer lease for a Role run. Concurrent acquire rejects
- * without dispatch. Exclusive create — no second writer.
+ * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
+ * (e.g. EPERM) means the holder process exists.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCodeOf(error) !== "ESRCH";
+  }
+}
+
+
+type WriterLockAutopsy =
+  | { verdict: "absent"; readFailure?: unknown }
+  | { verdict: "dead"; pid: number }
+  | { verdict: "alive"; pid: number };
+
+/**
+ * Holder autopsy for an existing writer.lock (#552). "absent" covers no file,
+ * no parseable pid (a live creator mid-acquisition reads as empty, and so does
+ * the crash-window leftover), and unreadable files — absent alone never
+ * authorizes reclaim; only a "dead" verdict does. A non-ENOENT read failure
+ * still decides "absent" but rides along as readFailure so the true cause can
+ * land in the cleanup sink instead of being laundered away.
+ */
+async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
+  let content: string;
+  try {
+    content = await readFile(lockPath, "utf8");
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
+    return { verdict: "absent", readFailure: error };
+  }
+  const normalized = content.trim();
+  if (!/^[1-9]\d*$/.test(normalized)) return { verdict: "absent" };
+  const pid = Number.parseInt(normalized, 10);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return { verdict: "absent" };
+  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
+}
+
+function describeAutopsy(autopsy: WriterLockAutopsy): string {
+  switch (autopsy.verdict) {
+    case "alive":
+      return `live pid ${autopsy.pid}`;
+    case "dead":
+      return `dead pid ${autopsy.pid}`;
+    case "absent":
+      return autopsy.readFailure !== undefined
+        ? "unreadable lock"
+        : "absent or unparseable holder";
+  }
+}
+
+/**
+ * Remove one lock whose re-read autopsy is still a verified-dead holder, or
+ * leave it for the next round otherwise. The pre-unlink re-read guard means a
+ * concurrent writer that re-locked between the autopsy and the unlink cannot
+ * have its live lock stolen. Residual race: a writer can still re-lock between
+ * the re-read and the unlink itself; POSIX offers no compare-and-delete, and
+ * this narrows the window to a single syscall pair.
+ *
+ * An EACCES unlink (non-writable run directory) is recovered by restoring the
+ * directory permissions only — never by a blind retrying unlink. After the
+ * chmod the caller loop re-runs the create/autopsy cycle, so any unlink still
+ * follows a fresh verified-dead verdict on the current pathname content; a
+ * contender that installed its live lock inside the recovery window reads as
+ * alive and is left alone (#629).
+ *
+ * Returns whether the lock was actually deleted.
+ */
+async function reclaimStaleWriterLock(
+  lockPath: string,
+  runDirectory: string,
+): Promise<{ reclaimed: boolean; eaccesFailure?: unknown }> {
+  const current = await autopsyWriterLock(lockPath);
+  if (current.verdict !== "dead") return { reclaimed: false };
+  try {
+    await unlink(lockPath);
+    return { reclaimed: true };
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return { reclaimed: false };
+    if (errorCodeOf(error) !== "EACCES") throw error;
+    // Restore directory permissions and drop the round: re-unlinking here
+    // without a fresh autopsy could delete a contender's live lock that was
+    // installed while the directory was unwritable (#629 TOCTOU).
+    await chmod(runDirectory, 0o755);
+    // A chmod-proof EACCES (e.g. a deny-delete ACE the mode change cannot
+    // clear) recurs every round; hand the identity to the caller so the final
+    // stayed-contested refusal can still name the true cause (#629).
+    return { reclaimed: false, eaccesFailure: error };
+  }
+}
+
+async function createWriterLease(
+  lockPath: string,
+  runDirectory: string,
+  reportCleanupFailure: (error: unknown) => void,
+): Promise<RunWriterLease> {
+  const handle = await open(lockPath, "wx");
+  try {
+    await handle.writeFile(`${process.pid}\n`, "utf8");
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await unlink(lockPath).catch(() => undefined);
+    throw error;
+  }
+  let released = false;
+  return {
+    lockPath,
+    async release() {
+      if (released) return;
+      released = true;
+      await handle.close().catch(() => undefined);
+      try {
+        await unlink(lockPath);
+      } catch (error) {
+        if (errorCodeOf(error) === "EACCES") {
+          try {
+            await chmod(runDirectory, 0o755);
+            await unlink(lockPath);
+          } catch (retryError) {
+            reportCleanupFailure(retryError);
+          }
+        } else {
+          reportCleanupFailure(error);
+        }
+      }
+    },
+  };
+}
+
+const WRITER_LEASE_RECLAIM_ROUNDS = 3;
+
+/**
+ * Acquire the one-writer lease for a Role run. Exclusive create — no second
+ * writer; a concurrent acquire rejects without dispatch.
+ *
+ * A contested lock gets a holder autopsy before rejection (#552): only a
+ * verified-dead holder pid — parseable pid, signal-0 ESRCH, and still dead on
+ * the pre-unlink re-read — authorizes reclaim, because no writer is left to
+ * release the lock; acquire then retries the create. An empty, unparseable, or
+ * unreadable lock proves no dead holder (a live creator is mid-acquisition
+ * between the exclusive create and its pid write), so it rejects as
+ * RunWriterLeaseHeldError naming the path and the lock stays on disk — a
+ * crash-window empty lock blocking a resume is that refusal's known residue,
+ * not safely fixable by unlink here. A live holder rejects the same typed
+ * error naming the pid and path. A pid recycled by an unrelated process reads
+ * as alive — that degrades to the same typed rejection, never worse than the
+ * pre-#552 behavior. Reclaim rounds are bounded by
+ * WRITER_LEASE_RECLAIM_ROUNDS; a lock that stays contested (e.g. a reclaim
+ * race repeatedly lost) surfaces the same typed error instead of spinning.
+ * When every round's unlink fails with a chmod-proof EACCES, the final
+ * refusal additionally carries the last reclaim failure's error identity so
+ * the true cause stays observable (#629).
  *
  * `onCleanupFailure` receives a non-terminal diagnostic line when release-time
- * lock cleanup fails. Release stays best-effort (a stale lock resurfaces as
- * RunWriterLeaseHeldError on next acquire), but the true error identity must
- * still land somewhere observable — silent swallowing is forbidden.
+ * lock cleanup fails, a contested lock cannot be read, or a stale lock is
+ * reclaimed (the #556 orphan-pi residual declaration). Release stays
+ * best-effort, but no diagnostic promises that the next acquire reclaims a
+ * residual lock: a release-failed residual carries this process's live pid
+ * (the next acquire rejects it as held), and an unreadable contested lock is
+ * left in place. The true error identity must still land somewhere observable
+ * — silent swallowing is forbidden.
  */
 export async function acquireRunWriterLease(
   runDirectory: string,
-  onCleanupFailure?: (diagnostic: string) => void,
+  onCleanupFailure?: (diagnostic: string, kind?: WriterLeaseDiagnosticKind) => void,
 ): Promise<RunWriterLease> {
-  const reportCleanupFailure = (error: unknown): void => {
-    // Sink isolation: a throwing onCleanupFailure must not propagate through
-    // release() — release stays best-effort by contract. The true cleanup
-    // cause has already been handed to the sink as its argument.
+  const reportDiagnostic = (diagnostic: string, kind?: WriterLeaseDiagnosticKind): void => {
+    const line = diagnostic.endsWith("\n") ? diagnostic : `${diagnostic}\n`;
     try {
-      onCleanupFailure?.(
-        `writer lease lock cleanup failed (best-effort continue; stale lock resurfaces as lease-held on next acquire) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
-      );
+      onCleanupFailure?.(line, kind);
     } catch {
-      // diagnostic-sink failure is itself best-effort; never break release().
+      // diagnostic-sink failure is itself best-effort; never break acquire()/release().
     }
   };
+  /**
+   * Release-time cleanup failure: the release could not remove the lock, so
+   * the residual lock (carrying this process's pid) stays on disk — the next
+   * acquire reads it as live and rejects; nothing here may promise that the
+   * next acquire reclaims it.
+   */
+  const reportCleanupFailure = (error: unknown): void => {
+    reportDiagnostic(
+      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+    );
+  };
+  /** Contested-lock read failure: nothing was cleaned up; the lock stays exactly where it is. */
+  const reportReadFailure = (error: unknown): void => {
+    reportDiagnostic(
+      `writer lease lock read failed (holder liveness unverifiable; lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+    );
+  };
   const lockPath = join(runDirectory, WRITER_LOCK_FILE);
-  try {
-    const handle = await open(lockPath, "wx");
+  let lastAutopsy: WriterLockAutopsy = { verdict: "absent" };
+  let lastReclaimFailure: unknown;
+  for (let reclaimsLeft = WRITER_LEASE_RECLAIM_ROUNDS; ; reclaimsLeft -= 1) {
     try {
-      await handle.writeFile(`${process.pid}\n`, "utf8");
+      return await createWriterLease(lockPath, runDirectory, reportCleanupFailure);
     } catch (error) {
-      await handle.close().catch(() => undefined);
-      await unlink(lockPath).catch(() => undefined);
-      throw error;
+      if (errorCodeOf(error) !== "EEXIST") throw error;
     }
-    let released = false;
-    return {
-      lockPath,
-      async release() {
-        if (released) return;
-        released = true;
-        await handle.close().catch(() => undefined);
-        try {
-          await unlink(lockPath);
-        } catch (error) {
-          if ((error as { code?: unknown }).code === "EACCES") {
-            try {
-              await chmod(runDirectory, 0o755);
-              await unlink(lockPath);
-            } catch (retryError) {
-              // best-effort cleanup: stale lock will surface as lease-held on next acquire (exit 2),
-              // but the true chmod/unlink cause must be recorded, not swallowed.
-              reportCleanupFailure(retryError);
-            }
-          } else {
-            // non-EACCES unlink failure is best-effort settlement cleanup; record true cause.
-            reportCleanupFailure(error);
-          }
-        }
-      },
-    };
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "EEXIST"
-    ) {
-      throw new RunWriterLeaseHeldError();
+    lastAutopsy = await autopsyWriterLock(lockPath);
+    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
+      reportReadFailure(lastAutopsy.readFailure);
     }
-    throw error;
+    if (lastAutopsy.verdict === "alive") {
+      throw new RunWriterLeaseHeldError(
+        `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
+      );
+    }
+    if (lastAutopsy.verdict === "absent") {
+      throw new RunWriterLeaseHeldError(
+        lastAutopsy.readFailure !== undefined
+          ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
+          : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
+      );
+    }
+    if (reclaimsLeft <= 0) break;
+    let reclaimed = false;
+    try {
+      const outcome = await reclaimStaleWriterLock(lockPath, runDirectory);
+      reclaimed = outcome.reclaimed;
+      if (!reclaimed && outcome.eaccesFailure !== undefined) {
+        lastReclaimFailure = outcome.eaccesFailure;
+      }
+    } catch (reclaimError) {
+      throw new RunWriterLeaseHeldError(
+        `stale writer lease reclaim failed at ${lockPath} (autopsy: ${describeAutopsy(lastAutopsy)}): ${describeErrorIdentity(reclaimError)}`,
+      );
+    }
+    if (reclaimed) {
+      reportDiagnostic(
+        `stale writer lease reclaimed at ${lockPath} (holder pid ${lastAutopsy.pid} verified dead): the killed holder may have left an orphaned pi child still writing this run — check for a surviving pi process on this run before continuing`,
+        "stale-reclaimed",
+      );
+    }
   }
+  throw new RunWriterLeaseHeldError(
+    lastReclaimFailure !== undefined
+      ? `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)}; last reclaim failure: ${describeErrorIdentity(lastReclaimFailure)})`
+      : `role run writer lease stayed contested at ${lockPath} after ${WRITER_LEASE_RECLAIM_ROUNDS} reclaims (last autopsy: ${describeAutopsy(lastAutopsy)})`,
+  );
 }
 
 /**

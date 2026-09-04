@@ -42,6 +42,7 @@ import {
   RunWriterLeaseHeldError,
   type RunWriterLease,
   type TypedProviderHttpObservation,
+  type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import {
   classifyPostAdmissionFailure,
@@ -57,6 +58,7 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
+  hasSealedAcceptedProjection,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -554,6 +556,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
+    shouldStopAutoResume: async () =>
+      hasSealedAcceptedProjection(admitted),
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
@@ -592,6 +596,7 @@ export async function runPostAdmissionManualResume<
   exitCode: number;
   admitted?: A;
   terminal?: T;
+  staleWriterLeaseReclaimed?: true;
 }> {
   const { admitted, env, io, request, adapters, effectiveEngine } = input;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
@@ -617,18 +622,61 @@ export async function runPostAdmissionManualResume<
         terminal: existing,
       };
     }
-  } catch {
-    // Pre-dispatch settle failure is not proof of seal; fall through to dispatch
-    // so the attempt path can settle or fail honestly.
+  } catch (error) {
+    // Sealed accepted + publication/settle throw must fail closed without redispatch
+    // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
+    // Ledger authority failure also fail-closes with preserved cause (never wash to unsealed).
+    // Fail-closed decision is independent of cause value: `throw undefined` is legal JS
+    // and must not fail open. One cause → one presentation (settle vs authority).
+    let failClosed: { cause: unknown } | undefined;
+    try {
+      if (await hasSealedAcceptedProjection(admitted)) {
+        failClosed = { cause: error };
+      }
+    } catch (authorityError) {
+      failClosed = { cause: authorityError };
+    }
+    if (failClosed !== undefined) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: failClosed.cause,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    // Pre-dispatch settle failure without a sealed accepted projection is not
+    // proof of seal; fall through to dispatch so the attempt path can settle
+    // or fail honestly.
   }
 
   let lease: RunWriterLease;
+  let staleWriterLeaseReclaimed: true | undefined;
   try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) => io.stderr(diagnostic));
+    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
+      // Record the typed fact before the fallible sink: if io.stderr throws
+      // (acquire deliberately swallows diagnostic-sink failures), the reclaim
+      // still happened and must stay observable.
+      if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
+      io.stderr(diagnostic);
+    });
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1 };
+      // A held rejection after our own reclaim must still carry the fact that
+      // this caller reclaimed the stale lock — e.g. another resumer re-locked
+      // before our retry create (#629).
+      return {
+        exitCode: 1,
+        ...(staleWriterLeaseReclaimed === true
+          ? { staleWriterLeaseReclaimed: true as const }
+          : {}),
+      };
     }
     throw error;
   }
@@ -649,5 +697,8 @@ export async function runPostAdmissionManualResume<
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
-  return result;
+  return {
+    ...result,
+    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
+  };
 }

@@ -555,32 +555,34 @@ export async function prepareGrokRoleEnvelope(options: {
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
-    // `undefined` is a legal thrown value, so failure presence is explicit.
-    let shutdownFailure: { present: false } | { present: true; value: unknown } = { present: false };
+    const cleanupFailures: unknown[] = [];
     try {
       await emit("session_shutdown", {});
     } catch (error) {
-      shutdownFailure = { present: true, value: error };
+      cleanupFailures.push(error);
     }
+    try {
+      restoreAkRoleRunDir();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    // Server closure is unconditional: a shutdown-handler failure must not leave
+    // the listening MCP server keeping the completed invocation alive.
     try {
       const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
       if (typeof closeAll === "function") closeAll.call(server);
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
-    } catch (closeFailure) {
-      if (shutdownFailure.present) {
-        throw new AggregateError(
-          [shutdownFailure.value, closeFailure],
-          "prepareGrokRoleEnvelope dispose session_shutdown failed and listener close also failed",
-          { cause: shutdownFailure.value },
-        );
-      }
-      throw closeFailure;
-    } finally {
-      restoreAkRoleRunDir();
+    } catch (error) {
+      cleanupFailures.push(error);
     }
-    if (shutdownFailure.present) throw shutdownFailure.value;
+    if (cleanupFailures.length === 1) throw cleanupFailures[0];
+    if (cleanupFailures.length > 1) {
+      throw new AggregateError(cleanupFailures, "Grok envelope dispose cleanup failures", {
+        cause: cleanupFailures[0],
+      });
+    }
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
