@@ -172,12 +172,13 @@ function appendWithIdentityClaim(
     );
   }
 
-  holdAfterExclusiveIdentityClaimForTests();
-
   let primaryFailure: unknown;
   let result: RecordPointer | undefined;
   let cleanupFailure: Error | undefined;
   try {
+    // Hold must share this try/finally so a hold read/open failure still
+    // releases the claim and surfaces its real cause via primaryFailure wrap.
+    holdAfterExclusiveIdentityClaimForTests();
     sealTornTail(recordFile);
     const raced = findIdentityPointer(
       recordFile,
