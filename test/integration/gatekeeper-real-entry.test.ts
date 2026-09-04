@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
   AUDITOR_DOSSIER_TOOL_NAME,
   createAuditorDossierTool,
+  gateSubmissionCandidatePath,
 } from "../../src/auditor-dossier-tool.ts";
 import {
   runGatekeeper,
@@ -200,5 +202,68 @@ test("direct officer transport failure names the summoned seat", async () => {
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") assert.equal(result.stage, "notary");
+  });
+});
+
+test("runGatekeeper persists in-memory tool-call leaf so dossier resolves candidate body", async () => {
+  await withParent(async (context, faux) => {
+    const marker = "GATE-REAL-ENTRY-CANDIDATE-632";
+    const leaf = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call-real-entry-1",
+          name: "ak_fixer_output",
+          arguments: { status: "completed", report: marker },
+        }],
+      },
+    };
+    // Grok shape: candidate only on memory books; durable session may be header-only.
+    const priorEntries = [...context.sessionManager.getEntries()];
+    context.sessionManager.getEntries = () => [...priorEntries, leaf];
+
+    let dossierPayload: {
+      parentSessionCandidate?: string;
+      submissionCandidate?: string;
+    } | undefined;
+    let turn = 0;
+    const respond = async (childContext: any) => {
+      turn += 1;
+      if (turn === 1) {
+        return completion([{ tool: AUDITOR_DOSSIER_TOOL_NAME, args: {} }], [])(childContext);
+      }
+      const results = (childContext.messages ?? []).filter(
+        (message: { role?: string }) => message.role === "toolResult",
+      );
+      const latest = results[results.length - 1]! as {
+        details?: unknown;
+        content?: Array<{ type?: string; text?: string }>;
+      };
+      if (latest.details !== undefined) {
+        dossierPayload = latest.details as typeof dossierPayload;
+      } else {
+        const text = (latest.content ?? [])
+          .map((part) => (part?.type === "text" ? part.text ?? "" : ""))
+          .join("");
+        dossierPayload = JSON.parse(text) as typeof dossierPayload;
+      }
+      return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], [])(childContext);
+    };
+    faux.setResponses(Array.from({ length: 4 }, () => respond));
+
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion" },
+    });
+    assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
+
+    const expectedPath = gateSubmissionCandidatePath(context.runDirectory);
+    assert.equal(readFileSync(expectedPath, "utf8").includes(marker), true);
+    assert.equal(dossierPayload?.submissionCandidate, expectedPath);
+    assert.equal(dossierPayload?.parentSessionCandidate, expectedPath);
+    assert.equal(readFileSync(dossierPayload!.parentSessionCandidate!, "utf8").includes(marker), true);
   });
 });
