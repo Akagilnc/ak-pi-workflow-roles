@@ -479,6 +479,10 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
+    shouldStopAutoResume: async () => {
+      if (adapters.hasLawfulTerminalResult === undefined) return false;
+      return adapters.hasLawfulTerminalResult(admitted, env.principalAuthority);
+    },
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
@@ -543,9 +547,29 @@ export async function runPostAdmissionManualResume<
         terminal: existing,
       };
     }
-  } catch {
-    // Pre-dispatch settle failure is not proof of seal; fall through to dispatch
-    // so the attempt path can settle or fail honestly.
+  } catch (error) {
+    // Sealed accepted + publication/settle throw must fail closed without redispatch
+    // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
+    const hasLawful =
+      adapters.hasLawfulTerminalResult !== undefined &&
+      (await adapters.hasLawfulTerminalResult(admitted, env.principalAuthority));
+    if (hasLawful) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    // Pre-dispatch settle failure without a sealed accepted projection is not
+    // proof of seal; fall through to dispatch so the attempt path can settle
+    // or fail honestly.
   }
 
   let lease: RunWriterLease;

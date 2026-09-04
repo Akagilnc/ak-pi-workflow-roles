@@ -342,6 +342,12 @@ export async function runWithAutoResumeLoop<
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  /**
+   * After a non-lawful terminal, stop further auto-resume when a unique sealed
+   * accepted projection is already readable (publication miss must not redispatch
+   * and destroy the sealed read — #648 / #599 alignment).
+   */
+  shouldStopAutoResume?: () => Promise<boolean>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -421,6 +427,16 @@ export async function runWithAutoResumeLoop<
           // Present lawful terminal once to real io (dummy was used inside dispatch)
           options.io.stdout(formatTerminalResult(terminal));
         }
+        return result;
+      }
+
+      // Unique sealed acceptance already landed — do not treat publication/settle
+      // failure as a retryable miss (#648 sealed-acceptance publication retry).
+      if (
+        options.shouldStopAutoResume !== undefined &&
+        (await options.shouldStopAutoResume())
+      ) {
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
 
