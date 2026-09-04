@@ -1,8 +1,7 @@
 /**
  * #665 — 429 failure terminal resume hint is seat-uniform.
- * Seam: presentControlledFailure (post-admission). Adapters without
- * isResumableRole must still project resume when typed 429 is observed —
- * the seat flag must not fork the public terminal face.
+ * Seam: presentControlledFailure (post-admission). Principal available +
+ * typed 429 → resume; no per-seat hasLawful / isResumableRole fork.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -20,7 +19,7 @@ import {
   renderResumeCommand,
 } from "../../src/public-cli/run-lifecycle.ts";
 
-test("#665 typed 429 failure projects resume without isResumableRole adapter flag", async () => {
+test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-665-resume-hint-"));
   try {
     const runId = "run-665-uniform-429";
@@ -50,7 +49,7 @@ test("#665 typed 429 failure projects resume without isResumableRole adapter fla
 
     const stdout: string[] = [];
     const stderr: string[] = [];
-    // Doctor-shaped adapters: trySettle only — no isResumableRole, no hasLawful.
+    // Doctor-shaped adapters: trySettle only — no per-seat resume fork flags.
     const result = await presentControlledFailure(
       admitted,
       {
@@ -76,7 +75,7 @@ test("#665 typed 429 failure projects resume without isResumableRole adapter fla
     assert.equal(result.terminal.roleOutcome.kind, "failure");
     assert.ok(
       result.terminal.resume,
-      "429 failure terminal must carry resume for seats without isResumableRole",
+      "429 failure terminal must carry resume uniformly (no per-seat fork)",
     );
     assert.equal(result.terminal.resume.command, renderResumeCommand(runId));
 

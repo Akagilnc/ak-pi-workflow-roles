@@ -2514,23 +2514,6 @@ export async function readLawfulJudgeRoleOutcome(
 }
 
 /**
- * Independent confirmation that a lawful Judge terminal result is present in session.
- * Used for resume qualification — must not depend on artifact publication success.
- * Unreadable sessions are not a confirmed lawful result (returns false).
- */
-export async function hasLawfulJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  try {
-    const outcome = await readLawfulJudgeRoleOutcome(admitted, authority);
-    return outcome !== undefined && isLawfulTypedTerminalOutcome(outcome);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
  *
  * - Returns undefined only for genuine absence (missing session path, or no
@@ -3581,18 +3564,6 @@ export async function trySettleCoderTerminalResult(
   return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
 
-export async function hasLawfulCoderTerminalResult(
-  admitted: AdmittedCoderInvocation,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  try {
-    const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "coder";
-  } catch {
-    return false;
-  }
-}
-
 /** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
 export async function trySettleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
@@ -3604,18 +3575,6 @@ export async function trySettleFixerTerminalResult(
   },
 ): Promise<TerminalResult | undefined> {
   return settleLawfulFixerTerminalResult(admitted, authority, options);
-}
-
-export async function hasLawfulFixerTerminalResult(
-  admitted: AdmittedFixerInvocation,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  try {
-    const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "fixer";
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -3805,18 +3764,6 @@ export async function trySettleReviewerTerminalResult(
   },
 ): Promise<TerminalResult | undefined> {
   return settleLawfulReviewerTerminalResult(admitted, authority, options);
-}
-
-export async function hasLawfulReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  try {
-    const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "reviewer";
-  } catch {
-    return false;
-  }
 }
 
 function mergerDecisiveFacts(output: MergerOutput): Record<string, unknown> {
@@ -4055,18 +4002,6 @@ export async function trySettleMergerTerminalResult(
   },
 ): Promise<TerminalResult | undefined> {
   return settleLawfulMergerTerminalResult(admitted, authority, options);
-}
-
-export async function hasLawfulMergerTerminalResult(
-  admitted: AdmittedMergerInvocation,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  try {
-    const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "merger";
-  } catch {
-    return false;
-  }
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */

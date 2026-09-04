@@ -31,7 +31,6 @@ import {
 } from "./run-lifecycle.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
-  hasLawfulReviewerTerminalResult,
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
   trySettleReviewerTerminalResult,
@@ -96,7 +95,6 @@ function reviewerAdapters(
               "code-review",
             ),
           }),
-    hasLawfulTerminalResult: (admitted, authority) => hasLawfulReviewerTerminalResult(admitted, authority),
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
       return infrastructureFailure === undefined
