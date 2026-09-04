@@ -705,6 +705,35 @@ test("lawful result with publication failure is not resumable even with attempt 
     const sealed = await readSealedSubmission(project, runId, home);
     assert.ok(sealed, "sealed accepted projection must survive publication failure");
     assert.equal(sealed.role, "judge");
+
+    // Real manual resume entry: sealed + publication miss must not redispatch (#648).
+    let resumeDispatches = 0;
+    const { io: resumeIo } = captureIo();
+    await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch after sealed acceptance\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0);
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must remain readable after manual resume",
+    );
   });
 });
 
