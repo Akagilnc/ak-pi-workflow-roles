@@ -42,13 +42,21 @@ export type CollectorSnapshot = {
   normalizedByteLength: number;
 };
 
+/**
+ * #641 chain① receipt evidence record: pointer/integrity facts only. Bodies and
+ * raw payloads stay in the volume (observe details + GitHub pointer) and are
+ * never transcribed into the receipt.
+ */
 export type CollectorEvidenceRecord = {
   evidenceId: string;
   kind: string;
   versionId: string;
   contentDigest: string;
   firstObservedAt: string;
-  raw: unknown;
+  githubId?: number;
+  authorLogin?: string;
+  htmlUrl?: string;
+  authoritativeTime?: string | null;
 };
 
 export type CollectorReceipt = {
@@ -104,6 +112,6 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
       snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
     } as CollectorSnapshot)),
-    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record) => ({ evidenceId: safeGet(record, "evidenceId"), kind: safeGet(record, "kind"), versionId: safeGet(record, "versionId"), contentDigest: safeGet(record, "contentDigest"), firstObservedAt: safeGet(record, "firstObservedAt"), raw: safeGet(record, "raw") } as CollectorEvidenceRecord)),
+    evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record) => ({ evidenceId: safeGet(record, "evidenceId"), kind: safeGet(record, "kind"), versionId: safeGet(record, "versionId"), contentDigest: safeGet(record, "contentDigest"), firstObservedAt: safeGet(record, "firstObservedAt"), githubId: safeGet(record, "githubId"), authorLogin: safeGet(record, "authorLogin"), htmlUrl: safeGet(record, "htmlUrl"), authoritativeTime: safeGet(record, "authoritativeTime") } as CollectorEvidenceRecord)),
   };
 }

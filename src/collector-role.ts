@@ -18,8 +18,10 @@ import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
+  projectEvidenceEntryView,
   type CollectorConfigState,
   type CollectorLedger,
 } from "./collector-ledger.ts";
@@ -30,32 +32,55 @@ import {
 import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
+  collectorReadArgsSchema,
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
 import { COLLECTOR_ACCEPTED_TEXT } from "./package-contracts/collector-output.ts";
+import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submission-correctable-error.ts";
+import { CollectorUnknownEvidenceError } from "./collector-identity.ts";
 
-export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
+export { CollectorUnknownEvidenceError } from "./collector-identity.ts";
+
+/**
+ * #641 chain②: normal completion must never declare `infrastructureFailure`.
+ * When the runtime can machine-verify a lawful receipt assembly, a declaration
+ * is model misuse — bounce it as correctable guidance instead of host failure.
+ */
+export class CollectorNormalCompletionDeclarationError extends CorrectableSubmissionError {
+  constructor() {
+    super("runtime 已按机器状态核验本局为正常完工（回执可合法组装）：正常完工的交件不得填 infrastructureFailure，请省略该字段后重新提交。");
+    this.name = "CollectorNormalCompletionDeclarationError";
+  }
+}
+
+export {
+  COLLECTOR_FIXED_KICKOFF,
+} from "./collector-config.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 };
 
 export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
 const observeSchema = collectorObserveArgsSchema;
+const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
 const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
+type ReadParams = Static<typeof readSchema>;
 type WaitParams = Static<typeof waitSchema>;
 type OutputParams = Static<typeof outputSchema>;
 
@@ -259,7 +284,7 @@ export function createCollectorRoleRuntime(
     pi.registerTool({
       name: COLLECTOR_OBSERVE_TOOL,
       label: "通进司观察",
-      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。",
+      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文在上下文中只给头部摘录加指针；需要头部之外的正文时，用 ak_collector_read 按 evidenceId 开卷；findings 的拆分与归类由你在交件时完成。",
       promptSnippet: "抓取配置目标 PR 证据",
       parameters: observeSchema,
       async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -268,11 +293,12 @@ export function createCollectorRoleRuntime(
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
-          const { snapshot, modelView } = await activation.ledger.observe(
+          const { snapshot, contextView } = await activation.ledger.observe(
             activation.transport,
             activation.clock,
             signal,
           );
+          activation.ledger.completeOperational(toolCallId);
           if (snapshot.prState !== "OPEN") {
             // Non-OPEN observed as latest complete snapshot is target-state failure at output,
             // but observe itself may return the fact. If this is a final observation, still return.
@@ -280,14 +306,55 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: JSON.stringify(modelView),
+              // #641 chain①: model context carries bounded body heads + pointers only.
+              text: JSON.stringify(contextView),
             }],
-            details: modelView,
+            // #641 the bounded projection is the only provider-visible face on every host
+            // (Grok/ACP relays tool details as MCP structuredContent); full bodies stay
+            // in the ledger volume and enter context only by explicit ak_collector_read.
+            details: contextView,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
-        } finally {
+          hostActions.failInfrastructure(error, ctx, toolCallId);
+        }
+      },
+    });
+
+    pi.registerTool({
+      name: COLLECTOR_READ_TOOL,
+      label: "通进司开卷",
+      description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针；只在观察头部摘录不足以判读时调用。",
+      promptSnippet: "按指针开卷读材料",
+      parameters: readSchema,
+      async execute(toolCallId: string, params: ReadParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+        if (activation === undefined) {
+          throw new Error("通进司未激活");
+        }
+        try {
+          activation.ledger.beginOperational(COLLECTOR_READ_TOOL, toolCallId);
+          const record = activation.ledger.getEvidence(params.evidenceId);
+          if (
+            record === undefined ||
+            (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment" && record.kind !== "reaction") ||
+            typeof record.body !== "string"
+          ) {
+            throw new CollectorUnknownEvidenceError(params.evidenceId);
+          }
+          const material = projectEvidenceEntryView(record);
           activation.ledger.completeOperational(toolCallId);
+          return {
+            content: [{
+              type: "text" as const,
+              // #641 chain①: full bodies enter provider context only by explicit pointer.
+              text: JSON.stringify(material),
+            }],
+            details: material,
+          };
+        } catch (error) {
+          if (isCorrectableExecuteError(error)) throw error;
+          // typed toolCallId books the shared infrastructure fact so settlement can
+          // tell a read tool's real host failure from a correctable pointer bounce.
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -310,6 +377,7 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
+          activation.ledger.completeOperational(toolCallId);
           return {
             content: [{
               type: "text" as const,
@@ -318,9 +386,7 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
-        } finally {
-          activation.ledger.completeOperational(toolCallId);
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -342,6 +408,7 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
+          activation.ledger.completeOperational(toolCallId);
           return {
             content: [{
               type: "text" as const,
@@ -350,9 +417,7 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
-          hostActions.failInfrastructure(error, ctx);
-        } finally {
-          activation.ledger.completeOperational(toolCallId);
+          hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },
     });
@@ -360,8 +425,20 @@ export function createCollectorRoleRuntime(
     pi.registerTool({
       name: COLLECTOR_OUTPUT_TOOL,
       label: "通进司输出",
-      description: "观察完成后提交；回执由 runtime 组装。",
+      description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
       promptSnippet: "提交通进司回执",
+      // #641 chain②: the seat owns the normal-completion decision. The probe
+      // runs the exact receipt assembly (validation only, no accept side
+      // effects); success ⇒ machine-verified normal completion ⇒ bounce.
+      bounceInfrastructureDeclaration(params) {
+        if (activation === undefined) return undefined;
+        try {
+          buildCollectorReceipt(activation.ledger, params, activation.clock);
+        } catch {
+          return undefined;
+        }
+        return new CollectorNormalCompletionDeclarationError();
+      },
       parameters: outputSchema,
       async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
         if (activation === undefined) {
