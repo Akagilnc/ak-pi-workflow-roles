@@ -51,6 +51,7 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
+  hasSealedAcceptedProjection,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -479,6 +480,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
+    shouldStopAutoResume: async () =>
+      hasSealedAcceptedProjection(admitted),
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
@@ -543,9 +546,37 @@ export async function runPostAdmissionManualResume<
         terminal: existing,
       };
     }
-  } catch {
-    // Pre-dispatch settle failure is not proof of seal; fall through to dispatch
-    // so the attempt path can settle or fail honestly.
+  } catch (error) {
+    // Sealed accepted + publication/settle throw must fail closed without redispatch
+    // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
+    // Ledger authority failure also fail-closes with preserved cause (never wash to unsealed).
+    // Fail-closed decision is independent of cause value: `throw undefined` is legal JS
+    // and must not fail open. One cause → one presentation (settle vs authority).
+    let failClosed: { cause: unknown } | undefined;
+    try {
+      if (await hasSealedAcceptedProjection(admitted)) {
+        failClosed = { cause: error };
+      }
+    } catch (authorityError) {
+      failClosed = { cause: authorityError };
+    }
+    if (failClosed !== undefined) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: failClosed.cause,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    // Pre-dispatch settle failure without a sealed accepted projection is not
+    // proof of seal; fall through to dispatch so the attempt path can settle
+    // or fail honestly.
   }
 
   let lease: RunWriterLease;

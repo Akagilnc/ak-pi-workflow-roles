@@ -3,6 +3,7 @@
  * Single implementation lives in src/public-command-renderer.ts.
  */
 export {
+  isPublicCallableRole,
   renderPublicAkRoleCommand,
   type PublicCommandTarget,
 } from "../public-command-renderer.ts";

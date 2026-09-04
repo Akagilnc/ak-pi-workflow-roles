@@ -350,7 +350,11 @@ test("structurally empty request stays empty while attachments remain typed tran
 test("registry renderer owns public command text; model prose is ignored", () => {
   assert.equal(
     renderPublicAkRoleCommand({ role: "reviewer", phase: null }),
-    "ak-role reviewer",
+    undefined,
+  );
+  assert.equal(
+    renderPublicAkRoleCommand({ role: "gleaner-left", phase: null }),
+    undefined,
   );
   assert.equal(
     renderPublicAkRoleCommand({ role: "fixer", phase: "apply" }),
@@ -372,8 +376,7 @@ test("registry renderer owns public command text; model prose is ignored", () =>
   });
   assert.equal(fact.disposition, "recommendation");
   if (fact.disposition === "recommendation") {
-    assert.equal(fact.command, "ak-role reviewer");
-    assert.equal(fact.command.includes("pi --ak-role"), false);
+    assert.equal(fact.command, undefined);
   }
 });
 
@@ -1139,8 +1142,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.equal(terminal.navigator.disposition, "recommendation");
     if (terminal.navigator.disposition === "recommendation") {
       assert.equal(terminal.navigator.next.role, "reviewer");
-      assert.equal(terminal.navigator.command, "ak-role reviewer");
-      assert.equal(terminal.navigator.command.includes("pi --ak-role"), false);
+      assert.equal(terminal.navigator.command, undefined);
     }
     assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);

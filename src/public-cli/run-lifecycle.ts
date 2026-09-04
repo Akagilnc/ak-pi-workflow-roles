@@ -523,6 +523,7 @@ export type RunWriterLease = {
 /** Kind of a writer-lease diagnostic sent on the existing sink. */
 export type WriterLeaseDiagnosticKind = "stale-reclaimed";
 
+
 /**
  * True error identity for diagnostics — name/code/message as-is, never a
  * guessed label (failure-honesty constitution).
@@ -560,6 +561,7 @@ function isProcessAlive(pid: number): boolean {
     return errorCodeOf(error) !== "ESRCH";
   }
 }
+
 
 type WriterLockAutopsy =
   | { verdict: "absent"; readFailure?: unknown }
