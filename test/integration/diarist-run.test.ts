@@ -486,6 +486,22 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
         ].map((row) => JSON.stringify(row)).join("\n") + "\n",
         "utf8",
       );
+      const ccBlocks = readCcSessionBlocks({
+        projectsRoot: join(home, ".claude", "projects"),
+        cwds: [project],
+      });
+      const queuedBlock = ccBlocks.find(
+        (block) => block.sourceRef.entryId === "sess.jsonl:2",
+      );
+      assert.equal(queuedBlock?.isUserTurn, true);
+      assert.equal(
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:3"),
+        false,
+      );
+      assert.equal(
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:4"),
+        false,
+      );
 
       const result = await runDiarist({
         ticketNumber: 99,
@@ -515,8 +531,6 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.equal(queued?.sourceKind, "cc-session");
       assert.equal(queued?.sourceRef.sessionFile, sessionFile);
       assert.equal(queued?.transcript, "可以。就这样做");
-      assert.equal(refs.some((r) => r.entryId === "sess.jsonl:3"), false);
-      assert.equal(refs.some((r) => r.entryId === "sess.jsonl:4"), false);
     },
     { selectAllCandidates: true },
   );
