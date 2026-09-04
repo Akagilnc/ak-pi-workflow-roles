@@ -411,8 +411,13 @@ export function createCollectorLedger(
     if (commentEvidence !== undefined) {
       storeEvidence(commentEvidence);
     }
-    attempts.push({ ...attempt });
-    attemptKeys.add(attemptKey);
+    const existing = attempts.find((item) => item.attemptId === attempt.attemptId);
+    if (existing === undefined) {
+      attempts.push({ ...attempt });
+      attemptKeys.add(attemptKey);
+    } else {
+      Object.assign(existing, attempt);
+    }
     if (attempt.status === "ambiguous_loss") {
       transportFailures.push({
         failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
@@ -845,10 +850,6 @@ export function createCollectorLedger(
         ...(signal === undefined ? {} : { signal }),
       });
 
-      // Successful or ambiguous request completion dirties observation generation.
-      mutationGeneration += 1;
-      finalObservationCompleted = false;
-
       const journalRequest = (commentEvidence: CollectorEvidenceRecord | undefined): void => {
         const attemptKey = [
           config.repository.canonical,
@@ -864,11 +865,10 @@ export function createCollectorLedger(
       };
 
       if (result.kind === "success") {
-        const record = storeEvidence(
-          normalizeIssueCommentEvidence(result.comment, startedAt),
-        );
+        const record = normalizeIssueCommentEvidence(result.comment, startedAt);
         attempt.status = "succeeded";
         attempt.commentEvidenceId = record.evidenceId;
+        commitRequestAttempt(attempt, attemptKey, record);
         journalRequest(record);
         return {
           status: "succeeded",
@@ -883,15 +883,7 @@ export function createCollectorLedger(
       if (result.kind === "ambiguous_loss") {
         attempt.status = "ambiguous_loss";
         attempt.responseDiagnostics = result.diagnostics;
-        transportFailures.push({
-          failureId: sha256Text(`loss:${attemptId}`).slice(0, 16),
-          kind: "ambiguous_request_loss",
-          message: result.diagnostics,
-          requestId: request.id,
-          observedHead: snapshot.headOid,
-          marker,
-          recovered: false,
-        });
+        commitRequestAttempt(attempt, attemptKey, undefined);
         journalRequest(undefined);
         return {
           status: "ambiguous_loss",
@@ -939,9 +931,6 @@ export function createCollectorLedger(
       await clock.sleep(effectiveMs, signal);
       const endedAt = clock.wallNow().toISOString();
       const cutoffReached = pastCutoff(clock);
-      if (cutoffReached) finalObservationRequired = true;
-      mutationGeneration += 1;
-      finalObservationCompleted = false;
       const record: CollectorWaitRecord = {
         waitId,
         requestedMs: input.durationMs,
@@ -950,7 +939,7 @@ export function createCollectorLedger(
         endedAt,
         cutoffReached,
       };
-      waits.push(record);
+      commitWaitRecord(record);
       appendJournal(COLLECTOR_WAIT_ENTRY_TYPE, {
         waitRecord: record,
       });
