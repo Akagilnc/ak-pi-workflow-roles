@@ -146,17 +146,29 @@ export async function runPublicNotaryResume(
     request,
     env,
     io,
-    load: () =>
-      loadResumableNotaryRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildNotaryTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
+    load: () => {
+      if (request.message !== undefined) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
+        );
+      }
+      return loadResumableNotaryRun(
+        env.home,
+        request.runId,
+        env.principalAuthority,
+      );
+    },
+    buildTurnRequest: (admitted) => {
+      const { message: _omitted, ...safeRequest } = request;
+      return buildNotaryTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          safeRequest,
+          env,
+        ),
+      );
+    },
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
