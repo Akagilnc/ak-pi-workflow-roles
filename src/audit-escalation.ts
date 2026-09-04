@@ -110,19 +110,25 @@ export function isAuditEscalationProjection(
   return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
 }
 
-function humanDecisionText(result: AuditEscalationResult): string {
+function humanDecisionText(
+  decision: AuditEscalationDecision,
+  result: AuditEscalationResult,
+): string {
+  const officer = Object.hasOwn(decision, "officer")
+    ? (decision as OfficerAuditEscalationDecision).officer
+    : undefined;
   const lines = [
-    typeof result.officer === "string"
-      ? `Human decision required: ${result.officer} escalation.`
-      : "Human decision required: compliance audit escalation.",
+    officer === undefined
+      ? "Human decision required: compliance audit escalation."
+      : `Human decision required: ${officer} escalation.`,
   ];
-  if (typeof result.reason === "string") {
+  if (officer !== undefined && typeof result.reason === "string") {
     lines.push(`Reason: ${result.reason}`);
   }
   if (Array.isArray(result.conflicts)) {
     lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
   }
-  if (Array.isArray(result.findings) && result.findings.length > 0) {
+  if (officer !== undefined && Array.isArray(result.findings) && result.findings.length > 0) {
     lines.push("Findings:", ...result.findings.map((finding) => `- ${finding}`));
   }
   const gate = result.auditDecisionGate;
@@ -142,7 +148,7 @@ export function projectAuditEscalation(
 ): AuditEscalationToolResult {
   const details = buildAuditEscalationResult(decision, deliveredOutput);
   return {
-    content: [{ type: "text", text: humanDecisionText(details) }],
+    content: [{ type: "text", text: humanDecisionText(decision, details) }],
     details,
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),

@@ -57,6 +57,11 @@ function runIdentity(context: HostContext): string {
 }
 
 function attemptIdentity(context: HostContext, runId: string): string {
+  const entries = [...context.sessionManager.getEntries?.() ?? []] as Array<{ id?: unknown; message?: { role?: unknown } }>;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.message?.role === "user" && typeof entry.id === "string") return entry.id;
+  }
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
@@ -125,13 +130,18 @@ export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
   home?: string,
+  currentAttemptId?: string,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  const latestAttemptId = currentAttemptId ?? (owned.at(-1)?.subject as { attemptId?: unknown } | undefined)?.attemptId;
+  if (typeof latestAttemptId !== "string") return undefined;
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
+    if ((record?.subject as { attemptId?: unknown } | undefined)?.attemptId !== latestAttemptId) continue;
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
-    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
+    if (payload?.type !== "outcome") continue;
+    if (payload.outcome !== "audit-escalation") return undefined;
     if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
   }
   return undefined;
@@ -303,20 +313,21 @@ export function createSubmissionLedgerHost(
             ...original,
             status: "escalate",
             officer,
-            reason: Object.hasOwn(original, "reason")
-              ? original.reason
-              : `门下省${officer}上呈（原卷未附 reason）`,
+            reason: original.reason === undefined
+              ? `门下省${officer}上呈（原卷未附 reason）`
+              : original.reason,
           }, deliveredOutput);
           let result: HostToolResult<unknown>;
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
             if (error instanceof GatekeeperEscalationError) {
-              const original = error.gatekeeper.submission as Record<string, unknown>;
-              result = projectOfficerEscalation(error.gatekeeper.officer, original, {
-                ...(params as Record<string, unknown>),
-                ...original,
-              });
+              const decision = error.gatekeeper as unknown as Record<string, unknown>;
+              result = projectOfficerEscalation(
+                error.gatekeeper.officer,
+                decision,
+                params as Record<string, unknown>,
+              );
             } else if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",

@@ -163,11 +163,24 @@ export async function hasSealedAcceptedProjection(
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
+  authority: DurablePrincipalAuthority,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
+  let currentAttemptId: string | undefined;
+  if (role === "coder" || role === "fixer") {
+    const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index] as SessionEntry & { id?: string; message?: { role?: string } };
+      if (entry.message?.role === "user" && typeof entry.id === "string") {
+        currentAttemptId = entry.id;
+        break;
+      }
+    }
+  }
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
     admitted.runId,
     sealedLedgerHome(admitted),
+    currentAttemptId,
   );
   if (projection?.role !== role) return undefined;
   return projection;
@@ -176,11 +189,12 @@ async function auditEscalationLedgerOutcome(
 async function closedLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
+  authority: DurablePrincipalAuthority,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
   const sealed = await sealedLedgerOutcome(admitted);
   return sealed?.role === role
     ? sealed
-    : auditEscalationLedgerOutcome(admitted, role);
+    : auditEscalationLedgerOutcome(admitted, role, authority);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -2462,7 +2476,7 @@ export async function readLawfulJudgeRoleOutcome(
     };
   }
   // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
-  return auditEscalationLedgerOutcome(admitted, "judge");
+  return auditEscalationLedgerOutcome(admitted, "judge", authority);
 }
 
 /**
@@ -2556,7 +2570,7 @@ async function settleLawfulCoderTerminalResult(
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder");
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", authority);
   if (ledgerOutcome === undefined) return undefined;
   let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   let output: CoderOutput | undefined;
@@ -2744,7 +2758,7 @@ async function settleLawfulFixerTerminalResult(
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer");
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", authority);
   if (ledgerOutcome === undefined) return undefined;
   let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   let output: FixerOutput | undefined;
@@ -3034,7 +3048,7 @@ async function settleLawfulDoctorTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   if (sealed?.role !== "doctor") {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor", authority);
     if (escalation === undefined) return undefined;
     const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
     return withOptionalGateProjection(
@@ -3154,7 +3168,7 @@ async function settleLawfulOneShotAcceptedTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName);
+  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, authority);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
     return withOptionalGateProjection(
