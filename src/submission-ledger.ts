@@ -268,7 +268,7 @@ export function createSubmissionLedgerHost(
     }
   });
 
-  const facade: RoleHost = {
+  return {
     ...host,
     registerTool(tool) {
       const role = outputTools.get(tool.name);
@@ -358,5 +358,4 @@ export function createSubmissionLedgerHost(
       });
     },
   };
-  return facade;
 }
