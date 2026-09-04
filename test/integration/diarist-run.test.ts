@@ -4,7 +4,7 @@
  * runDiarist enters production composition only: real cc/issue/ADR files + PATH hermes.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   accessSync,
   chmodSync,
@@ -453,9 +453,39 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
           },
         ],
       };
-      await seedCcSession(home, project, [
+      const sessionFile = await seedCcSession(home, project, [
         { uuid: "u-cc", content: "cc turn about 起居录" },
       ]);
+      await appendFile(
+        sessionFile,
+        [
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt: "可以。就这样做",
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "other",
+              prompt: "wrong attachment type",
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt: "wrong origin",
+              origin: { kind: "system" },
+            },
+          },
+        ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+        "utf8",
+      );
 
       const result = await runDiarist({
         ticketNumber: 99,
@@ -479,44 +509,17 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.ok(refs.some((r) => r.entryId === 42));
       assert.ok(refs.some((r) => r.path === adrRel));
       assert.ok(refs.some((r) => r.entryId === "u-cc"));
+      const queued = volume.entries.find(
+        (entry) => entry.sourceRef.entryId === "sess.jsonl:2",
+      );
+      assert.equal(queued?.sourceKind, "cc-session");
+      assert.equal(queued?.sourceRef.sessionFile, sessionFile);
+      assert.equal(queued?.transcript, "可以。就这样做");
+      assert.equal(refs.some((r) => r.entryId === "sess.jsonl:3"), false);
+      assert.equal(refs.some((r) => r.entryId === "sess.jsonl:4"), false);
     },
     { selectAllCandidates: true },
   );
-});
-
-test("cc human queued_command attachment is exposed as a user turn", async () => {
-  await withHermeticHome({ prefix: "ak-diarist-queued-command-" }, async ({ home }) => {
-    const root = join(home, ".claude", "projects");
-    const sessionDir = join(root, "-work");
-    mkdirSync(sessionDir, { recursive: true });
-    const sessionFile = join(sessionDir, "queued.jsonl");
-    writeFileSync(
-      sessionFile,
-      `${JSON.stringify({
-        type: "attachment",
-        attachment: {
-          type: "queued_command",
-          prompt: "可以。就这样做",
-          origin: { kind: "human" },
-          message: "must not replace prompt",
-        },
-      })}\n`,
-      "utf8",
-    );
-
-    const blocks = readCcSessionBlocks({ projectsRoot: root, cwds: ["/work"] });
-
-    assert.deepEqual(blocks, [
-      {
-        sourceKind: "cc-session",
-        sourceRef: { sessionFile, entryId: "queued.jsonl:1" },
-        transcript: "可以。就这样做",
-        timestamp: new Date(0).toISOString(),
-        isUserTurn: true,
-        isNotification: false,
-      },
-    ]);
-  });
 });
 
 test("referenced ADR missing fails typed (not silent skip)", async () => {
