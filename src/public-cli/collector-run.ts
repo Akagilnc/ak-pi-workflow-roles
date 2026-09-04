@@ -1,7 +1,7 @@
 /**
  * Public Collector Role run: admit a structured PR target → explicit Internal activate
- * → settle Terminal result (#112 / #517). One-shot; no resume path (Collector rejects
- * session resume/fork/reload). Lifecycle is the shared post-admission coordinator.
+ * → settle Terminal result (#112 / #517). #633: manual resume continues the exact
+ * session. Lifecycle is the shared post-admission coordinator.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -14,9 +14,16 @@ import {
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableCollectorRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   readCollectorInfrastructureFailure,
@@ -109,25 +116,62 @@ export async function runPublicCollector(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleCollectorTerminalResult(admitted, authority),
-      shouldPresentSettled: () => true,
-      resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
-        const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
-        return (
-          result.knownFailure ??
-          (infrastructureFailure === undefined
-            ? undefined
-            : {
-                cause: infrastructureFailure.cause,
-                diagnostic: infrastructureFailure.diagnostic,
-                ...(infrastructureFailure.identity === undefined
-                  ? {}
-                  : { identity: infrastructureFailure.identity }),
-              })
-        );
-      },
+    adapters: collectorAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function collectorAdapters(): PostAdmissionAdapters<AdmittedCollectorInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleCollectorTerminalResult(admitted, authority),
+    shouldPresentSettled: () => true,
+    resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
+      const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
+      return (
+        result.knownFailure ??
+        (infrastructureFailure === undefined
+          ? undefined
+          : {
+              cause: infrastructureFailure.cause,
+              diagnostic: infrastructureFailure.diagnostic,
+              ...(infrastructureFailure.identity === undefined
+                ? {}
+                : { identity: infrastructureFailure.identity }),
+            })
+      );
     },
+  };
+}
+
+/**
+ * Resume a previously admitted Collector run (#633). Repository/PR identity
+ * restores from the durable admitted request; the session principal reopens.
+ */
+export async function runPublicCollectorResume(
+  request: PublicResumeRequest,
+  env: CollectorRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedCollectorInvocation;
+  terminal?: TerminalResult;
+}> {
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () =>
+      loadResumableCollectorRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    ),
+    buildTurnRequest: (admitted) =>
+      buildCollectorTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
+    adapters: collectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

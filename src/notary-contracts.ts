@@ -1,6 +1,6 @@
 /**
  * Public Notary (符宝郎) terminating receipt contracts.
- * Lawful explicit releases: pass | bounce.
+ * Lawful explicit releases: pass | bounce | escalate.
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
 import { Type } from "typebox";
@@ -35,11 +35,14 @@ export const notaryOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "pass | bounce — 形状指引，非 schema 闸",
+        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
       }),
       findings: Type.Unknown({
-        description: "string[] findings，随 pass 或 bounce 留存",
+        description: "string[] findings，随 pass、bounce 或 escalate 留存",
       }),
+      reason: Type.Optional(Type.Unknown({
+        description: "status 为 escalate 时的上呈理由",
+      })),
     }),
   ),
 );
@@ -56,6 +59,11 @@ export type NotaryOutput =
       readonly status: "bounce";
       readonly disposition: "rewrite";
       readonly findings: readonly string[];
+    }
+  | {
+      readonly status: "escalate";
+      readonly reason?: unknown;
+      readonly findings?: unknown;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,7 +76,7 @@ function asStringArray(value: unknown): readonly string[] {
 }
 
 /**
- * Project one lawful explicit Notary release (pass | bounce).
+ * Project one lawful explicit Notary release (pass | bounce | escalate).
  * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
  * public-terminal projects non-usable releases via typed failure cause.
  */
@@ -86,6 +94,9 @@ export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefi
     if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
     return clone as NotaryOutput;
   }
+  if (status === "escalate") {
+    return structuredClone(value) as NotaryOutput;
+  }
   return undefined;
 }
 
@@ -100,7 +111,7 @@ export function retainNotarySubmission(value: unknown): unknown {
 }
 
 /**
- * Settlement/recording path: only lawful recorded pass/bounce.
+ * Settlement/recording path: only lawful recorded pass/bounce/escalate.
  * Does not gate role admission — callers must not use this to reject a submission.
  */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
@@ -120,6 +131,10 @@ export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknow
   }
   if (status === "bounce") {
     facts.disposition = "rewrite";
+  }
+  if (status === "escalate") {
+    const reason = (output as { reason?: unknown }).reason;
+    if (reason !== undefined) facts.reason = reason;
   }
   return facts;
 }

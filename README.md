@@ -38,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. The optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`, Grok: `runDirectory/grok-home`), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Collector, Doctor, Notary, and Inspector remain one-shot. Countersign and Gleaner-Left accept manual resume (#599).
+`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. `[message]` applies only to seats that accept caller instruction: for those seats the optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Notary/符宝郎 must omit `message` and derives evidence from the existing source-run/dossier binding. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`, Grok: `runDirectory/grok-home`), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Every callable role accepts manual resume; Countersign and Gleaner-Left gained it in #599, Collector, Doctor, Notary, and Inspector in #633.
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -90,23 +90,23 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
 ak-role reviewer --base main "Review the branch."
 
-# collector — GitHub PR review evidence; one-shot
+# collector — GitHub PR review evidence
 ak-role collector --pr 42 --repo owner/repository
 
 # fixer — repair the assigned findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 
-# doctor — diagnose one retained case; one-shot
+# doctor — diagnose one retained case
 ak-role doctor --issue 115 "Diagnose this retained case."
 
 # merger — resolve one merge already in conflict (start it with Git's ort first)
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# notary — document-fidelity check on one retained source run; one-shot; optional --ticket for court diary
+# notary — document-fidelity check on one retained source run; optional --ticket for court diary
 ak-role notary --source-run <runId@role|path>
 ak-role notary --source-run <runId@role|path> --ticket 582
 
-# inspector — direct complexity and test-quality check; one-shot
+# inspector — direct complexity and test-quality check
 ak-role inspector --attach ./change.patch "Review this material."
 
 # gatekeeper — direct Gate province review; dispatch an officer or pass

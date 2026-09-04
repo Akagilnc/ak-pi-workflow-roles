@@ -13,6 +13,7 @@ import {
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import {
+  latestUserAttemptId,
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
   readSealedSubmission,
@@ -176,15 +177,33 @@ export async function hasSealedAcceptedProjection(
 
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
-  role: "judge" | "doctor",
+  role: TerminalRoleName,
+  authority: DurablePrincipalAuthority,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
+  let currentAttemptId: string | undefined;
+  if (role === "coder" || role === "fixer") {
+    const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
+    currentAttemptId = latestUserAttemptId(entries);
+  }
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
     admitted.runId,
     sealedLedgerHome(admitted),
+    currentAttemptId,
   );
   if (projection?.role !== role) return undefined;
   return projection;
+}
+
+async function closedLedgerOutcome(
+  admitted: AdmittedRoleInvocation,
+  role: TerminalRoleName,
+  authority: DurablePrincipalAuthority,
+): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+  const sealed = await sealedLedgerOutcome(admitted);
+  return sealed?.role === role
+    ? sealed
+    : auditEscalationLedgerOutcome(admitted, role, authority);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -208,6 +227,7 @@ import {
   type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalResume,
+  type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
@@ -1687,13 +1707,21 @@ function extractInfrastructureToolFailure(
   return undefined;
 }
 
-/** Read the bound session principal for a parameterized infrastructure tool failure. */
+/**
+ * Read the bound session principal for a parameterized infrastructure tool failure.
+ * `currentAttemptOnly` bounds the reverse scan to the latest top-level user turn
+ * so a prior attempt's residual cannot mask the current failure (#633).
+ */
 async function readInfrastructureToolFailure(
   sessionFile: string,
   spec: InfrastructureFailureSpec,
+  options: { readonly currentAttemptOnly?: boolean } = {},
 ): Promise<ControlledFailure | undefined> {
   try {
-    const entries = await readBoundSessionEntries(sessionFile);
+    let entries = await readBoundSessionEntries(sessionFile);
+    if (options.currentAttemptOnly === true) {
+      entries = entries.slice(currentAttemptStartIndex(entries));
+    }
     return extractInfrastructureToolFailure(entries, spec);
   } catch {
     return undefined;
@@ -1721,6 +1749,9 @@ export async function readCollectorInfrastructureFailure(
   return readInfrastructureToolFailure(
     sessionFile,
     COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC,
+    // Multi-attempt resume: only a current-attempt infrastructure failure
+    // may preempt the current failure cause (#633).
+    { currentAttemptOnly: true },
   );
 }
 
@@ -2482,7 +2513,7 @@ export async function readLawfulJudgeRoleOutcome(
     };
   }
   // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
-  return auditEscalationLedgerOutcome(admitted, "judge");
+  return auditEscalationLedgerOutcome(admitted, "judge", authority);
 }
 
 /**
@@ -2576,24 +2607,28 @@ async function settleLawfulCoderTerminalResult(
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "coder") return undefined;
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", authority);
+  if (ledgerOutcome === undefined) return undefined;
+  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
+  let output: CoderOutput | undefined;
+  if (ledgerOutcome.kind === "accepted") {
+    output = validateAcceptedCoderDetails(ledgerOutcome.decisiveFacts);
+    roleOutcome = {
+      kind: "accepted",
+      role: "coder",
+      status: ledgerOutcome.status,
+      decisiveFacts: coderDecisiveFacts(output),
+    };
+  }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const output = validateAcceptedCoderDetails(sealed.decisiveFacts);
-  const roleOutcome: LawfulCoderRoleOutcome = {
-    kind: "accepted",
-    role: "coder",
-    status: sealed.status,
-    decisiveFacts: coderDecisiveFacts(output),
-  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
     roleOutcome,
     coordinates,
     {
-      coderOutput: output,
+      ...(output === undefined ? {} : { coderOutput: output }),
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
@@ -2760,18 +2795,22 @@ async function settleLawfulFixerTerminalResult(
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "fixer") return undefined;
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", authority);
+  if (ledgerOutcome === undefined) return undefined;
+  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
+  let output: FixerOutput | undefined;
+  if (ledgerOutcome.kind === "accepted") {
+    output = validateFixerOutput(ledgerOutcome.decisiveFacts);
+    roleOutcome = {
+      kind: "accepted",
+      role: "fixer",
+      status: ledgerOutcome.status,
+      decisiveFacts: fixerDecisiveFacts(output),
+    };
+  }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const output = validateFixerOutput(sealed.decisiveFacts);
-  const roleOutcome: LawfulFixerRoleOutcome = {
-    kind: "accepted",
-    role: "fixer",
-    status: sealed.status,
-    decisiveFacts: fixerDecisiveFacts(output),
-  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
@@ -2784,7 +2823,7 @@ async function settleLawfulFixerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      fixerOutput: output,
+      ...(output === undefined ? {} : { fixerOutput: output }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -2894,7 +2933,10 @@ async function settleLawfulCollectorTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== "collector") {
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
+    // Bounded to the current attempt so multi-attempt resume timeout/no-output
+    // is not masked by a prior wait-tool residual (#633).
+    const scanStart = currentAttemptStartIndex(entries);
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
@@ -3046,7 +3088,7 @@ async function settleLawfulDoctorTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   if (sealed?.role !== "doctor") {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor", authority);
     if (escalation === undefined) return undefined;
     const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
     return withOptionalGateProjection(
@@ -3126,11 +3168,11 @@ export async function trySettleDoctorTerminalResult(
 }
 
 /**
- * Shared accepted-settlement skeleton for one-shot seats that scan residual
- * tool candidates then project sealed ledger outcome (#502 DRY).
+ * Shared accepted-settlement skeleton for seats that scan residual tool
+ * candidates then project sealed ledger outcome (#502 DRY).
  * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
  */
-type OneShotAcceptedSettlementSpec = {
+type SeatAcceptedSettlementSpec = {
   readonly role:
     | "notary"
     | "countersign"
@@ -3144,13 +3186,6 @@ type OneShotAcceptedSettlementSpec = {
     sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
   ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
   readonly tryAcceptDetails: (details: unknown) => boolean;
-  /**
-   * When true, residual reverse-scan is bounded to the current attempt
-   * (entries after the latest top-level user turn). Resumable one-shot seats
-   * need this so a prior attempt residual cannot mask the current provider
-   * failure (#599). Notary stays whole-session (true one-shot).
-   */
-  readonly residualScanCurrentAttemptOnly?: boolean;
 };
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
@@ -3164,7 +3199,7 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-async function settleLawfulOneShotAcceptedTerminalResult(
+async function settleLawfulSeatAcceptedTerminalResult(
   admitted:
     | AdmittedNotaryInvocation
     | AdmittedCountersignInvocation
@@ -3173,20 +3208,30 @@ async function settleLawfulOneShotAcceptedTerminalResult(
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation,
   authority: DurablePrincipalAuthority,
-  spec: OneShotAcceptedSettlementSpec,
+  spec: SeatAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
+  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, authority);
+  if (roleOutcome?.kind === "audit_escalation") {
+    const navigator = extractNavigatorFact(entries);
+    return withOptionalGateProjection(
+      {
+        roleOutcome,
+        navigator,
+        artifacts: [],
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    );
+  }
   if (roleOutcome?.role !== spec.role) {
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
-    // Resumable seats bound the scan to the current attempt so multi-attempt
-    // resume timeout/no-output is not masked by a prior residual (#599).
-    const scanStart = spec.residualScanCurrentAttemptOnly === true
-      ? currentAttemptStartIndex(entries)
-      : 0;
+    // Bounded to the current attempt so multi-attempt resume timeout/no-output
+    // is not masked by a prior residual (#599 / #633).
+    const scanStart = currentAttemptStartIndex(entries);
     let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= scanStart; index -= 1) {
       const message = entries[index]?.message;
@@ -3259,7 +3304,7 @@ function tryAcceptWithValidator(validate: (details: unknown) => unknown): (detai
   };
 }
 
-/** Lawful Notary accepted outcome (pass/bounce). */
+/** Lawful Notary accepted outcome (pass/bounce/escalate). */
 export type LawfulNotaryRoleOutcome = {
   kind: "accepted";
   role: "notary";
@@ -3271,10 +3316,10 @@ async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
+    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce/escalate",
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
@@ -3323,11 +3368,10 @@ async function settleLawfulCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
     projectAccepted: (sealed) => {
       const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
@@ -3376,11 +3420,10 @@ async function settleLawfulGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gleaner-left",
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "左拾遗回执无显式 completed",
-    residualScanCurrentAttemptOnly: true,
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);
@@ -3417,7 +3460,7 @@ export async function trySettleGleanerLeftTerminalResult(
   return settleLawfulGleanerLeftTerminalResult(admitted, authority);
 }
 
-/** Lawful Inspector accepted outcome (pass/bounce). */
+/** Lawful Inspector accepted outcome (pass/bounce/escalate). */
 export type LawfulInspectorRoleOutcome = {
   kind: "accepted";
   role: "inspector";
@@ -3429,10 +3472,10 @@ async function settleLawfulInspectorTerminalResult(
   admitted: AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "inspector",
     toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "察院回执无显式 pass/bounce",
+    nonUsableDiagnostic: "察院回执无显式 pass/bounce/escalate",
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedInspectorOutput(sealed.decisiveFacts);
@@ -3466,7 +3509,7 @@ async function settleLawfulGatekeeperTerminalResult(
   admitted: AdmittedGatekeeperInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gatekeeper",
     toolName: GATEKEEPER_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "门下省决议无显式 dispatch/pass",
@@ -3504,7 +3547,7 @@ async function settleLawfulNavigatorTerminalResult(
   admitted: AdmittedNavigatorInvocation,
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "navigator",
     toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "游奕使回执无显式路线建议",
@@ -4447,35 +4490,55 @@ export function presentFailureTerminal(
   }
 }
 
+/** Optional cancel hook so early settle can release an in-flight grace sleep. */
+export type NavigatorGraceSleep = ((ms: number) => Promise<void>) & {
+  cancel?: () => void;
+};
+
+function defaultNavigatorGraceSleep(): NavigatorGraceSleep {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const sleep = ((ms: number) =>
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timer = undefined;
+        resolve();
+      }, ms);
+    })) as NavigatorGraceSleep;
+  sleep.cancel = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  return sleep;
+}
+
 /**
  * Race a promise against the post-role Navigator grace.
  * On timeout, returns the timeout sentinel; the caller records unavailable and
  * ignores or disposes late completion.
+ * When work settles first, the grace sleep is canceled synchronously so its
+ * timer/resource cannot keep the process alive after the race resolves.
  */
 export function raceNavigatorGrace<T>(
   work: Promise<T>,
   graceMs: number = NAVIGATOR_POST_ROLE_GRACE_MS,
-  sleep: (ms: number) => Promise<void> = (ms) =>
-    new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: NavigatorGraceSleep = defaultNavigatorGraceSleep(),
 ): Promise<{ status: "done"; value: T } | { status: "timeout" }> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    void work.then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        resolve({ status: "done", value });
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      },
-    );
-    void sleep(graceMs).then(() => {
+    const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
-      resolve({ status: "timeout" });
+      sleep.cancel?.();
+      action();
+    };
+    void work.then(
+      (value) => finish(() => resolve({ status: "done", value })),
+      (error) => finish(() => reject(error)),
+    );
+    void sleep(graceMs).then(() => {
+      finish(() => resolve({ status: "timeout" }));
     });
   });
 }

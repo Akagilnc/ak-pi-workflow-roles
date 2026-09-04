@@ -21,8 +21,8 @@ import {
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
-  createCollectorLedger,
   projectEvidenceEntryView,
+  type CollectorConfigState,
   type CollectorLedger,
 } from "./collector-ledger.ts";
 import {
@@ -88,6 +88,7 @@ export type CollectorRoleDependencies = {
   loadSoul(): Promise<string>;
   createTransport(): CollectorGitHubTransport;
   createClock?(): CollectorClock;
+  createLedger(config: CollectorConfigState, clock: CollectorClock, ctx: HostContext): CollectorLedger;
   packageExtensionPath?: string;
 };
 
@@ -249,15 +250,16 @@ export function createCollectorRoleRuntime(
           reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
-      // Concurrency is owned at execute (beginOperational), not announced-batch preflight.
-      // Pi may emit tool_call for every part before any execute runs (ADR 0041).
+      if (event.toolName === COLLECTOR_OUTPUT_TOOL) {
+        activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, event.toolCallId);
+      }
       if (
-        activation.ledger.outputAccepted &&
+        activation.ledger.outputCandidate &&
         event.toolName !== COLLECTOR_OUTPUT_TOOL
       ) {
         return {
           block: true,
-          reason: "回执已受理，本局不再受理操作",
+          reason: "通进司已产出输出候选，本局不再受理操作",
         };
       }
       return undefined;
@@ -270,7 +272,7 @@ export function createCollectorRoleRuntime(
 
     pi.on("session_shutdown", () => {
       if (activation === undefined) return;
-      if (!activation.ledger.outputAccepted || activation.ledger.fatal) {
+      if (activation.ledger.fatal) {
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
         }
@@ -452,8 +454,7 @@ export function createCollectorRoleRuntime(
             params,
             activation.clock,
           );
-          activation.ledger.markOutputAccepted();
-          activation.ledger.completeOperational(toolCallId);
+          activation.ledger.recordOutputCandidate();
           const acceptedDetails = receipt;
           return {
             content: [{
@@ -472,6 +473,8 @@ export function createCollectorRoleRuntime(
             hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           throw error;
+        } finally {
+          activation.ledger.completeOperational(toolCallId);
         }
       },
     });
@@ -488,7 +491,6 @@ export function createCollectorRoleRuntime(
           );
         }
         if (
-          event.reason === "resume" ||
           event.reason === "fork" ||
           event.reason === "reload"
         ) {
@@ -581,11 +583,16 @@ export function createCollectorRoleRuntime(
 
         const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
         const transport = dependencies.createTransport();
-        const ledger = createCollectorLedger({
-          repository,
-          prNumber,
-          manifest,
-        });
+
+        const ledger = dependencies.createLedger(
+          { repository, prNumber, manifest },
+          clock,
+          ctx,
+        );
+
+        if (ledger.activationRecorded) {
+          firstDispatchDone = true;
+        }
 
       activation = {
         soul,
