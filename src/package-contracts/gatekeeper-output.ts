@@ -38,6 +38,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function asStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 /**
  * Project one lawful explicit Gatekeeper decision (dispatch | pass).
  * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
@@ -47,7 +52,7 @@ export function projectLawfulGatekeeperOutput(value: unknown): GatekeeperDirectO
   if (!isRecord(value)) return undefined;
   if (value.status === "pass") {
     return Array.isArray(value.findings)
-      ? { status: "pass", findings: value.findings as readonly string[] }
+      ? { status: "pass", findings: asStringArray(value.findings) }
       : { status: "pass" };
   }
   if (
