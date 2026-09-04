@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -1010,3 +1011,62 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails after listen", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-listen-fail-"));
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorEngine = process.env.AK_ROLE_ENGINE;
+  const priorExitCode = process.exitCode;
+  delete process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_ENGINE;
+  const socketPath = join(root, "mcp.sock");
+  try {
+    await assert.rejects(
+      () => prepareGrokRoleEnvelope({
+        request: {
+          principal: {},
+          activation: { role: "judge" },
+          methods: [],
+          continuation: { kind: "initial", prompt: "decide" },
+          model: { provider: "xai", model: "grok-4.6" },
+          cwd: process.cwd(),
+          home: root,
+          agentDir: join(root, "agent"),
+          runDirectory: grokRunDirectory(root, "listen-fail-run"),
+        } as RoleTurnRequest,
+        socketPath,
+        dependencies: {
+          loadJudgeSoul: async () => {
+            throw new Error("forced session_start failure after listen");
+          },
+          auditSoulCompliance: async () => ({ status: "pass" }),
+          activationTraceWriter: async () => {},
+        },
+      }),
+      /forced session_start failure after listen/,
+    );
+
+    // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
+    process.exitCode = priorExitCode;
+
+    // External proof the owner released the unix listener: same path can bind again.
+    const probe = createServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(socketPath, () => {
+        probe.off("error", reject);
+        resolve();
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      probe.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+  } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE;
+    else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
