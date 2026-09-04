@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
-import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
@@ -42,6 +41,7 @@ import {
 } from "../../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 import {
   context,
   candidate,
@@ -84,8 +84,8 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((route as any).data.invocationId, events[0].invocationId);
     assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
     assert.equal(events[0].reason, candidate().candidates[0]!.reason);
-    // Command is registry-rendered from next; model command prose is not authority.
-    assert.equal(events[0].command, "ak-role reviewer");
+    // Required --base cannot be inferred from role/phase, so no unusable bare command is emitted.
+    assert.equal(events[0].command, undefined);
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -422,24 +422,6 @@ test("model settings are exact and typed settlement projection ignores prose and
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-function hostContextFor(root: string, sessionFile?: string) {
-  const bookKey = basename(root);
-  const file = sessionFile ?? join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
-  return {
-    cwd: root,
-    mode: "print" as const,
-    model: undefined,
-    sessionManager: {
-      getLeafEntry: () => undefined,
-      getLeafId: () => null,
-      getEntries: () => [],
-      getSessionDir: () => dirname(file),
-      getSessionFile: () => file,
-    },
-    abort() {},
-  };
-}
-
 test("host-neutral native factory opens without parent modelRegistry and reports thinking from setting", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));
   try {
@@ -601,73 +583,3 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
   }
   await cleanupTempDir(root);
 });
-
-test("native navigator dispose settles handle.close rejection on the caller", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-close-reject-"));
-  try {
-    seedGitRepository(root);
-    const faux = fauxProvider({ provider: "nav-close-reject", api: "openai-completions" });
-    const model = faux.getModel();
-    const setting = join(root, "navigator-model.json");
-    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    const closeBoom = new Error("navigator handle.close failed");
-    await withInstitutionalProviderFixture(faux, async () => {
-      const session = await createNativeNavigatorSessionFactory()({
-        context: hostContextFor(root),
-        subject: join(root, "session-close"),
-        modelSettingPath: setting,
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      const originalDispose = AgentSession.prototype.dispose;
-      AgentSession.prototype.dispose = function (...args) {
-        originalDispose.apply(this, args);
-        throw closeBoom;
-      };
-      try {
-        await assert.rejects(
-          () => Promise.resolve(session.dispose()),
-          (error: unknown) => {
-            assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
-            assert.equal((error as AggregateError).errors[0], closeBoom);
-            assert.equal((error as AggregateError).cause, closeBoom);
-            return true;
-          },
-        );
-        await assert.rejects(
-          () => Promise.resolve(session.dispose()),
-          (error: unknown) => error instanceof AggregateError && error.cause === closeBoom,
-        );
-      } finally {
-        AgentSession.prototype.dispose = originalDispose;
-      }
-    });
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

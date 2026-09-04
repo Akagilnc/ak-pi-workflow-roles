@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConnection } from "node:net";
 import test from "node:test";
 
 /** #604: nest grok run dirs under home/.ak-roles so session path-derive finds package home. */
@@ -122,6 +123,54 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok dispose closes MCP server even when session_shutdown rejects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-shutdown-failure-"));
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "shutdown-failure"),
+      } as RoleTurnRequest,
+      socketPath,
+      dependencies: {
+        loadJudgeSoul: async () => "JUDGE SOUL",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: join(root, "work"),
+          subject: "shutdown failure",
+          authority: "test",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {}, setWorkContext() {}, warmHelp() {}, isPreparing: () => false,
+          settle: async () => {},
+          async dispose() { throw new Error("shutdown fixture failure"); },
+        }),
+      },
+    });
+    const server = prepared.mcpServers[0] as McpServer;
+    await listThroughMcp(server);
+    await assert.rejects(prepared.dispose!(), /shutdown fixture failure/);
+    await new Promise<void>((resolve, reject) => {
+      const socket = createConnection(socketPath);
+      socket.once("connect", () => {
+        socket.destroy();
+        reject(new Error("MCP server still accepted connections after dispose"));
+      });
+      socket.once("error", () => resolve());
+    });
+  } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
 });
