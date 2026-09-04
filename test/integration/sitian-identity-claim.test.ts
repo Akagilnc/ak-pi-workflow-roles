@@ -5,13 +5,14 @@
  * (no forged SHA/path/claim encoding).
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -27,14 +28,14 @@ import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
-function waitChildExit(child: ReturnType<typeof spawn>): Promise<number | null> {
+function waitChildExit(child: ChildProcess): Promise<number | null> {
   return new Promise((resolvePromise, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolvePromise(code));
   });
 }
 
-async function settleSpawnedChild(child: ReturnType<typeof spawn>): Promise<void> {
+async function settleSpawnedChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
     child.kill("SIGTERM");
@@ -42,6 +43,49 @@ async function settleSpawnedChild(child: ReturnType<typeof spawn>): Promise<void
     // already exiting
   }
   await waitChildExit(child).catch(() => undefined);
+}
+
+/**
+ * Race marker readiness against child exit/error — never poll forever.
+ * Always returns so callers can enter cleanup.
+ */
+async function waitReadyOrChildSettled(
+  readyMarker: string,
+  child: ChildProcess,
+  exitPromise: Promise<number | null>,
+): Promise<void> {
+  let settledCode: number | null | undefined;
+  let settledError: unknown;
+  const settled = exitPromise.then(
+    (code) => {
+      settledCode = code;
+      return code;
+    },
+    (error: unknown) => {
+      settledError = error;
+      throw error;
+    },
+  );
+  settled.catch(() => undefined);
+
+  while (!existsSync(readyMarker)) {
+    if (settledError !== undefined) throw settledError;
+    if (
+      settledCode !== undefined ||
+      child.exitCode !== null ||
+      child.signalCode !== null
+    ) {
+      throw new Error(
+        `child settled before ready marker ${readyMarker}: code=${String(
+          settledCode ?? child.exitCode,
+        )} signal=${String(child.signalCode)}`,
+      );
+    }
+    await Promise.race([
+      settled.then(() => undefined).catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 2)),
+    ]);
+  }
 }
 
 async function withHermeticLedgerRoot<T>(
@@ -77,12 +121,49 @@ function countIdentityRows(recordFile: string, identity: string): number {
   return count;
 }
 
+function payloadMarkersForIdentity(
+  recordFile: string,
+  identity: string,
+): unknown[] {
+  if (!existsSync(recordFile)) return [];
+  const markers: unknown[] = [];
+  for (const line of readFileSync(recordFile, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        identity?: unknown;
+        payload?: { marker?: unknown };
+      };
+      if (parsed.identity === identity) markers.push(parsed.payload?.marker);
+    } catch {
+      // ignore malformed for this counter
+    }
+  }
+  return markers;
+}
+
 /** External volume surface: canonical records.jsonl plus any sidecars. */
 function volumeSurfaceNames(sessionDir: string, recordFile: string): string[] {
   const base = basename(recordFile);
   return readdirSync(sessionDir)
     .filter((name) => name === base || name.startsWith(`${base}.`))
     .sort();
+}
+
+/** Locate claim/recovery residues left by a real failed append (no forged paths). */
+function claimResiduePaths(
+  sessionDir: string,
+  recordFile: string,
+): { claimPath?: string; recoveryPath?: string } {
+  const base = basename(recordFile);
+  const result: { claimPath?: string; recoveryPath?: string } = {};
+  for (const name of readdirSync(sessionDir)) {
+    if (!name.startsWith(`${base}.`)) continue;
+    if (name.endsWith(".recovery")) result.recoveryPath = join(sessionDir, name);
+    else result.claimPath = join(sessionDir, name);
+  }
+  return result;
 }
 
 function poisonCanonicalAppend(recordFile: string): void {
@@ -95,6 +176,10 @@ function repairCanonicalAppend(recordFile: string): void {
   chmodSync(recordFile, 0o644);
 }
 
+type ChildAppendResult =
+  | { readonly ok: true; readonly pointer: { identity: string } }
+  | { readonly ok: false; readonly name: string; readonly message: string };
+
 function spawnAppendChild(args: {
   readonly home: string;
   readonly cwd: string;
@@ -102,7 +187,7 @@ function spawnAppendChild(args: {
   readonly kind: string;
   readonly marker: string;
   readonly expectFailure: boolean;
-}): ReturnType<typeof spawn> {
+}): ChildProcess {
   const script = `
     import { appendSitianRecord } from ${JSON.stringify(join(packageRoot, "src/sitian-appender.ts"))};
     try {
@@ -120,6 +205,7 @@ function spawnAppendChild(args: {
       process.stdout.write(JSON.stringify({
         ok: false,
         name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error),
       }) + "\\n");
       process.exit(${args.expectFailure ? 0 : 1});
     }
@@ -149,6 +235,9 @@ test("successful appendSitianRecord publishes one row and removes claim sidecars
     assert.equal(pointer.identity, identity);
     assert.equal(pointer.recordFile, recordFile);
     assert.equal(countIdentityRows(recordFile, identity), 1);
+    assert.deepEqual(payloadMarkersForIdentity(recordFile, identity), [
+      "published-clean",
+    ]);
     assert.deepEqual(
       volumeSurfaceNames(sessionDir, recordFile),
       [basename(recordFile)],
@@ -157,7 +246,7 @@ test("successful appendSitianRecord publishes one row and removes claim sidecars
   });
 });
 
-test("concurrent same-identity appendSitianRecord commits one volume row", async () => {
+test("concurrent same-identity append accepts one row plus typed live contention then idempotent retry", async () => {
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
     const identity = "concurrent-identity-claim";
     const kind = "identity-claim-concurrent";
@@ -173,15 +262,25 @@ test("concurrent same-identity appendSitianRecord commits one volume row", async
       while (!existsSync(barrier)) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
       }
-      const pointer = appendSitianRecord({
-        level: "event",
-        kind: ${JSON.stringify(kind)},
-        identity: ${JSON.stringify(identity)},
-        home: ${JSON.stringify(home)},
-        cwd: ${JSON.stringify(cwd)},
-        payload: { marker: "concurrent-claim", pid: process.pid },
-      });
-      process.stdout.write(JSON.stringify(pointer) + "\\n");
+      try {
+        const pointer = appendSitianRecord({
+          level: "event",
+          kind: ${JSON.stringify(kind)},
+          identity: ${JSON.stringify(identity)},
+          home: ${JSON.stringify(home)},
+          cwd: ${JSON.stringify(cwd)},
+          payload: { marker: "concurrent-claim", pid: process.pid },
+        });
+        process.stdout.write(JSON.stringify({ ok: true, pointer }) + "\\n");
+        process.exit(0);
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          ok: false,
+          name: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error),
+        }) + "\\n");
+        process.exit(0);
+      }
     `;
 
     const readyA = join(home, "ready-a.seam");
@@ -197,8 +296,16 @@ test("concurrent same-identity appendSitianRecord commits one volume row", async
       { cwd: packageRoot, stdio: ["ignore", "pipe", "pipe"] },
     );
 
+    let stdoutA = "";
+    let stdoutB = "";
     let stderrA = "";
     let stderrB = "";
+    childA.stdout!.setEncoding("utf8").on("data", (chunk) => {
+      stdoutA += chunk;
+    });
+    childB.stdout!.setEncoding("utf8").on("data", (chunk) => {
+      stdoutB += chunk;
+    });
     childA.stderr!.setEncoding("utf8").on("data", (chunk) => {
       stderrA += chunk;
     });
@@ -213,14 +320,36 @@ test("concurrent same-identity appendSitianRecord commits one volume row", async
 
     await withPrimaryAwareCleanup(
       async () => {
-        while (!existsSync(readyA) || !existsSync(readyB)) {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-        }
+        await Promise.all([
+          waitReadyOrChildSettled(readyA, childA, exitA),
+          waitReadyOrChildSettled(readyB, childB, exitB),
+        ]);
         writeFileSync(barrier, "go\n", "utf8");
 
         const [codeA, codeB] = await Promise.all([exitA, exitB]);
         assert.equal(codeA, 0, `child A failed: ${stderrA}`);
         assert.equal(codeB, 0, `child B failed: ${stderrB}`);
+
+        const results: ChildAppendResult[] = [stdoutA, stdoutB].map((raw) => {
+          const line = raw.trim().split("\n").at(-1);
+          assert.ok(line, `missing child stdout JSON: ${raw}`);
+          return JSON.parse(line) as ChildAppendResult;
+        });
+
+        const successes = results.filter((result) => result.ok);
+        const failures = results.filter((result) => !result.ok);
+        assert.ok(
+          successes.length >= 1,
+          `expected at least one committed success: ${JSON.stringify(results)}`,
+        );
+        for (const failure of failures) {
+          assert.equal(failure.name, "SitianInfrastructureError");
+          assert.match(
+            failure.message,
+            /typed live contention/i,
+            `unexpected contention failure: ${failure.message}`,
+          );
+        }
 
         const { sessionDir, recordFile } = resolveSitianRecordPath({
           level: "event",
@@ -234,13 +363,29 @@ test("concurrent same-identity appendSitianRecord commits one volume row", async
           1,
           "concurrent same-identity appends must converge on one JSONL row",
         );
-        assert.deepEqual(
-          volumeSurfaceNames(sessionDir, recordFile),
-          [basename(recordFile)],
-        );
+
+        const retry = appendSitianRecord({
+          level: "event",
+          kind,
+          identity,
+          home,
+          cwd,
+          payload: { marker: "concurrent-claim-retry" },
+        });
+        assert.equal(retry.identity, identity);
+        assert.equal(countIdentityRows(recordFile, identity), 1);
+        assert.deepEqual(payloadMarkersForIdentity(recordFile, identity), [
+          "concurrent-claim",
+        ]);
+        assert.deepEqual(volumeSurfaceNames(sessionDir, recordFile), [
+          basename(recordFile),
+        ]);
       },
       async () => {
-        await Promise.all([settleSpawnedChild(childA), settleSpawnedChild(childB)]);
+        await Promise.all([
+          settleSpawnedChild(childA),
+          settleSpawnedChild(childB),
+        ]);
       },
     );
   });
@@ -278,7 +423,11 @@ test("dead unpublished claim from real append IO failure recovers one row", asyn
     await withPrimaryAwareCleanup(
       async () => {
         const code = await waitChildExit(child);
-        assert.equal(code, 0, `poisoned append child failed unexpectedly: ${stderr}`);
+        assert.equal(
+          code,
+          0,
+          `poisoned append child failed unexpectedly: ${stderr}`,
+        );
         assert.equal(countIdentityRows(recordFile, identity), 0);
 
         repairCanonicalAppend(recordFile);
@@ -286,7 +435,9 @@ test("dead unpublished claim from real append IO failure recovers one row", asyn
 
         assert.equal(pointer.identity, identity);
         assert.equal(countIdentityRows(recordFile, identity), 1);
-        assert.match(readFileSync(recordFile, "utf8"), /recovered-after-io-repair/);
+        assert.deepEqual(payloadMarkersForIdentity(recordFile, identity), [
+          "recovered-after-io-repair",
+        ]);
         assert.deepEqual(
           volumeSurfaceNames(sessionDir, recordFile),
           [basename(recordFile)],
@@ -298,6 +449,182 @@ test("dead unpublished claim from real append IO failure recovers one row", asyn
           repairCanonicalAppend(recordFile);
         } catch {
           // already repaired or absent
+        }
+        await settleSpawnedChild(child);
+      },
+    );
+  });
+});
+
+test("malformed claim is typed malformed, never labeled disappeared", async () => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "malformed-claim-not-disappeared";
+    const kind = "identity-claim-malformed";
+    const input = {
+      level: "event" as const,
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "should-not-publish-malformed" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+    poisonCanonicalAppend(recordFile);
+
+    const child = spawnAppendChild({
+      home,
+      cwd,
+      identity,
+      kind,
+      marker: "should-not-publish-malformed",
+      expectFailure: true,
+    });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    await withPrimaryAwareCleanup(
+      async () => {
+        const code = await waitChildExit(child);
+        assert.equal(
+          code,
+          0,
+          `poisoned append child failed unexpectedly: ${stderr}`,
+        );
+        const { claimPath } = claimResiduePaths(sessionDir, recordFile);
+        assert.ok(claimPath, "poisoned append must leave a real claim residue");
+        writeFileSync(claimPath, "not-a-claim-body\n", "utf8");
+
+        repairCanonicalAppend(recordFile);
+        assert.throws(
+          () => appendSitianRecord(input),
+          (error: unknown) => {
+            assert.ok(error instanceof SitianInfrastructureError);
+            assert.match(error.message, /is malformed/i);
+            assert.match(error.message, /refusing to treat as disappeared/i);
+            assert.doesNotMatch(
+              error.message,
+              /disappeared without a published canonical row/i,
+            );
+            return true;
+          },
+        );
+        assert.equal(countIdentityRows(recordFile, identity), 0);
+        assert.ok(existsSync(claimPath), "malformed claim must remain in place");
+      },
+      async () => {
+        try {
+          repairCanonicalAppend(recordFile);
+        } catch {
+          // already repaired or absent
+        }
+        await settleSpawnedChild(child);
+      },
+    );
+  });
+});
+
+test("sidecar cleanup failure after commit throws while preserving the committed row", async () => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "cleanup-failure-keeps-row";
+    const kind = "identity-claim-cleanup-failure";
+    const input = {
+      level: "event" as const,
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "committed-before-cleanup-failure" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+    poisonCanonicalAppend(recordFile);
+
+    const child = spawnAppendChild({
+      home,
+      cwd,
+      identity,
+      kind,
+      marker: "committed-before-cleanup-failure",
+      expectFailure: true,
+    });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    await withPrimaryAwareCleanup(
+      async () => {
+        const code = await waitChildExit(child);
+        assert.equal(
+          code,
+          0,
+          `poisoned append child failed unexpectedly: ${stderr}`,
+        );
+        const { claimPath } = claimResiduePaths(sessionDir, recordFile);
+        assert.ok(claimPath, "poisoned append must leave a real claim residue");
+
+        const claimBody = readFileSync(claimPath, "utf8");
+        const nl = claimBody.indexOf("\n");
+        assert.ok(nl > 0, "claim residue must carry write-ahead row");
+        const row = claimBody.slice(nl + 1);
+        repairCanonicalAppend(recordFile);
+        writeFileSync(recordFile, row, "utf8");
+        assert.equal(countIdentityRows(recordFile, identity), 1);
+
+        chmodSync(sessionDir, 0o555);
+        try {
+          assert.throws(
+            () => appendSitianRecord(input),
+            (error: unknown) => {
+              assert.ok(error instanceof SitianInfrastructureError);
+              assert.match(
+                error.message,
+                /could not be released after canonical row/i,
+              );
+              assert.match(error.message, /was committed/i);
+              return true;
+            },
+          );
+        } finally {
+          chmodSync(sessionDir, 0o755);
+        }
+
+        assert.equal(
+          countIdentityRows(recordFile, identity),
+          1,
+          "cleanup failure must not unwind the committed row",
+        );
+        assert.deepEqual(payloadMarkersForIdentity(recordFile, identity), [
+          "committed-before-cleanup-failure",
+        ]);
+        assert.ok(
+          existsSync(claimPath),
+          "failed cleanup must leave visible claim residue",
+        );
+      },
+      async () => {
+        try {
+          chmodSync(sessionDir, 0o755);
+        } catch {
+          // already restored
+        }
+        try {
+          repairCanonicalAppend(recordFile);
+        } catch {
+          // already repaired or absent
+        }
+        try {
+          const { claimPath, recoveryPath } = claimResiduePaths(
+            sessionDir,
+            recordFile,
+          );
+          if (claimPath !== undefined) unlinkSync(claimPath);
+          if (recoveryPath !== undefined) unlinkSync(recoveryPath);
+        } catch {
+          // best-effort fixture close
         }
         await settleSpawnedChild(child);
       },
@@ -337,7 +664,11 @@ test("dead claim with dead recovery from real IO failures fails closed", async (
     await withPrimaryAwareCleanup(
       async () => {
         const claimCode = await waitChildExit(claimChild);
-        assert.equal(claimCode, 0, `claim child failed unexpectedly: ${claimStderr}`);
+        assert.equal(
+          claimCode,
+          0,
+          `claim child failed unexpectedly: ${claimStderr}`,
+        );
         assert.equal(countIdentityRows(recordFile, identity), 0);
 
         const recoveryChild = spawnAppendChild({
