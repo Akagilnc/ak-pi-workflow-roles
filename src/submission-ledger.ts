@@ -295,21 +295,25 @@ export function createSubmissionLedgerHost(
             toolCallId,
           );
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
+          const projectOfficerEscalation = (
+            officer: "inspector" | "notary",
+            original: Record<string, unknown>,
+            deliveredOutput: Record<string, unknown> = original,
+          ): HostToolResult<unknown> => projectAuditEscalation({
+            ...original,
+            status: "escalate",
+            officer,
+            reason: Object.hasOwn(original, "reason")
+              ? original.reason
+              : `门下省${officer}上呈（原卷未附 reason）`,
+          }, deliveredOutput);
           let result: HostToolResult<unknown>;
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
             if (error instanceof GatekeeperEscalationError) {
               const original = error.gatekeeper.submission as Record<string, unknown>;
-              const auditDecision = {
-                ...original,
-                status: "escalate" as const,
-                officer: error.gatekeeper.officer,
-                reason: Object.hasOwn(original, "reason")
-                  ? original.reason
-                  : `门下省${error.gatekeeper.officer}上呈（原卷未附 reason）`,
-              };
-              result = projectAuditEscalation(auditDecision, {
+              result = projectOfficerEscalation(error.gatekeeper.officer, original, {
                 ...(params as Record<string, unknown>),
                 ...original,
               });
@@ -342,14 +346,7 @@ export function createSubmissionLedgerHost(
             (result.details as Record<string, unknown>).status === "escalate"
           ) {
             const details = result.details as Record<string, unknown>;
-            result = projectAuditEscalation({
-              ...details,
-              status: "escalate",
-              officer: role,
-              reason: Object.hasOwn(details, "reason")
-                ? details.reason
-                : `门下省${role}上呈（原卷未附 reason）`,
-            }, details);
+            result = projectOfficerEscalation(role, details);
           }
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];
