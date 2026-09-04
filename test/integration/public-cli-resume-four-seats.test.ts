@@ -269,7 +269,6 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
     const roleRuntimeDependencies = createGrokRoleRuntimeDependencies(packageRoot);
     let preparedTurn: GrokPreparedTurn | undefined;
     let observedResumeContinuation = false;
-    let promptCount = 0;
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity,
       recordCapabilities: async () => {},
@@ -288,27 +287,7 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
           socketPath: join(home, `collector-resume-${randomUUID()}.sock`),
         });
         preparedTurn = prepared;
-        // Submission ledger requires a sole terminating tool in the ACP round.
-        // Drain observe in prompt 1 (convert MissingSubmission → retry), then
-        // seal with sole output in prompt 2 against the persisted snapshot.
-        return {
-          ...prepared,
-          async closeRound() {
-            const result = await prepared.closeRound();
-            if (
-              promptCount === 1
-              && result.accepted === false
-              && "failure" in result
-              && result.failure.identity?.code === "round-ended-without-submission"
-            ) {
-              return {
-                accepted: false as const,
-                retry: { code: "collector-observe-drained", toolCallIds: [] },
-              };
-            }
-            return result;
-          },
-        };
+        return prepared;
       },
       connect: async () => ({
         async request(method) {
@@ -322,13 +301,13 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
           }
           if (method === "session/prompt") {
             assert.ok(preparedTurn, "prepare must run before session/prompt");
-            promptCount += 1;
             const server = preparedTurn.mcpServers[0] as GrokMcpServer;
-            if (promptCount === 1) {
-              const observed = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
-              assert.equal(observed.error, undefined, JSON.stringify(observed));
-              return { stopReason: "end_turn" };
-            }
+            // Pi: observe on a prior toolUse message; turn_end sees sole output.
+            // Grok ACP closes every session/prompt — drain observe via production
+            // closeRound, then sole output for the host's sealing closeRound.
+            const observed = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
+            assert.equal(observed.error, undefined, JSON.stringify(observed));
+            await preparedTurn.closeRound();
             const sealed = await callThroughMcp(server, COLLECTOR_OUTPUT_TOOL, {});
             assert.equal(sealed.error, undefined, JSON.stringify(sealed));
             return { stopReason: "end_turn" };
