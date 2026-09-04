@@ -668,8 +668,17 @@ export async function prepareGrokRoleEnvelope(options: {
     };
   } catch (error) {
     // listen already succeeded; dispose is not yet caller-owned. Release the
-    // unix listener before surfacing the activation/prepare failure.
-    await dispose().catch(() => {});
+    // unix listener before surfacing the activation/prepare failure. Keep both
+    // causes when dispose also fails (failure-honesty; do not erase cleanup).
+    try {
+      await dispose();
+    } catch (cleanupFailure) {
+      throw new AggregateError(
+        [error, cleanupFailure],
+        "prepareGrokRoleEnvelope activation failed and its dispose cleanup also failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
