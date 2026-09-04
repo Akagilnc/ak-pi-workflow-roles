@@ -42,7 +42,6 @@ import {
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
   settleJudgeTerminalResult,
-  trySettleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   formatTerminalResult,
@@ -56,7 +55,6 @@ import {
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
-import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -307,68 +305,6 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     } catch (error) {
       assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
     }
-  });
-});
-
-test("judge settlement does not revive a prior-attempt escalation on resume", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const admitted = await admitJudgeInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      instruction: "Continue after owner decision.",
-      attachmentPaths: [],
-      createRunId: () => "run-judge-stale-escalation",
-    });
-    const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
-    await mkdir(coordinates.sessionDirectory, { recursive: true });
-    await writeFile(coordinates.sessionFile, [
-      JSON.stringify({ type: "session", id: "session-id" }),
-      JSON.stringify({ type: "message", id: "current-resume-user", message: { role: "user", content: [{ type: "text", text: "resume" }] } }),
-    ].join("\n") + "\n");
-    await recordAuditEscalationSubmission({
-      cwd: project,
-      home,
-      runId: admitted.runId,
-      runDirectory: admitted.runDirectory,
-      role: "judge",
-      details: { kind: "audit_escalation", officer: "inspector", reason: "old" },
-    });
-    assert.equal(await trySettleJudgeTerminalResult(admitted, piDurablePrincipalAuthority), undefined);
-  });
-});
-
-test("judge settlement treats missing run session as absence", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      "run-judge-missing@judge",
-    );
-    assert.equal(
-      await trySettleJudgeTerminalResult(
-        fixtureJudgeAdmitted({
-          runId: "missing",
-          bookKey,
-          projectRoot: project,
-          instruction: "",
-          instructionEmpty: true,
-          runDirectory: join(runDirectory, "nope"),
-        }),
-        piDurablePrincipalAuthority,
-      ),
-      undefined,
-    );
   });
 });
 

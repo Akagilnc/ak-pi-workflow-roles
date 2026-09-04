@@ -13,13 +13,6 @@ import {
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 
-/**
- * Shared durable user-attempt id for scripted public-CLI host sessions and the
- * ledger producer context. Settlement filters audit-escalation by
- * latestUserAttemptId(session) — the two fixtures must agree (#664 F1).
- */
-export const SCRIPTED_TERMINATING_USER_ATTEMPT_ID = "user-1";
-
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
   if (toolName === undefined) throw new Error(`no output tool for role ${role}`);
@@ -73,15 +66,7 @@ async function driveLedgerProducer(input: {
           getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
           getLeafId: () => null,
           getLeafEntry: () => undefined,
-          // Mirror scriptedTerminatingToolSession user row so attemptIdentity
-          // matches settlement's latestUserAttemptId on the durable session.
-          getEntries: () => [
-            {
-              type: "message",
-              id: SCRIPTED_TERMINATING_USER_ATTEMPT_ID,
-              message: { role: "user" },
-            },
-          ],
+          getEntries: () => [],
           getSessionDir: () => "",
           getSessionFile: () => undefined,
         },

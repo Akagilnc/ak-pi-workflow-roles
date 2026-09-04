@@ -56,22 +56,8 @@ function runIdentity(context: HostContext): string {
   throw new Error("提交账需要已受理的 run 身份");
 }
 
-export function latestUserAttemptId(
-  entries: Iterable<{ readonly id?: unknown; readonly message?: { readonly role?: unknown } }>,
-): string | undefined {
-  const ordered = [...entries];
-  for (let index = ordered.length - 1; index >= 0; index -= 1) {
-    const entry = ordered[index];
-    if (entry?.message?.role === "user" && typeof entry.id === "string") return entry.id;
-  }
-  return undefined;
-}
-
 function attemptIdentity(context: HostContext, runId: string): string {
-  return latestUserAttemptId(context.sessionManager.getEntries?.() ?? [])
-    ?? context.sessionManager.getHeader?.()?.id
-    ?? context.sessionManager.getLeafId?.()
-    ?? `${runId}:initial`;
+  return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
 function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {
@@ -139,18 +125,13 @@ export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
   home?: string,
-  currentAttemptId?: string,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  const latestAttemptId = currentAttemptId ?? (owned.at(-1)?.subject as { attemptId?: unknown } | undefined)?.attemptId;
-  if (typeof latestAttemptId !== "string") return undefined;
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
-    if ((record?.subject as { attemptId?: unknown } | undefined)?.attemptId !== latestAttemptId) continue;
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
-    if (payload?.type !== "outcome") continue;
-    if (payload.outcome !== "audit-escalation") return undefined;
+    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
     if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
   }
   return undefined;
