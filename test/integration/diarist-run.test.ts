@@ -25,6 +25,9 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import {
+  withPrimaryAwareCleanup,
+} from "../helpers/primary-aware-cleanup.ts";
+import {
   installHermesFixture,
   type HermesFixtureOptions,
 } from "../helpers/hermes-fixture.ts";
@@ -57,7 +60,12 @@ function runConcurrentAppender(
   project: string,
   home: string,
   barrier: string,
-): { readonly ready: Promise<void>; readonly done: Promise<void> } {
+): {
+  readonly ready: Promise<void>;
+  readonly done: Promise<void>;
+  /** Own failure-path cleanup: cooperative SIGTERM, then wait for exit (no hard kill). */
+  readonly settle: () => Promise<void>;
+} {
   const script = `
     import { existsSync } from "node:fs";
     import { appendTicketProvenanceEntry } from ${JSON.stringify(join(packageRoot, "src/ticket-provenance.ts"))};
@@ -88,6 +96,10 @@ function runConcurrentAppender(
     child.stdout.once("data", () => resolve());
     child.once("error", reject);
   });
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => resolve());
+  });
   const done = new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => {
@@ -95,7 +107,20 @@ function runConcurrentAppender(
       else reject(new Error(`concurrent appender exited ${String(code)}: ${stderr}`));
     });
   });
-  return { ready, done };
+  const settle = async (): Promise<void> => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // already exiting
+      }
+    }
+    await exited.then(
+      () => undefined,
+      () => undefined,
+    );
+  };
+  return { ready, done, settle };
 }
 
 function block(
@@ -167,14 +192,24 @@ async function seedCcSession(
 test("shared Sitian volume commits one row for concurrent identical identities", async () => {
   await withDiaristProject("diarist-concurrent-", async ({ project, home }) => {
     const barrier = join(home, "append.barrier");
-    const children = Array.from({ length: 8 }, () =>
-      runConcurrentAppender(project, home, barrier));
-    await Promise.all(children.map(({ ready }) => ready));
-    await writeFile(barrier, "go\n", "utf8");
-    await Promise.all(children.map(({ done }) => done));
+    const children: Array<ReturnType<typeof runConcurrentAppender>> = [];
+    await withPrimaryAwareCleanup(
+      async () => {
+        for (let i = 0; i < 8; i += 1) {
+          children.push(runConcurrentAppender(project, home, barrier));
+        }
+        await Promise.all(children.map(({ ready }) => ready));
+        await writeFile(barrier, "go\n", "utf8");
+        await Promise.all(children.map(({ done }) => done));
 
-    const volume = await readTicketProvenance(582, project, home);
-    assert.equal(volume.entries.length, 1);
+        const volume = await readTicketProvenance(582, project, home);
+        assert.equal(volume.entries.length, 1);
+      },
+      async () => {
+        // Fixture owns every child it created — barrier/setup failure must not strand them.
+        await Promise.all(children.map(({ settle }) => settle()));
+      },
+    );
   });
 });
 

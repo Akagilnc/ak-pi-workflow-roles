@@ -35,14 +35,97 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const SITIAN_VOLUME_LOCK_TIMEOUT_MS = 30_000;
 const SITIAN_VOLUME_LOCK_RETRY_MS = 10;
 const syncSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
-/** Serialize one volume's recovery + identity check + append across processes. */
+function errorCodeOf(error: unknown): unknown {
+  return (error as { code?: unknown }).code;
+}
+
+/** True error identity — name/code/message as-is, never a guessed label. */
+function describeErrorIdentity(error: unknown): string {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const name =
+    typeof candidate?.name === "string" && candidate.name !== ""
+      ? candidate.name
+      : typeof error;
+  const code =
+    typeof candidate?.code === "string" || typeof candidate?.code === "number"
+      ? ` code=${String(candidate.code)}`
+      : "";
+  const message =
+    typeof candidate?.message === "string" && candidate.message !== ""
+      ? `: ${candidate.message}`
+      : "";
+  return `${name}${code}${message}`;
+}
+
+/**
+ * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
+ * (e.g. EPERM) means the holder process exists.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCodeOf(error) !== "ESRCH";
+  }
+}
+
+type SitianVolumeLockAutopsy =
+  | { verdict: "absent"; readFailure?: unknown }
+  | { verdict: "dead"; pid: number }
+  | { verdict: "alive"; pid: number };
+
+/**
+ * Holder autopsy for an existing volume lock. "absent" covers no file, no
+ * parseable pid (live creator mid-acquisition, or crash-window leftover), and
+ * unreadable files — absent alone never authorizes reclaim; only "dead" does.
+ */
+function autopsySitianVolumeLock(lockFile: string): SitianVolumeLockAutopsy {
+  let content: string;
+  try {
+    content = readFileSync(lockFile, "utf8");
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
+    return { verdict: "absent", readFailure: error };
+  }
+  const normalized = content.trim();
+  if (!/^[1-9]\d*$/.test(normalized)) return { verdict: "absent" };
+  const pid = Number.parseInt(normalized, 10);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return { verdict: "absent" };
+  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
+}
+
+/**
+ * Remove one lock whose re-read autopsy is still a verified-dead holder, or
+ * leave it otherwise. The pre-unlink re-read means a contender that re-locked
+ * between the first autopsy and the unlink cannot have its live lock stolen.
+ */
+function reclaimDeadSitianVolumeLock(lockFile: string): boolean {
+  const current = autopsySitianVolumeLock(lockFile);
+  if (current.verdict !== "dead") return false;
+  try {
+    unlinkSync(lockFile);
+    return true;
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * Serialize one volume's recovery + identity check + append across processes.
+ *
+ * Contested lock: live holder → wait (no wall-clock ceiling, no steal);
+ * verified-dead holder → reclaim and retry create; absent/unparseable → wait
+ * for mid-acquisition to finish (absent alone never authorizes reclaim).
+ * Unreadable lock fails with the true read identity — cause is not laundered
+ * into a timeout.
+ */
 function withSitianVolumeLock<T>(recordFile: string, action: () => T): T {
   const lockFile = `${recordFile}.lock`;
-  const startedAt = Date.now();
   let descriptor: number;
   while (true) {
     try {
@@ -55,12 +138,26 @@ function withSitianVolumeLock<T>(recordFile: string, action: () => T): T {
       }
       break;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() - startedAt > SITIAN_VOLUME_LOCK_TIMEOUT_MS) {
+      if (errorCodeOf(error) !== "EEXIST") throw error;
+      const autopsy = autopsySitianVolumeLock(lockFile);
+      if (autopsy.verdict === "absent" && autopsy.readFailure !== undefined) {
         throw new Error(
-          `Sitian volume lock timeout after ${SITIAN_VOLUME_LOCK_TIMEOUT_MS}ms: ${lockFile}`,
+          `Sitian volume lock is unreadable at ${lockFile}: ${describeErrorIdentity(autopsy.readFailure)}; holder liveness unverifiable, lock left in place`,
+          { cause: autopsy.readFailure },
         );
       }
+      if (autopsy.verdict === "dead") {
+        try {
+          reclaimDeadSitianVolumeLock(lockFile);
+        } catch (reclaimError) {
+          throw new Error(
+            `Sitian volume lock reclaim failed at ${lockFile} (dead pid ${autopsy.pid}): ${describeErrorIdentity(reclaimError)}`,
+            { cause: reclaimError },
+          );
+        }
+        continue;
+      }
+      // live contention, or absent mid-acquisition: wait and retry create.
       Atomics.wait(syncSleepBuffer, 0, 0, SITIAN_VOLUME_LOCK_RETRY_MS);
     }
   }
@@ -99,6 +196,7 @@ function withSitianVolumeLock<T>(recordFile: string, action: () => T): T {
   }
   return result as T;
 }
+
 
 /** Authorized S4 submission ledger kinds that share a common run submission volume. */
 export const S4_SUBMISSION_LEDGER_KINDS = new Set([
