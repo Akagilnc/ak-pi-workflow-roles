@@ -6,15 +6,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import { projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 
 type GateCall = { readonly kind: string; readonly subject: unknown };
 
-async function submitThroughGate(input: {
-  readonly flags: ReadonlyMap<string, string | boolean>;
-}): Promise<{ readonly gateCalls: GateCall[] }> {
+async function submitThroughGate(): Promise<{ readonly gateCalls: GateCall[] }> {
   const tools = new Map<string, { name: string; execute: Function }>();
   const gateCalls: GateCall[] = [];
   const roleHost = {
@@ -25,8 +21,8 @@ async function submitThroughGate(input: {
     getAllTools() {
       return [{ name: COUNTERSIGN_OUTPUT_TOOL_NAME }];
     },
-    getFlag(name: string) {
-      return input.flags.get(name);
+    getFlag() {
+      return undefined;
     },
     async requireGatekeeperPass(options: {
       subject: { kind: string };
@@ -65,12 +61,7 @@ async function submitThroughGate(input: {
 }
 
 test("countersign gate summons Notary with kind only — no verdict/ticket body", async () => {
-  const flags = projectGrokActivationFlags({
-    activation: { role: "countersign", ticketNumber: 582 },
-  } as RoleTurnRequest);
-  assert.equal(flags.get("ak-countersign-ticket-number"), "582");
-
-  const { gateCalls } = await submitThroughGate({ flags });
+  const { gateCalls } = await submitThroughGate();
   assert.equal(gateCalls.length, 1);
   assert.equal(gateCalls[0]!.kind, "countersign_verdict");
   assert.deepEqual(gateCalls[0]!.subject, { kind: "countersign_verdict" });
@@ -78,15 +69,4 @@ test("countersign gate summons Notary with kind only — no verdict/ticket body"
     Object.prototype.hasOwnProperty.call(gateCalls[0]!.subject as object, "material"),
     false,
   );
-});
-
-test("countersign gate true-unbound still summons with kind only", async () => {
-  const flags = projectGrokActivationFlags({
-    activation: { role: "countersign" },
-  } as RoleTurnRequest);
-  assert.equal(flags.has("ak-countersign-ticket-number"), false);
-
-  const { gateCalls } = await submitThroughGate({ flags });
-  assert.equal(gateCalls.length, 1);
-  assert.deepEqual(gateCalls[0]!.subject, { kind: "countersign_verdict" });
 });

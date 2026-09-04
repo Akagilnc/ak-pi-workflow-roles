@@ -160,11 +160,9 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
     assert.ok(turn.activation.role === "countersign");
     assert.equal(turn.activation.ticketNumber, 582);
 
-    // Pi adapter output contract: structured argv carries the admitted binding.
+    // ticketNumber stays on activation; no private role transport flag (#632).
     const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
-    const flagAt = piArgv.indexOf("--ak-countersign-ticket-number");
-    assert.ok(flagAt >= 0);
-    assert.equal(piArgv[flagAt + 1], "582");
+    assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 });
 

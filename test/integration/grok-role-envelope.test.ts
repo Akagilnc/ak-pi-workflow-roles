@@ -69,16 +69,11 @@ test("Grok projection maps public activations onto the shared envelope", () => {
   assert.equal(projectGrokActivationFlags({ activation: activations[1]! } as RoleTurnRequest).get("ak-fixer-prerequisites"), "/prereqs");
   assert.equal(projectGrokActivationFlags({ activation: activations[3]! } as RoleTurnRequest).get("ak-review-authority-refs"), JSON.stringify(["issue:1"]));
   assert.equal(projectGrokActivationFlags({ activation: activations[4]! } as RoleTurnRequest).get("ak-collector-request-manifest"), "/manifest");
+  // countersign ticketNumber is activation-only — no private transport flag (#632).
   assert.equal(
-    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).get(
+    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).has(
       "ak-countersign-ticket-number",
     ),
-    "582",
-  );
-  assert.equal(
-    projectGrokActivationFlags({
-      activation: { role: "countersign" },
-    } as RoleTurnRequest).has("ak-countersign-ticket-number"),
     false,
   );
   assert.equal(
