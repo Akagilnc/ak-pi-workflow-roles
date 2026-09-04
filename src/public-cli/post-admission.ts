@@ -550,23 +550,24 @@ export async function runPostAdmissionManualResume<
     // Sealed accepted + publication/settle throw must fail closed without redispatch
     // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
     // Ledger authority failure also fail-closes with preserved cause (never wash to unsealed).
-    // One fail-closed cause → one presentation return (settle error vs authority error).
-    let failClosedCause: unknown | undefined;
+    // Fail-closed decision is independent of cause value: `throw undefined` is legal JS
+    // and must not fail open. One cause → one presentation (settle vs authority).
+    let failClosed: { cause: unknown } | undefined;
     try {
       if (await hasSealedAcceptedProjection(admitted)) {
-        failClosedCause = error;
+        failClosed = { cause: error };
       }
     } catch (authorityError) {
-      failClosedCause = authorityError;
+      failClosed = { cause: authorityError };
     }
-    if (failClosedCause !== undefined) {
+    if (failClosed !== undefined) {
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: failClosedCause,
+          thrown: failClosed.cause,
         },
         adapters,
         env.principalAuthority,
