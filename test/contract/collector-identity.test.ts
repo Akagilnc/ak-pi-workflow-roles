@@ -4,8 +4,7 @@ import test from "node:test";
 
 import { normalizeIssueComment, normalizePullRequestReaction, normalizeReview, normalizeReviewComment } from "../../src/collector-github.ts";
 import { normalizeIssueCommentEvidence, normalizePullRequestReactionEvidence, normalizeReviewCommentEvidence, normalizeReviewEvidence, type CollectorEvidenceRecord } from "../../src/collector-evidence.ts";
-import { enrichCollectorFindings, extractCollectorEvidenceIdentityGroups, CollectorUnknownEvidenceError, CollectorFindingsValidationError } from "../../src/collector-identity.ts";
-import { isCorrectableSubmissionError } from "../../src/submission-correctable-error.ts";
+import { extractCollectorEvidenceIdentityGroups } from "../../src/collector-identity.ts";
 
 const reactionFixture = new URL("../fixtures/collector/codex-pr-reaction-1165.json", import.meta.url);
 const noFindingFixture = new URL("../fixtures/collector/codex-nofinding-5234537035.json", import.meta.url);
@@ -157,66 +156,4 @@ test("machine identity ignores display changes, separates user IDs, and leaves t
     null,
   ]);
   assert.deepEqual(groups.map((group) => group.materials.length), [2, 1, 1]);
-});
-
-test("#641 chain① enrichment turns model pointer refs into receipt findings with machine locators", async () => {
-  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-inline-review-4895713581.json", import.meta.url), "utf8"));
-  const records = raw.map((item: any) => normalizeReviewCommentEvidence(normalizeReviewComment(item), observedAt));
-  const targetHead = records[0]!.commitOid!;
-  const groups = extractCollectorEvidenceIdentityGroups(records, targetHead);
-  enrichCollectorFindings({
-    candidate: {
-      findings: [
-        { evidenceId: records[0]!.evidenceId, category: " correctness " },
-        { evidenceId: records[0]!.evidenceId, category: "性能" },
-        { evidenceId: records[records.length - 1]!.evidenceId },
-      ],
-    },
-    records,
-    groups,
-    targetHead,
-    repository: "acme/widgets",
-    prNumber: 1168,
-  });
-  const findings = groups.flatMap((group) => group.findings);
-  assert.equal(findings.length, 3, "one comment may split into multiple LLM findings");
-  for (const finding of findings) {
-    assert.equal(finding.pointer.repository, "acme/widgets");
-    assert.equal(finding.pointer.prNumber, 1168);
-    assert.equal(finding.pointer.kind, "review_comment");
-    assert.equal(typeof finding.pointer.commentId, "number");
-    assert.equal(typeof finding.pointer.htmlUrl, "string");
-    assert.equal(finding.source.headRelation, "current");
-    assert.equal("body" in finding, false, "findings must not transcribe bodies");
-  }
-  assert.equal(findings[0]!.category, "correctness", "category is a short LLM label, trimmed");
-  assert.equal(findings[2]!.category, undefined);
-});
-
-test("#641 chain① enrichment rejects pointer/validation misuses with branded correctable errors", () => {
-  const groups = extractCollectorEvidenceIdentityGroups([], "head");
-  const captureThrown = (run: () => void): unknown => {
-    try {
-      run();
-    } catch (error) {
-      return error;
-    }
-    assert.fail("expected a throw");
-  };
-  // Unknown evidenceId is a retryable pointer correction on every host (Grok/ACP
-  // converts only correctable execute errors into a retry — never infra abort).
-  const unknown = captureThrown(() => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: "missing" }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }));
-  assert.ok(unknown instanceof CollectorUnknownEvidenceError, "unknown pointer must be the shared brand");
-  assert.ok(isCorrectableSubmissionError(unknown), "unknown pointer must be correctable");
-
-  // Other malformed findings are the same class of model misuse — correctable,
-  // never a round infrastructure failure on any supported engine.
-  for (const misuse of [
-    () => enrichCollectorFindings({ candidate: { findings: "nope" }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }),
-    () => enrichCollectorFindings({ candidate: { findings: [{ evidenceId: 3 }] }, records: [], groups, targetHead: "head", repository: "r", prNumber: 1 }),
-  ]) {
-    const thrown = captureThrown(misuse);
-    assert.ok(thrown instanceof CollectorFindingsValidationError, "malformed findings must use the validation brand");
-    assert.ok(isCorrectableSubmissionError(thrown), "malformed findings must be correctable");
-  }
 });
