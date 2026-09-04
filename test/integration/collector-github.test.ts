@@ -14,7 +14,12 @@ import {
   normalizeReviewComment,
   type GhApiRunner,
 } from "../../src/collector-github.ts";
-import { createCollectorLedger } from "../../src/collector-ledger.ts";
+import {
+  COLLECTOR_ACTIVATION_ENTRY_TYPE,
+  COLLECTOR_REQUEST_ENTRY_TYPE,
+  COLLECTOR_SNAPSHOT_ENTRY_TYPE,
+  createCollectorLedger,
+} from "../../src/collector-ledger.ts";
 import {
   normalizePullRequestEvidence,
   normalizeReviewEvidence,
@@ -718,7 +723,10 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
   assert.equal(postCount, 1, "recovery must not repost");
 });
 
-function collectorLedgerFixture(digestChar = "f") {
+function collectorLedgerFixture(
+  digestChar = "f",
+  options?: Parameters<typeof createCollectorLedger>[1],
+) {
   return createCollectorLedger({
     repository: {
       display: "Acme/Widgets",
@@ -736,8 +744,54 @@ function collectorLedgerFixture(digestChar = "f") {
       digest: digestChar.repeat(64),
       sourcePath: "/tmp/requests.json",
     },
-  });
+  }, options);
 }
+
+test("Collector durable dossier replay restores evidence, deadline, and interrupted request ambiguity", async () => {
+  const entries: Array<{ type: "custom"; customType: string; data: unknown }> = [];
+  const sourceClock = clockAt("2026-01-01T00:00:00Z");
+  const source = collectorLedgerFixture("f", {
+    clock: sourceClock,
+    journal: {
+      append(customType, data) {
+        entries.push({ type: "custom", customType, data });
+      },
+    },
+  });
+  source.recordActivation(sourceClock);
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-replay" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+    createComment: async () => { throw new Error("interrupted after dispatch"); },
+  });
+  const observed = await source.observe(transport, sourceClock);
+  await assert.rejects(
+    () => source.request({ requestId: "codex", snapshotId: observed.snapshot.snapshotId }, transport, sourceClock),
+    /interrupted after dispatch/,
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.customType),
+    [COLLECTOR_ACTIVATION_ENTRY_TYPE, COLLECTOR_SNAPSHOT_ENTRY_TYPE, COLLECTOR_REQUEST_ENTRY_TYPE],
+  );
+  const resumed = collectorLedgerFixture("f", {
+    clock: clockAt("2026-01-01T00:01:00Z"),
+    dossierEntries: entries,
+  });
+  assert.equal(resumed.deadlineTime?.toISOString(), "2026-01-01T00:15:00.000Z");
+  assert.equal(resumed.allSnapshots().length, 1);
+  assert.ok(resumed.allEvidence().length > 0);
+  assert.equal(resumed.requestAttempts()[0]?.status, "ambiguous_loss");
+  assert.equal(resumed.unresolvedTransportFailure, true);
+  await assert.rejects(
+    () => resumed.request({ requestId: "codex", snapshotId: observed.snapshot.snapshotId }, transport, sourceClock),
+    /未恢复的传输失败/,
+  );
+  assert.equal(transport.calls.create, 1, "resume must not repeat an unknown POST");
+});
 
 function hangUntilAbortedRunner(signal?: AbortSignal) {
   return new Promise<never>((_resolve, reject) => {
