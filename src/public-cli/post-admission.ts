@@ -549,7 +549,25 @@ export async function runPostAdmissionManualResume<
   } catch (error) {
     // Sealed accepted + publication/settle throw must fail closed without redispatch
     // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
-    if (await hasSealedAcceptedProjection(admitted)) {
+    // Ledger authority failure also fail-closes with preserved cause (never wash to unsealed).
+    let sealedAccepted: boolean;
+    try {
+      sealedAccepted = await hasSealedAcceptedProjection(admitted);
+    } catch (authorityError) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: authorityError,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    if (sealedAccepted) {
       return (await presentControlledFailure(
         admitted,
         {
