@@ -52,7 +52,7 @@ ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper
-# 持久劳务引擎（可调用角色；不含 navigator）；一次性覆盖仍用 --engine
+# 持久劳务引擎（可调用角色）；一次性覆盖仍用 --engine
 ak-role config set-engine judge opus
 ak-role config unset-engine judge
 # 持久主会话宿主（可调用角色）；一次性覆盖仍用 --host
@@ -103,6 +103,12 @@ ak-role notary --source-run <runId@role|path> --ticket 582
 # 察院——直调复杂度与测试质量两轴；一次性
 ak-role inspector --attach ./change.patch "Review this material."
 
+# 门下省——直调省审：派官或放行
+ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
+
+# 游奕使——直调路线建议（有序的下一步角色候选）；自动出席不变
+ak-role navigator "刚完成 coder apply 收敛，下一步？"
+
 # 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
 ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
 
@@ -129,14 +135,14 @@ ak-role resume <runId> "<裁定>"
 | **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
-| **门下省** | gatekeeper（无独立 CLI；交卷自动出席） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召（皆非闸派）；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **门下省** | gatekeeper（交卷自动出席，亦可 `ak-role gatekeeper` 直调） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召（皆非闸派）；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
 | **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。票庭流水线在本席 turn 前跑起居郎工序（调用者无感）；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
 | **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
-| **游奕使** | navigator（无 CLI，自动出席） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
+| **游奕使** | navigator（自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
 
 其余席位：
 
@@ -160,126 +166,6 @@ ak-role resume <runId> "<裁定>"
 ## Codex fast 档
 
 开启：`echo "fast_mode = on" > ~/.pi-codex-fast`；关闭：`echo "fast_mode = off" > ~/.pi-codex-fast`（或删文件）。修改后无需重启，下一个请求即生效。Fast 档价格高于默认档。
-
-<!-- BEGIN GENERATED: public-cli-options -->
-## 公开 CLI 选项（生成）
-
-本表由 `src/public-cli/option-definitions.ts` 生成；以 `ak-role help <command>` 为准。勿手改本区。
-
-### `global`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--model` | — | `provider/model` | 否 | 否 | option | — | 覆盖本调用有效席位模型（可置于子命令前或后）。 |
-| `--thinking` | — | `level` | 否 | 否 | option | — | 覆盖 thinking 档位：off\|minimal\|low\|medium\|high\|xhigh\|max。 |
-| `--engine` | — | `name` | 否 | 否 | option | — | 本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。 |
-| `--host` | — | `name` | 否 | 否 | option | — | 为本调用选择具名主会话宿主适配器。 |
-| `--help` | `-h` | — | 否 | 否 | option | — | 显示公开 CLI 帮助并退出。 |
-
-### `judge`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `coder`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `fixer`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `plan\|apply` | `plan`, `apply` | — | 否 | 否 | positional | phases=plan\|apply; default=apply | 指令前可选 phase 词元；默认 apply。 |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--prerequisites` | — | `path` | 否 | 否 | option | — | {id, requirement} 前置条件 JSON 数组路径。 |
-
-### `reviewer`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--base` | — | `revision` | 是 | 否 | option | — | 必填；钉住审查目标的 fixed-point revision。 |
-| `--authority-ref` | — | `ref` | 否 | 是 | option | — | 持久 authority 引用/URL（可重复；仅 ref，非内联散文）。 |
-
-### `collector`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--pr` | — | `number` | 是 | 否 | option | — | 必填；正整数 GitHub PR 号。 |
-| `--repo` | — | `owner/repo` | 否 | 否 | option | — | GitHub owner/repo 覆盖（默认取 github.com origin）。 |
-| `--request-manifest` | — | `path` | 否 | 否 | option | — | 可选 request manifest JSON 路径（{requests:[{id,body}]}）。 |
-
-### `doctor`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-| `--issue` | — | `number` | 是 | 否 | option | — | 必填；留存病例的正整数 issue 号。 |
-| `--runs` | — | `path` | 否 | 否 | option | — | 可选项目相对 .ak-roles/books/<book>/issues/<n>/runs 覆盖，且须匹配 --issue。 |
-
-### `merger`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 已有进行中 ordinary merge 的项目根（默认 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `inspector`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附加普通文件；受理即冻结（可重复）。 |
-
-### `notary`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份用的项目根（默认进程 cwd）。 |
-| `--source-run` | — | `runId@role\|path` | 是 | 否 | option | — | 必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。 |
-| `--ticket` | — | `number` | 否 | 否 | option | — | 可选票号：符宝郎按票键调取起居录时使用。 |
-
-
-### `countersign`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份的项目根（默认 process cwd）。 |
-| `--attach` | — | `path` | 否 | 是 | option | — | 附卷普通文件；受理时冻结（可重复）。 |
-| `--ticket` | — | `number` | 否 | 否 | option | — | 票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。 |
-
-### `gleaner-left`
-
-可选自由 positional `instruction` 可空。调用者不得传方向性 instruction；本席按 `--base` 自取合并候选 diff。
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `--project` | — | `path` | 否 | 否 | option | — | 卷宗身份的项目根（默认 process cwd）。 |
-| `--base` | — | `revision` | 是 | 否 | option | — | 必填；无锚定合并候选 diff 的比较基线 revision。 |
-
-### `analyst`
-
-| 拼写 | 别名 | 值 | 必填 | 可重复 | 形式 | 模式/阶段 | 说明 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `sweep` | — | — | 否 | 否 | positional | modes=sweep | 可选 sweep 模式词元（至多一次；不得夹带其他 positional）。 |
-| `--ticket` | — | `number` | 否 | 否 | option | modes=issue | 票号；在 cwd 候簿（git common-dir）内按 invocation.ticketNumber 现取现算。裸调用=整簿。不依赖 library-index 自举。 |
-| `--attach` | — | `path` | 条件:sweep | 是 | option | modes=sweep; max=sweep:1 | sweep 模式附件路径；sweep 必填且恰一次；载荷为附件正文。 |
-| `--cohort` | — | — | 否 | 否 | option | modes=cohort | 选择 cohort 模式。 |
-| `--group-a-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort A 组标签（cohort 模式必填）。 |
-| `--group-a-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort A 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
-| `--group-b-label` | — | `label` | 条件:cohort | 否 | option | modes=cohort | cohort B 组标签（cohort 模式必填）。 |
-| `--group-b-issues` | — | `N\|book:N[,...]` | 条件:cohort | 否 | option | modes=cohort | cohort B 组 issue：裸 N 归属 cwd 簿；book:N 显式跨簿；簿键中的逗号/反斜杠用 \, / \\ 转义（cohort 模式必填）。 |
-<!-- END GENERATED: public-cli-options -->
 
 ## 规范指针
 

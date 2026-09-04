@@ -1,29 +1,36 @@
-import {
-  type GitHubIssueComment,
-  type GitHubMachineIdentity,
-  type GitHubPullRequestReaction,
-  type GitHubReview,
-  type GitHubReviewComment,
+import type {
+  GitHubMachineIdentity,
 } from "./collector-github.ts";
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
-
-export type GitHubIdentityMaterial = GitHubReview | GitHubIssueComment | GitHubReviewComment | GitHubPullRequestReaction;
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
   id: number;
-  /** Original review body, retained as uninterpreted material. */
-  body?: string;
   /** Receipt-local immutable source reference. */
   evidenceId?: string;
   headRelation?: HeadRelation | "unbound";
 };
 
+/**
+ * #641 chain①: a receipt finding is a model-classified unit (splitting stays
+ * with the collector LLM) whose source pointer resolves against the stored
+ * evidence and whose machine locator (repo/PR/comment id/url/author/kind/时间)
+ * is enriched by the runtime from the same record — never transcribed bodies.
+ */
 export type CollectorFinding = {
-  identity: GitHubMachineIdentity;
+  identity: GitHubMachineIdentity | null;
   source: CollectorMaterialRef;
-  category: "inline";
-  body: string;
+  category?: string;
+  pointer: {
+    repository: string;
+    prNumber: number;
+    commentId: number;
+    htmlUrl?: string;
+    authorLogin?: string;
+    kind: CollectorMaterialRef["kind"];
+    authoritativeTime?: string | null;
+  };
 };
 
 export type CollectorIdentityGroup = {
@@ -35,12 +42,10 @@ export type CollectorIdentityGroup = {
   materials: CollectorMaterialRef[];
 };
 
-function materialKind(material: GitHubIdentityMaterial): CollectorIdentityGroup["materials"][number]["kind"] {
-  if ("pullRequestReviewId" in material) return "review_comment";
-  if ("state" in material) return "review";
-  if ("content" in material) return "reaction";
-  return "issue_comment";
-}
+export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
+  attendance: true;
+  findings: CollectorFinding[];
+};
 
 function identityKey(identity: GitHubMachineIdentity | null): string {
   if (identity === null) return "unassigned";
@@ -61,60 +66,10 @@ function mergeMachineIdentity(
   return observed.userType < current.userType ? observed : current;
 }
 
-/** Group observed GitHub materials only by API machine identity fields. */
-export function groupGitHubMaterialsByIdentity(
-  materials: readonly GitHubIdentityMaterial[],
-): CollectorIdentityGroup[] {
-  const groups = new Map<string, CollectorIdentityGroup>();
-  for (const material of materials) {
-    const identity = material.machineIdentity ?? null;
-    const key = identityKey(identity);
-    let group = groups.get(key);
-    if (group === undefined) {
-      group = {
-        identity,
-        ...(material.userLogin === null ? {} : { displayLogin: material.userLogin }),
-        materials: [],
-      };
-      groups.set(key, group);
-    } else {
-      group.identity = mergeMachineIdentity(group.identity, identity);
-    }
-    const kind = materialKind(material);
-    group.materials.push({
-      kind,
-      id: material.id,
-      ...(kind === "review" && "body" in material ? { body: material.body } : {}),
-    });
-  }
-  return [...groups.values()];
-}
-
-const CODEX_USER_ID = 199175422;
-const CODERABBIT_USER_ID = 136622811;
-export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
-  attendance: true;
-  findings: CollectorFinding[];
-};
-
-/** Extract attendance and provider findings without using login/display text as identity. */
-export function extractGitHubIdentityGroups(materials: readonly GitHubIdentityMaterial[]): ExtractedCollectorIdentityGroup[] {
-  const groups = groupGitHubMaterialsByIdentity(materials);
-  const byKey = new Map(groups.map((group) => [identityKey(group.identity), group]));
-  for (const group of groups) {
-    group.attendance = true;
-    group.findings = [];
-  }
-  for (const material of materials) {
-    const identity = material.machineIdentity ?? null;
-    const group = byKey.get(identityKey(identity))!;
-    if (identity === null) continue;
-    const source = { kind: materialKind(material), id: material.id };
-    if (source.kind === "review_comment" && "body" in material && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
-      group.findings!.push({ identity, source, category: "inline", body: material.body });
-    }
-  }
-  return groups as ExtractedCollectorIdentityGroup[];
+function headRelationFor(record: CollectorEvidenceRecord, targetHead: string): HeadRelation | "unbound" {
+  return record.commitOid === undefined || record.commitOid === null
+    ? "unbound"
+    : record.commitOid === targetHead ? "current" : "prior";
 }
 
 /** Receipt adapter consuming the typed facts retained by transport normalization. */
@@ -131,11 +86,8 @@ export function extractCollectorEvidenceIdentityGroups(
     const source: CollectorMaterialRef = {
       kind,
       id: record.githubId,
-      ...(kind === "review" && record.body !== undefined ? { body: record.body } : {}),
       evidenceId: record.evidenceId,
-      headRelation: record.commitOid === undefined || record.commitOid === null
-        ? "unbound"
-        : record.commitOid === targetHead ? "current" : "prior",
+      headRelation: headRelationFor(record, targetHead),
     };
     const key = identityKey(identity);
     let group = groups.get(key);
@@ -152,10 +104,105 @@ export function extractCollectorEvidenceIdentityGroups(
       group.identity = mergeMachineIdentity(group.identity, identity);
     }
     group.materials.push(source);
-    if (identity === null || record.body === undefined) continue;
-    if (kind === "review_comment" && (identity.userId === CODEX_USER_ID || identity.userId === CODERABBIT_USER_ID)) {
-      group.findings.push({ identity, source: { ...source }, category: "inline", body: record.body });
-    }
   }
   return [...groups.values()];
+}
+
+/**
+ * #641 chain①: pointer-open failures are model misuse, not host failures. The
+ * seat rejects them as correctable so the model can retry with a stored
+ * evidenceId — on Pi and Grok/ACP alike (第 0 条: 模型提交方式可纠正).
+ */
+export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
+  constructor(evidenceId: string) {
+    super(`未在本局已观测材料中找到 evidenceId ${evidenceId}；请用 observe 返回的指针重试。`);
+    this.name = "CollectorUnknownEvidenceError";
+  }
+}
+
+/**
+ * #641 chain①: any malformed findings submission is a model misuse the model
+ * can correct and resubmit — a branded correctable rejection on every supported
+ * engine, never a round infrastructure failure.
+ */
+export class CollectorFindingsValidationError extends CorrectableSubmissionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CollectorFindingsValidationError";
+  }
+}
+
+/**
+ * #641 chain①: turn model-submitted finding pointer refs into receipt findings.
+ * Each pointer must resolve to a stored text-bearing evidence record; the
+ * machine locator is enriched from the same record so receipt and volume agree
+ * (指针可解析、开卷相符) by construction. Throws branded correctable
+ * (non-fatal, model-visible) errors for unresolvable or mis-typed findings.
+ */
+export function enrichCollectorFindings(input: {
+  candidate: unknown;
+  records: readonly CollectorEvidenceRecord[];
+  groups: readonly ExtractedCollectorIdentityGroup[];
+  targetHead: string;
+  repository: string;
+  prNumber: number;
+}): void {
+  const candidate = input.candidate;
+  if (candidate === undefined || candidate === null) return;
+  if (typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new CollectorFindingsValidationError("通进司交件参数必须为对象");
+  }
+  const rawFindings = (candidate as { findings?: unknown }).findings;
+  if (rawFindings === undefined) return;
+  if (!Array.isArray(rawFindings)) {
+    throw new CollectorFindingsValidationError("通进司 findings 必须为数组");
+  }
+  const byEvidenceId = new Map(input.records.map((record) => [record.evidenceId, record]));
+  for (const raw of rawFindings) {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new CollectorFindingsValidationError("通进司 finding 必须为对象");
+    }
+    const evidenceId = (raw as { evidenceId?: unknown }).evidenceId;
+    if (typeof evidenceId !== "string" || evidenceId.length === 0) {
+      throw new CollectorFindingsValidationError("通进司 finding 缺少可解析的 evidenceId 指针");
+    }
+    const record = byEvidenceId.get(evidenceId);
+    if (record === undefined) {
+      throw new CollectorUnknownEvidenceError(evidenceId);
+    }
+    if (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment") {
+      throw new CollectorFindingsValidationError(`通进司 finding 指针指向不可承 finding 的证据种类 ${record.kind}`);
+    }
+    if (record.githubId === undefined) {
+      throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 缺少 GitHub id`);
+    }
+    const category = (raw as { category?: unknown }).category;
+    if (category !== undefined && (typeof category !== "string" || category.trim().length === 0)) {
+      throw new CollectorFindingsValidationError("通进司 finding category 必须为非空字符串");
+    }
+    const identity = record.machineIdentity ?? null;
+    const group = input.groups.find((candidateGroup) => identityKey(candidateGroup.identity) === identityKey(identity));
+    if (group === undefined) {
+      throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
+    }
+    group.findings.push({
+      identity,
+      source: {
+        kind: record.kind,
+        id: record.githubId,
+        evidenceId: record.evidenceId,
+        headRelation: headRelationFor(record, input.targetHead),
+      },
+      ...(category === undefined ? {} : { category: category.trim() }),
+      pointer: {
+        repository: input.repository,
+        prNumber: input.prNumber,
+        commentId: record.githubId,
+        ...(record.htmlUrl === undefined ? {} : { htmlUrl: record.htmlUrl }),
+        ...(record.authorLogin === undefined ? {} : { authorLogin: record.authorLogin }),
+        kind: record.kind,
+        authoritativeTime: record.authoritativeTime ?? null,
+      },
+    });
+  }
 }

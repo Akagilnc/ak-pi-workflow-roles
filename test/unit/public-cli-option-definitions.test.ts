@@ -114,7 +114,6 @@ test("table→helpDocument: per-command structured option semantics are equivale
       owner,
     );
   }
-  assert.equal(helpDocumentForCommand("navigator"), undefined);
   assert.equal(helpDocumentForCommand("not-a-command"), undefined);
 });
 

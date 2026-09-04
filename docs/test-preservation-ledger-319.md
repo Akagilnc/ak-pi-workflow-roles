@@ -3,7 +3,8 @@
 > Batch 0 产物。庭定 `requiredPreservationLedger` 全项落成。  
 > 用途：后续删/并/改造批次的否决真源——负向断言一条不得丢。  
 > 不新增生产护栏；不改变调度或测试行为。  
-> head 基线：`64e6f4c0`（审计报告落成点）。
+> head 基线：`64e6f4c0`（审计报告落成点）。  
+> 基线属性：本账是 #319 时点快照。其后票面若废止某条的产品事实，该条仍保留为历史基线，不得再冒充现行否决真源；现行规则以现行代码与公开说明为准。
 
 图例：🔒 = 闸类负向（must-reject / abort-without-receipt / isolation / seatbelt / partition）。
 
@@ -29,7 +30,7 @@
 | M2.2 | malformed admission 拒 | 同上 · fixer malformed prerequisites `code === 2` | 🔒 |
 | M2.3 | 无 ambient home skills | 同上 · empty home；`public-cli-cold-matrix.test.ts` · empty ambient home | 🔒 |
 | M2.4 | 无自动 Internal `--ak-role` 注册 | `public-cli-install.test.ts` · admits 共装案 ordinary help；cold-matrix 同构 | 🔒 |
-| M2.5 | Navigator 非 caller command（推荐 command 不含 task 路径等） | `package-entrypoint-cold-help.integration.test.ts` · live-help 案 `command` 形态 | 🔒 |
+| M2.5 | 【#319 基线】当时 Navigator 非 caller command（推荐 command 不含 task 路径等）；#639 已使 Navigator 公开可调用（`ak-role navigator`），自动出席不变——本条不再作现行否决真源 | `package-entrypoint-cold-help.integration.test.ts` · live-help 案 `command` 形态 | 🔒 |
 | M2.6 | Merger fail-closed 与深链失败 | `test/integration/merger-role.test.ts` · `Merger terminal contract and singleton failures abort without accepting a receipt`；`public-cli-merger-run.test.ts` residual precedence | 🔒 |
 
 ---
@@ -120,7 +121,7 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 
 | 项 | 动作 | 本 ledger 必留项 |
 |----|------|------------------|
-| M2 | cold-matrix = 全角色冒烟真源；lifecycle 只留角色独有深链（Reviewer→auditor→Judge、Doctor audited output、Collector default gh receipt） | **M2.1–M2.6 全留**（blank/malformed、无 ambient、无自动 Internal、Navigator 非 command、Merger fail-closed/深链失败） |
+| M2 | cold-matrix = 全角色冒烟真源；lifecycle 只留角色独有深链（Reviewer→auditor→Judge、Doctor audited output、Collector default gh receipt） | **M2.1–M2.6 全留**（blank/malformed、无 ambient、无自动 Internal、M2.5 为 #319 基线且经 #639 废止其“非 caller command”产品义、Merger fail-closed/深链失败） |
 | M3 | `public-cli-install` coder admits 只留 blank + bin/技能路径 argv；深链唯一承载 `public-cli-coder-installed-run` 🔒 | **M2.1 coder blank** + skill 路径不经 `.agents/skills`；深链失败面不迁入 install |
 | R5 | install 确认共享 tarball（`getSharedIsolatedPack`）；discovery 一案独占 live `pi install`/settings；admits 矩阵共一次 install，禁每角色重装 | 不删 M2.1–M2.4；不把 settings 写路径断言从 discovery 案拿掉 |
 
@@ -132,7 +133,7 @@ R8 可压缩 timeout 类 sleep；不得删 R8.1–R8.3 负向。R9 本批仅登�
 | M2.2 malformed fixer prerequisites | 同上 |
 | M2.3 无 ambient home skills | 同上 + `public-cli-cold-matrix.test.ts` |
 | M2.4 无自动 Internal `--ak-role` | 同上 + cold-matrix |
-| M2.5 Navigator 非 caller command | cold-matrix + `package-entrypoint-cold-help.integration.test.ts` |
+| M2.5 【#319 基线；#639 废止“非 caller command”产品义】 | cold-matrix + `package-entrypoint-cold-help.integration.test.ts` |
 | M2.6 Merger fail-closed / 深链失败 | `merger-role.test.ts` + `public-cli-merger-run.test.ts` |
 | M3 coder 深链 | **仅** `public-cli-coder-installed-run.test.ts` 🔒 |
 

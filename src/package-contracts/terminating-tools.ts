@@ -27,6 +27,8 @@ import {
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
+import { GATEKEEPER_ACCEPTED_TEXT, GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
+import { NAVIGATOR_ACCEPTED_TEXT, NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
 import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
@@ -67,6 +69,8 @@ export {
   validateRecordedCountersignOutput,
   validateRecordedGleanerLeftOutput,
   validateRecordedInspectorOutput,
+  validateRecordedGatekeeperOutput,
+  validateRecordedNavigatorOutput,
 };
 export type {
   CollectorReceipt,
@@ -81,6 +85,8 @@ export type {
   CountersignVerdict,
   GleanerLeftOutput,
   InspectorOutput,
+  GatekeeperDirectOutput,
+  NavigatorAdvice,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -95,6 +101,8 @@ export const TERMINATING_TOOL_NAMES = [
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   GLEANER_LEFT_OUTPUT_TOOL_NAME,
   INSPECTOR_OUTPUT_TOOL_NAME,
+  GATEKEEPER_OUTPUT_TOOL_NAME,
+  NAVIGATOR_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -109,7 +117,9 @@ export type AcceptedDetails =
   | NotaryOutput
   | CountersignVerdict
   | GleanerLeftOutput
-  | InspectorOutput;
+  | InspectorOutput
+  | GatekeeperDirectOutput
+  | NavigatorAdvice;
 
 export function isTerminatingToolName(
   name: string,
@@ -141,6 +151,10 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return GLEANER_LEFT_ACCEPTED_TEXT;
     case INSPECTOR_OUTPUT_TOOL_NAME:
       return INSPECTOR_ACCEPTED_TEXT;
+    case GATEKEEPER_OUTPUT_TOOL_NAME:
+      return GATEKEEPER_ACCEPTED_TEXT;
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      return NAVIGATOR_ACCEPTED_TEXT;
   }
 }
 
@@ -197,6 +211,8 @@ export function validateAcceptedDetails(
     [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
     [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"],
     [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [GATEKEEPER_OUTPUT_TOOL_NAME]: ["dispatch", "pass"],
+    [NAVIGATOR_OUTPUT_TOOL_NAME]: ["advice"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
@@ -233,6 +249,10 @@ export function validateAcceptedDetails(
       return validateRecordedGleanerLeftOutput(details);
     case INSPECTOR_OUTPUT_TOOL_NAME:
       return validateRecordedInspectorOutput(details);
+    case GATEKEEPER_OUTPUT_TOOL_NAME:
+      return validateRecordedGatekeeperOutput(details);
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      return validateRecordedNavigatorOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -279,7 +299,9 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case DOCTOR_OUTPUT_TOOL_NAME:
     case NOTARY_OUTPUT_TOOL_NAME:
     case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-    case INSPECTOR_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
+    case INSPECTOR_OUTPUT_TOOL_NAME:
+    case GATEKEEPER_OUTPUT_TOOL_NAME:
+    case NAVIGATOR_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
     case MERGER_OUTPUT_TOOL_NAME: {

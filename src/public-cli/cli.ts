@@ -52,9 +52,11 @@ import {
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
+  parseGatekeeperArgv,
   parseJudgeArgv,
   parseInspectorArgv,
   parseMergerArgv,
+  parseNavigatorArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -71,6 +73,7 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
+import { runPublicInstructionSeat } from "./instruction-seat-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
@@ -90,7 +93,6 @@ import {
 } from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
-  isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
@@ -128,6 +130,8 @@ export const PUBLIC_ROLE_ARGV = {
   notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
   inspector: { parse: parseInspectorArgv, options: optionsForOwner("inspector") },
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
+  gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
+  navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -596,17 +600,12 @@ function requireLegalEngineName(name: string): string {
   }
 }
 
-/** Callable seats own persistent call axes; automatic seats have no call path. */
+/** Callable seats own persistent call axes (checked against the callable predicate). */
 function requireCallableSeat(
   seat: string,
   axis: "engine" | "host",
   verb: "set-engine" | "unset-engine" | "set-host" | "unset-host",
 ): asserts seat is PublicCallableRole {
-  if (isAutomaticConfigurableSeat(seat)) {
-    throw new CliUsageError(
-      `config ${verb} refuses ${seat}: no independent activation path; storing would be silently ineffective`,
-    );
-  }
   if (!isPublicCallableRole(seat)) {
     throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
@@ -765,12 +764,11 @@ function renderCommandHelp(command: string): string | undefined {
 }
 
 function renderRoles(seats: readonly EffectiveSeat[]): string {
-  const lines: string[] = ["seat\tkind\tsource\tmodel"];
+  const lines: string[] = ["seat\tsource\tmodel"];
   for (const seat of seats) {
-    const kind = seat.automatic ? "automatic" : "callable";
     const model =
       seat.selection === undefined ? "-" : formatModelSpec(seat.selection);
-    lines.push(`${seat.seat}\t${kind}\t${seat.source}\t${model}`);
+    lines.push(`${seat.seat}\t${seat.source}\t${model}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -1562,6 +1560,35 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV.merger.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
+    // a role like any other; one parameterized branch for both.
+    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        parsed.command,
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicInstructionSeat(
+        parsed.args,
+        createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
+        io,
+        parsed.command,
+        parsed.command === "gatekeeper"
+          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
+          : PUBLIC_ROLE_ARGV.navigator.parse,
       );
       return {
         exitCode: result.exitCode,

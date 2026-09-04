@@ -152,16 +152,13 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
   ]);
   assert.equal(seats.includes("auditor" as never), false);
 
-  // #453/#620: gatekeeper stays automatic with no startup; subordinates have no package startup.
+  // #453/#620/#639: gatekeeper keeps no package startup; subordinates have none either.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.automatic, true);
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "inspector")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.automatic, false);
   assert.equal(codexOnly.find((s) => s.seat === "notary")?.source, "unconfigured");
   assert.equal(codexOnly.find((s) => s.seat === "notary")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "notary")?.automatic, false);
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };

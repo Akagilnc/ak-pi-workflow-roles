@@ -45,6 +45,7 @@ import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
@@ -73,6 +74,16 @@ import {
   type InspectorRuntimeDependencies,
 } from "./inspector-role.ts";
 import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
+import {
+  GATEKEEPER_TOOL_SPEC,
+  type GatekeeperRuntimeDependencies,
+} from "./gatekeeper-role.ts";
+import {
+  NAVIGATOR_TOOL_SPEC,
+  type NavigatorRuntimeDependencies,
+} from "./navigator-role.ts";
+import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
+import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -336,7 +347,6 @@ export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GATEKEEPER_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
@@ -388,6 +398,7 @@ export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
@@ -441,6 +452,8 @@ type ActivationRuntime = {
   countersign: { activate(): Promise<void> };
   gleanerLeft: { activate(): Promise<void> };
   inspector: { activate(): Promise<void> };
+  gatekeeper: { activate(): Promise<void> };
+  navigator: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -487,6 +500,8 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
     case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
     case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
+    case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
+    case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -592,6 +607,8 @@ export type RoleRuntimeDependencies = {
   loadCountersignSoul?(): Promise<string>;
   loadGleanerLeftSoul?(): Promise<string>;
   loadInspectorSoul?(): Promise<string>;
+  loadGatekeeperSoul?(): Promise<string>;
+  loadNavigatorSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -923,6 +940,40 @@ export function createInspectorRoleRuntime(
       tool: INSPECTOR_TOOL_SPEC,
       acceptedText: INSPECTOR_ACCEPTED_TEXT,
       soulTag: "inspector",
+    },
+    dependencies,
+  );
+}
+
+/** #639: direct Gatekeeper public seat on the shared filed-officer envelope. */
+export function createGatekeeperRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: GatekeeperRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "gatekeeper",
+      tool: GATEKEEPER_TOOL_SPEC,
+      acceptedText: GATEKEEPER_ACCEPTED_TEXT,
+      soulTag: "gatekeeper",
+    },
+    dependencies,
+  );
+}
+
+/** #639: direct Navigator public seat on the shared filed-officer envelope. */
+export function createNavigatorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: NavigatorRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "navigator",
+      tool: NAVIGATOR_TOOL_SPEC,
+      acceptedText: NAVIGATOR_ACCEPTED_TEXT,
+      soulTag: "navigator",
     },
     dependencies,
   );
@@ -1433,6 +1484,18 @@ export function createRoleRuntimeExtension(
         return dependencies.loadInspectorSoul();
       },
     });
+    const gatekeeper = createGatekeeperRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadGatekeeperSoul) throw new Error("Gatekeeper runtime dependencies are not configured");
+        return dependencies.loadGatekeeperSoul();
+      },
+    });
+    const navigator = createNavigatorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadNavigatorSoul) throw new Error("Navigator runtime dependencies are not configured");
+        return dependencies.loadNavigatorSoul();
+      },
+    });
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1581,6 +1644,8 @@ export function createRoleRuntimeExtension(
         countersign,
         gleanerLeft,
         inspector,
+        gatekeeper,
+        navigator,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
