@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
+  AUDITOR_DOSSIER_TOOL_NAME,
+  createAuditorDossierTool,
+} from "../../src/auditor-dossier-tool.ts";
+import {
   runGatekeeper,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
@@ -48,14 +52,60 @@ async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvid
 test("worker completion directly summons Inspector without a Gatekeeper child", async () => {
   await withParent(async (context, faux) => {
     const seen: string[] = [];
-    faux.setResponses([completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], seen)]);
+    let dossierPayload: unknown;
+    let turn = 0;
+    const respond = async (childContext: any) => {
+      turn += 1;
+      const names = (childContext.tools ?? []).map((tool: { name?: string }) => tool.name);
+      assert.equal(names.includes(AUDITOR_DOSSIER_TOOL_NAME), true, "shared dossier tool present");
+      assert.equal(names.includes("ak_gatekeeper_subject"), false, "subject body tool gone");
+      if (turn === 1) {
+        // First turn: pull the shared locator (same tool 审刑院 uses).
+        return completion([{ tool: AUDITOR_DOSSIER_TOOL_NAME, args: {} }], seen)(childContext);
+      }
+      // Child HTTP path may strip toolName/details; content text still carries the locator JSON.
+      const results = (childContext.messages ?? []).filter(
+        (message: { role?: string }) => message.role === "toolResult",
+      );
+      assert.ok(results.length >= 1, "dossier tool must leave a toolResult");
+      const latest = results[results.length - 1]! as {
+        details?: unknown;
+        content?: Array<{ type?: string; text?: string }>;
+      };
+      if (latest.details !== undefined) {
+        dossierPayload = latest.details;
+      } else {
+        const text = (latest.content ?? [])
+          .map((part) => (part?.type === "text" ? part.text ?? "" : ""))
+          .join("");
+        dossierPayload = JSON.parse(text);
+      }
+      const serialized = JSON.stringify(dossierPayload ?? "");
+      assert.equal(serialized.includes("implementation and test evidence"), false);
+      assert.equal(/"status"\s*:\s*"pass"/.test(serialized), false);
+      return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], seen)(childContext);
+    };
+    // Headroom for dossier fetch + decision (and any idle retry).
+    faux.setResponses(Array.from({ length: 4 }, () => respond));
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "worker_completion", material: "implementation and test evidence" },
+      subject: { kind: "worker_completion" },
     });
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
-    assert.equal(seen.length, 1, "direct summons opens exactly one child session");
+    assert.equal(seen.length, 2, "dossier fetch then officer decision");
+    const expected = await createAuditorDossierTool(context.runDirectory).execute("x", {});
+    // Prefer details; fall back to content JSON when the transport strips details.
+    const actual =
+      dossierPayload && typeof dossierPayload === "object" && !Array.isArray(dossierPayload)
+        ? dossierPayload
+        : JSON.parse(
+            Array.isArray(dossierPayload)
+              ? (dossierPayload as Array<{ text?: string }>).map((part) => part.text ?? "").join("")
+              : String(dossierPayload),
+          );
+    assert.deepEqual(actual, expected.details);
+    assert.equal(typeof (actual as { runDirectory?: string }).runDirectory, "string");
   });
 });
 
@@ -66,7 +116,7 @@ test("judge draft directly summons Notary and preserves bounce", async () => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
+      subject: { kind: "judge_draft" },
     });
     assert.deepEqual(result, {
       status: "bounce",
@@ -85,7 +135,7 @@ test("direct officer escalate projects typed escalate result with reason and fin
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "worker_completion", material: "completion" },
+      subject: { kind: "worker_completion" },
     });
     assert.equal(result.status, "escalate");
     if (result.status === "escalate") {
@@ -103,7 +153,7 @@ test("countersign verdict directly summons Notary", async () => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "countersign_verdict", material: "signed verdict" },
+      subject: { kind: "countersign_verdict" },
     });
     assert.deepEqual(result, { status: "pass", officer: "notary", findings: [] });
   });
@@ -115,7 +165,7 @@ test("direct officer settlement without a receipt stays loud and typed", async (
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "worker_completion", material: "completion" },
+      subject: { kind: "worker_completion" },
     });
     assert.equal(result.status, "no_receipt");
     if (result.status === "no_receipt") {
@@ -138,7 +188,7 @@ test("direct officer missing arguments is one-shot serializable transport failur
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "worker_completion", material: "completion" },
+      subject: { kind: "worker_completion" },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -156,7 +206,7 @@ test("direct officer transport failure names the summoned seat", async () => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
-      subject: { kind: "judge_draft", material: "draft" },
+      subject: { kind: "judge_draft" },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") assert.equal(result.stage, "notary");

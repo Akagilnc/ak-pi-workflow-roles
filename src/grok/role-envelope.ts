@@ -21,7 +21,6 @@ import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
 } from "../role-runtime.ts";
-import { loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import {
   createGrokRoleTurnHost,
   type GrokPreparedTurn,
@@ -639,16 +638,17 @@ export async function prepareGrokRoleEnvelope(options: {
         message: { role: "user", content: prompt },
       });
     }
-    const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
+    // Method notes only here — role before_agent_start injects soul once.
+    // Preloading session materials duplicated soul under the role tag (#632).
     const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
     const promptResults = await emit("before_agent_start", {
       prompt,
-      systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
+      systemPrompt: methodPrompt,
       systemPromptOptions: {},
     });
     const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
       typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
-      ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+      ?? methodPrompt;
     // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
     // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
     const readingMaterials: unknown[] = [];

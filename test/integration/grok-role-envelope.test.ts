@@ -130,6 +130,47 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   }
 });
 
+test("Grok opening materials inject soul exactly once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-soul-once-"));
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    // Production soul loader returns the full session-materials bundle; the old
+    // envelope also preloaded that same bundle before before_agent_start, so the
+    // distinctive soul title appeared twice. Bite that double-injection shape.
+    const { loadMainRoleSessionMaterials } = await import("../../src/session-opening-materials.ts");
+    const soul = await loadMainRoleSessionMaterials("judge");
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "soul-once"),
+      } as RoleTurnRequest,
+      socketPath,
+      dependencies: {
+        loadJudgeSoul: async () => soul,
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      const body = prepared.systemPrompt.body;
+      const marker = "# Judge Soul（大理寺）";
+      assert.ok(soul.includes(marker), "fixture soul must carry the judge title marker");
+      const occurrences = body.split(marker).length - 1;
+      assert.equal(occurrences, 1, `soul title must appear once, saw ${occurrences}`);
+      assert.match(body, /<judge_soul>[\s\S]*# Judge Soul（大理寺）[\s\S]*<\/judge_soul>/);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok dispose closes MCP server even when session_shutdown rejects", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-shutdown-failure-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
