@@ -10,6 +10,7 @@ import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
+  gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
   projectLawfulGatekeeperOutput,
 } from "./package-contracts/gatekeeper-output.ts";
@@ -131,7 +132,7 @@ export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
     name: GATEKEEPER_OUTPUT_TOOL_NAME,
     description: "提交门下省派官决定。",
-    parameters: gatekeeperOutputSchema,
+    parameters: gatekeeperDecisionSchema,
     async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
   };
 }
