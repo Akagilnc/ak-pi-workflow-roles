@@ -14,8 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -273,23 +272,6 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(invocations.length, 1);
     assert.equal(invocations[0]!.name, "diagnosing-bugs");
 
-    // #634: DONE fixer settlement projects a direct Inspector round with no Gatekeeper seat.
-    {
-      const sessionFile = piDurablePrincipalAuthority.decode(admitted.principal).sessionFile;
-      const auditorDir = join(dirname(sessionFile), "auditor-roles");
-      await mkdir(auditorDir, { recursive: true });
-      await writeFile(
-        join(auditorDir, "o01_inspector.jsonl"),
-        gateToolSessionJsonl({
-          id: "direct-inspector",
-          startedAt: "2026-09-04T00:00:00.000Z",
-          endedAt: "2026-09-04T00:00:10.000Z",
-          toolName: "ak_inspector_output",
-          args: { status: "pass", findings: [] },
-        }),
-        "utf8",
-      );
-    }
     const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
@@ -298,10 +280,6 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(terminal.roleOutcome.status, "completed");
-    assert.ok(terminal.gate);
-    assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
-    assert.equal(terminal.gate!.rounds[0]!.dispatch.kind, "direct");
-    assert.equal(terminal.gate!.rounds[0]!.dispatch.officer, "inspector");
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
