@@ -443,8 +443,16 @@ export function createCollectorLedger(
   };
 
   const replayDossierEntries = (entries: Iterable<unknown>): void => {
-    const interruptedRequests = new Map<string, { attempt: CollectorRequestAttempt; attemptKey: string }>();
-    for (const raw of entries) {
+    const orderedEntries = Array.from(entries);
+    const finalRequestStatus = new Map<string, CollectorRequestAttempt["status"]>();
+    for (const raw of orderedEntries) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
+      if (entry.type !== "custom" || entry.customType !== COLLECTOR_REQUEST_ENTRY_TYPE || typeof entry.data !== "object" || entry.data === null) continue;
+      const attempt = (entry.data as Record<string, unknown>).attempt as CollectorRequestAttempt | undefined;
+      if (attempt?.attemptId !== undefined) finalRequestStatus.set(attempt.attemptId, attempt.status);
+    }
+    for (const raw of orderedEntries) {
       if (typeof raw !== "object" || raw === null) continue;
       const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
       if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) continue;
@@ -469,12 +477,14 @@ export function createCollectorLedger(
           ? data.attemptKey
           : [config.repository.canonical, String(config.prNumber), attempt.observedHead, attempt.requestId].join("|");
         const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
-        commitRequestAttempt(attempt, attemptKey, commentEvidence);
-        if (attempt.status === "started") {
-          interruptedRequests.set(attempt.attemptId, { attempt, attemptKey });
-        } else {
-          interruptedRequests.delete(attempt.attemptId);
-        }
+        const replayAttempt = attempt.status === "started" && finalRequestStatus.get(attempt.attemptId) === "started"
+          ? {
+            ...attempt,
+            status: "ambiguous_loss" as const,
+            responseDiagnostics: "request interrupted after dispatch before completion was recorded",
+          }
+          : attempt;
+        commitRequestAttempt(replayAttempt, attemptKey, commentEvidence);
         continue;
       }
       if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
@@ -482,17 +492,6 @@ export function createCollectorLedger(
         if (wait?.waitId === undefined) continue;
         commitWaitRecord(wait);
       }
-    }
-    for (const { attempt, attemptKey } of interruptedRequests.values()) {
-      commitRequestAttempt(
-        {
-          ...attempt,
-          status: "ambiguous_loss",
-          responseDiagnostics: "request interrupted after dispatch before completion was recorded",
-        },
-        attemptKey,
-        undefined,
-      );
     }
   };
 
