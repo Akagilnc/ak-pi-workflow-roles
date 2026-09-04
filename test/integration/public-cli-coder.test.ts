@@ -33,7 +33,7 @@ import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { recordAuditEscalationSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -188,6 +188,39 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
     }
+  });
+});
+
+test("coder settlement reads durable audit escalation", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const admitted = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
+      phase: "apply",
+      instruction: "Escalate the gate decision.",
+      attachmentPaths: [],
+      createRunId: () => "run-coder-escalate-001",
+    });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "", "utf8");
+    await recordAuditEscalationSubmission({
+      cwd: project,
+      home,
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+      role: "coder",
+      details: { kind: "audit_escalation", conflicts: ["authority conflict"] },
+    });
+    const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
+    const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
+      methodProvenance: material.provenance,
+    });
+    assert.equal(terminal.roleOutcome.kind, "audit_escalation");
+    assert.deepEqual(terminal.roleOutcome.decisiveFacts.conflicts, ["authority conflict"]);
   });
 });
 

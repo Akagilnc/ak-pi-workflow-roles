@@ -49,7 +49,7 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { recordAuditEscalationSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -663,15 +663,27 @@ async function settleFixerSession(
   await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
   await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
   const home = tryHomeFromAkRolesPath(admitted.runDirectory);
-  await sealAcceptedSubmission({
-    runId: admitted.runId,
-    cwd: admitted.projectRoot,
-    ...(home === undefined ? {} : { home }),
-    runDirectory: admitted.runDirectory,
-    role: "fixer",
-    details,
-    toolCallId: "f-out",
-  });
+  if ((details as { kind?: unknown })?.kind === AUDIT_ESCALATION_KIND) {
+    await recordAuditEscalationSubmission({
+      runId: admitted.runId,
+      cwd: admitted.projectRoot,
+      ...(home === undefined ? {} : { home }),
+      runDirectory: admitted.runDirectory,
+      role: "fixer",
+      details,
+      toolCallId: "f-out",
+    });
+  } else {
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: admitted.projectRoot,
+      ...(home === undefined ? {} : { home }),
+      runDirectory: admitted.runDirectory,
+      role: "fixer",
+      details,
+      toolCallId: "f-out",
+    });
+  }
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",
@@ -896,6 +908,15 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         factKey: "fixerStatus",
         factValue: "partially_completed",
       },
+      {
+        runId: "run-fixer-status-escalation",
+        phase: "apply",
+        details: escalation,
+        kind: "audit_escalation",
+        status: "audit_escalation",
+        factKey: "conflicts",
+        factValue: ["soul procedure conflict"],
+      },
     ];
 
     for (const row of cases) {
@@ -925,6 +946,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       );
       assert.equal(isLawfulTypedTerminalOutcome(settled.roleOutcome), true);
       assert.equal(exitCodeForTerminalOutcome(settled.roleOutcome), 0);
+      if (row.kind === "audit_escalation") continue;
 
       const { io, stdout } = captureIo();
       const cliArgs =
@@ -962,8 +984,7 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
       assert.equal(
-        result.terminal!.roleOutcome.kind === "accepted" ||
-          result.terminal!.roleOutcome.kind === "audit_escalation"
+        result.terminal!.roleOutcome.kind === "accepted"
           ? result.terminal!.roleOutcome.status
           : undefined,
         row.status,
