@@ -88,4 +88,4 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 ## 修订通道
 
-Soul 与本文件（CLAUDE.md）的修订走陛下直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。
+Soul 与本文件（CLAUDE.md）的内容修订走陛下直批通道：最终文字须经陛下过目确定，且负持续精进义务；工厂在未获陛下授权（内容确定）前不得改动，获授权后可由工厂腿落笔，谁写的不是要件。
