@@ -146,6 +146,15 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   // Without delivered output, verdict fields are absent (negative control).
   const stripped = projectAuditEscalation(decision).details;
   assert.equal(stripped.note, undefined);
+
+  // Officer-owned facts cannot be filled by colliding parent-role fields.
+  const officer = projectAuditEscalation(
+    { status: "escalate", officer: "notary" },
+    delivered,
+  ).details;
+  assert.equal(officer.officer, "notary");
+  assert.equal(Object.hasOwn(officer, "reason"), false);
+  assert.equal(Object.hasOwn(officer, "findings"), false);
 });
 
 test("escalate face keeps role decisionGate and audit gate side by side", async () => {
