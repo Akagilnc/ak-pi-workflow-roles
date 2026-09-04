@@ -1,15 +1,23 @@
 /**
  * #648 — same-identity concurrent writers must not duplicate canonical rows.
- * Two concurrent single-call attempts preserve uniqueness; one real-IO failure
- * path proves the thrower releases its own identity claim.
+ * Deterministic overlap: post-claim hold + fs.watch of the real claim surface,
+ * then a second real appendSitianRecord; one real-IO failure path proves the
+ * thrower releases its own identity claim.
  */
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
+  existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
+  unlinkSync,
+  watch,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -76,6 +84,58 @@ function claimSidecarNames(sessionDir: string, recordFile: string): string[] {
     .sort();
 }
 
+
+function tryCreateFifo(path: string): boolean {
+  try {
+    unlinkSync(path);
+  } catch {
+    // absent is fine
+  }
+  const result = spawnSync("mkfifo", [path], { encoding: "utf8" });
+  return result.status === 0 && existsSync(path);
+}
+
+/** One writer open/write/close cycle so a blocked FIFO reader reaches EOF. */
+function feedFifoEof(path: string): void {
+  const fd = openSync(path, fsConstants.O_RDWR);
+  try {
+    writeSync(fd, "\n");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Resolve when the real identity-claim sidecar appears on the volume surface.
+ * Event-driven via fs.watch; races against holder exit rather than polling.
+ */
+function waitForClaimAppearance(args: {
+  readonly sessionDir: string;
+  readonly recordFile: string;
+  readonly holderExit: Promise<number | null>;
+}): Promise<"claim" | "holder-exit"> {
+  const { sessionDir, recordFile, holderExit } = args;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (outcome: "claim" | "holder-exit") => {
+      if (settled) return;
+      settled = true;
+      watcher.close();
+      resolve(outcome);
+    };
+    const hasClaim = () => claimSidecarNames(sessionDir, recordFile).length > 0;
+    const watcher = watch(sessionDir, () => {
+      if (hasClaim()) finish("claim");
+    });
+    watcher.on("error", reject);
+    holderExit.then(
+      () => finish(hasClaim() ? "claim" : "holder-exit"),
+      reject,
+    );
+    if (hasClaim()) finish("claim");
+  });
+}
+
 type ChildAppendResult =
   | { readonly ok: true; readonly identity: string }
   | {
@@ -91,6 +151,7 @@ function spawnAppendChild(args: {
   readonly identity: string;
   readonly kind: string;
   readonly marker: string;
+  readonly holdPath?: string;
 }): ChildProcess {
   const script = `
     import { appendSitianRecord } from ${JSON.stringify(join(packageRoot, "src/sitian-appender.ts"))};
@@ -127,10 +188,17 @@ function spawnAppendChild(args: {
       process.exit(1);
     }
   `;
+  const env =
+    args.holdPath === undefined
+      ? process.env
+      : {
+          ...process.env,
+          AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD: args.holdPath,
+        };
   return spawn(
     process.execPath,
     ["--import", "tsx", "--input-type=module", "-e", script],
-    { cwd: packageRoot, stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: packageRoot, stdio: ["ignore", "pipe", "pipe"], env },
   );
 }
 
@@ -174,7 +242,7 @@ async function readChildResult(child: ChildProcess): Promise<ChildAppendResult> 
   return parseRecognizedChildResult(line);
 }
 
-test("two concurrent single-call attempts preserve uniqueness: one row, no sidecars", async () => {
+test("two concurrent single-call attempts preserve uniqueness: one row, no sidecars", async (t) => {
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
     const identity = "concurrent-same-identity-uniqueness";
     const kind = "identity-claim-concurrent-uniqueness";
@@ -189,14 +257,67 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
     const { sessionDir, recordFile } = resolveSitianRecordPath(input);
     mkdirSync(sessionDir, { recursive: true });
 
-    const children = [
-      spawnAppendChild({ home, cwd, identity, kind, marker: "child-a" }),
-      spawnAppendChild({ home, cwd, identity, kind, marker: "child-b" }),
-    ];
+    const holdPath = join(home, "identity-claim-hold.fifo");
+    if (!tryCreateFifo(holdPath)) {
+      t.skip("FIFO unsupported on this platform for post-claim hold");
+      return;
+    }
 
+    const holder = spawnAppendChild({
+      home,
+      cwd,
+      identity,
+      kind,
+      marker: "holder",
+      holdPath,
+    });
+    const holderExit = waitChildExit(holder);
+    holderExit.catch(() => undefined);
+    // Capture holder stdout before release — unblocking can finish before a late reader attaches.
+    const holderResultPromise = readChildResult(holder);
+
+    let contender: ChildProcess | undefined;
     await withPrimaryAwareCleanup(
       async () => {
-        const results = await Promise.all(children.map((child) => readChildResult(child)));
+        const appearance = await waitForClaimAppearance({
+          sessionDir,
+          recordFile,
+          holderExit,
+        });
+        assert.equal(
+          appearance,
+          "claim",
+          "holder must acquire a real identity claim before the contender runs",
+        );
+        assert.ok(
+          claimSidecarNames(sessionDir, recordFile).length > 0,
+          "claim sidecar must be visible on the volume surface while held",
+        );
+
+        contender = spawnAppendChild({
+          home,
+          cwd,
+          identity,
+          kind,
+          marker: "contender",
+        });
+        const contenderResult = await readChildResult(contender);
+        assert.equal(contenderResult.ok, false);
+        if (!contenderResult.ok) {
+          assert.equal(contenderResult.name, "SitianInfrastructureError");
+          assert.equal(contenderResult.knownCause, "session");
+          assert.equal(contenderResult.code, "EEXIST");
+        }
+
+        feedFifoEof(holdPath);
+
+        const holderResult = await holderResultPromise;
+        assert.equal(holderResult.ok, true);
+        if (holderResult.ok) {
+          assert.equal(holderResult.identity, identity);
+        }
+
+        const results = [holderResult, contenderResult];
         assert.ok(
           results.some((result) => result.ok),
           "at least one concurrent attempt must succeed",
@@ -210,6 +331,7 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
             assert.equal(result.code, "EEXIST");
           }
         }
+
         const read = await readSitianRecords(recordFile);
         assert.equal(read.records.filter((row) => row.identity === identity).length, 1);
         assert.deepEqual(volumeSurfaceNames(sessionDir, recordFile), [
@@ -217,7 +339,21 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
         ]);
       },
       async () => {
-        await Promise.all(children.map((child) => settleSpawnedChild(child)));
+        try {
+          feedFifoEof(holdPath);
+        } catch {
+          // hold already drained or absent
+        }
+        await Promise.all(
+          [holder, contender]
+            .filter((child): child is ChildProcess => child !== undefined)
+            .map((child) => settleSpawnedChild(child)),
+        );
+        try {
+          unlinkSync(holdPath);
+        } catch {
+          // absent is fine
+        }
       },
     );
   });

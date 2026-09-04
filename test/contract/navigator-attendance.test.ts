@@ -41,6 +41,7 @@ import {
 } from "../../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 import {
   context,
   candidate,
@@ -420,24 +421,6 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
-
-function hostContextFor(root: string, sessionFile?: string) {
-  const bookKey = basename(root);
-  const file = sessionFile ?? join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
-  return {
-    cwd: root,
-    mode: "print" as const,
-    model: undefined,
-    sessionManager: {
-      getLeafEntry: () => undefined,
-      getLeafId: () => null,
-      getEntries: () => [],
-      getSessionDir: () => dirname(file),
-      getSessionFile: () => file,
-    },
-    abort() {},
-  };
-}
 
 test("host-neutral native factory opens without parent modelRegistry and reports thinking from setting", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));

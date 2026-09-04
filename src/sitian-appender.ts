@@ -104,6 +104,23 @@ function unlinkAbsentOk(path: string): Error | undefined {
   }
 }
 
+
+/**
+ * Non-public test sync after exclusive claim acquisition.
+ *
+ * Claim→append→unlink is microseconds; fs.watch + SIGSTOP cannot keep a
+ * holder inside that window race-free. When set, this env names a path whose
+ * synchronous read blocks the winner exactly once after linkSync succeeds and
+ * before seal/append/cleanup — so an observer can watch the real claim appear,
+ * run a second real appendSitianRecord into forced EEXIST overlap, then release
+ * the hold. Not a public API, injectable FS callback, or IO-count lock.
+ */
+function holdAfterExclusiveIdentityClaimForTests(): void {
+  const holdPath = process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD;
+  if (holdPath === undefined || holdPath.length === 0) return;
+  readFileSync(holdPath);
+}
+
 /**
  * Same-identity uniqueness under normal concurrent writers.
  *
@@ -154,6 +171,8 @@ function appendWithIdentityClaim(
       { cause: error },
     );
   }
+
+  holdAfterExclusiveIdentityClaimForTests();
 
   let primaryFailure: unknown;
   let result: RecordPointer | undefined;

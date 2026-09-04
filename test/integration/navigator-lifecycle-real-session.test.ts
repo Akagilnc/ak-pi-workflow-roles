@@ -24,6 +24,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { hostContextFor } from "../helpers/navigator-host-context.ts";
 
 test("exact-session resume keeps principal; terminal starts next invocation; non-UUIDv7 rejected", async () => {
   const { basename } = await import("node:path");
@@ -853,24 +854,6 @@ test("healthy Navigator preparation survives mid-turn agent_settled for later ac
     assert.equal(events.some((event) => event.disposition === "unavailable"), false);
   });
 });
-
-function hostContextFor(root: string, sessionFile?: string) {
-  const bookKey = basename(root);
-  const file = sessionFile ?? join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
-  return {
-    cwd: root,
-    mode: "print" as const,
-    model: undefined,
-    sessionManager: {
-      getLeafEntry: () => undefined,
-      getLeafId: () => null,
-      getEntries: () => [],
-      getSessionDir: () => dirname(file),
-      getSessionFile: () => file,
-    },
-    abort() {},
-  };
-}
 
 test("reused native session rethrows a prompt failure that produced no new assistant", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-reused-prompt-"));
