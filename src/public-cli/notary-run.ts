@@ -158,17 +158,10 @@ export async function runPublicNotaryResume(
         env.principalAuthority,
       );
     },
-    buildTurnRequest: (admitted) => {
-      const { message: _omitted, ...safeRequest } = request;
-      return buildNotaryTurnRequest(
-        admitted,
-        resumeTurnRequestProjectionOptions(
-          admitted,
-          safeRequest,
-          env,
-        ),
-      );
-    },
+    buildTurnRequest: (admitted) => buildNotaryTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
