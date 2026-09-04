@@ -39,7 +39,6 @@ import {
   toolExecutionObservationRecordSchema,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
@@ -71,14 +70,8 @@ import {
 } from "../helpers/package-entrypoint-fixtures.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
-/** In-file province scripting (officer is fixture choice, not subject→officer oracle). */
-function scriptProvincePass(names: readonly string[], officer: "notary" | "inspector") {
-  if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-    return fauxAssistantMessage(
-      fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer }),
-      { stopReason: "toolUse" },
-    );
-  }
+/** In-file direct-officer pass scripting. */
+function scriptOfficerPass(names: readonly string[], officer: "notary" | "inspector") {
   if (names.includes(NOTARY_OUTPUT_TOOL)) {
     return fauxAssistantMessage(
       fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
@@ -339,8 +332,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const developerPrompt = "Exercise audited terminating acceptance.";
         const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
-          const province = scriptProvincePass(names, "notary");
-          if (province !== undefined) return province;
+          const officerPass = scriptOfficerPass(names, "notary");
+          if (officerPass !== undefined) return officerPass;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             // Developer exact-session v1 shape: direction-only next is enough.
             // Full route/matches/command must not be required for recommendation.
@@ -530,8 +523,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
       }, async ({ session, sessionManager }) => {
         const escalateRespond = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
-          const province = scriptProvincePass(names, "notary");
-          if (province !== undefined) return province;
+          const officerPass = scriptOfficerPass(names, "notary");
+          if (officerPass !== undefined) return officerPass;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
           }
@@ -697,18 +690,18 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           );
 
           let coderContext: Context | undefined;
-          // completed zero-commit: ① bounces once; same payload resubmit confirms + province pass.
-          // unfinished: ① does not apply — single call + scripted province pass (unfinished 过闸).
+          // completed zero-commit: ① bounces once; same payload resubmit confirms + direct officer pass.
+          // unfinished: ① does not apply — single call + scripted officer pass (unfinished 过闸).
           const firstCallId = row.output.status === "completed"
             ? `${row.callId}-bounce`
             : row.callId;
-          const provinceOrIdle = (context: Context) => {
+          const officerOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               return navigatorPrepareFixtureResponse({ role: "coder", phase: "apply" });
             }
-            const province = scriptProvincePass(names, "inspector");
-            if (province !== undefined) return province;
+            const officerPass = scriptOfficerPass(names, "inspector");
+            if (officerPass !== undefined) return officerPass;
             return fauxAssistantMessage("coder fixture idle");
           };
           faux.setResponses(
@@ -725,8 +718,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                 },
                 (context: Context) => {
                   const names = context.tools?.map((tool) => tool.name) ?? [];
-                  const province = scriptProvincePass(names, "inspector");
-                  if (province !== undefined) return province;
+                  const officerPass = scriptOfficerPass(names, "inspector");
+                  if (officerPass !== undefined) return officerPass;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
                       id: row.callId,
@@ -736,8 +729,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                 },
                 (context: Context) => {
                   const names = context.tools?.map((tool) => tool.name) ?? [];
-                  const province = scriptProvincePass(names, "inspector");
-                  if (province !== undefined) return province;
+                  const officerPass = scriptOfficerPass(names, "inspector");
+                  if (officerPass !== undefined) return officerPass;
                   return fauxAssistantMessage(
                     fauxToolCall(CODER_OUTPUT_TOOL_NAME, row.output, {
                       id: row.callId,
@@ -745,7 +738,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                provinceOrIdle,
+                officerOrIdle,
               ]
               : [
                 (context: Context) => {
@@ -757,8 +750,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
                     { stopReason: "toolUse" },
                   );
                 },
-                provinceOrIdle,
-                provinceOrIdle,
+                officerOrIdle,
+                officerOrIdle,
               ],
           );
           await session.prompt(row.prompt);
@@ -1041,13 +1034,13 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           assert.equal(mixed.message.isError, true);
 
           // Every Fixer status (plan/planned and apply/unfinished) requires Gatekeeper pass.
-          const provinceOrIdle = (context: Context) => {
+          const officerOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               return navigatorPrepareFixtureResponse({ role: "fixer", phase: "apply" });
             }
-            const province = scriptProvincePass(names, "inspector");
-            if (province !== undefined) return province;
+            const officerPass = scriptOfficerPass(names, "inspector");
+            if (officerPass !== undefined) return officerPass;
             return fauxAssistantMessage("fixer fixture idle");
           };
           faux.setResponses([
@@ -1057,8 +1050,8 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
-            provinceOrIdle,
-            provinceOrIdle,
+            officerOrIdle,
+            officerOrIdle,
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(

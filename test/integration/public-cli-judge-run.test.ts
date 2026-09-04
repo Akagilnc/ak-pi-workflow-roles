@@ -473,25 +473,6 @@ for (const scenario of [
     },
   },
   {
-    name: "gatekeeper-no-dispatch",
-    runId: "run-e2e-judge-gate-gk-001",
-    childEnv: { AK_GATE_MODE: "gatekeeper-no-dispatch" },
-    expectDetails: {
-      stage: "gatekeeper",
-      // Unusable non-pass/non-dispatch; lawful province pass is not failure (#597).
-      submission: { status: "ok-enough" },
-    },
-  },
-  {
-    name: "officer-no-pass",
-    runId: "run-e2e-judge-gate-officer-001",
-    childEnv: { AK_GATE_MODE: "officer-no-pass" },
-    expectDetails: {
-      stage: "inspector",
-      submission: { status: "ok-enough" },
-    },
-  },
-  {
     name: "notary-no-pass",
     runId: "run-e2e-judge-gate-notary-001",
     childEnv: { AK_GATE_MODE: "notary-no-pass" },
