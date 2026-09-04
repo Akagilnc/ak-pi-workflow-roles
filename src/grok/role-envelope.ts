@@ -555,13 +555,12 @@ export async function prepareGrokRoleEnvelope(options: {
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
-    // Capture session_shutdown failure so listener close cannot erase it
-    // (JS finally overwrite). Always close + restore; AggregateError keeps both.
-    let shutdownFailure: unknown;
+    // `undefined` is a legal thrown value, so failure presence is explicit.
+    let shutdownFailure: { present: false } | { present: true; value: unknown } = { present: false };
     try {
       await emit("session_shutdown", {});
     } catch (error) {
-      shutdownFailure = error;
+      shutdownFailure = { present: true, value: error };
     }
     try {
       const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
@@ -570,18 +569,18 @@ export async function prepareGrokRoleEnvelope(options: {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     } catch (closeFailure) {
-      if (shutdownFailure !== undefined) {
+      if (shutdownFailure.present) {
         throw new AggregateError(
-          [shutdownFailure, closeFailure],
+          [shutdownFailure.value, closeFailure],
           "prepareGrokRoleEnvelope dispose session_shutdown failed and listener close also failed",
-          { cause: shutdownFailure },
+          { cause: shutdownFailure.value },
         );
       }
       throw closeFailure;
     } finally {
       restoreAkRoleRunDir();
     }
-    if (shutdownFailure !== undefined) throw shutdownFailure;
+    if (shutdownFailure.present) throw shutdownFailure.value;
   };
 
   const closeRound: GrokPreparedTurn["closeRound"] = async () => {
