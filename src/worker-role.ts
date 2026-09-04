@@ -28,11 +28,11 @@ import {
 } from "./package-contracts/fixer-packet.ts";
 import {
   createWorkerSubmissionGate,
+  WORKER_DONE_STATUSES,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./worker-submission-gates.ts";
-import { WORKER_DONE_STATUSES } from "./worker-submission-gates.ts";
 import {
   fixerBashSeatbeltDenyReason,
   matchFixerBashForbiddenLiteral,

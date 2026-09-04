@@ -21,10 +21,16 @@
  * Lawful province non-dispatch release (`pass` on a dispatch tool) opens no
  * round and must not throw (#597 / ADR 0074 gate-non-mandatory).
  * True non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
+ * Historical dispatch↔officer pairing requires a shared typed
+ * `ak_auditor_parent_attempt_binding.parent.attemptEntryId` — never seat/time guessing.
+ * An orphan accepted dispatch must not consume a later same-seat direct officer.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
+} from "./compliance-transport.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
@@ -84,6 +90,18 @@ const OFFICER_ARG_ALIASES: Readonly<Record<string, "inspector" | "notary">> = {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/** Typed parent-attempt id from ak_auditor_parent_attempt_binding — durable invocation association. */
+function extractAttemptEntryId(rows: readonly LedgerSessionRow[]): string | undefined {
+  for (const row of rows) {
+    if (row.type !== "custom" || row.customType !== AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) continue;
+    if (!isRecord(row.data) || !isRecord(row.data.parent)) continue;
+    const id = row.data.parent.attemptEntryId;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return undefined;
+}
+
 
 /** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */
 function isMissingDirectoryError(error: unknown): boolean {
@@ -214,6 +232,8 @@ type ClassifiedVolume =
       readonly officer: "inspector" | "notary";
       readonly status: string;
       readonly reason?: string;
+      /** Present only when the volume carries ak_auditor_parent_attempt_binding. */
+      readonly attemptEntryId?: string;
     }
   | {
       readonly kind: "officer";
@@ -224,6 +244,7 @@ type ClassifiedVolume =
       readonly findings: readonly string[];
       readonly findingsCount: number;
       readonly officerWallMs: number;
+      readonly attemptEntryId?: string;
     };
 
 async function classifyAuditorVolume(
@@ -237,6 +258,7 @@ async function classifyAuditorVolume(
   if (call === undefined) return undefined;
 
   const span = requireAcceptedGateSpan(rows, filePath);
+  const attemptEntryId = extractAttemptEntryId(rows);
   if (!call.accepted) {
     // Rejected historical dispatch is not a pairing key — omit it so a later
     // independent direct officer summons remains its own round.
@@ -270,6 +292,7 @@ async function classifyAuditorVolume(
       officer,
       status,
       ...(reason === undefined ? {} : { reason }),
+      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
     };
   }
 
@@ -289,6 +312,7 @@ async function classifyAuditorVolume(
     findings,
     findingsCount,
     officerWallMs: span.wallMs,
+    ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
   };
 }
 
@@ -314,7 +338,14 @@ function pairGateRounds(
       const candidate = ordered[j]!;
       if (candidate.kind !== "officer") continue;
       if (candidate.officer !== vol.officer) continue;
-      // First unused later officer with matching identity.
+      // Durable invocation association — seat/time alone must not pair.
+      if (
+        vol.attemptEntryId === undefined
+        || candidate.attemptEntryId === undefined
+        || candidate.attemptEntryId !== vol.attemptEntryId
+      ) {
+        continue;
+      }
       match = { index: j, officer: candidate };
       break;
     }

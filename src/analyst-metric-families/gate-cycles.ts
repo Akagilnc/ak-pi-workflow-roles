@@ -5,7 +5,10 @@
  * Emits per-leg round counts / officer wall / terminal status, plus by-officer
  * bounce rate and mean officer wall. findings prose is never read (count only).
  */
-import type { AnalystGateCycleRound } from "../analyst-gate-cycles-read.ts";
+import type {
+  AnalystGateCycleOrigin,
+  AnalystGateCycleRound,
+} from "../analyst-gate-cycles-read.ts";
 import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
 
@@ -15,6 +18,8 @@ export type AnalystGateCyclesRoundRow = {
   readonly status: string;
   readonly officerWallMs: number;
   readonly findingsCount: number;
+  /** Direct summons vs historical province-paired dispatch. */
+  readonly origin: AnalystGateCycleOrigin;
 };
 
 export type AnalystGateCyclesLeg = {
@@ -53,6 +58,7 @@ function projectRound(round: AnalystGateCycleRound): AnalystGateCyclesRoundRow {
     status: round.status,
     officerWallMs: round.officerWallMs,
     findingsCount: round.findingsCount,
+    origin: round.origin,
   };
 }
 

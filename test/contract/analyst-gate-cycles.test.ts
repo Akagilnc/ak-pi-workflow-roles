@@ -38,13 +38,13 @@ const GATE_JUDGE_DIR = `${GATE_JUDGE_RUN}@judge`;
  * bounceRate = 5/7.
  */
 const EXPECTED_SEVEN_ROUNDS = [
-  { roundIndex: 1, officer: "notary" as const, status: "bounce", officerWallMs: 10_000, findingsCount: 3 },
-  { roundIndex: 2, officer: "notary" as const, status: "bounce", officerWallMs: 20_000, findingsCount: 1 },
-  { roundIndex: 3, officer: "notary" as const, status: "bounce", officerWallMs: 30_000, findingsCount: 1 },
-  { roundIndex: 4, officer: "notary" as const, status: "bounce", officerWallMs: 40_000, findingsCount: 1 },
-  { roundIndex: 5, officer: "notary" as const, status: "pass", officerWallMs: 50_000, findingsCount: 0 },
-  { roundIndex: 6, officer: "notary" as const, status: "bounce", officerWallMs: 60_000, findingsCount: 1 },
-  { roundIndex: 7, officer: "notary" as const, status: "pass", officerWallMs: 70_000, findingsCount: 0 },
+  { roundIndex: 1, officer: "notary" as const, status: "bounce", officerWallMs: 10000, findingsCount: 3, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 2, officer: "notary" as const, status: "bounce", officerWallMs: 20000, findingsCount: 1, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 3, officer: "notary" as const, status: "bounce", officerWallMs: 30000, findingsCount: 1, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 4, officer: "notary" as const, status: "bounce", officerWallMs: 40000, findingsCount: 1, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 5, officer: "notary" as const, status: "pass", officerWallMs: 50000, findingsCount: 0, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 6, officer: "notary" as const, status: "bounce", officerWallMs: 60000, findingsCount: 1, origin: { kind: "historical_dispatch" as const } },
+  { roundIndex: 7, officer: "notary" as const, status: "pass", officerWallMs: 70000, findingsCount: 0, origin: { kind: "historical_dispatch" as const } },
 ];
 
 function iso(msFromBase: number): string {
@@ -83,6 +83,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
         endedAt: iso(round.dEnd),
         toolName: "ak_menxia_output",
         args: { status: "dispatch", officer: "fubaolang" },
+        attemptEntryId: `attempt-${index + 1}`,
       }),
       "utf8",
     );
@@ -95,6 +96,7 @@ async function writeSevenRoundHistoricalFixture(auditorDir: string): Promise<voi
         endedAt: iso(round.oEnd),
         toolName: "ak_fubaolang_output",
         args: { status: round.status, findings: round.findings },
+        attemptEntryId: `attempt-${index + 1}`,
       }),
       "utf8",
     );
@@ -131,10 +133,10 @@ async function writeCurrentNameSingleRound(auditorDir: string): Promise<void> {
   );
 }
 
-/** One lawful accepted round + rejected / no-result terminals that must not pair. */
+/** One lawful accepted round + rejected / orphan terminals that must not steal later direct officers. */
 async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
   await mkdir(auditorDir, { recursive: true });
-  // Lawful round 1 (current English faces)
+  // Lawful round 1 (current English faces) — shared durable attempt association.
   await writeFile(
     join(auditorDir, "d01_gatekeeper.jsonl"),
     gateToolSessionJsonl({
@@ -143,6 +145,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       endedAt: iso(1_000),
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "inspector" },
+      attemptEntryId: "attempt-lawful",
     }),
     "utf8",
   );
@@ -154,12 +157,26 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       endedAt: iso(11_000),
       toolName: "ak_inspector_output",
       args: { status: "pass", findings: [] },
+      attemptEntryId: "attempt-lawful",
+    }),
+    "utf8",
+  );
+  // Accepted orphan same-seat dispatch — must not consume a later direct officer.
+  await writeFile(
+    join(auditorDir, "d03_gatekeeper_orphan.jsonl"),
+    gateToolSessionJsonl({
+      id: "disp-orphan",
+      startedAt: iso(15_000),
+      endedAt: iso(16_000),
+      toolName: "ak_gatekeeper_output",
+      args: { status: "dispatch", officer: "inspector" },
+      attemptEntryId: "attempt-orphan",
     }),
     "utf8",
   );
   // Rejected dispatch — must not open a round even with a later officer
   await writeFile(
-    join(auditorDir, "d03_gatekeeper_rejected.jsonl"),
+    join(auditorDir, "d04_gatekeeper_rejected.jsonl"),
     gateToolSessionJsonl({
       id: "disp-rej",
       startedAt: iso(20_000),
@@ -167,34 +184,37 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "inspector" },
       receipt: "rejected",
+      attemptEntryId: "attempt-rejected",
     }),
     "utf8",
   );
   await writeFile(
-    join(auditorDir, "o04_inspector_after_rej.jsonl"),
+    join(auditorDir, "o05_inspector_after_rej.jsonl"),
     gateToolSessionJsonl({
       id: "off-after-rej",
       startedAt: iso(21_000),
       endedAt: iso(31_000),
       toolName: "ak_inspector_output",
       args: { status: "bounce", findings: ["z"] },
+      attemptEntryId: "attempt-direct",
     }),
     "utf8",
   );
   // Accepted dispatch + officer toolCall with no toolResult — unpaired, not a round
   await writeFile(
-    join(auditorDir, "d05_gatekeeper_orphan.jsonl"),
+    join(auditorDir, "d06_gatekeeper_orphan_notary.jsonl"),
     gateToolSessionJsonl({
-      id: "disp-orphan",
+      id: "disp-orphan-notary",
       startedAt: iso(40_000),
       endedAt: iso(41_000),
       toolName: "ak_gatekeeper_output",
       args: { status: "dispatch", officer: "notary" },
+      attemptEntryId: "attempt-orphan-notary",
     }),
     "utf8",
   );
   await writeFile(
-    join(auditorDir, "o06_notary_no_result.jsonl"),
+    join(auditorDir, "o07_notary_no_result.jsonl"),
     gateToolSessionJsonl({
       id: "off-no-result",
       startedAt: iso(41_000),
@@ -202,6 +222,7 @@ async function writeRejectedTerminalFixture(auditorDir: string): Promise<void> {
       toolName: "ak_notary_output",
       args: { status: "pass", findings: [] },
       receipt: "omit",
+      attemptEntryId: "attempt-orphan-notary",
     }),
     "utf8",
   );
@@ -284,15 +305,17 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     }, { home });
     const currentLeg = gateSection(current.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(currentLeg);
-    assert.deepEqual(currentLeg.rounds, [
+        assert.deepEqual(currentLeg.rounds, [
       {
         roundIndex: 1,
         officer: "inspector",
         status: "bounce",
         officerWallMs: 10_000,
         findingsCount: 2,
+        origin: { kind: "direct" },
       },
     ]);
+
 
     // Rejected/no-result historical terminals do not form rounds.
     await rm(judgeAuditorDir(home), { recursive: true, force: true });
@@ -303,9 +326,10 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     }, { home });
     const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(rejectedLeg);
-    // Rejected dispatch is omitted; the later officer is an independent direct round.
+    // Rejected dispatch is omitted; orphan accepted same-seat dispatch must not steal the later officer.
     // Accepted dispatch without an accepted officer receipt still forms no round.
     assert.equal(rejectedLeg.roundCount, 2, "rejected dispatch must not swallow a later direct officer round");
+    // Orphan accepted same-seat dispatch must not mark the later officer as historical.
     assert.deepEqual(rejectedLeg.rounds, [
       {
         roundIndex: 1,
@@ -313,6 +337,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
         status: "pass",
         officerWallMs: 10_000,
         findingsCount: 0,
+        origin: { kind: "historical_dispatch" },
       },
       {
         roundIndex: 2,
@@ -320,8 +345,10 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
         status: "bounce",
         officerWallMs: 10_000,
         findingsCount: 1,
+        origin: { kind: "direct" },
       },
     ]);
+
     assert.deepEqual(gateSection(rejected.page).byOfficer, [
       {
         officer: "inspector",
