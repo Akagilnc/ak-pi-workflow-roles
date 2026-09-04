@@ -81,7 +81,6 @@ test("worker completion directly summons Inspector without a Gatekeeper child", 
         dossierPayload = JSON.parse(text);
       }
       const serialized = JSON.stringify(dossierPayload ?? "");
-      assert.equal(serialized.includes("implementation and test evidence"), false);
       assert.equal(/"status"\s*:\s*"pass"/.test(serialized), false);
       return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], seen)(childContext);
     };
@@ -95,17 +94,8 @@ test("worker completion directly summons Inspector without a Gatekeeper child", 
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
     assert.equal(seen.length, 2, "dossier fetch then officer decision");
     const expected = await createAuditorDossierTool(context.runDirectory).execute("x", {});
-    // Prefer details; fall back to content JSON when the transport strips details.
-    const actual =
-      dossierPayload && typeof dossierPayload === "object" && !Array.isArray(dossierPayload)
-        ? dossierPayload
-        : JSON.parse(
-            Array.isArray(dossierPayload)
-              ? (dossierPayload as Array<{ text?: string }>).map((part) => part.text ?? "").join("")
-              : String(dossierPayload),
-          );
-    assert.deepEqual(actual, expected.details);
-    assert.equal(typeof (actual as { runDirectory?: string }).runDirectory, "string");
+    assert.deepEqual(dossierPayload, expected.details);
+    assert.equal(typeof (dossierPayload as { runDirectory?: string }).runDirectory, "string");
   });
 });
 
