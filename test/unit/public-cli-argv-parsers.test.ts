@@ -11,8 +11,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import type { DoctorOutput } from "../../src/doctor-contracts.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { sampleCompletedDoctorOutput } from "../helpers/doctor-fixtures.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitCoderInvocation,
@@ -183,48 +183,6 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
     assert.throws(() => parseDoctorArgv([...raw]), (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE", JSON.stringify(raw));
   }
 });
-
-function sampleCompletedDoctorOutput(
-  identity: { issueNumber: number; runsPath: string },
-): DoctorOutput {
-  return {
-    status: "completed",
-    case: identity,
-    findings: [],
-    cost: {
-      invocations: { count: 1, sources: ["review-001"] },
-      legs: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      modelApiTurns: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      outputTokens: { count: 7, sources: ["review-001/session/leg.jsonl"] },
-      toolCalls: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      retries: {
-        count: 0,
-        sources: [],
-        evidence: "literal run-dir naming",
-      },
-      statuses: [
-        { source: "review-001/session/leg.jsonl", status: "completed" },
-      ],
-      commits: [],
-      sessions: [
-        {
-          source: "review-001/session/leg.jsonl",
-          startedAt: "2026-08-01T05:01:18.580Z",
-          endedAt: "2026-08-01T05:01:20.000Z",
-          wallMilliseconds: 1420,
-          completion: "accepted",
-        },
-      ],
-      outputBytes: {
-        count: 1,
-        sources: ["review-001/session/leg.jsonl"],
-        payload: "raw JSONL bytes",
-        providerWireBytes: "unavailable",
-      },
-    },
-  };
-}
-
 
 test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
   const isUsage = (error: unknown): boolean =>
