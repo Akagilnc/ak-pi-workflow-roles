@@ -341,6 +341,37 @@ test("judge settlement does not revive a prior-attempt escalation on resume", as
   });
 });
 
+test("judge settlement treats missing run session as absence", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      "run-judge-missing@judge",
+    );
+    assert.equal(
+      await trySettleJudgeTerminalResult(
+        fixtureJudgeAdmitted({
+          runId: "missing",
+          bookKey,
+          projectRoot: project,
+          instruction: "",
+          instructionEmpty: true,
+          runDirectory: join(runDirectory, "nope"),
+        }),
+        piDurablePrincipalAuthority,
+      ),
+      undefined,
+    );
+  });
+});
+
 test("structurally empty request stays empty while attachments remain typed transport", () => {
   const empty = buildJudgeTransportPrompt(
     fixtureJudgeAdmitted({
