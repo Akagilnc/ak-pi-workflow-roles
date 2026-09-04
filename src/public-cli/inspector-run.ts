@@ -1,8 +1,8 @@
 /**
  * Public Inspector Role run: admit instruction/attachments → shared post-admission
- * coordinator → settle Terminal result (#568 / ADR 0074). #633: manual resume
- * continues the exact session. Dual path with gate-province dispatch; this module
- * is the direct command face.
+ * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
+ * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
+ * with gate-province dispatch; this module is the direct command face.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";

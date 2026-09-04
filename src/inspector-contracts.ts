@@ -1,6 +1,6 @@
 /**
  * Public Inspector (察院) terminating receipt contracts.
- * Lawful explicit releases: pass | bounce.
+ * Lawful explicit releases: pass | bounce | escalate.
  * Dual path: gate-dispatched and independently callable (#568 / ADR 0074).
  */
 
@@ -9,7 +9,8 @@ export const INSPECTOR_ACCEPTED_TEXT = "察院回执已接受";
 
 export type InspectorOutput =
   | { readonly status: "pass"; readonly findings?: unknown }
-  | { readonly status: "bounce"; readonly findings?: unknown };
+  | { readonly status: "bounce"; readonly findings?: unknown }
+  | { readonly status: "escalate"; readonly reason?: unknown; readonly findings?: unknown };
 
 export function validateRecordedInspectorOutput(value: unknown): InspectorOutput {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -21,7 +22,7 @@ export function validateRecordedInspectorOutput(value: unknown): InspectorOutput
   } catch {
     throw new Error("Inspector output has no execution discriminator");
   }
-  if (status === "pass" || status === "bounce") {
+  if (status === "pass" || status === "bounce" || status === "escalate") {
     return value as InspectorOutput;
   }
   throw new Error("Inspector output has no execution discriminator");
@@ -32,5 +33,7 @@ export function inspectorDecisiveFacts(output: InspectorOutput): Record<string, 
   const facts: Record<string, unknown> = { status: output.status };
   const findings = (output as { findings?: unknown }).findings;
   if (findings !== undefined) facts.findings = findings;
+  const reason = (output as { reason?: unknown }).reason;
+  if (reason !== undefined) facts.reason = reason;
   return facts;
 }

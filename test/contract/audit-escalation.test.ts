@@ -112,7 +112,13 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
     conflicts: ["conflict"],
     decisionGate: { question: "", options: [] as unknown[] },
   };
-  const delivered = { judgeStatus: "converged" as const, note: "keep-me" };
+  const delivered = {
+    judgeStatus: "converged" as const,
+    note: "keep-me",
+    reason: "role reason",
+    officer: "role officer",
+    findings: ["role finding"],
+  };
   const result = await disposeComplianceDecision(
     decision,
     {
@@ -129,6 +135,9 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
   assert.equal(result.details.judgeStatus, "converged");
   assert.equal(result.details.note, "keep-me");
+  assert.equal(result.details.reason, "role reason");
+  assert.equal(result.details.officer, "role officer");
+  assert.deepEqual(result.details.findings, ["role finding"]);
   assert.deepEqual(result.details.conflicts, ["conflict"]);
   // Audit gate always lives at auditDecisionGate — one fixed home.
   assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
@@ -137,6 +146,15 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   // Without delivered output, verdict fields are absent (negative control).
   const stripped = projectAuditEscalation(decision).details;
   assert.equal(stripped.note, undefined);
+
+  // Officer-owned facts cannot be filled by colliding parent-role fields.
+  const officer = projectAuditEscalation(
+    { status: "escalate", officer: "notary" },
+    delivered,
+  ).details;
+  assert.equal(officer.officer, "notary");
+  assert.equal(Object.hasOwn(officer, "reason"), false);
+  assert.equal(Object.hasOwn(officer, "findings"), false);
 });
 
 test("escalate face keeps role decisionGate and audit gate side by side", async () => {

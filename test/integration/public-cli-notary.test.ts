@@ -112,7 +112,8 @@ function scriptedNotarySession(
     details !== null &&
     "status" in details &&
     ((details as { status?: unknown }).status === "pass" ||
-      (details as { status?: unknown }).status === "bounce");
+      (details as { status?: unknown }).status === "bounce" ||
+      (details as { status?: unknown }).status === "escalate");
   return scriptedTerminatingToolSession({
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -402,7 +403,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
   });
 });
 
-test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
+test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -415,6 +416,11 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
         status: "bounce",
         findings: ["quote has no source"],
         disposition: "rewrite",
+      },
+      {
+        status: "escalate",
+        findings: ["quote authority ambiguous"],
+        reason: "need owner clarification",
       },
     ] as const;
 
@@ -438,13 +444,19 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
       assert.ok(result.terminal, `receipt ${receipt.status}`);
-      assert.equal(result.terminal.roleOutcome.kind, "accepted");
+      assert.equal(
+        result.terminal.roleOutcome.kind,
+        receipt.status === "escalate" ? "audit_escalation" : "accepted",
+      );
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(
         result.terminal.roleOutcome.status,
-        receipt.status,
+        receipt.status === "escalate" ? "audit_escalation" : receipt.status,
         `receipt ${receipt.status}`,
       );
+      if ("reason" in receipt) {
+        assert.equal(result.terminal.roleOutcome.decisiveFacts.reason, receipt.reason);
+      }
       assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
     }
   });

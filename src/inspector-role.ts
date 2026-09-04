@@ -23,11 +23,14 @@ export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "pass | bounce — 形状指引，非 schema 闸",
+        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
       }),
       findings: Type.Unknown({
         description: "随交卷留存的问题记录",
       }),
+      reason: Type.Optional(Type.Unknown({
+        description: "status 为 escalate 时的上呈理由",
+      })),
     }),
   ),
 );
@@ -44,7 +47,7 @@ export type InspectorRuntimeDependencies = {
 export const INSPECTOR_TOOL_SPEC = {
   name: INSPECTOR_OUTPUT_TOOL_NAME,
   label: "察院输出",
-  description: "察院终局回执，状态为 pass 或 bounce。",
+  description: "察院终局回执，状态为 pass、bounce 或 escalate。",
   promptSnippet: "察院终局回执",
   parameters: inspectorOutputSchema,
 } as const;

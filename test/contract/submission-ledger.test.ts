@@ -8,7 +8,7 @@ import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
+import { GatekeeperDecisionError, GatekeeperEscalationError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { AcceptedDetailsContractError } from "../../src/package-contracts/terminating-tools.ts";
@@ -229,12 +229,41 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
       details: projection?.decisiveFacts,
     }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
 
+    // A later attempt owns settlement: an earlier escalation cannot survive a
+    // current-attempt correctable outcome.
+    const retry = registerTool(f.root, async () => ({ content: [], details: {}, terminate: false }));
+    retry.context.sessionManager.getHeader = () => ({ type: "session", id: "run-ledger:retry" });
+    await retry.tool().execute("retry-non-final", {}, undefined, undefined, retry.context);
+    assert.equal(await readAuditEscalationSubmission(f.root, "run-ledger", f.root), undefined);
+
     // Audit escalation is not sealed and therefore does not lock the durable run.
-    const retry = registerTool(f.root);
-    await retry.start("after-audit");
-    await retry.tool().execute("after-audit", {}, undefined, undefined, retry.context);
-    await retry.close();
+    const acceptedRetry = registerTool(f.root);
+    acceptedRetry.context.sessionManager.getHeader = () => ({ type: "session", id: "run-ledger:accepted-retry" });
+    await acceptedRetry.start("after-audit");
+    await acceptedRetry.tool().execute("after-audit", {}, undefined, undefined, acceptedRetry.context);
+    await acceptedRetry.close();
     assert.equal((await readSealedSubmission(f.root, "run-ledger", f.root))?.status, "converged");
+  });
+});
+
+test("officer escalation keeps officer facts separate from the parent receipt", async () => {
+  await withLedgerFixture(async (f) => {
+    const parent = { status: "completed", report: "parent-report" };
+    const escalating = registerTool(
+      f.root,
+      async () => { throw new GatekeeperEscalationError({ status: "escalate", officer: "notary", reason: undefined, findings: ["f"], submission: {} }); },
+      packagedRoleOutputTool("coder")!,
+      "coder",
+    );
+    await escalating.start("coder-escalation", packagedRoleOutputTool("coder")!);
+    await escalating.tool().execute("coder-escalation", parent, undefined, undefined, escalating.context);
+    await escalating.close();
+    const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
+    assert.equal(projection?.decisiveFacts.status, "completed");
+    assert.equal(projection?.decisiveFacts.report, "parent-report");
+    assert.equal(projection?.decisiveFacts.officer, "notary");
+    assert.equal(typeof projection?.decisiveFacts.reason, "string");
+    assert.deepEqual(projection?.decisiveFacts.findings, ["f"]);
   });
 });
 
