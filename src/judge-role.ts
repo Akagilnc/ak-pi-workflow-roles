@@ -96,7 +96,7 @@ export function createJudgeRoleRuntime(
             // Gatekeeper runs after the draft is booked and before existing auditor.
             await pi.requireGatekeeperPass!({
               context: ctx,
-              subject: { kind: "judge_draft", material: JSON.stringify(verdict) },
+              subject: { kind: "judge_draft" },
               ...(signal === undefined ? {} : { signal }),
               hostActions,
               toolCallId,

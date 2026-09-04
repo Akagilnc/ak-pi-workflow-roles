@@ -2,6 +2,11 @@ import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
+import {
+  auditorRunDirectory,
+  createAuditorDossierTool,
+  persistGateSubmissionCandidate,
+} from "./auditor-dossier-tool.ts";
 import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
@@ -15,12 +20,12 @@ import {
 } from "./package-contracts/gatekeeper-output.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
-const SUBJECT_TOOL = "ak_gatekeeper_subject";
 
+/** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
 export type GatekeeperSubject =
-  | { readonly kind: "worker_completion"; readonly material: string }
-  | { readonly kind: "judge_draft"; readonly material: string }
-  | { readonly kind: "countersign_verdict"; readonly material: string };
+  | { readonly kind: "worker_completion" }
+  | { readonly kind: "judge_draft" }
+  | { readonly kind: "countersign_verdict" };
 
 export type GatekeeperResult =
   /**
@@ -114,15 +119,6 @@ export type GatekeeperRuntimeDependencies = {
 
 function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
-}
-
-function subjectTool(subject: GatekeeperSubject): AuditorDecisionTool {
-  return {
-    name: SUBJECT_TOOL,
-    description: "读取已受理卷宗；只供取阅，不评判不改动。",
-    parameters: Type.Object({}, { additionalProperties: false }),
-    async execute() { return result(JSON.stringify(subject), subject); },
-  };
 }
 
 /** Shared officer decision tool — open transport; projection owns legality. */
@@ -235,6 +231,14 @@ function projectOfficerDecision(
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
   const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
+  // Resolve once so dossier tool and child session share the same run binding (#632).
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
+  // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
+  const submissionCandidate =
+    runDirectory === undefined
+      ? undefined
+      : persistGateSubmissionCandidate(runDirectory, options.context);
   try {
     const officerRun = await executeAuditorChild({
       context: options.context,
@@ -243,9 +247,13 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       systemPrompt: await loadSoul(officer),
       prompt: "卷宗已受理。",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
-      dossierTool: subjectTool(options.subject),
+      // Same locator as 审刑院 — run directory + path identifiers only; no receipt body (#632).
+      dossierTool: createAuditorDossierTool(
+        runDirectory,
+        submissionCandidate === undefined ? undefined : { submissionCandidate },
+      ),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
+      ...(runDirectory === undefined ? {} : { runDirectory }),
     });
     if (officerRun.noReceiptLifecycle !== undefined) {
       return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
