@@ -12,7 +12,6 @@ import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
   gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
-  projectLawfulGatekeeperOutput,
 } from "./package-contracts/gatekeeper-output.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
@@ -189,19 +188,6 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
-function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
-  // Lawful dispatch/pass discriminant is owned by package-contracts; province
-  // wraps undefined into transport_failure while retaining the submission.
-  const projected = projectLawfulGatekeeperOutput(decision);
-  if (projected === undefined) return noUsableReleaseFailure("gatekeeper", decision);
-  if (projected.status === "dispatch") {
-    return { status: "dispatch", officer: projected.officer };
-  }
-  // Lawful non-dispatch release — province may pass without dispatching an officer
-  // (ADR 0074 gate-non-mandatory; gate-output-guide pass = 正常放行; #597).
-  return { status: "pass", findings: projected.findings ?? [] };
-}
-
 function projectOfficerDecision(
   officer: "inspector" | "notary",
   decision: unknown,
@@ -227,37 +213,14 @@ function projectOfficerDecision(
   return noUsableReleaseFailure(officer, decision);
 }
 
+/** Submission-gate summons: subject kind determines the officer without a province child. */
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
-  let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
+  const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
   try {
-    // Seat identity only — shared executor owns model config/registry/auth (#453 / ADR 0018).
-    provinceRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel: "Gatekeeper",
-      gateSeat: "gatekeeper",
-      systemPrompt: await loadSoul("gatekeeper"),
-      prompt: "卷宗已受理。",
-      tool: createGatekeeperOutputTool(),
-      dossierTool: subjectTool(options.subject),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-    });
-  } catch (error) {
-    return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
-  }
-  if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
-  }
-  const province = projectProvinceDecision(provinceRun.decision);
-  if (province.status !== "dispatch") return province;
-
-  const officer = province.officer;
-  try {
-    const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
     const officerRun = await executeAuditorChild({
       context: options.context,
-      roleLabel,
+      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
       gateSeat: officer,
       systemPrompt: await loadSoul(officer),
       prompt: "卷宗已受理。",
@@ -291,7 +254,7 @@ export async function requireGatekeeperPass(options: {
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
     // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`门下省 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
+    const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
       stage: typeof gatekeeper.stage;
       reason: string;
       submission?: unknown;

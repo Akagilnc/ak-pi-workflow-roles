@@ -27,7 +27,6 @@ import {
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
 } from "../../src/gatekeeper-role.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -383,18 +382,16 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
-  const responses = [
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
-    fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })),
-  ];
-  // The child reaches this faux over the real OpenAI-completions HTTP server (models.json),
-  // which calls faux.provider.stream — so the scripted responses live on the faux provider
-  // itself, not on a parent-only modelRegistry the child no longer reads.
-  faux.provider.stream = (() => {
-    const next = responses.shift();
-    if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+  // The child reaches this faux over the real OpenAI-completions HTTP server (models.json).
+  // Choose the only registered direct officer tool; no province response is scripted.
+  faux.provider.stream = ((_model: unknown, context: { tools?: Array<{ name?: string; function?: { name?: string } }>; systemPrompt?: string }) => {
+    const names = new Set(context.tools?.map((entry) => entry.name ?? entry.function?.name));
+    const inspector = names.has(INSPECTOR_OUTPUT_TOOL) || context.systemPrompt?.includes("# 察院 Soul");
+    const tool = inspector ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
     const stream = createAssistantMessageEventStream();
-    queueMicrotask(() => stream.end(next));
+    queueMicrotask(() => stream.end(
+      fauxAssistantMessage(fauxToolCall(tool, { status: "pass", findings: [] })),
+    ));
     return stream;
   }) as any;
   faux.provider.streamSimple = faux.provider.stream as any;
@@ -410,7 +407,6 @@ async function workerCompletionGatekeeperHarness(options: {
   execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
   toolName: string;
   output: unknown;
-  unusableSubmission?: Record<string, unknown>;
   officer?: "inspector" | "notary";
   officerUnusableSubmission?: Record<string, unknown>;
   passingRuns?: number;
@@ -419,7 +415,6 @@ async function workerCompletionGatekeeperHarness(options: {
     execute,
     toolName,
     output,
-    unusableSubmission = { status: "not-a-release" } as Record<string, unknown>,
     officer = "inspector",
     officerUnusableSubmission = { status: "not-an-audit-verdict" } as Record<string, unknown>,
     passingRuns = 1,
@@ -433,33 +428,14 @@ async function workerCompletionGatekeeperHarness(options: {
   // delivery budget and settle a typed no_receipt lifecycle. Both are consumed
   // over the real OpenAI-completions round-trip in sequence.
   const responses: AssistantMessage[] = [
-    // 1. Gatekeeper child transport failure throws.
-    fauxAssistantMessage([{ type: "text", text: "" }], { stopReason: "error", errorMessage: "Gatekeeper transport dropped" }),
-    // 2. Unusable Gatekeeper submission projects unusable_release error.
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, unusableSubmission)),
-    // 3. Gatekeeper child exhausts delivery budget → no_receipt (initial + 2 receipt prompts).
-    fauxAssistantMessage("no decision"),
-    fauxAssistantMessage("no decision"),
-    fauxAssistantMessage("no decision"),
-    // 4. Gatekeeper dispatches; Officer child transport failure throws.
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage([{ type: "text", text: "" }], { stopReason: "error", errorMessage: "Officer transport dropped" }),
-    // 5. Unusable officer submission projects unusable_release error.
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage(fauxToolCall(officerToolName, officerUnusableSubmission)),
-    // 6. Officer child exhausts delivery budget → no_receipt.
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage("no decision"),
     fauxAssistantMessage("no decision"),
     fauxAssistantMessage("no decision"),
-    // 7. Officer bounces.
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage(fauxToolCall(officerToolName, { status: "bounce", findings: ["add a focused regression"] })),
-    // 8. Passing gate runs project pass.
-    ...Array.from({ length: passingRuns }, () => [
-      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
-      fauxAssistantMessage(fauxToolCall(officerToolName, { status: "pass", findings: [] })),
-    ]).flat(),
+    ...Array.from({ length: passingRuns }, () =>
+      fauxAssistantMessage(fauxToolCall(officerToolName, { status: "pass", findings: [] }))),
   ];
   // The child reaches this faux over the real OpenAI-completions HTTP server
   // (models.json), which calls faux.provider.stream — so the scripted responses
@@ -483,24 +459,7 @@ async function workerCompletionGatekeeperHarness(options: {
           return true;
         });
       };
-      // Transport / unusable release are plain Error via failInfrastructure — not GatekeeperDecisionError.
-      await reject("transport", (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      await reject("unusable-release", (error) => {
-        assert.equal(error instanceof GatekeeperDecisionError, false);
-        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
-        assert.equal(typed.stage, "gatekeeper");
-        assert.ok(typeof typed.reason === "string" && typed.reason.length > 0);
-        assert.deepEqual(typed.submission, unusableSubmission);
-      });
-      await reject("no-receipt", (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "no_receipt");
-        if (error.result.status === "no_receipt") {
-          assert.equal(error.result.stage, "gatekeeper");
-          assert.equal(error.result.facts.acceptedReceipt, false);
-          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
-        }
-      });
+      // Direct officer transport / unusable release are infrastructure failures.
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
       await reject(`${officer}-unusable-release`, (error) => {
         assert.equal(error instanceof GatekeeperDecisionError, false);
@@ -586,7 +545,6 @@ async function realEntryGateModelHarness(options: {
   }
   const seen: Array<{ provider: string; id: string }> = [];
   const responses = [
-    fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer })),
     fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
   ];
   faux.provider.stream = (() => {
@@ -1429,7 +1387,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     const bounceSubmission = { status: "bounce", findings };
     const expected = {
       status: "bounce" as const,
-      officer: "inspector" as const,
+      officer: "notary" as const,
       disposition: "rewrite" as const,
       findings,
       submission: bounceSubmission,
@@ -1437,8 +1395,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
     const responses = [
-      fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })),
-      fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, bounceSubmission)),
+      fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, bounceSubmission)),
     ];
     // The gatekeeper child reaches this faux over the real OpenAI-completions
     // HTTP server registered in the ambient models.json.
@@ -1483,7 +1440,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
   });
 });
 
-test("coder completed submissions traverse the real Gatekeeper provider gate until pass", async () => {
+test("coder completed submissions traverse the direct Inspector gate until pass", async () => {
   const request = "Apply the approved plan.";
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
@@ -1517,11 +1474,11 @@ test("coder completed submissions traverse the real Gatekeeper provider gate unt
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
-  assert.equal(tracer.providerRequests, 17);
+  assert.equal(tracer.providerRequests, 7);
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("fixer submissions of every status traverse the real Gatekeeper provider gate", async () => {
+test("fixer submissions of every status traverse the direct Inspector gate", async () => {
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1547,7 +1504,7 @@ test("fixer submissions of every status traverse the real Gatekeeper provider ga
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
     // completed + partially_completed + unfinished + planned + plan-refused + apply-refused
-    // each consume one pass pair.
+    // each consume one direct Inspector pass.
     passingRuns: 6,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
@@ -1598,20 +1555,20 @@ test("fixer submissions of every status traverse the real Gatekeeper provider ga
     (await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"))).terminate,
     true,
   );
-  // planned + plan-refused + apply-refused each consume one pass pair (6 requests).
-  assert.equal(tracer.providerRequests, beforeAllStatuses + 6);
-  // reject matrix (15) + six pass pairs (12) = 27.
-  assert.equal(tracer.providerRequests, 27);
+  // planned + plan-refused + apply-refused each consume one direct pass.
+  assert.equal(tracer.providerRequests, beforeAllStatuses + 3);
+  // Direct-officer reject matrix (6 requests) + six passes = 12.
+  assert.equal(tracer.providerRequests, 12);
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("judge submissions traverse the real Gatekeeper provider gate before auditor", async () => {
+test("judge submissions traverse the direct Notary gate before auditor", async () => {
   let auditCalls = 0;
   const { harness, tool } = await startJudge(async () => {
     auditCalls += 1;
     return { status: "pass" };
   });
-  // Full 8-reject+pass matrix once; production does not branch on judgeStatus.
+  // Full direct-Notary reject+pass matrix once; production does not branch on judgeStatus.
   const continueVerdict = {
     judgeStatus: "continue" as const,
     fix: { summary: "tighten the gate" },
@@ -1636,8 +1593,8 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   });
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
-  assert.equal(auditCalls, 1, "auditor runs only after Gatekeeper pass");
-  assert.equal(tracer.providerRequests, 17);
+  assert.equal(auditCalls, 1, "auditor runs only after Notary pass");
+  assert.equal(tracer.providerRequests, 7);
   assert.equal(tracer.remainingResponses, 0);
 
   // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
@@ -1668,268 +1625,6 @@ test("judge submissions traverse the real Gatekeeper provider gate before audito
   assert.equal(secondGate.providerRequests, 1);
 });
 
-// #453: gate model selection through real coder/fixer/judge submit tools.
-test("#453 real coder/fixer/judge entries observe gate model inheritance and overrides", async () => {
-  const completedCoder = { status: "completed", report: "TDD and verification evidence" };
-  const completedFixer = {
-    status: "completed" as const,
-    report: "repair complete",
-    classResults: [{
-      name: "Gate",
-      disposition: "completed" as const,
-      searchScope: "all",
-      exceptions: [],
-      commitSha: "a".repeat(40),
-    }],
-  };
-  const continueVerdict = {
-    judgeStatus: "continue" as const,
-    fix: { summary: "tighten the gate" },
-    note: "ticket-review",
-  };
-
-  const startCoder = async () => {
-    const request = "Apply the approved plan.";
-    const harness = extensionHarness(undefined, {
-      "ak-coder-task": "/materials/approved.md",
-      "ak-coder-phase": "apply",
-    });
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
-    const runtime = createCoderRoleRuntime(
-      piHostAdapter.host,
-      {
-        loadSoul: async () => "CODER LAW",
-        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-        loadCanonicalSkillBinding: async () => tddBinding(),
-      },
-      testHostActions(),
-    );
-    await runtime.activate();
-    // Completed coder requires the canonical tdd expansion arming path.
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.({
-      systemPrompt: "BASE",
-      prompt: expandedTdd(request),
-    }, { abort() {}, mode: "tui" });
-    return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
-  };
-  const startFixer = async () => {
-    const harness = extensionHarness(undefined, {
-      "ak-fix-packet": "/materials/fix.md",
-      "ak-fixer-phase": "apply",
-    });
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
-    const runtime = createFixerRoleRuntime(
-      piHostAdapter.host,
-      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      testHostActions(),
-    );
-    await runtime.activate();
-    return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
-  };
-
-  await withActivationHome({ prefix: "ak-453-gate-model-" }, async ({ home }) => {
-    // Unconfigured: all three real entries inherit the parent session model.
-    for (const entry of [
-      {
-        name: "coder",
-        officer: "inspector" as const,
-        start: startCoder,
-        output: completedCoder,
-        toolName: CODER_OUTPUT_TOOL_NAME,
-      },
-      {
-        name: "fixer",
-        officer: "inspector" as const,
-        start: startFixer,
-        output: completedFixer,
-        toolName: FIXER_OUTPUT_TOOL_NAME,
-      },
-      {
-        name: "judge",
-        officer: "notary" as const,
-        start: async () => startJudge(async () => ({ status: "pass" as const })),
-        output: continueVerdict,
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-      },
-    ]) {
-      if (entry.name === "judge") {
-        const { harness, tool } = await entry.start() as { harness: any; tool: any };
-        const tracer = await realEntryGateModelHarness({ officer: entry.officer });
-        const context = tracer.context(`${entry.name}-inherit`, entry.toolName);
-        const { sealed, pending } = await acceptThroughTypedRoundClosure({
-          handlers: harness.handlers,
-          tool,
-          toolCallId: `${entry.name}-inherit`,
-          toolName: entry.toolName,
-          output: entry.output,
-          context,
-        });
-        assert.equal(pending.terminate, undefined);
-        assert.deepEqual(sealed.decisiveFacts, entry.output);
-        assert.deepEqual(
-          tracer.seen,
-          [
-            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-          ],
-          `${entry.name} unconfigured gate seats inherit parent model`,
-        );
-      } else {
-        const tool = await entry.start() as any;
-        const tracer = await realEntryGateModelHarness({ officer: entry.officer });
-        const accepted = await tool.execute(
-          `${entry.name}-inherit`,
-          entry.output,
-          undefined,
-          undefined,
-          tracer.context(`${entry.name}-inherit`, entry.toolName),
-        );
-        assert.equal(accepted.terminate, true, `${entry.name} must terminate after gate pass`);
-        assert.deepEqual(
-          tracer.seen,
-          [
-            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-            { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-          ],
-          `${entry.name} unconfigured gate seats inherit parent model`,
-        );
-      }
-    }
-
-    // gatekeeper-only: province + officer both use the produced gatekeeper page.
-    const gatekeeperOnlySeats = {
-      gatekeeper: { provider: "xai", model: "gate-only-model", thinking: "high" },
-      inspector: { provider: "xai", model: "gate-only-model", thinking: "high" },
-      notary: { provider: "xai", model: "gate-only-model", thinking: "high" },
-    };
-    for (const officer of ["inspector", "notary"] as const) {
-      const tool = await startCoder();
-      const tracer = await realEntryGateModelHarness({
-        officer,
-        catalog: [{ provider: "xai", id: "gate-only-model" }],
-        seats: gatekeeperOnlySeats,
-      });
-      const accepted = await tool.execute(
-        `gate-only-${officer}`,
-        completedCoder,
-        undefined,
-        undefined,
-        tracer.context(`gate-only-${officer}`, CODER_OUTPUT_TOOL_NAME),
-      );
-      assert.equal(accepted.terminate, true);
-      assert.deepEqual(tracer.seen, [
-        { provider: "xai", id: "gate-only-model" },
-        { provider: "xai", id: "gate-only-model" },
-      ]);
-    }
-
-    // Own officer overrides win; inspector/notary do not cross-wire.
-    const ownOverrideSeats = {
-      gatekeeper: { provider: "xai", model: "gate-model", thinking: "high" },
-      inspector: { provider: "openai-codex", model: "inspector-model", thinking: "medium" },
-      notary: { provider: "openai-codex", model: "notary-model", thinking: "high" },
-    };
-    const catalog = [
-      { provider: "xai", id: "gate-model" },
-      { provider: "openai-codex", id: "inspector-model" },
-      { provider: "openai-codex", id: "notary-model" },
-    ];
-    {
-      const tool = await startCoder();
-      const tracer = await realEntryGateModelHarness({ officer: "inspector", catalog, seats: ownOverrideSeats });
-      assert.equal(
-        (await tool.execute(
-          "own-inspector",
-          completedCoder,
-          undefined,
-          undefined,
-          tracer.context("own-inspector", CODER_OUTPUT_TOOL_NAME),
-        )).terminate,
-        true,
-      );
-      assert.deepEqual(tracer.seen, [
-        { provider: "xai", id: "gate-model" },
-        { provider: "openai-codex", id: "inspector-model" },
-      ]);
-    }
-    {
-      const tool = await startCoder();
-      const tracer = await realEntryGateModelHarness({ officer: "notary", catalog, seats: ownOverrideSeats });
-      assert.equal(
-        (await tool.execute(
-          "own-notary",
-          completedCoder,
-          undefined,
-          undefined,
-          tracer.context("own-notary", CODER_OUTPUT_TOOL_NAME),
-        )).terminate,
-        true,
-      );
-      assert.deepEqual(tracer.seen, [
-        { provider: "xai", id: "gate-model" },
-        { provider: "openai-codex", id: "notary-model" },
-      ]);
-    }
-
-    // A produced page of parent-inherited seats (no explicit override) restores
-    // parent inheritance.
-    {
-      const tool = await startCoder();
-      const tracer = await realEntryGateModelHarness({
-        officer: "inspector",
-        catalog, // leftover catalog must not apply without explicit produced seats
-      });
-      assert.equal(
-        (await tool.execute(
-          "unset-restore",
-          completedCoder,
-          undefined,
-          undefined,
-          tracer.context("unset-restore", CODER_OUTPUT_TOOL_NAME),
-        )).terminate,
-        true,
-      );
-      assert.deepEqual(tracer.seen, [
-        { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-        { provider: tracer.parentModel.provider, id: tracer.parentModel.id },
-      ]);
-    }
-
-    // Explicit override auth failure is loud transport failure — no parent fallback.
-    const authFailSeats = {
-      gatekeeper: { provider: "xai", model: "auth-fail-model" },
-      inspector: { provider: "xai", model: "auth-fail-model" },
-      notary: { provider: "xai", model: "auth-fail-model" },
-    };
-    {
-      const tool = await startCoder();
-      const tracer = await realEntryGateModelHarness({
-        officer: "inspector",
-        catalog: [{ provider: "xai", id: "auth-fail-model" }],
-        authFailIds: new Set(["auth-fail-model"]),
-        seats: authFailSeats,
-      });
-      await assert.rejects(
-        tool.execute(
-          "auth-fail",
-          completedCoder,
-          undefined,
-          undefined,
-          tracer.context("auth-fail", CODER_OUTPUT_TOOL_NAME),
-        ),
-        (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.equal(error instanceof GatekeeperDecisionError, false);
-          assert.match(error.message, /authentication failed|override credentials missing/i);
-          return true;
-        },
-      );
-      assert.deepEqual(tracer.seen, [], "auth failure must not reach child completion");
-    }
-  });
-});
-
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
   // #319 Batch 3 (M1): lightweight expansion-binding API seam.
   // Publish-surface packaged Pi coverage stays in package-entrypoint (M1.4/M1.5).
@@ -1948,13 +1643,9 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     });
     const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
     const model = faux.getModel();
-    // Each completed/refused submission traverses the gatekeeper province then
-    // the inspector seat — two child turns. Provide a generous alternating script
-    // (dispatch → pass) so any single traversal is served over the real
-    // OpenAI-completions round-trip; the unused tail is simply left queued.
+    // Completed/refused submissions directly summon Inspector.
     const responses: AssistantMessage[] = [];
     for (let i = 0; i < 20; i += 1) {
-      responses.push(fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })));
       responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
     }
     faux.setResponses(responses);
@@ -2065,7 +1756,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const model = faux.getModel();
     const responses: AssistantMessage[] = [];
     for (let i = 0; i < 4; i += 1) {
-      responses.push(fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" })));
       responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
     }
     faux.setResponses(responses);
@@ -2175,7 +1865,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   }
 
   // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
-  // and still traverses the Gatekeeper province gate.
+  // and still traverses the direct Inspector gate.
   {
     const harness = await start();
     const refused = {
@@ -2200,7 +1890,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           thinkingLevel: "off",
         }),
       )).details, refused);
-      assert.equal(harness.providerRequests(), requestsBeforeRefusal + 2);
+      assert.equal(harness.providerRequests(), requestsBeforeRefusal + 1);
       await assert.rejects(
         refusalTool.execute(
           "coder-mixed",
