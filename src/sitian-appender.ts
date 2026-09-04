@@ -95,7 +95,7 @@ function readIdentityClaim(claimPath: string): IdentityClaimRead {
     if (errorCodeOf(error) === 'ENOENT') return { kind: "absent" };
     throw new SitianInfrastructureError(
       `Sitian identity claim is unreadable at ${claimPath}: ${describeErrorIdentity(error)}; holder liveness unverifiable, claim left in place`,
-      { cause: error },
+      { cause: error, failureDisposition: "unreadable-claim" },
     );
   }
   const claim = parseIdentityClaim(contents);
@@ -112,7 +112,7 @@ function readRecoveryHolderPid(recoveryPath: string): RecoveryHolderRead {
     if (errorCodeOf(error) === 'ENOENT') return { kind: "absent" };
     throw new SitianInfrastructureError(
       `Sitian identity recovery token is unreadable at ${recoveryPath}: ${describeErrorIdentity(error)}; holder liveness unverifiable, token left in place`,
-      { cause: error },
+      { cause: error, failureDisposition: "unreadable-recovery" },
     );
   }
   const line = contents.split('\n', 1)[0] ?? '';
@@ -204,6 +204,7 @@ function releaseIdentityArtifactsAfterPublish(
   if (published === undefined) {
     throw new SitianInfrastructureError(
       `Sitian identity claim artifacts at ${claimPath} cannot be released: canonical row for identity ${identity} is not durably visible at ${recordFile}`,
+      { failureDisposition: "row-invisible" },
     );
   }
   const failures: Error[] = [];
@@ -214,13 +215,13 @@ function releaseIdentityArtifactsAfterPublish(
   if (failures.length === 1) {
     throw new SitianInfrastructureError(
       `Sitian identity claim artifacts at ${claimPath} could not be released after canonical row for identity ${identity} was committed at ${recordFile}: ${describeErrorIdentity(failures[0])}`,
-      { cause: failures[0] },
+      { cause: failures[0], failureDisposition: "post-commit-cleanup" },
     );
   }
   if (failures.length > 1) {
     throw new SitianInfrastructureError(
       `Sitian identity claim artifacts at ${claimPath} could not be released after canonical row for identity ${identity} was committed at ${recordFile}: ${failures.map(describeErrorIdentity).join('; ')}`,
-      { cause: new AggregateError(failures, 'Sitian identity claim sidecar cleanup failures') },
+      { cause: new AggregateError(failures, 'Sitian identity claim sidecar cleanup failures'), failureDisposition: "post-commit-cleanup" },
     );
   }
   return published;
@@ -241,6 +242,7 @@ function publishIdentityRow(
   if (published === undefined) {
     throw new SitianInfrastructureError(
       `Sitian identity row for ${identity} was written but is not durably visible at ${recordFile}`,
+      { failureDisposition: "row-invisible" },
     );
   }
   return published;
@@ -279,11 +281,13 @@ function resolveContendedIdentityClaim(
     if (raced !== undefined) return raced;
     throw new SitianInfrastructureError(
       `Sitian identity claim at ${claimPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
+      { failureDisposition: "disappeared" },
     );
   }
   if (claimRead.kind === 'malformed') {
     throw new SitianInfrastructureError(
       `Sitian identity claim at ${claimPath} is malformed; refusing to treat as disappeared, claim left in place`,
+      { failureDisposition: "malformed-claim" },
     );
   }
   const claim = claimRead.claim;
@@ -291,6 +295,7 @@ function resolveContendedIdentityClaim(
   if (isProcessAlive(claim.pid)) {
     throw new SitianInfrastructureError(
       `Sitian identity claim at ${claimPath} is held by live pid ${claim.pid}; typed live contention — retry after the holder publishes`,
+      { failureDisposition: "live-contention" },
     );
   }
 
@@ -333,21 +338,25 @@ function resolveContendedIdentityClaim(
     }
     throw new SitianInfrastructureError(
       `Sitian identity recovery token at ${recoveryPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
+      { failureDisposition: "disappeared" },
     );
   }
   if (recoveryRead.kind === 'malformed') {
     throw new SitianInfrastructureError(
       `Sitian identity recovery token at ${recoveryPath} is malformed; refusing to treat as disappeared, claim left in place`,
+      { failureDisposition: "malformed-recovery" },
     );
   }
   if (isProcessAlive(recoveryRead.pid)) {
     throw new SitianInfrastructureError(
       `Sitian identity recovery token at ${recoveryPath} is held by live pid ${recoveryRead.pid}; typed live contention — retry after the holder publishes`,
+      { failureDisposition: "live-contention" },
     );
   }
 
   throw new SitianInfrastructureError(
     `Sitian identity claim stayed unpublished at ${claimPath} after dead holder pid ${claim.pid}; recovery residue at ${recoveryPath} is not safely reclaimable without pathname compare-and-unlink, claim left in place`,
+    { failureDisposition: "dead-recovery" },
   );
 }
 
