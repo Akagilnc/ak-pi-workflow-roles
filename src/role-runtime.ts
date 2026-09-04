@@ -1,9 +1,4 @@
-import { readFileSync, writeSync } from "node:fs";
-import { join as pathJoin } from "node:path";
-import {
-  loadNotarySourceRunLocator,
-  NotarySourceRunError,
-} from "./notary-source-run.ts";
+import { writeSync } from "node:fs";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -723,121 +718,6 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-/** Typed cause when admitted countersign ticket binding cannot be resolved. */
-export type CountersignInvocationBindingReason =
-  | "flag-invalid"
-  | "unreadable"
-  | "unparseable";
-
-export class CountersignInvocationBindingError extends Error {
-  readonly code = "countersign-invocation-binding" as const;
-  readonly reason: CountersignInvocationBindingReason;
-  constructor(
-    reason: CountersignInvocationBindingReason,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "CountersignInvocationBindingError";
-    this.reason = reason;
-  }
-}
-
-/**
- * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
- * Prefer the activation transport flag (admitted typed binding along the seam).
- * Flag absent → fall back to invocation.json.
- * Flag present-but-invalid → typed failure (never wash into unbound / invocation fallback).
- * Invocation present-but-unreadable/unparseable → typed failure.
- * Invocation absent or field absent → legal unbound.
- */
-function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
-  const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
-  if (fromFlag !== undefined) {
-    if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
-      const n = Number(fromFlag);
-      if (Number.isSafeInteger(n) && n >= 1) return n;
-    }
-    throw new CountersignInvocationBindingError(
-      "flag-invalid",
-      "countersign Notary gate: ak-countersign-ticket-number is present but not a safe positive integer string",
-    );
-  }
-
-  const runDir = process.env.AK_ROLE_RUN_DIR;
-  if (typeof runDir !== "string" || runDir.trim() === "") return undefined;
-  const invocationPath = pathJoin(runDir, "invocation.json");
-  let rawText: string;
-  try {
-    rawText = readFileSync(invocationPath, "utf8");
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err && err.code === "ENOENT") return undefined;
-    throw new CountersignInvocationBindingError(
-      "unreadable",
-      `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
-      { cause: error },
-    );
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(rawText);
-  } catch (error) {
-    throw new CountersignInvocationBindingError(
-      "unparseable",
-      `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
-      { cause: error },
-    );
-  }
-  if (
-    typeof raw === "object" &&
-    raw !== null &&
-    typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
-    Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
-    (raw as { ticketNumber: number }).ticketNumber >= 1
-  ) {
-    return (raw as { ticketNumber: number }).ticketNumber;
-  }
-  return undefined;
-}
-
-/**
- * Assemble Notary inner-gate material for countersign verdict.
- * ticket-bound → ticketNumber; true-unbound → sourceRun via sole notary-source-run loader.
- * Gate attendance itself never branches away.
- */
-async function buildCountersignNotaryGateMaterial(input: {
-  readonly roleHost: RoleHost;
-  readonly parameters: unknown;
-}): Promise<string> {
-  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
-  if (ticketNumber !== undefined) {
-    return JSON.stringify({ verdict: input.parameters, ticketNumber });
-  }
-  const runDir = process.env.AK_ROLE_RUN_DIR;
-  if (typeof runDir !== "string" || runDir.trim() === "") {
-    throw new CountersignInvocationBindingError(
-      "unreadable",
-      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator",
-    );
-  }
-  let sourceRun;
-  try {
-    // Sole authority for run-dir name + retained identity (DRY #14 / notary-source-run).
-    sourceRun = await loadNotarySourceRunLocator(runDir);
-  } catch (error) {
-    if (error instanceof NotarySourceRunError) {
-      throw new CountersignInvocationBindingError(
-        "unreadable",
-        `countersign Notary gate: source-run locator unusable (${error.message})`,
-        { cause: error },
-      );
-    }
-    throw error;
-  }
-  return JSON.stringify({ verdict: input.parameters, sourceRun });
-}
-
 /** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
 type FiledOfficerBeforeAccept = (input: {
   readonly toolCallId: string;
@@ -986,18 +866,13 @@ export function createCountersignRoleRuntime(
   hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
   // Notary inner gate difference only — lifecycle stays on the shared envelope.
-  // Always-present: ticket-bound material carries ticketNumber; true-unbound
-  // carries the current countersign source-run locator (never bare verdict).
+  // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
-      ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const material = await buildCountersignNotaryGateMaterial({
-            roleHost,
-            parameters,
-          });
+      ? async ({ toolCallId, signal, ctx }) => {
           await roleHost.requireGatekeeperPass!({
             context: ctx,
-            subject: { kind: "countersign_verdict", material },
+            subject: { kind: "countersign_verdict" },
             ...(signal === undefined ? {} : { signal }),
             hostActions,
             toolCallId,

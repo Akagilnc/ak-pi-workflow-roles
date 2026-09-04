@@ -197,6 +197,8 @@ export function createFixerRoleRuntime(
 ): WorkerRoleRuntime {
   let soul: string | undefined;
   let packet: FixerInvocationInput | undefined;
+  let packetPath: string | undefined;
+  let prerequisitesPath: string | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
   const submissionGate = createWorkerSubmissionGate();
@@ -225,21 +227,24 @@ export function createFixerRoleRuntime(
         );
       }
       phase = selectedPhase;
-      const packetPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.packet.name);
-      if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
+      const resolvedPacketPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.packet.name);
+      if (typeof resolvedPacketPath !== "string" || resolvedPacketPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
+      packetPath = resolvedPacketPath;
       const instructions = await dependencies.loadPacket(packetPath);
       if (instructions.trim().length === 0) {
         throw new FixerPacketValidationError(
           new Error("Fixer instructions must be nonblank"),
         );
       }
-      const prerequisitesPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.prerequisites.name);
-      if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {
+      const resolvedPrerequisitesPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.prerequisites.name);
+      if (resolvedPrerequisitesPath !== undefined && (typeof resolvedPrerequisitesPath !== "string" || resolvedPrerequisitesPath.trim().length === 0)) {
         throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
       }
-      const prerequisites = typeof prerequisitesPath === "string"
+      prerequisitesPath =
+        typeof resolvedPrerequisitesPath === "string" ? resolvedPrerequisitesPath : undefined;
+      const prerequisites = prerequisitesPath !== undefined
         ? parseFixerPrerequisites(await dependencies.loadPacket(prerequisitesPath))
         : Object.freeze([]);
       packet = Object.freeze({ instructions, prerequisites });
@@ -268,7 +273,7 @@ export function createFixerRoleRuntime(
             if (WORKER_DONE_STATUSES.has(output.status)) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
-                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                subject: { kind: "worker_completion" },
                 ...(_signal === undefined ? {} : { signal: _signal }),
                 hostActions,
                 toolCallId,
@@ -295,9 +300,15 @@ export function createFixerRoleRuntime(
         });
         pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("修内司职分未装载");
+          if (packetPath === undefined) throw new Error("修内司修理包路径未装载");
+          // Path delivery only — body is self-fetched; no inline duplicate of flag bytes (#632).
+          const prerequisitesBlock =
+            prerequisitesPath === undefined
+              ? ""
+              : `\n\n<fixer_prerequisites_path>\n${prerequisitesPath}\n</fixer_prerequisites_path>`;
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet?.instructions ?? ""}\n</fix_packet>\n\n<fixer_prerequisites>\n${JSON.stringify(packet?.prerequisites ?? [])}\n</fixer_prerequisites>`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet_path>\n${packetPath}\n</fix_packet_path>${prerequisitesBlock}`,
           };
         });
       }
@@ -402,7 +413,7 @@ export function createCoderRoleRuntime(
             if (WORKER_DONE_STATUSES.has(output.status)) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
-                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                subject: { kind: "worker_completion" },
                 ...(_signal === undefined ? {} : { signal: _signal }),
                 hostActions,
                 toolCallId,

@@ -1,30 +1,20 @@
 /**
- * #582 / ADR 0075 — Notary gate material from projected countersign ticket flag.
- * Admission→turn is proven in public-cli-countersign-run; Grok/Pi flag projection
- * in grok-role-envelope / buildPiTurnExtraArgs consumers. This file only proves
- * the gate consumes a real adapter flag map into typed material (and corrupt
- * invocation fails before gate).
+ * #632 — countersign → Notary gate is pointer-only (kind routing; no body material).
+ * Ticket/source-run self-fetch lives with the officer dossier tool, not gate argv.
  */
 import assert from "node:assert/strict";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
 
-import { withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import {
-  CountersignInvocationBindingError,
-  createCountersignRoleRuntime,
-} from "../../src/role-runtime.ts";
+import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 
-type GateCall = { readonly kind: string; readonly material: string };
+type GateCall = { readonly kind: string; readonly subject: unknown };
 
 async function submitThroughGate(input: {
   readonly flags: ReadonlyMap<string, string | boolean>;
-  readonly runDir?: string;
-}): Promise<{ readonly gateCalls: GateCall[]; readonly error?: unknown }> {
+}): Promise<{ readonly gateCalls: GateCall[] }> {
   const tools = new Map<string, { name: string; execute: Function }>();
   const gateCalls: GateCall[] = [];
   const roleHost = {
@@ -39,11 +29,11 @@ async function submitThroughGate(input: {
       return input.flags.get(name);
     },
     async requireGatekeeperPass(options: {
-      subject: { kind: string; material: string };
+      subject: { kind: string };
     }) {
       gateCalls.push({
         kind: options.subject.kind,
-        material: options.subject.material,
+        subject: options.subject,
       });
     },
   };
@@ -58,169 +48,45 @@ async function submitThroughGate(input: {
     },
   ).activate();
 
-  const prior = process.env.AK_ROLE_RUN_DIR;
-  if (input.runDir !== undefined) process.env.AK_ROLE_RUN_DIR = input.runDir;
-  else delete process.env.AK_ROLE_RUN_DIR;
-  try {
-    try {
-      await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
-        "call-1",
-        { countersignStatus: "converged" },
-        undefined,
-        undefined,
-        {
-          cwd: "/tmp",
-          mode: "json",
-          model: undefined,
-          sessionManager: {} as never,
-          abort() {},
-        },
-      );
-      return { gateCalls };
-    } catch (error) {
-      return { gateCalls, error };
-    }
-  } finally {
-    if (prior === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = prior;
-  }
+  await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
+    "call-1",
+    { countersignStatus: "converged" },
+    undefined,
+    undefined,
+    {
+      cwd: "/tmp",
+      mode: "json",
+      model: undefined,
+      sessionManager: {} as never,
+      abort() {},
+    },
+  );
+  return { gateCalls };
 }
 
-test("notary gate material carries ticketNumber from real Grok activation flags", async () => {
-  // Adapter output is the sole flag source — same function production Grok host uses.
+test("countersign gate summons Notary with kind only — no verdict/ticket body", async () => {
   const flags = projectGrokActivationFlags({
     activation: { role: "countersign", ticketNumber: 582 },
   } as RoleTurnRequest);
   assert.equal(flags.get("ak-countersign-ticket-number"), "582");
 
-  const { gateCalls, error } = await submitThroughGate({ flags });
-  assert.equal(error, undefined);
+  const { gateCalls } = await submitThroughGate({ flags });
   assert.equal(gateCalls.length, 1);
   assert.equal(gateCalls[0]!.kind, "countersign_verdict");
-  const material = JSON.parse(gateCalls[0]!.material) as {
-    ticketNumber?: number;
-    verdict?: { countersignStatus?: string };
-  };
-  assert.equal(material.ticketNumber, 582);
-  assert.equal(material.verdict?.countersignStatus, "converged");
+  assert.deepEqual(gateCalls[0]!.subject, { kind: "countersign_verdict" });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(gateCalls[0]!.subject as object, "material"),
+    false,
+  );
 });
 
-test("notary gate true-unbound material carries sourceRun locator", async () => {
-  await withHermeticHome({ prefix: "ak-cs-unbound-src-" }, async ({ home }) => {
-    // UUID hex form required by sole notary-source-run RUN_DIR_NAME contract.
-    const runId = "01a0c582-0000-7000-8000-000000000099";
-    const runDir = join(home, "runs", `${runId}@countersign`);
-    await mkdir(runDir, { recursive: true });
-    // runDirectory must survive realpath for loadNotarySourceRunLocator.
-    const realRunDir = await realpath(runDir);
-    await writeFile(
-      join(runDir, "run-state.json"),
-      `${JSON.stringify({
-        runId,
-        role: "countersign",
-        state: "running",
-        bookKey: "test",
-        projectRoot: home,
-        sessionDirectory: join(realRunDir, "session"),
-        sessionFile: join(realRunDir, "session", "s.jsonl"),
-        runDirectory: realRunDir,
-        admittedRequestPath: join(realRunDir, "admitted-request.json"),
-      }, null, 2)}\n`,
-      "utf8",
-    );
-
-    const flags = projectGrokActivationFlags({
-      activation: { role: "countersign" },
-    } as RoleTurnRequest);
-    assert.equal(flags.has("ak-countersign-ticket-number"), false);
-
-    const { gateCalls, error } = await submitThroughGate({ flags, runDir: realRunDir });
-    assert.equal(error, undefined);
-    assert.equal(gateCalls.length, 1);
-    const material = JSON.parse(gateCalls[0]!.material) as {
-      ticketNumber?: number;
-      sourceRun?: { runDirectory?: string; runId?: string; role?: string };
-      verdict?: { countersignStatus?: string };
-    };
-    assert.equal(material.ticketNumber, undefined);
-    assert.equal(material.sourceRun?.runId, runId);
-    assert.equal(material.sourceRun?.role, "countersign");
-    assert.equal(material.sourceRun?.runDirectory, realRunDir);
-    assert.equal(material.verdict?.countersignStatus, "converged");
-  });
-});
-
-test("notary gate true-unbound without source-run locator fails typed", async () => {
+test("countersign gate true-unbound still summons with kind only", async () => {
   const flags = projectGrokActivationFlags({
     activation: { role: "countersign" },
   } as RoleTurnRequest);
-  const { gateCalls, error } = await submitThroughGate({ flags });
-  assert.ok(error instanceof CountersignInvocationBindingError);
-  assert.equal(error.reason, "unreadable");
-  assert.equal(gateCalls.length, 0);
+  assert.equal(flags.has("ak-countersign-ticket-number"), false);
+
+  const { gateCalls } = await submitThroughGate({ flags });
+  assert.equal(gateCalls.length, 1);
+  assert.deepEqual(gateCalls[0]!.subject, { kind: "countersign_verdict" });
 });
-
-const BINDING_FAILURES: readonly {
-  readonly name: string;
-  readonly reason: CountersignInvocationBindingError["reason"];
-  readonly flags: ReadonlyMap<string, string | boolean>;
-  readonly runDir?: "corrupt-invocation";
-}[] = [
-  {
-    name: "flag empty string",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", ""]]),
-  },
-  {
-    name: "flag zero",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", "0"]]),
-  },
-  {
-    name: "flag negative",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", "-1"]]),
-  },
-  {
-    name: "flag non-numeric",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", "nope"]]),
-  },
-  {
-    name: "flag boolean true",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", true]]),
-  },
-  {
-    name: "flag above MAX_SAFE_INTEGER",
-    reason: "flag-invalid",
-    flags: new Map([["ak-countersign-ticket-number", "9007199254740993"]]),
-  },
-  {
-    name: "corrupt invocation.json",
-    reason: "unparseable",
-    flags: new Map(),
-    runDir: "corrupt-invocation",
-  },
-];
-
-for (const failure of BINDING_FAILURES) {
-  test(`notary gate binding failure: ${failure.name}`, async () => {
-    await withHermeticHome({ prefix: "ak-cs-bind-fail-" }, async ({ home }) => {
-      let runDir: string | undefined;
-      if (failure.runDir === "corrupt-invocation") {
-        runDir = join(home, "run");
-        await mkdir(runDir, { recursive: true });
-        await writeFile(join(runDir, "invocation.json"), "{not-json\n", "utf8");
-      }
-      const { gateCalls, error } = await submitThroughGate({
-        flags: failure.flags,
-        ...(runDir === undefined ? {} : { runDir }),
-      });
-      assert.ok(error instanceof CountersignInvocationBindingError);
-      assert.equal(error.code, "countersign-invocation-binding");
-      assert.equal(error.reason, failure.reason);
-      assert.equal(gateCalls.length, 0);
-    });
-  });
-}
