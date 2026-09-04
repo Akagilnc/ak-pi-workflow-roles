@@ -1020,6 +1020,8 @@ test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails
   delete process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_ENGINE;
   const socketPath = join(root, "mcp.sock");
+  const activationFailure = new Error("forced session_start failure after listen");
+  const disposeFailure = new Error("forced dispose cleanup failure");
   try {
     await assert.rejects(
       () => prepareGrokRoleEnvelope({
@@ -1037,13 +1039,33 @@ test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails
         socketPath,
         dependencies: {
           loadJudgeSoul: async () => {
-            throw new Error("forced session_start failure after listen");
+            throw activationFailure;
           },
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationTraceWriter: async () => {},
+          // Real dispose path: navigator is created before soul load, then
+          // session_shutdown awaits attendance.dispose during prepare's cleanup.
+          createNavigatorAttendance: () => ({
+            prepare() {},
+            setWorkContext() {},
+            warmHelp() {},
+            isPreparing: () => false,
+            settle: async () => {},
+            dispose() {
+              throw disposeFailure;
+            },
+          }),
         },
       }),
-      /forced session_start failure after listen/,
+      (error: unknown) => {
+        // Structural AggregateError identity: pre-54bbc dispose().catch(() => {})
+        // would rethrow activationFailure alone and fail this check.
+        assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
+        assert.equal(error.errors[0], activationFailure);
+        assert.equal(error.errors[1], disposeFailure);
+        assert.equal(error.cause, activationFailure);
+        return true;
+      },
     );
 
     // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
