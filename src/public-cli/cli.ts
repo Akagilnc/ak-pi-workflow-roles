@@ -98,7 +98,7 @@ import {
  * adapters live in each seat's resume module.
  */
 const RESUME_SEAT_DISPATCH: Record<
-  NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>, 
+  NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>,
   {
     readonly seat: PublicCallableRole;
     readonly run: (
