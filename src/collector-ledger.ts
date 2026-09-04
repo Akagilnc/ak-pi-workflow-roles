@@ -189,7 +189,6 @@ export type CollectorLedger = {
     signal?: AbortSignal,
   ): Promise<{
     snapshot: CollectorSnapshot;
-    modelView: ObserveModelView;
     contextView: ObserveModelView;
   }>;
 
@@ -641,7 +640,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         attempts,
       });
 
-      return { snapshot, modelView, contextView: projectObserveContextView(modelView) };
+      return { snapshot, contextView: projectObserveContextView(modelView) };
     },
 
     async request(input, transport, clock, signal) {
