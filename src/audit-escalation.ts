@@ -89,9 +89,11 @@ export function buildAuditEscalationResult(
   // Role output cannot fill an absent audit/officer-owned field.
   delete deliveredFields.conflicts;
   delete deliveredFields.auditDecisionGate;
-  delete deliveredFields.reason;
-  delete deliveredFields.officer;
-  delete deliveredFields.findings;
+  if (Object.hasOwn(decision, "officer")) {
+    delete deliveredFields.reason;
+    delete deliveredFields.officer;
+    delete deliveredFields.findings;
+  }
   const result = {
     ...deliveredFields,
     ...auditOwned,
