@@ -89,20 +89,16 @@ export type CollectorConfigState = {
   manifest: CollectorManifest;
 };
 
-export type CollectorLedgerHydrationState = {
-  readonly activationTime?: Date | undefined;
-  readonly deadlineTime?: Date | undefined;
-  readonly snapshots?: readonly CollectorSnapshot[] | undefined;
-  readonly evidenceRecords?: readonly CollectorEvidenceRecord[] | undefined;
-  readonly requestAttempts?: readonly CollectorRequestAttempt[] | undefined;
-  readonly attemptKeys?: Iterable<string> | undefined;
-  readonly waits?: readonly CollectorWaitRecord[] | undefined;
-  readonly transportFailures?: readonly CollectorTransportFailure[] | undefined;
-  readonly mutationGeneration?: number | undefined;
-  readonly observedGeneration?: number | undefined;
-  readonly latestCompleteSnapshotId?: string | undefined;
-  readonly finalObservationRequired?: boolean | undefined;
-  readonly finalObservationCompleted?: boolean | undefined;
+/** Durable session journal sink owned by the shared execution seam. */
+export type CollectorDurableJournal = {
+  append(customType: string, data: unknown): void;
+};
+
+export type CollectorLedgerOptions = {
+  readonly clock?: CollectorClock | undefined;
+  readonly journal?: CollectorDurableJournal | undefined;
+  /** Prior dossier custom entries; replayed in order through live business transitions. */
+  readonly dossierEntries?: Iterable<unknown> | undefined;
 };
 
 export type CollectorLedger = {
@@ -191,9 +187,10 @@ export function collectorToolArgumentsValid(
 
 export function createCollectorLedger(
   config: CollectorConfigState,
-  hydration?: CollectorLedgerHydrationState,
-  clock?: CollectorClock,
+  options?: CollectorLedgerOptions,
 ): CollectorLedger {
+  const clock = options?.clock;
+  const journal = options?.journal;
   let fatal = false;
   let fatalReason: string | undefined;
   let outputCandidate = false;
@@ -300,65 +297,183 @@ export function createCollectorLedger(
     return { user, prInitial, reviews, reactions, issueComments, reviewComments, prTerminal };
   };
 
-  if (hydration?.activationTime !== undefined && hydration?.deadlineTime !== undefined) {
-    activationTime = hydration.activationTime;
-    deadlineTime = hydration.deadlineTime;
-    if (clock !== undefined) {
-      const wallNow = clock.wallNow().getTime();
-      const monoNow = clock.monoNow();
-      const elapsedMs = wallNow - activationTime.getTime();
-      const remainingMs = deadlineTime.getTime() - wallNow;
-      activationMono = monoNow - elapsedMs;
-      deadlineMono = monoNow + remainingMs;
-    }
-  }
 
-  for (const record of hydration?.evidenceRecords ?? []) {
-    storeEvidence(record);
-  }
+  const appendJournal = (customType: string, data: unknown): void => {
+    journal?.append(customType, data);
+  };
 
-  for (const snap of hydration?.snapshots ?? []) {
-    const copy: CollectorSnapshot = { ...snap, evidenceIds: [...snap.evidenceIds] };
+  const bindDeadlineMonoFromWall = (): void => {
+    if (clock === undefined || activationTime === undefined || deadlineTime === undefined) return;
+    const wallNow = clock.wallNow().getTime();
+    const monoNow = clock.monoNow();
+    activationMono = monoNow - (wallNow - activationTime.getTime());
+    deadlineMono = monoNow + (deadlineTime.getTime() - wallNow);
+  };
+
+  const rebindSnapshotCompletedMono = (snapshot: CollectorSnapshot): CollectorSnapshot => {
+    const copy: CollectorSnapshot = { ...snapshot, evidenceIds: [...snapshot.evidenceIds] };
     if (deadlineTime !== undefined && deadlineMono !== undefined && copy.completedAt !== undefined) {
       const completedWall = new Date(copy.completedAt).getTime();
       copy.completedMono = deadlineMono + (completedWall - deadlineTime.getTime());
     }
-    snapshots.push(copy);
-  }
+    return copy;
+  };
 
-  latestCompleteSnapshotId = hydration?.latestCompleteSnapshotId ?? snapshots.at(-1)?.snapshotId;
+  const commitActivationWindow = (nextActivation: Date, nextDeadline: Date): void => {
+    if (activationTime !== undefined) return;
+    activationTime = nextActivation;
+    deadlineTime = nextDeadline;
+    bindDeadlineMonoFromWall();
+  };
 
-  for (const att of hydration?.requestAttempts ?? []) {
-    attempts.push({ ...att });
-    const key = [config.repository.canonical, String(config.prNumber), att.observedHead, att.requestId].join("|");
-    attemptKeys.add(key);
-  }
-
-  if (hydration?.attemptKeys !== undefined) {
-    for (const key of hydration.attemptKeys) {
-      attemptKeys.add(key);
+  const recoverAmbiguousRequestLosses = (
+    snapshotId: string,
+    observedRecords: readonly CollectorEvidenceRecord[],
+  ): void => {
+    for (const failure of transportFailures) {
+      if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
+      if (failure.marker === undefined || failure.requestId === undefined) continue;
+      const found = observedRecords.find((record) =>
+        record.kind === "issue_comment" &&
+        record.authorLogin === requesterLogin &&
+        typeof record.body === "string" &&
+        record.body.includes(failure.marker!)
+      );
+      if (found === undefined) continue;
+      failure.recovered = true;
+      const attempt = attempts.find((item) =>
+        item.status === "ambiguous_loss" &&
+        item.requestId === failure.requestId &&
+        item.marker === failure.marker
+      );
+      if (attempt !== undefined) {
+        attempt.status = "recovered";
+        attempt.commentEvidenceId = found.evidenceId;
+        attempt.recoverySnapshotId = snapshotId;
+      }
     }
-  }
+  };
 
-  for (const wait of hydration?.waits ?? []) {
+  const finalizeObservedSnapshot = (snapshot: CollectorSnapshot): CollectorSnapshot => {
+    if (requesterLogin === undefined) {
+      for (const id of snapshot.evidenceIds) {
+        const record = evidenceById.get(id);
+        if (record?.kind === "authenticated_user" && record.authorLogin !== undefined) {
+          requesterLogin = record.authorLogin.toLowerCase();
+          break;
+        }
+      }
+    }
+    const stored = rebindSnapshotCompletedMono(snapshot);
+    snapshots.push(stored);
+    latestCompleteSnapshotId = stored.snapshotId;
+    const observedRecords = stored.evidenceIds.flatMap((id) => {
+      const record = evidenceById.get(id);
+      return record === undefined ? [] : [record];
+    });
+    recoverAmbiguousRequestLosses(stored.snapshotId, observedRecords);
+    observedGeneration = mutationGeneration;
+    if (
+      finalObservationRequired &&
+      stored.completedMono !== undefined &&
+      deadlineMono !== undefined &&
+      stored.completedMono >= deadlineMono
+    ) {
+      finalObservationCompleted = true;
+    } else if (
+      clock !== undefined &&
+      deadlineMono !== undefined &&
+      clock.monoNow() >= deadlineMono &&
+      stored.completedMono !== undefined &&
+      stored.completedMono >= deadlineMono
+    ) {
+      finalObservationRequired = true;
+      finalObservationCompleted = true;
+    }
+    return stored;
+  };
+
+  const commitObservedSnapshot = (
+    snapshot: CollectorSnapshot,
+    evidenceRecords: readonly CollectorEvidenceRecord[],
+  ): CollectorSnapshot => {
+    for (const record of evidenceRecords) {
+      storeEvidence(record);
+    }
+    return finalizeObservedSnapshot(snapshot);
+  };
+
+  const commitRequestAttempt = (
+    attempt: CollectorRequestAttempt,
+    attemptKey: string,
+    commentEvidence: CollectorEvidenceRecord | undefined,
+  ): void => {
+    if (commentEvidence !== undefined) {
+      storeEvidence(commentEvidence);
+    }
+    attempts.push({ ...attempt });
+    attemptKeys.add(attemptKey);
+    if (attempt.status === "ambiguous_loss") {
+      transportFailures.push({
+        failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
+        kind: "ambiguous_request_loss",
+        message: attempt.responseDiagnostics ?? "ambiguous request loss",
+        requestId: attempt.requestId,
+        observedHead: attempt.observedHead,
+        marker: attempt.marker,
+        recovered: false,
+      });
+    }
+    mutationGeneration += 1;
+    finalObservationCompleted = false;
+  };
+
+  const commitWaitRecord = (wait: CollectorWaitRecord): void => {
     waits.push({ ...wait });
-  }
+    if (wait.cutoffReached) finalObservationRequired = true;
+    mutationGeneration += 1;
+    finalObservationCompleted = false;
+  };
 
-  for (const failure of hydration?.transportFailures ?? []) {
-    transportFailures.push({ ...failure });
-  }
+  const replayDossierEntries = (entries: Iterable<unknown>): void => {
+    for (const raw of entries) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
+      if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) continue;
+      const data = entry.data as Record<string, unknown>;
+      if (entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
+        if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
+          commitActivationWindow(new Date(data.activationTime), new Date(data.deadlineTime));
+        }
+        continue;
+      }
+      if (entry.customType === COLLECTOR_SNAPSHOT_ENTRY_TYPE) {
+        const snapshot = data.snapshot as CollectorSnapshot | undefined;
+        if (snapshot?.snapshotId === undefined || !Array.isArray(data.evidence)) continue;
+        // Generations advance only via request/wait commits and observation sync — never from collection sizes or payload counters.
+        commitObservedSnapshot(snapshot, data.evidence as CollectorEvidenceRecord[]);
+        continue;
+      }
+      if (entry.customType === COLLECTOR_REQUEST_ENTRY_TYPE) {
+        const attempt = data.attempt as CollectorRequestAttempt | undefined;
+        if (attempt?.attemptId === undefined) continue;
+        const attemptKey = typeof data.attemptKey === "string"
+          ? data.attemptKey
+          : [config.repository.canonical, String(config.prNumber), attempt.observedHead, attempt.requestId].join("|");
+        const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
+        commitRequestAttempt(attempt, attemptKey, commentEvidence);
+        continue;
+      }
+      if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
+        const wait = data.waitRecord as CollectorWaitRecord | undefined;
+        if (wait?.waitId === undefined) continue;
+        commitWaitRecord(wait);
+      }
+    }
+  };
 
-  if (hydration?.mutationGeneration !== undefined) {
-    mutationGeneration = hydration.mutationGeneration;
-  }
-  if (hydration?.observedGeneration !== undefined) {
-    observedGeneration = hydration.observedGeneration;
-  }
-  if (hydration?.finalObservationRequired !== undefined) {
-    finalObservationRequired = hydration.finalObservationRequired;
-  }
-  if (hydration?.finalObservationCompleted !== undefined) {
-    finalObservationCompleted = hydration.finalObservationCompleted;
+  if (options?.dossierEntries !== undefined) {
+    replayDossierEntries(options.dossierEntries);
   }
   if (clock !== undefined && deadlineMono !== undefined && clock.monoNow() >= deadlineMono) {
     finalObservationRequired = true;
@@ -367,6 +482,7 @@ export function createCollectorLedger(
       finalObservationCompleted = true;
     }
   }
+
 
   const ledger: CollectorLedger = {
     get config() {
@@ -428,6 +544,10 @@ export function createCollectorLedger(
       activationMono = clock.monoNow();
       deadlineTime = new Date(activationTime.getTime() + COLLECTOR_ELIGIBILITY_MS);
       deadlineMono = activationMono + COLLECTOR_ELIGIBILITY_MS;
+      appendJournal(COLLECTOR_ACTIVATION_ENTRY_TYPE, {
+        activationTime: activationTime.toISOString(),
+        deadlineTime: deadlineTime.toISOString(),
+      });
     },
 
     recordOutputCandidate() {
@@ -602,31 +722,6 @@ export function createCollectorLedger(
         `${completedAt}:${pr.headOid}:${storedIds.join(",")}`,
       ).slice(0, 16);
 
-      // Recover ambiguous request markers if present.
-      for (const failure of transportFailures) {
-        if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
-        if (failure.marker === undefined || failure.requestId === undefined) continue;
-        const found = storedRecords.find((record) =>
-          record.kind === "issue_comment" &&
-          record.authorLogin === requesterLogin &&
-          typeof record.body === "string" &&
-          record.body.includes(failure.marker!)
-        );
-        if (found) {
-          failure.recovered = true;
-          const attempt = attempts.find((item) =>
-            item.status === "ambiguous_loss" &&
-            item.requestId === failure.requestId &&
-            item.marker === failure.marker
-          );
-          if (attempt) {
-            attempt.status = "recovered";
-            attempt.commentEvidenceId = found.evidenceId;
-            attempt.recoverySnapshotId = snapshotId;
-          }
-        }
-      }
-
       const snapshot: CollectorSnapshot = {
         snapshotId,
         observedAt,
@@ -642,23 +737,29 @@ export function createCollectorLedger(
         pageDiagnostics,
         normalizedByteLength,
       };
-      snapshots.push(snapshot);
-      latestCompleteSnapshotId = snapshotId;
-      observedGeneration = mutationGeneration;
-      if (finalObservationRequired && completedMono >= (deadlineMono ?? 0)) {
-        finalObservationCompleted = true;
-      } else if (cutoff) {
-        finalObservationCompleted = true;
+      if (cutoff) {
+        finalObservationRequired = true;
       }
+      const committed = finalizeObservedSnapshot(snapshot);
+      appendJournal(COLLECTOR_SNAPSHOT_ENTRY_TYPE, {
+        snapshot: committed,
+        evidence: committed.evidenceIds.flatMap((id) => {
+          const record = evidenceById.get(id);
+          return record === undefined ? [] : [record];
+        }),
+      });
 
       const modelView = buildObserveModelView({
-        snapshot,
-        records: storedRecords,
+        snapshot: committed,
+        records: committed.evidenceIds.flatMap((id) => {
+          const record = evidenceById.get(id);
+          return record === undefined ? [] : [record];
+        }),
         requesterLogin,
         attempts,
       });
 
-      return { snapshot, modelView };
+      return { snapshot: committed, modelView };
     },
 
     async request(input, transport, clock, signal) {
@@ -748,12 +849,27 @@ export function createCollectorLedger(
       mutationGeneration += 1;
       finalObservationCompleted = false;
 
+      const journalRequest = (commentEvidence: CollectorEvidenceRecord | undefined): void => {
+        const attemptKey = [
+          config.repository.canonical,
+          String(config.prNumber),
+          attempt.observedHead,
+          attempt.requestId,
+        ].join("|");
+        appendJournal(COLLECTOR_REQUEST_ENTRY_TYPE, {
+          attempt: { ...attempt },
+          attemptKey,
+          commentEvidence,
+        });
+      };
+
       if (result.kind === "success") {
         const record = storeEvidence(
           normalizeIssueCommentEvidence(result.comment, startedAt),
         );
         attempt.status = "succeeded";
         attempt.commentEvidenceId = record.evidenceId;
+        journalRequest(record);
         return {
           status: "succeeded",
           attemptId,
@@ -776,6 +892,7 @@ export function createCollectorLedger(
           marker,
           recovered: false,
         });
+        journalRequest(undefined);
         return {
           status: "ambiguous_loss",
           attemptId,
@@ -834,6 +951,9 @@ export function createCollectorLedger(
         cutoffReached,
       };
       waits.push(record);
+      appendJournal(COLLECTOR_WAIT_ENTRY_TYPE, {
+        waitRecord: record,
+      });
       return {
         waitId,
         requestedMs: input.durationMs,
@@ -910,89 +1030,5 @@ function buildObserveModelView(input: {
       marker: attempt.marker,
       recoverySnapshotId: attempt.recoverySnapshotId,
     })),
-  };
-}
-
-export function hydrateCollectorLedgerFromSession(
-  entries: Iterable<unknown>,
-  config: CollectorConfigState,
-): CollectorLedgerHydrationState {
-  let activationTime: Date | undefined;
-  let deadlineTime: Date | undefined;
-  const snapshots: CollectorSnapshot[] = [];
-  const evidence = new Map<string, CollectorEvidenceRecord>();
-  const attempts: CollectorRequestAttempt[] = [];
-  const attemptKeys = new Set<string>();
-  const waits: CollectorWaitRecord[] = [];
-  const transportFailures: CollectorTransportFailure[] = [];
-  let mutationGeneration = 0;
-  let observedGeneration = 0;
-
-  for (const raw of entries) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
-    if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) continue;
-    const data = entry.data as Record<string, unknown>;
-
-    if (entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
-      if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
-        activationTime = new Date(data.activationTime);
-        deadlineTime = new Date(data.deadlineTime);
-      }
-      continue;
-    }
-    if (entry.customType === COLLECTOR_SNAPSHOT_ENTRY_TYPE) {
-      const snapshot = data.snapshot as CollectorSnapshot | undefined;
-      if (snapshot?.snapshotId === undefined || !Array.isArray(data.evidence)) continue;
-      snapshots.push(snapshot);
-      for (const record of data.evidence as CollectorEvidenceRecord[]) {
-        if (record?.evidenceId !== undefined) evidence.set(record.evidenceId, record);
-      }
-      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
-      if (typeof data.observedGeneration === "number") observedGeneration = data.observedGeneration;
-      continue;
-    }
-    if (entry.customType === COLLECTOR_REQUEST_ENTRY_TYPE) {
-      const attempt = data.attempt as CollectorRequestAttempt | undefined;
-      if (attempt?.attemptId === undefined) continue;
-      attempts.push(attempt);
-      if (typeof data.attemptKey === "string") attemptKeys.add(data.attemptKey);
-      const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
-      if (commentEvidence?.evidenceId !== undefined) evidence.set(commentEvidence.evidenceId, commentEvidence);
-      if (attempt.status === "ambiguous_loss") {
-        transportFailures.push({
-          failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
-          kind: "ambiguous_request_loss",
-          message: attempt.responseDiagnostics ?? "ambiguous request loss",
-          requestId: attempt.requestId,
-          observedHead: attempt.observedHead,
-          marker: attempt.marker,
-          recovered: false,
-        });
-      }
-      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
-      continue;
-    }
-    if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
-      const wait = data.waitRecord as CollectorWaitRecord | undefined;
-      if (wait?.waitId === undefined) continue;
-      waits.push(wait);
-      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
-    }
-  }
-
-  return {
-    activationTime,
-    deadlineTime,
-    snapshots,
-    evidenceRecords: [...evidence.values()],
-    requestAttempts: attempts,
-    attemptKeys,
-    waits,
-    transportFailures,
-    mutationGeneration,
-    observedGeneration,
-    latestCompleteSnapshotId: snapshots.at(-1)?.snapshotId,
-    finalObservationRequired: deadlineTime !== undefined && Date.now() >= deadlineTime.getTime(),
   };
 }

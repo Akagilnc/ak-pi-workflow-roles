@@ -16,16 +16,11 @@ import {
 } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
-  COLLECTOR_ACTIVATION_ENTRY_TYPE,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
-  COLLECTOR_REQUEST_ENTRY_TYPE,
   COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_SNAPSHOT_ENTRY_TYPE,
-  COLLECTOR_WAIT_ENTRY_TYPE,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
-  hydrateCollectorLedgerFromSession,
   type CollectorLedger,
 } from "./collector-ledger.ts";
 import {
@@ -200,13 +195,6 @@ export function createCollectorRoleRuntime(
       if (!firstDispatchDone) {
         firstDispatchDone = true;
         activation.ledger.recordActivation(activation.clock);
-        ctx.sessionManager?.appendCustomEntry?.(
-          COLLECTOR_ACTIVATION_ENTRY_TYPE,
-          {
-            activationTime: activation.ledger.activationTime?.toISOString(),
-            deadlineTime: activation.ledger.deadlineTime?.toISOString(),
-          },
-        );
       }
 
       return {
@@ -284,20 +272,6 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          ctx.sessionManager?.appendCustomEntry?.(
-            COLLECTOR_SNAPSHOT_ENTRY_TYPE,
-            {
-              snapshot,
-              evidence: snapshot.evidenceIds.flatMap((id) => {
-                const record = activation!.ledger.getEvidence(id);
-                return record === undefined ? [] : [record];
-              }),
-              mutationGeneration: activation.ledger.mutationGeneration,
-              observedGeneration: activation.ledger.observedGeneration,
-              activationTime: activation.ledger.activationTime?.toISOString(),
-              deadlineTime: activation.ledger.deadlineTime?.toISOString(),
-            },
-          );
           if (snapshot.prState !== "OPEN") {
             // Non-OPEN observed as latest complete snapshot is target-state failure at output,
             // but observe itself may return the fact. If this is a final observation, still return.
@@ -335,27 +309,6 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          const attempts = activation.ledger.requestAttempts();
-          const lastAttempt = attempts.at(-1);
-          if (lastAttempt) {
-            const attemptKey = [
-              activation.repository.canonical,
-              String(activation.prNumber),
-              lastAttempt.observedHead,
-              lastAttempt.requestId,
-            ].join("|");
-            ctx.sessionManager?.appendCustomEntry?.(
-              COLLECTOR_REQUEST_ENTRY_TYPE,
-              {
-                attempt: lastAttempt,
-                attemptKey,
-                commentEvidence: lastAttempt.commentEvidenceId
-                  ? activation.ledger.getEvidence(lastAttempt.commentEvidenceId)
-                  : undefined,
-                mutationGeneration: activation.ledger.mutationGeneration,
-              },
-            );
-          }
           return {
             content: [{
               type: "text" as const,
@@ -388,17 +341,6 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          const waits = activation.ledger.waits();
-          const lastWait = waits.at(-1);
-          if (lastWait) {
-            ctx.sessionManager?.appendCustomEntry?.(
-              COLLECTOR_WAIT_ENTRY_TYPE,
-              {
-                waitRecord: lastWait,
-                mutationGeneration: activation.ledger.mutationGeneration,
-              },
-            );
-          }
           return {
             content: [{
               type: "text" as const,
@@ -561,10 +503,14 @@ export function createCollectorRoleRuntime(
         const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
         const transport = dependencies.createTransport();
 
-        const hydration = hydrateCollectorLedgerFromSession(
-          ctx.sessionManager?.getEntries?.() ?? [],
-          { repository, prNumber, manifest },
-        );
+        const journal =
+          ctx.sessionManager?.appendCustomEntry === undefined
+            ? undefined
+            : {
+              append(customType: string, data: unknown): void {
+                ctx.sessionManager?.appendCustomEntry?.(customType, data);
+              },
+            };
 
         const ledger = createCollectorLedger(
           {
@@ -572,8 +518,11 @@ export function createCollectorRoleRuntime(
             prNumber,
             manifest,
           },
-          hydration,
-          clock,
+          {
+            clock,
+            ...(journal === undefined ? {} : { journal }),
+            dossierEntries: ctx.sessionManager?.getEntries?.() ?? [],
+          },
         );
 
         if (ledger.activationRecorded) {
