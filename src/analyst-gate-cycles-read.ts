@@ -32,6 +32,15 @@ import {
 } from "./ledger-session-read.ts";
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
+/** Honest origin discriminant: direct summons vs historical province dispatch. */
+export type AnalystGateCycleOrigin =
+  | { readonly kind: "direct" }
+  | {
+      readonly kind: "historical_dispatch";
+      /** Seat-reduction reason from the accepted dispatch receipt; never invented. */
+      readonly reason?: string;
+    };
+
 export type AnalystGateCycleRound = {
   /** 1-based chronological order among paired rounds on this leg. */
   readonly roundIndex: number;
@@ -50,13 +59,8 @@ export type AnalystGateCycleRound = {
   readonly findings: readonly string[];
   /** findings.length — retained so metric families need not re-derive. */
   readonly findingsCount: number;
-  /** `direct` for current summons; `dispatch` for historical province-paired rounds. */
-  readonly dispatchStatus: "direct" | "dispatch";
-  /**
-   * Optional seat-reduction reason from the accepted dispatch receipt.
-   * Absent when the dispatch did not write a non-empty reason — never invented.
-   */
-  readonly dispatchReason?: string;
+  /** Direct summons or historical province-paired dispatch. */
+  readonly origin: AnalystGateCycleOrigin;
 };
 
 const DISPATCH_TOOLS = new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
@@ -212,11 +216,6 @@ type ClassifiedVolume =
       readonly reason?: string;
     }
   | {
-      readonly kind: "rejected-dispatch";
-      readonly startedAt: string;
-      readonly officer: "inspector" | "notary";
-    }
-  | {
       readonly kind: "officer";
       readonly startedAt: string;
       readonly endedAt: string;
@@ -239,9 +238,9 @@ async function classifyAuditorVolume(
 
   const span = requireAcceptedGateSpan(rows, filePath);
   if (!call.accepted) {
-    if (!DISPATCH_TOOLS.has(call.toolName)) return undefined;
-    const officer = normalizeOfficerArg(call.args?.officer);
-    return officer === undefined ? undefined : { kind: "rejected-dispatch", startedAt: span.startedAt, officer };
+    // Rejected historical dispatch is not a pairing key — omit it so a later
+    // independent direct officer summons remains its own round.
+    return undefined;
   }
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
@@ -308,7 +307,7 @@ function pairGateRounds(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const vol = ordered[i]!;
-    if (vol.kind !== "dispatch" && vol.kind !== "rejected-dispatch") continue;
+    if (vol.kind !== "dispatch") continue;
     let match: { index: number; officer: Extract<ClassifiedVolume, { kind: "officer" }> } | undefined;
     for (let j = i + 1; j < ordered.length; j += 1) {
       if (usedOfficerIdx.has(j)) continue;
@@ -321,7 +320,6 @@ function pairGateRounds(
     }
     if (match === undefined) continue;
     usedOfficerIdx.add(match.index);
-    if (vol.kind === "rejected-dispatch") continue;
     rounds.push({
       roundIndex: rounds.length + 1,
       officer: match.officer.officer,
@@ -331,8 +329,10 @@ function pairGateRounds(
       officerEndedAt: match.officer.endedAt,
       findings: match.officer.findings,
       findingsCount: match.officer.findingsCount,
-      dispatchStatus: "dispatch",
-      ...(vol.reason === undefined ? {} : { dispatchReason: vol.reason }),
+      origin: {
+        kind: "historical_dispatch",
+        ...(vol.reason === undefined ? {} : { reason: vol.reason }),
+      },
     });
   }
 
@@ -350,7 +350,7 @@ function pairGateRounds(
       officerEndedAt: vol.endedAt,
       findings: vol.findings,
       findingsCount: vol.findingsCount,
-      dispatchStatus: "direct",
+      origin: { kind: "direct" },
     });
   }
 

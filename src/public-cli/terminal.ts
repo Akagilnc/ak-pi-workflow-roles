@@ -152,13 +152,15 @@ export type TerminalResume = {
 /** Current English gate seat faces projected on Terminal (#478). */
 export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
-/** Direct summons (`direct`) or historical province dispatch, plus officer identity. */
-export type TerminalGateDispatch = {
-  readonly status: string;
-  readonly officer: "inspector" | "notary";
-  /** Present only when the accepted dispatch wrote a non-empty reason. */
-  readonly reason?: string;
-};
+/** Honest discriminant: direct summons vs historical province dispatch. */
+export type TerminalGateDispatch =
+  | { readonly kind: "direct"; readonly officer: "inspector" | "notary" }
+  | {
+      readonly kind: "historical_dispatch";
+      readonly officer: "inspector" | "notary";
+      /** Present only when the accepted dispatch wrote a non-empty reason. */
+      readonly reason?: string;
+    };
 
 /** One accepted officer report: seat, status, full typed findings. */
 export type TerminalGateOfficerReport = {
@@ -315,11 +317,12 @@ export function formatTerminalResult(result: TerminalResult): string {
     );
     for (const round of result.gate.rounds) {
       const reason =
-        round.dispatch.reason === undefined
-          ? ""
-          : encodeTerminalField(round.dispatch.reason);
+        round.dispatch.kind === "historical_dispatch"
+        && round.dispatch.reason !== undefined
+          ? encodeTerminalField(round.dispatch.reason)
+          : "";
       lines.push(
-        `gate-round\t${round.roundIndex}\t${round.dispatch.status}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
+        `gate-round\t${round.roundIndex}\t${round.dispatch.kind}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
       );
     }
   }

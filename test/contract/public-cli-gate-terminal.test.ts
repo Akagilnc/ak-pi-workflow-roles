@@ -177,7 +177,7 @@ function assertGateNotaryRound(
   assert.equal(gate.rounds.length, 1);
   const round = gate.rounds[0]!;
   assert.equal(round.roundIndex, 1);
-  assert.equal(round.dispatch.status, "dispatch");
+  assert.equal(round.dispatch.kind, "historical_dispatch");
   assert.equal(round.dispatch.officer, "notary");
   if (reason === undefined) {
     assert.equal(
@@ -293,7 +293,13 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
     assert.ok(terminal.gate !== undefined);
     assertGateNotaryRound(terminal.gate!, reason);
     // Typed reason field projects fixture bytes as written (not re-trimmed).
-    assert.equal(terminal.gate!.rounds[0]!.dispatch.reason, reason);
+    {
+      const dispatch = terminal.gate!.rounds[0]!.dispatch;
+      assert.equal(dispatch.kind, "historical_dispatch");
+      if (dispatch.kind === "historical_dispatch") {
+        assert.equal(dispatch.reason, reason);
+      }
+    }
     assert.equal(terminal.gate!.rounds[0]!.officer.findings.length, findings.length);
     assert.deepEqual(terminal.gate!.rounds[0]!.officer.findings, [...findings]);
   }, { prefix: "ak-gate-normal-" });
@@ -317,7 +323,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
     assert.ok(terminal.gate !== undefined);
     assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
     const round = terminal.gate!.rounds[0]!;
-    assert.equal(round.dispatch.status, "direct");
+    assert.equal(round.dispatch.kind, "direct");
     assert.equal(round.dispatch.officer, "inspector");
     assert.equal(
       Object.prototype.hasOwnProperty.call(round.dispatch, "reason"),

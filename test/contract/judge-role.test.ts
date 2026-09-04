@@ -1478,7 +1478,7 @@ test("coder completed submissions traverse the direct Inspector gate until pass"
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("fixer submissions of every status traverse the direct Inspector gate", async () => {
+test("fixer completed and partially_completed traverse the direct Inspector gate; skip statuses settle without it", async () => {
   const start = async (phase: "plan" | "apply") => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
@@ -1503,9 +1503,9 @@ test("fixer submissions of every status traverse the direct Inspector gate", asy
     execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
     toolName: FIXER_OUTPUT_TOOL_NAME,
     output: completed,
-    // completed + partially_completed + unfinished + planned + plan-refused + apply-refused
-    // each consume one direct Inspector pass.
-    passingRuns: 6,
+    // completed + partially_completed consume the direct Inspector pass;
+    // planned / refused / unfinished settle without summoning.
+    passingRuns: 2,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
   await tracer.assertRejectSequence();
@@ -1555,10 +1555,10 @@ test("fixer submissions of every status traverse the direct Inspector gate", asy
     (await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"))).terminate,
     true,
   );
-  // planned + plan-refused + apply-refused each consume one direct pass.
-  assert.equal(tracer.providerRequests, beforeAllStatuses + 3);
-  // Direct-officer reject matrix (6 requests) + six passes = 12.
-  assert.equal(tracer.providerRequests, 12);
+  // skip statuses must not consume further officer passes.
+  assert.equal(tracer.providerRequests, beforeAllStatuses);
+  // Direct-officer reject matrix (6 requests) + two DONE passes = 8.
+  assert.equal(tracer.providerRequests, 8);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1699,7 +1699,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     });
     const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
     const model = faux.getModel();
-    // Completed/refused submissions directly summon Inspector.
+    // Completed submissions directly summon Inspector; refused skips the gate.
     const responses: AssistantMessage[] = [];
     for (let i = 0; i < 20; i += 1) {
       responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
@@ -1921,7 +1921,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   }
 
   // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
-  // and still traverses the direct Inspector gate.
+  // and settles without summoning the Inspector (skip-statuses).
   {
     const harness = await start();
     const refused = {
@@ -1946,7 +1946,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
           thinkingLevel: "off",
         }),
       )).details, refused);
-      assert.equal(harness.providerRequests(), requestsBeforeRefusal + 1);
+      assert.equal(harness.providerRequests(), requestsBeforeRefusal);
       await assert.rejects(
         refusalTool.execute(
           "coder-mixed",

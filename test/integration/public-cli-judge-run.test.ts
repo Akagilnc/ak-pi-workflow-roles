@@ -7,6 +7,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -602,6 +603,22 @@ test(
         "runs",
         "run-e2e-judge-001@judge",
       );
+      // #634: judge settlement projects a direct Notary round with no Gatekeeper seat.
+      {
+        const auditorDir = join(runDir, "session", "auditor-roles");
+        await mkdir(auditorDir, { recursive: true });
+        await writeFile(
+          join(auditorDir, "o01_notary.jsonl"),
+          gateToolSessionJsonl({
+            id: "direct-notary",
+            startedAt: "2026-09-04T00:00:00.000Z",
+            endedAt: "2026-09-04T00:00:10.000Z",
+            toolName: "ak_notary_output",
+            args: { status: "pass", findings: [] },
+          }),
+          "utf8",
+        );
+      }
       const terminal = await settleJudgeTerminalResult(
         fixtureJudgeAdmitted({
           runId: "run-e2e-judge-001",
@@ -616,6 +633,10 @@ test(
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");
+      assert.ok(terminal.gate);
+      assert.deepEqual(terminal.gate!.actualSeats, ["notary"]);
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.officer, "notary");
       assert.equal(terminal.navigator.disposition, "recommendation");
       if (terminal.navigator.disposition === "recommendation") {
         assert.equal(terminal.navigator.next.role, "reviewer");
