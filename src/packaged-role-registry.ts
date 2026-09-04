@@ -191,18 +191,6 @@ export type PublicRoleRecord = (typeof PUBLIC_ROLE_RECORDS)[number];
 export type PackagedRole = PublicRoleRecord["role"];
 
 /**
- * Seats that refuse resume. Collector/doctor/notary remain pending independent
- * authority review; countersign/gleaner-left revoked by #599 (DK-1/2/3).
- * Inspector is one-shot on the filed-officer envelope (#568 / ADR 0074).
- */
-export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
-  "collector",
-  "doctor",
-  "notary",
-  "inspector",
-];
-
-/**
  * Read-only metadata projection (no sessionMaterials).
  * Distributed per PublicRoleRecord member so role↔field associations stay intact.
  */

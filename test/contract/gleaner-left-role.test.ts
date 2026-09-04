@@ -11,7 +11,7 @@ import {
   validateRecordedGleanerLeftOutput,
 } from "../../src/gleaner-left-contracts.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
-import { ONE_SHOT_ROLES, PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { GATE_OFFICER_SEATS } from "../../src/public-cli/config.ts";
 
 test("gleaner-left is a callable seat with unanchored materials (resume allowed)", () => {
@@ -22,7 +22,6 @@ test("gleaner-left is a callable seat with unanchored materials (resume allowed)
     [...MAIN_ROLE_SESSION_MATERIALS["gleaner-left"]],
     ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
   );
-  assert.equal(ONE_SHOT_ROLES.includes("gleaner-left"), false);
   assert.equal((GATE_OFFICER_SEATS as readonly string[]).includes("gleaner-left"), false);
 });
 

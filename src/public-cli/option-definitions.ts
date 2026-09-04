@@ -1182,7 +1182,7 @@ const ROLE_COMMAND_HELP = {
   },
   collector: {
     command: "collector",
-    summary: "Collect GitHub PR review evidence (one-shot).",
+    summary: "Collect GitHub PR review evidence.",
     usage: ["ak-role collector --pr <number> [options] [instruction]"],
     examples: [
       "ak-role collector --pr 42 --repo owner/repository",
@@ -1191,7 +1191,7 @@ const ROLE_COMMAND_HELP = {
   },
   doctor: {
     command: "doctor",
-    summary: "Diagnose one retained case (one-shot).",
+    summary: "Diagnose one retained case.",
     usage: ["ak-role doctor --issue <number> [options] [instruction]"],
     examples: [
       'ak-role doctor --issue 115 "Diagnose this retained case."',
@@ -1290,7 +1290,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist.",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding.",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",

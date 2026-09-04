@@ -1,7 +1,8 @@
 /**
  * Public Inspector Role run: admit instruction/attachments → shared post-admission
- * coordinator → settle Terminal result (#568 / ADR 0074). One-shot: pass/bounce/escalate, 无 resume.
- * Dual path with gate-province dispatch; this module is the direct command face.
+ * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
+ * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
+ * with gate-province dispatch; this module is the direct command face.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -14,9 +15,16 @@ import {
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableInspectorRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleInspectorTerminalResult,
@@ -110,10 +118,46 @@ export async function runPublicInspector(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
-      shouldPresentSettled: () => true,
-    },
+    adapters: inspectorAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
+    shouldPresentSettled: () => true,
+  };
+}
+
+/**
+ * Resume a previously admitted Inspector run (#633); the session principal reopens.
+ */
+export async function runPublicInspectorResume(
+  request: PublicResumeRequest,
+  env: InspectorRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedInspectorInvocation;
+  terminal?: TerminalResult;
+}> {
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () =>
+      loadResumableInspectorRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    ),
+    buildTurnRequest: (admitted) =>
+      buildInspectorTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
+    adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

@@ -37,6 +37,7 @@ import {
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
+import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
 import { loadProductionGrokHostFactory } from "./load-production-grok-host.ts";
 import {
@@ -73,15 +74,14 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
-import { runPublicInstructionSeat } from "./instruction-seat-run.ts";
-import { runPublicCollector } from "./collector-run.ts";
+import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
-import { ONE_SHOT_ROLES } from "../packaged-role-registry.ts";
-import { runPublicDoctor } from "./doctor-run.ts";
+import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
-import { runPublicNotary } from "./notary-run.ts";
-import { runPublicInspector } from "./inspector-run.ts";
+import { runPublicNotary, runPublicNotaryResume } from "./notary-run.ts";
+import { runPublicInspector, runPublicInspectorResume } from "./inspector-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
@@ -91,6 +91,41 @@ import {
   peekRoleRunRole,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
+
+/**
+ * Single authoritative resume dispatch (#633): durable role → seat + public
+ * resume runner. Seat-specific loader validation, turn projection, and
+ * adapters live in each seat's resume module.
+ */
+const RESUME_SEAT_DISPATCH: Record<
+  NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>,
+  {
+    readonly seat: PublicCallableRole;
+    readonly run: (
+      request: PublicResumeRequest,
+      env: PostAdmissionEnv,
+      io: CliIo,
+    ) => Promise<{
+      exitCode: number;
+      terminal?: TerminalResult;
+      staleWriterLeaseReclaimed?: true;
+    }>;
+  }
+> = {
+  judge: { seat: "judge", run: runPublicResume },
+  coder: { seat: "coder", run: runPublicCoderResume },
+  fixer: { seat: "fixer", run: runPublicFixerResume },
+  reviewer: { seat: "reviewer", run: runPublicReviewerResume },
+  merger: { seat: "merger", run: runPublicMergerResume },
+  countersign: { seat: "countersign", run: runPublicCountersignResume },
+  "gleaner-left": { seat: "gleaner-left", run: runPublicGleanerLeftResume },
+  collector: { seat: "collector", run: runPublicCollectorResume },
+  doctor: { seat: "doctor", run: runPublicDoctorResume },
+  notary: { seat: "notary", run: runPublicNotaryResume },
+  inspector: { seat: "inspector", run: runPublicInspectorResume },
+  gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
+  navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+};
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCallableRole,
@@ -1148,135 +1183,25 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      // One-shot seats refuse resume — single typed owner, not a per-role chain.
-      if (resumeRole !== undefined && ONE_SHOT_ROLES.includes(resumeRole)) {
-        throw new CliUsageError(
-          `${resumeRole} role runs are one-shot and cannot be resumed`,
-        );
-      }
-      const resumeSeatRole =
-        resumeRole === "coder"
-          ? "coder"
-          : resumeRole === "fixer"
-            ? "fixer"
-            : resumeRole === "reviewer"
-              ? "reviewer"
-              : resumeRole === "merger"
-                ? "merger"
-                : resumeRole === "countersign"
-                  ? "countersign"
-                  : resumeRole === "gleaner-left"
-                    ? "gleaner-left"
-                    : "judge";
+      // #633: single authoritative resume dispatch — the seat follows the
+      // durable admitted role; missing durable role keeps the judge path.
+      const dispatch =
+        resumeRole === undefined
+          ? RESUME_SEAT_DISPATCH.judge
+          : RESUME_SEAT_DISPATCH[resumeRole];
       // #617 DK-4: resume resolves model/host/engine from the live seat table
       // exactly as a new leg would (flag → persistent → default). Cross-host
       // resume delivers prior native records as context to the target host.
       const seat = resolveEffectiveSeat(
         config,
-        resumeSeatRole,
+        dispatch.seat,
         credentials,
         invocationFromParsed(parsed),
       );
-      if (resumeRole === "coder") {
-        const result = await runPublicCoderResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "coder",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      if (resumeRole === "fixer") {
-        const result = await runPublicFixerResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "fixer",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      if (resumeRole === "reviewer") {
-        const result = await runPublicReviewerResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "reviewer",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      if (resumeRole === "merger") {
-        const result = await runPublicMergerResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "merger",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      if (resumeRole === "countersign") {
-        const result = await runPublicCountersignResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "countersign",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      if (resumeRole === "gleaner-left") {
-        const result = await runPublicGleanerLeftResume(
-          resumeRequest,
-          createRoleEnvironment(env, {
-            role: "gleaner-left",
-            home,
-            agentDir,
-            cwd,
-            credentials,
-            seat,
-            config,
-          }),
-          io,
-        );
-        return cliResultFromRoleRun(result);
-      }
-      const result = await runPublicResume(
+      const result = await dispatch.run(
         resumeRequest,
         createRoleEnvironment(env, {
-          role: "judge",
+          role: dispatch.seat,
           home,
           agentDir,
           cwd,

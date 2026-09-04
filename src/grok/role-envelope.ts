@@ -623,59 +623,75 @@ export async function prepareGrokRoleEnvelope(options: {
 
   // Shared envelope activation. systemPrompt must be ready before session/new
   // (ACP delivers it there), so activation runs during prepare.
-  await emit("session_start", { reason: request.continuation.kind });
-  const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
-  let prompt = request.continuation.prompt;
-  for (const value of inputResults) {
-    if (typeof value !== "object" || value === null) continue;
-    const record = value as Record<string, unknown>;
-    if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
-  }
-  // Book the user assignment so judge audit subjects recover it from parent books.
-  if (typeof prompt === "string" && prompt.trim() !== "") {
-    sessionEntries.push({
-      type: "message",
-      message: { role: "user", content: prompt },
+  try {
+    await emit("session_start", { reason: request.continuation.kind });
+    const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
+    let prompt = request.continuation.prompt;
+    for (const value of inputResults) {
+      if (typeof value !== "object" || value === null) continue;
+      const record = value as Record<string, unknown>;
+      if (record.action === "transform" && typeof record.text === "string") prompt = record.text;
+    }
+    // Book the user assignment so judge audit subjects recover it from parent books.
+    if (typeof prompt === "string" && prompt.trim() !== "") {
+      sessionEntries.push({
+        type: "message",
+        message: { role: "user", content: prompt },
+      });
+    }
+    const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
+    const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
+    const promptResults = await emit("before_agent_start", {
+      prompt,
+      systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
+      systemPromptOptions: {},
     });
-  }
-  const basePrompt = await loadMainRoleSessionMaterials(request.activation.role);
-  const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
-  const promptResults = await emit("before_agent_start", {
-    prompt,
-    systemPrompt: [basePrompt, methodPrompt].filter(Boolean).join("\n\n"),
-    systemPromptOptions: {},
-  });
-  const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
-    typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
-    ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
-  // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
-  // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
-  const readingMaterials: unknown[] = [];
-  for (const value of promptResults) {
-    if (typeof value !== "object" || value === null) continue;
-    if (!("readingMaterial" in value)) continue;
-    const material = (value as { readingMaterial?: unknown }).readingMaterial;
-    if (material !== undefined) readingMaterials.push(material);
-  }
+    const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
+      typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
+      ?? [basePrompt, methodPrompt].filter(Boolean).join("\n\n");
+    // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
+    // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
+    const readingMaterials: unknown[] = [];
+    for (const value of promptResults) {
+      if (typeof value !== "object" || value === null) continue;
+      if (!("readingMaterial" in value)) continue;
+      const material = (value as { readingMaterial?: unknown }).readingMaterial;
+      if (material !== undefined) readingMaterials.push(material);
+    }
 
-  priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-  runDirInjected = true;
+    priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+    runDirInjected = true;
 
-  return {
-    mcpServers: [{
-      name: `ak-${request.activation.role}`,
-      command: process.execPath,
-      args: [relay],
-      env: [
-        { name: "AK_GROK_MCP_SOCKET", value: options.socketPath },
-        { name: "AK_GROK_MCP_TOKEN", value: token },
-      ],
-    }],
-    systemPrompt: { body: systemPromptBody, materials: readingMaterials },
-    prompt,
-    abortSignal: hostAbort.signal,
-    closeRound,
-    dispose,
-  };
+    return {
+      mcpServers: [{
+        name: `ak-${request.activation.role}`,
+        command: process.execPath,
+        args: [relay],
+        env: [
+          { name: "AK_GROK_MCP_SOCKET", value: options.socketPath },
+          { name: "AK_GROK_MCP_TOKEN", value: token },
+        ],
+      }],
+      systemPrompt: { body: systemPromptBody, materials: readingMaterials },
+      prompt,
+      abortSignal: hostAbort.signal,
+      closeRound,
+      dispose,
+    };
+  } catch (error) {
+    // listen already succeeded; dispose is not yet caller-owned. Release the
+    // unix listener before surfacing the activation/prepare failure. Keep both
+    // causes when dispose also fails (failure-honesty; do not erase cleanup).
+    try {
+      await dispose();
+    } catch (cleanupFailure) {
+      throw new AggregateError(
+        [error, cleanupFailure],
+        "prepareGrokRoleEnvelope activation failed and its dispose cleanup also failed",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }

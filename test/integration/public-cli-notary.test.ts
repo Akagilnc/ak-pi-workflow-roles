@@ -16,10 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -37,10 +34,7 @@ import {
   buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import {
-  readRoleRunState,
-  writeRoleRunState,
-} from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -50,6 +44,11 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import {
+  CANONICAL_SOURCE_RUN_ID,
+  CANONICAL_SOURCE_ROLE,
+  seedCanonicalSourceRun,
+} from "../helpers/notary-fixtures.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
@@ -84,45 +83,6 @@ function seedGitProject(root: string): void {
   });
   execFileSync("git", ["config", "user.name", "Notary Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-const CANONICAL_SOURCE_ROLE = "judge" as const;
-
-/** Seed a retained source run under the machine ledger book (authoritative path). */
-async function seedCanonicalSourceRun(
-  home: string,
-  project: string,
-): Promise<string> {
-  const coords = issuePiDurablePrincipalCoordinates({
-    cwd: project,
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    home,
-  });
-  await mkdir(coords.sessionDirectory, { recursive: true });
-  const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
-  await writeFile(
-    coords.sessionFile,
-    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
-    "utf8",
-  );
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify({ role: CANONICAL_SOURCE_ROLE, runId: CANONICAL_SOURCE_RUN_ID })}\n`,
-    "utf8",
-  );
-  await writeRoleRunState(coords.runDirectory, {
-    runId: CANONICAL_SOURCE_RUN_ID,
-    role: CANONICAL_SOURCE_ROLE,
-    state: "terminal",
-    bookKey: coords.bookKey,
-    projectRoot: project,
-    sessionDirectory: coords.sessionDirectory,
-    sessionFile: coords.sessionFile,
-    admittedRequestPath,
-  });
-  return await realpath(coords.runDirectory);
 }
 
 /** Project-tree fake projection — must be rejected by public locator. */
