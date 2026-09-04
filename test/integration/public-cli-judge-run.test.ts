@@ -638,8 +638,7 @@ test(
       assert.equal(terminal.navigator.disposition, "recommendation");
       if (terminal.navigator.disposition === "recommendation") {
         assert.equal(terminal.navigator.next.role, "reviewer");
-        assert.equal(terminal.navigator.command, "ak-role reviewer");
-        assert.equal(terminal.navigator.command.includes("pi --ak-role"), false);
+        assert.equal(terminal.navigator.command, undefined);
       }
       assert.equal(terminal.runId, "run-e2e-judge-001");
       assert.ok(terminal.artifacts.length >= 2);

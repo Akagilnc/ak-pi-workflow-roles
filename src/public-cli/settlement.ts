@@ -150,6 +150,18 @@ async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Ex
   return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
 }
 
+/**
+ * Shared sealed-accepted detection for all resumable adapters (#648).
+ * Ledger projection is the sole authority — not optional per-role adapter wiring.
+ */
+export async function hasSealedAcceptedProjection(
+  admitted: AdmittedRoleInvocation,
+): Promise<boolean> {
+  // Ledger authority must not wash read failure into "unsealed" (#648).
+  // Callers treat throw as fail-closed: preserve true cause, never redispatch.
+  return (await sealedLedgerOutcome(admitted)) !== undefined;
+}
+
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: "judge" | "doctor",
