@@ -250,6 +250,9 @@ export function createCollectorRoleRuntime(
           reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
+      if (event.toolName === COLLECTOR_OUTPUT_TOOL) {
+        activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, event.toolCallId);
+      }
       if (
         activation.ledger.outputCandidate &&
         event.toolName !== COLLECTOR_OUTPUT_TOOL
