@@ -1,7 +1,6 @@
 /**
  * Shared Doctor test fixtures — the retained-case seed (#78 issue runs) and a
- * lawful completed DoctorOutput. One authority: doctor behavior tests and the
- * #633 resume tracers both project from here.
+ * lawful completed DoctorOutput. One authority for doctor behavior tests.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

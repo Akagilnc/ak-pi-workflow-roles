@@ -1,7 +1,7 @@
 /**
  * Shared Notary test fixtures — a canonical retained source run under the
- * machine ledger book (authoritative locator path). One authority: notary
- * behavior tests and the #633 resume tracers both seed from here.
+ * machine ledger book (authoritative locator path). One authority for notary
+ * behavior tests.
  */
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";

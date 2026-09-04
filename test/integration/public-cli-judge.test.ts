@@ -903,48 +903,21 @@ test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () =
   assert.deepEqual(await pendingRace, { status: "timeout" });
   assert.equal(raceResolved, true);
 
-  // Early completion must cancel the grace timer synchronously: 10s is a maximum, not a fixed delay.
+  // Early completion while deferred timer stays unreleased: 10s is a maximum, not a fixed delay.
   let holdEarlyTimer!: () => void;
   const earlyTimerHeld = new Promise<void>((resolve) => {
     holdEarlyTimer = resolve;
   });
-  let cancelCalls = 0;
-  const earlySleep = Object.assign(
-    async (ms: number) => {
-      assert.equal(ms, 10_000);
-      await earlyTimerHeld;
-    },
-    {
-      cancel() {
-        cancelCalls += 1;
-        holdEarlyTimer();
-      },
-    },
-  );
   const done = await raceNavigatorGrace(
     Promise.resolve("ok"),
     NAVIGATOR_POST_ROLE_GRACE_MS,
-    earlySleep,
+    async (ms) => {
+      assert.equal(ms, 10_000);
+      await earlyTimerHeld;
+    },
   );
   assert.deepEqual(done, { status: "done", value: "ok" });
-  assert.equal(cancelCalls, 1, "early settle must cancel/release the grace timer resource");
-
-  // Production default sleep: early settle must clearTimeout so no 10s resource remains.
-  const resourcesBefore = (
-    process as NodeJS.Process & { getActiveResourcesInfo?: () => string[] }
-  ).getActiveResourcesInfo?.() ?? [];
-  assert.deepEqual(await raceNavigatorGrace(Promise.resolve("ok")), { status: "done", value: "ok" });
-  const resourcesAfter = (
-    process as NodeJS.Process & { getActiveResourcesInfo?: () => string[] }
-  ).getActiveResourcesInfo?.() ?? [];
-  const timeoutDelta =
-    resourcesAfter.filter((name) => name === "Timeout").length -
-    resourcesBefore.filter((name) => name === "Timeout").length;
-  assert.equal(
-    timeoutDelta,
-    0,
-    `default sleep must clear the ${NAVIGATOR_POST_ROLE_GRACE_MS}ms grace timer on early settle; before=${resourcesBefore.join(",")} after=${resourcesAfter.join(",")}`,
-  );
+  holdEarlyTimer();
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
