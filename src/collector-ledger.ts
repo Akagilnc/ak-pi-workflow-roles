@@ -917,238 +917,82 @@ export function hydrateCollectorLedgerFromSession(
   entries: Iterable<unknown>,
   config: CollectorConfigState,
 ): CollectorLedgerHydrationState {
-  let customActivation: { activationTime: string; deadlineTime: string } | undefined;
-  const customSnapshots: CollectorSnapshot[] = [];
-  const customEvidence: CollectorEvidenceRecord[] = [];
-  const customAttempts: CollectorRequestAttempt[] = [];
-  const customAttemptKeys = new Set<string>();
-  const customWaits: CollectorWaitRecord[] = [];
-  let customMutationGen: number | undefined;
-  let customObservedGen: number | undefined;
-
-  let earliestSessionTime: string | undefined;
-  const toolSnapshots: CollectorSnapshot[] = [];
-  const toolEvidence: CollectorEvidenceRecord[] = [];
-  const toolAttempts: CollectorRequestAttempt[] = [];
-  const toolAttemptKeys = new Set<string>();
-  const toolWaits: CollectorWaitRecord[] = [];
-
-  type OpenToolCall = { name: string; args: any; timestamp?: string | undefined };
-  const openCalls = new Map<string, OpenToolCall>();
+  let activationTime: Date | undefined;
+  let deadlineTime: Date | undefined;
+  const snapshots: CollectorSnapshot[] = [];
+  const evidence = new Map<string, CollectorEvidenceRecord>();
+  const attempts: CollectorRequestAttempt[] = [];
+  const attemptKeys = new Set<string>();
+  const waits: CollectorWaitRecord[] = [];
+  const transportFailures: CollectorTransportFailure[] = [];
+  let mutationGeneration = 0;
+  let observedGeneration = 0;
 
   for (const raw of entries) {
-    if (!raw || typeof raw !== "object") continue;
-    const entry = raw as Record<string, unknown>;
+    if (typeof raw !== "object" || raw === null) continue;
+    const entry = raw as { type?: unknown; customType?: unknown; data?: unknown };
+    if (entry.type !== "custom" || typeof entry.data !== "object" || entry.data === null) continue;
+    const data = entry.data as Record<string, unknown>;
 
-    if (typeof entry.timestamp === "string" && entry.timestamp) {
-      if (!earliestSessionTime || entry.timestamp < earliestSessionTime) {
-        earliestSessionTime = entry.timestamp;
-      }
-    }
-
-    if (entry.type === "custom") {
-      const customType = entry.customType;
-      const data = entry.data as any;
-      if (!data || typeof data !== "object") continue;
-
-      if (customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
-        if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
-          customActivation = { activationTime: data.activationTime, deadlineTime: data.deadlineTime };
-        }
-      } else if (customType === COLLECTOR_SNAPSHOT_ENTRY_TYPE) {
-        const snap = (data.snapshot && typeof data.snapshot.snapshotId === "string")
-          ? data.snapshot
-          : (typeof data.snapshotId === "string" ? data : undefined);
-        if (snap) {
-          customSnapshots.push(snap);
-        }
-        if (Array.isArray(data.evidence)) {
-          customEvidence.push(...data.evidence);
-        }
-        if (typeof data.mutationGeneration === "number") {
-          customMutationGen = Math.max(customMutationGen ?? 0, data.mutationGeneration);
-        }
-        if (typeof data.observedGeneration === "number") {
-          customObservedGen = Math.max(customObservedGen ?? 0, data.observedGeneration);
-        }
-        if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string" && !customActivation) {
-          customActivation = { activationTime: data.activationTime, deadlineTime: data.deadlineTime };
-        }
-      } else if (customType === COLLECTOR_REQUEST_ENTRY_TYPE) {
-        const att = (data.attempt && typeof data.attempt.attemptId === "string")
-          ? data.attempt
-          : (typeof data.attemptId === "string" ? data : undefined);
-        if (att) {
-          customAttempts.push(att);
-        }
-        if (typeof data.attemptKey === "string") {
-          customAttemptKeys.add(data.attemptKey);
-        }
-        if (data.commentEvidence && typeof data.commentEvidence.evidenceId === "string") {
-          customEvidence.push(data.commentEvidence);
-        }
-        if (typeof data.mutationGeneration === "number") {
-          customMutationGen = Math.max(customMutationGen ?? 0, data.mutationGeneration);
-        }
-      } else if (customType === COLLECTOR_WAIT_ENTRY_TYPE) {
-        const waitRec = (data.waitRecord && typeof data.waitRecord.waitId === "string")
-          ? data.waitRecord
-          : (typeof data.waitId === "string" ? data : undefined);
-        if (waitRec) {
-          customWaits.push(waitRec);
-        }
-        if (typeof data.mutationGeneration === "number") {
-          customMutationGen = Math.max(customMutationGen ?? 0, data.mutationGeneration);
-        }
+    if (entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
+      if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
+        activationTime = new Date(data.activationTime);
+        deadlineTime = new Date(data.deadlineTime);
       }
       continue;
     }
-
-    if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-      const msg = entry.message as Record<string, unknown>;
-      if (typeof msg.timestamp === "string" && msg.timestamp) {
-        if (!earliestSessionTime || msg.timestamp < earliestSessionTime) {
-          earliestSessionTime = msg.timestamp;
-        }
+    if (entry.customType === COLLECTOR_SNAPSHOT_ENTRY_TYPE) {
+      const snapshot = data.snapshot as CollectorSnapshot | undefined;
+      if (snapshot?.snapshotId === undefined || !Array.isArray(data.evidence)) continue;
+      snapshots.push(snapshot);
+      for (const record of data.evidence as CollectorEvidenceRecord[]) {
+        if (record?.evidenceId !== undefined) evidence.set(record.evidenceId, record);
       }
-
-      if (msg.role === "assistant" && Array.isArray(msg.content)) {
-        for (const part of msg.content) {
-          if (part && typeof part === "object" && part.type === "toolCall" && typeof part.id === "string" && typeof part.name === "string") {
-            openCalls.set(part.id, {
-              name: part.name,
-              args: part.arguments,
-              timestamp: typeof msg.timestamp === "string" ? msg.timestamp : typeof entry.timestamp === "string" ? entry.timestamp : undefined,
-            });
-          }
-        }
+      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
+      if (typeof data.observedGeneration === "number") observedGeneration = data.observedGeneration;
+      continue;
+    }
+    if (entry.customType === COLLECTOR_REQUEST_ENTRY_TYPE) {
+      const attempt = data.attempt as CollectorRequestAttempt | undefined;
+      if (attempt?.attemptId === undefined) continue;
+      attempts.push(attempt);
+      if (typeof data.attemptKey === "string") attemptKeys.add(data.attemptKey);
+      const commentEvidence = data.commentEvidence as CollectorEvidenceRecord | undefined;
+      if (commentEvidence?.evidenceId !== undefined) evidence.set(commentEvidence.evidenceId, commentEvidence);
+      if (attempt.status === "ambiguous_loss") {
+        transportFailures.push({
+          failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
+          kind: "ambiguous_request_loss",
+          message: attempt.responseDiagnostics ?? "ambiguous request loss",
+          requestId: attempt.requestId,
+          observedHead: attempt.observedHead,
+          marker: attempt.marker,
+          recovered: false,
+        });
       }
-
-      if (msg.role === "toolResult" && typeof msg.toolCallId === "string") {
-        const toolCall = openCalls.get(msg.toolCallId);
-        const toolName = typeof msg.toolName === "string" ? msg.toolName : toolCall?.name;
-        const details = msg.details as any;
-
-        if (toolName === COLLECTOR_OBSERVE_TOOL && msg.isError !== true && details && typeof details === "object") {
-          if (typeof details.snapshotId === "string" && typeof details.headOid === "string") {
-            const evIds: string[] = [];
-            if (Array.isArray(details.evidence)) {
-              for (const item of details.evidence) {
-                if (item && typeof item.evidenceId === "string") {
-                  evIds.push(item.evidenceId);
-                  toolEvidence.push({
-                    evidenceId: item.evidenceId,
-                    kind: item.kind ?? "issue_comment",
-                    versionId: item.versionId ?? item.evidenceId,
-                    contentDigest: item.contentDigest ?? item.evidenceId,
-                    firstObservedAt: item.firstObservedAt ?? item.authoritativeTime ?? new Date().toISOString(),
-                    raw: item.raw ?? item,
-                    authorLogin: item.authorLogin,
-                    state: item.state,
-                    body: item.body,
-                    commitOid: item.commitOid,
-                    htmlUrl: item.htmlUrl,
-                    path: item.path,
-                    line: item.line,
-                    side: item.side,
-                    authoritativeTime: item.authoritativeTime,
-                    windowRelation: item.windowRelation,
-                    pullRequestReviewId: item.pullRequestReviewId,
-                    githubId: item.githubId,
-                    machineIdentity: item.machineIdentity,
-                  });
-                }
-              }
-            }
-            toolSnapshots.push({
-              snapshotId: details.snapshotId,
-              observedAt: details.observedAt ?? msg.timestamp ?? entry.timestamp ?? new Date().toISOString(),
-              completedAt: details.completedAt ?? msg.timestamp ?? entry.timestamp ?? new Date().toISOString(),
-              completedMono: 0,
-              host: "github.com",
-              repository: config.repository.canonical,
-              prNumber: config.prNumber,
-              prState: details.prState ?? "OPEN",
-              headOid: details.headOid,
-              complete: details.complete ?? true,
-              evidenceIds: evIds,
-              pageDiagnostics: details.pageDiagnostics ?? [],
-              normalizedByteLength: details.normalizedByteLength ?? 0,
-            });
-            if (Array.isArray(details.requestAttempts)) {
-              for (const att of details.requestAttempts) {
-                if (att && typeof att.attemptId === "string") {
-                  toolAttempts.push(att);
-                  const k = [config.repository.canonical, String(config.prNumber), att.observedHead ?? details.headOid, att.requestId].join("|");
-                  toolAttemptKeys.add(k);
-                }
-              }
-            }
-          }
-        } else if (toolName === COLLECTOR_REQUEST_TOOL && msg.isError !== true && details && typeof details === "object") {
-          const reqId = details.requestId ?? toolCall?.args?.requestId;
-          const headOid = details.observedHead;
-          if (reqId && headOid) {
-            const k = [config.repository.canonical, String(config.prNumber), headOid, reqId].join("|");
-            toolAttemptKeys.add(k);
-          }
-          if (typeof details.attemptId === "string") {
-            toolAttempts.push(details);
-          }
-        } else if (toolName === COLLECTOR_WAIT_TOOL && msg.isError !== true && details && typeof details === "object") {
-          if (typeof details.effectiveMs === "number") {
-            toolWaits.push(details);
-          }
-        }
-      }
+      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
+      continue;
+    }
+    if (entry.customType === COLLECTOR_WAIT_ENTRY_TYPE) {
+      const wait = data.waitRecord as CollectorWaitRecord | undefined;
+      if (wait?.waitId === undefined) continue;
+      waits.push(wait);
+      if (typeof data.mutationGeneration === "number") mutationGeneration = data.mutationGeneration;
     }
   }
-
-  let activationTime: Date | undefined;
-  let deadlineTime: Date | undefined;
-  if (customActivation) {
-    activationTime = new Date(customActivation.activationTime);
-    deadlineTime = new Date(customActivation.deadlineTime);
-  } else if (earliestSessionTime) {
-    activationTime = new Date(earliestSessionTime);
-    deadlineTime = new Date(activationTime.getTime() + COLLECTOR_ELIGIBILITY_MS);
-  }
-
-  const snapshots = customSnapshots.length > 0 ? customSnapshots : toolSnapshots;
-
-  const evidenceMap = new Map<string, CollectorEvidenceRecord>();
-  for (const ev of customEvidence) evidenceMap.set(ev.evidenceId, ev);
-  for (const ev of toolEvidence) {
-    if (!evidenceMap.has(ev.evidenceId)) evidenceMap.set(ev.evidenceId, ev);
-  }
-
-  const attemptsMap = new Map<string, CollectorRequestAttempt>();
-  for (const att of customAttempts) attemptsMap.set(att.attemptId, att);
-  for (const att of toolAttempts) {
-    if (!attemptsMap.has(att.attemptId)) attemptsMap.set(att.attemptId, att);
-  }
-
-  const attemptKeys = new Set<string>([...customAttemptKeys, ...toolAttemptKeys]);
-  for (const att of attemptsMap.values()) {
-    if (att.observedHead && att.requestId) {
-      attemptKeys.add([config.repository.canonical, String(config.prNumber), att.observedHead, att.requestId].join("|"));
-    }
-  }
-
-  const waits = customWaits.length > 0 ? customWaits : toolWaits;
-  const mutationGeneration = customMutationGen ?? (attemptsMap.size > 0 || waits.length > 0 ? Math.max(attemptsMap.size, waits.length) : 0);
-  const observedGeneration = customObservedGen ?? (snapshots.length > 0 ? mutationGeneration : 0);
 
   return {
     activationTime,
     deadlineTime,
     snapshots,
-    evidenceRecords: [...evidenceMap.values()],
-    requestAttempts: [...attemptsMap.values()],
+    evidenceRecords: [...evidence.values()],
+    requestAttempts: attempts,
     attemptKeys,
     waits,
+    transportFailures,
     mutationGeneration,
     observedGeneration,
     latestCompleteSnapshotId: snapshots.at(-1)?.snapshotId,
+    finalObservationRequired: deadlineTime !== undefined && Date.now() >= deadlineTime.getTime(),
   };
 }
