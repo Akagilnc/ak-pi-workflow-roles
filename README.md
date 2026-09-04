@@ -11,6 +11,8 @@ pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
 
+Four court seats (`coder` / `fixer` / `judge` / `countersign`) resolve an unbound ticket from the instruction via a Hermes labor-engine detour before the turn runs. Keep a working `hermes` executable on `PATH` for those seats; spawn failure, nonzero exit, or unusable output stops the run through the existing infrastructure-failure path with the original cause visible ([ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)). Pi-only installs that never dispatch those seats do not need Hermes.
+
 Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; seat and Gate-officer configuration lives under Reading results below.
 
 ### Test channel (`next`)
@@ -75,7 +77,7 @@ The examples below are usage sketches; option identity, aliases, requiredness, a
 
 ```bash
 # countersign — ticket-court review before work starts; resume continues the exact session
-ak-role countersign --attach ./ticket.md "裁：本票是否足以开工。"
+ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction
 ak-role gleaner-left --base main

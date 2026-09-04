@@ -12,6 +12,7 @@ import {
 import { resolveDiaristGithubOrigin } from "../diarist.ts";
 import {
   bindAdmittedTicketNumber,
+  recordTrueUnboundTicketResolution,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 
@@ -21,14 +22,18 @@ export type SeatTicketBindingEnv = {
 
 /**
  * Bind ticketNumber onto an unbound admitted seat via LLM instruction recognition.
- * Already-bound admissions are left untouched (no re-resolution).
- * true-unbound leaves the run unbound; failed verification throws.
+ * Already-settled admissions (ticketNumber or durable true-unbound) short-circuit —
+ * no re-entry into hermes on auto-resume attempts or manual resume (#635).
+ * true-unbound is persisted once; failed verification throws.
  */
 export async function resolveSeatTicketBinding(
   admitted: AdmittedRoleInvocation,
   env: SeatTicketBindingEnv = {},
 ): Promise<DiaristTicketResolution | undefined> {
   if (admitted.ticketNumber !== undefined) return undefined;
+  if (admitted.ticketResolution === "true-unbound") {
+    return { kind: "true-unbound" };
+  }
 
   const resolver = createHermesDiaristTicketResolver({
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
@@ -44,6 +49,8 @@ export async function resolveSeatTicketBinding(
   });
   if (resolution.kind === "ticket") {
     await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
+  } else {
+    await recordTrueUnboundTicketResolution(admitted);
   }
   return resolution;
 }
