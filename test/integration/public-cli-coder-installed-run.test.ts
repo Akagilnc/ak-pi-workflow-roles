@@ -406,6 +406,18 @@ test(
         const sealed = await readSealedSubmission(project, runId, home);
         assert.ok(sealed, "sealed submission must be recorded");
         assert.equal(sealed.status, "completed");
+
+        // Public installed entry: the completion gate opens only an Inspector child.
+        const auditorDir = join(runDirectory, "session", "auditor-roles");
+        const auditorFiles = await readdir(auditorDir);
+        const auditorTools = (await Promise.all(auditorFiles.map(async (name) =>
+          (await readFile(join(auditorDir, name), "utf8")))))
+          .flatMap((raw) => raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as any))
+          .flatMap((row) => row.message?.content ?? [])
+          .filter((part) => part.type === "toolCall")
+          .map((part) => part.name);
+        assert.equal(auditorTools.includes("ak_inspector_output"), true);
+        assert.equal(auditorTools.includes("ak_gatekeeper_output"), false);
       },
     );
   },
