@@ -49,15 +49,11 @@ function identityClaimPath(recordFile: string, identity: string): string {
  * with EEXIST when the destination already exists (unlike rename, which
  * replaces an existing destination on POSIX).
  */
-function publishExclusiveFile(path: string, contents: string): boolean {
+function publishExclusiveFile(path: string, contents: string): void {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(temporary, contents, "utf8");
   try {
     linkSync(temporary, path);
-    return true;
-  } catch (error) {
-    if (errorCodeOf(error) !== "EEXIST") throw error;
-    return false;
   } finally {
     try {
       unlinkSync(temporary);
@@ -114,10 +110,10 @@ function unlinkAbsentOk(path: string): Error | undefined {
  * Exclusive per-identity claim (linkSync) makes check+append atomic for one
  * identity. The winner appends under the claim and always releases it on both
  * normal and throwing exits. A loser that already sees the published row
- * returns that pointer; a loser that sees claim-without-row fails immediately
- * as typed contention (caller may retry). Crash residue can leave that one
- * identity contended — identity-scoped, never a volume lock. No wait loop,
- * write-ahead recovery, PID reclaim, or compare-and-unlink.
+ * returns that pointer; a loser that hits claim EEXIST without a published row
+ * fails as SitianInfrastructureError (knownCause session). Crash residue can
+ * leave that one identity blocked — identity-scoped, never a volume lock. No
+ * wait loop, write-ahead recovery, PID reclaim, or compare-and-unlink.
  */
 function appendWithIdentityClaim(
   recordFile: string,
@@ -138,8 +134,10 @@ function appendWithIdentityClaim(
     return existing;
   }
 
-  const acquired = publishExclusiveFile(claimPath, "");
-  if (!acquired) {
+  try {
+    publishExclusiveFile(claimPath, "");
+  } catch (error) {
+    if (errorCodeOf(error) !== "EEXIST") throw error;
     sealTornTail(recordFile);
     const published = findIdentityPointer(
       recordFile,
@@ -152,8 +150,8 @@ function appendWithIdentityClaim(
       return published;
     }
     throw new SitianInfrastructureError(
-      `Sitian identity claim at ${claimPath} is contended for identity ${record.identity}; typed contention — retry after the holder publishes`,
-      { failureDisposition: "contention" },
+      `Sitian identity claim at ${claimPath} already exists for identity ${record.identity}`,
+      { cause: error },
     );
   }
 
@@ -195,7 +193,7 @@ function appendWithIdentityClaim(
   if (cleanupFailure !== undefined) {
     throw new SitianInfrastructureError(
       `Sitian identity claim at ${claimPath} could not be released after append for identity ${record.identity}: ${errorText(cleanupFailure)}`,
-      { cause: cleanupFailure, failureDisposition: "cleanup" },
+      { cause: cleanupFailure },
     );
   }
   return result as RecordPointer;
