@@ -31,7 +31,6 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
-  hasLawfulFixerTerminalResult,
   presentStructuralRejection,
   trySettleFixerTerminalResult,
 } from "./settlement.ts";
@@ -99,8 +98,6 @@ function fixerAdapters(
               "diagnosing-bugs",
             ),
           }),
-    hasLawfulTerminalResult: (admitted, authority) => hasLawfulFixerTerminalResult(admitted, authority),
-    isResumableRole: true,
   };
 }
 
