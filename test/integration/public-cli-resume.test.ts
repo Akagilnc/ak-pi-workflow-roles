@@ -21,7 +21,6 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   acquireRunWriterLease,
-  isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
   markRunResumable,
@@ -248,25 +247,6 @@ test("typed HTTP 429 observation is field-based; quota-like prose alone is never
       provider: "anthropic",
     });
     assert.equal(await readTypedHttp429Observation(runDir), undefined);
-
-    assert.equal(
-      isV1ResumableFailure({
-        hasLawfulTerminalResult: false,
-        typedHttp429: { httpStatus: 429, provider: "xai" },
-      }),
-      true,
-    );
-    assert.equal(
-      isV1ResumableFailure({
-        hasLawfulTerminalResult: true,
-        typedHttp429: { httpStatus: 429, provider: "xai" },
-      }),
-      false,
-    );
-    assert.equal(
-      isV1ResumableFailure({ hasLawfulTerminalResult: false }),
-      false,
-    );
   });
 });
 
@@ -670,13 +650,13 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
   });
 });
 
-test("lawful result with publication failure is not resumable even with attempt 429", async () => {
+test("lawful+publication-fail under 429: resume hint uniform-out; sealed still no-redispatch (#665/#648)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const { host, dispatches } = sealedPublicationBlockedHost(
       "lawful despite later publication failure",
     );
@@ -696,11 +676,11 @@ test("lawful result with publication failure is not resumable even with attempt 
 
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.resume, undefined);
-    assert.equal(result.terminal!.runId, runId);
+    // #665: principal available + typed 429 → resume hint (统一出), even with sealed/lawful.
+    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
-      // Publication errno retained; must not wash into a resumable provider 429 path.
+      // Publication errno retained; hint presence must not wash failure cause into provider-429.
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
@@ -716,8 +696,7 @@ test("lawful result with publication failure is not resumable even with attempt 
       "runs",
       `${runId}@judge`,
     );
-    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-    assert.equal(stdout.join("").includes("ak-role resume"), false);
+    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
     const sealed = await readSealedSubmission(project, runId, home);
     assert.ok(sealed, "sealed accepted projection must survive publication failure");
     assert.equal(sealed.role, "judge");
