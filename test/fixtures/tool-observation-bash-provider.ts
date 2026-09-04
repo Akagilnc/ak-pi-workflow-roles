@@ -12,7 +12,6 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
@@ -34,12 +33,6 @@ export default async function fixture(pi: ExtensionAPI): Promise<void> {
   let bashIssued = false;
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-        { stopReason: "toolUse" },
-      );
-    }
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
@@ -89,7 +82,7 @@ export default async function fixture(pi: ExtensionAPI): Promise<void> {
     }
     return fauxAssistantMessage("observation fixture idle");
   };
-  // bash + judge + scripted province + auditor (+ navigator) need headroom.
+  // bash + judge + scripted direct notary + auditor (+ navigator) need headroom.
   faux.setResponses(Array.from({ length: 10 }, () => response));
   const model = faux.getModel();
   const provider: Provider = {

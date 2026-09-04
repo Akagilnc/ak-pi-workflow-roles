@@ -28,6 +28,7 @@ import {
 } from "./package-contracts/fixer-packet.ts";
 import {
   createWorkerSubmissionGate,
+  WORKER_DONE_STATUSES,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
@@ -264,13 +265,15 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            await pi.requireGatekeeperPass!({
-              context: ctx,
-              subject: { kind: "worker_completion", material: JSON.stringify(output) },
-              ...(_signal === undefined ? {} : { signal: _signal }),
-              hostActions,
-              toolCallId,
-            });
+            if (WORKER_DONE_STATUSES.has(output.status)) {
+              await pi.requireGatekeeperPass!({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
+            }
             const acceptedDetails = output;
             return {
               content: [{ type: "text" as const, text: FIXER_ACCEPTED_TEXT }],
@@ -396,13 +399,15 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            await pi.requireGatekeeperPass!({
-              context: ctx,
-              subject: { kind: "worker_completion", material: JSON.stringify(output) },
-              ...(_signal === undefined ? {} : { signal: _signal }),
-              hostActions,
-              toolCallId,
-            });
+            if (WORKER_DONE_STATUSES.has(output.status)) {
+              await pi.requireGatekeeperPass!({
+                context: ctx,
+                subject: { kind: "worker_completion", material: JSON.stringify(output) },
+                ...(_signal === undefined ? {} : { signal: _signal }),
+                hostActions,
+                toolCallId,
+              });
+            }
             const acceptedDetails = output;
             return {
               content: [{ type: "text" as const, text: CODER_ACCEPTED_TEXT }],

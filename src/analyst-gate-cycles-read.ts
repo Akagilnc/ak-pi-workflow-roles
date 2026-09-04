@@ -21,17 +21,32 @@
  * Lawful province non-dispatch release (`pass` on a dispatch tool) opens no
  * round and must not throw (#597 / ADR 0074 gate-non-mandatory).
  * True non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
+ * Historical dispatch↔officer pairing requires a shared typed
+ * `ak_auditor_parent_attempt_binding.parent.attemptEntryId` — never seat/time guessing.
+ * An orphan accepted dispatch must not consume a later same-seat direct officer.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
+} from "./compliance-transport.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
 
-/** One completed gate round: province dispatch paired with its officer volume. */
+/** One completed gate round: direct officer receipt or historical province/officer pair. */
+/** Honest origin discriminant: direct summons vs historical province dispatch. */
+export type AnalystGateCycleOrigin =
+  | { readonly kind: "direct" }
+  | {
+      readonly kind: "historical_dispatch";
+      /** Seat-reduction reason from the accepted dispatch receipt; never invented. */
+      readonly reason?: string;
+    };
+
 export type AnalystGateCycleRound = {
   /** 1-based chronological order among paired rounds on this leg. */
   readonly roundIndex: number;
@@ -50,13 +65,8 @@ export type AnalystGateCycleRound = {
   readonly findings: readonly string[];
   /** findings.length — retained so metric families need not re-derive. */
   readonly findingsCount: number;
-  /** Accepted dispatch receipt status (paired rounds are always "dispatch"). */
-  readonly dispatchStatus: string;
-  /**
-   * Optional seat-reduction reason from the accepted dispatch receipt.
-   * Absent when the dispatch did not write a non-empty reason — never invented.
-   */
-  readonly dispatchReason?: string;
+  /** Direct summons or historical province-paired dispatch. */
+  readonly origin: AnalystGateCycleOrigin;
 };
 
 const DISPATCH_TOOLS = new Set(["ak_menxia_output", "ak_gatekeeper_output"]);
@@ -80,6 +90,18 @@ const OFFICER_ARG_ALIASES: Readonly<Record<string, "inspector" | "notary">> = {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/** Typed parent-attempt id from ak_auditor_parent_attempt_binding — durable invocation association. */
+function extractAttemptEntryId(rows: readonly LedgerSessionRow[]): string | undefined {
+  for (const row of rows) {
+    if (row.type !== "custom" || row.customType !== AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) continue;
+    if (!isRecord(row.data) || !isRecord(row.data.parent)) continue;
+    const id = row.data.parent.attemptEntryId;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return undefined;
+}
+
 
 /** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */
 function isMissingDirectoryError(error: unknown): boolean {
@@ -111,9 +133,10 @@ function optionalDispatchReason(raw: unknown): string | undefined {
   return raw;
 }
 
-type AcceptedGateToolCall = {
+type GateToolCall = {
   readonly toolName: string;
   readonly args: Record<string, unknown> | undefined;
+  readonly accepted: boolean;
 };
 
 function isGateTerminatingToolName(toolName: string): boolean {
@@ -139,32 +162,40 @@ function acceptedGateReceiptIds(
 
 /**
  * Last accepted gate terminating toolCall on a nested volume (dispatch or officer).
- * Identity only — typed args are validated after recognition so unusable facts
- * fail loud instead of being skipped as "not a gate volume". Soul-audit and
- * other non-gate tools never qualify.
+ * Preference: keep the last accepted receipt; fall back to a rejected call only
+ * when no accepted receipt exists (so classify can lawfully omit). Identity only
+ * — typed args are validated after recognition so unusable facts fail loud
+ * instead of being skipped as "not a gate volume". Soul-audit and other non-gate
+ * tools never qualify.
  */
-function extractLastAcceptedGateToolCall(
+function extractLastGateToolCall(
   rows: readonly LedgerSessionRow[],
-): AcceptedGateToolCall | undefined {
+): GateToolCall | undefined {
   const acceptedIds = acceptedGateReceiptIds(rows);
-  let last: AcceptedGateToolCall | undefined;
+  let lastAccepted: GateToolCall | undefined;
+  let lastRejected: GateToolCall | undefined;
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (!isRecord(part) || part.type !== "toolCall") continue;
-      // Unpaired / rejected calls have no lawful receipt — skip before reading args.
       if (typeof part.id !== "string" || part.id.length === 0) continue;
-      if (!acceptedIds.has(part.id)) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       if (!isGateTerminatingToolName(part.name)) continue;
-      last = {
+      const call: GateToolCall = {
         toolName: part.name,
         args: isRecord(part.arguments) ? part.arguments : undefined,
+        accepted: acceptedIds.has(part.id),
       };
+      if (call.accepted) {
+        lastAccepted = call;
+      } else if (lastAccepted === undefined) {
+        // Only retain rejected while no accepted receipt has appeared yet.
+        lastRejected = call;
+      }
     }
   }
-  return last;
+  return lastAccepted ?? lastRejected;
 }
 
 function requireAcceptedGateStatus(
@@ -210,6 +241,8 @@ type ClassifiedVolume =
       readonly officer: "inspector" | "notary";
       readonly status: string;
       readonly reason?: string;
+      /** Present only when the volume carries ak_auditor_parent_attempt_binding. */
+      readonly attemptEntryId?: string;
     }
   | {
       readonly kind: "officer";
@@ -220,6 +253,7 @@ type ClassifiedVolume =
       readonly findings: readonly string[];
       readonly findingsCount: number;
       readonly officerWallMs: number;
+      readonly attemptEntryId?: string;
     };
 
 async function classifyAuditorVolume(
@@ -227,11 +261,19 @@ async function classifyAuditorVolume(
 ): Promise<ClassifiedVolume | undefined> {
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
   const rows = await readLedgerSessionJsonl(filePath);
-  // Recognize accepted gate tool first. Non-gate volumes stay omitted; once a
-  // gate receipt is present, required typed facts must not silently under-count.
-  const call = extractLastAcceptedGateToolCall(rows);
+  // Recognize gate tool first. Non-gate volumes stay omitted; rejected gate
+  // receipts omit before accepted-only span/status validation; once an accepted
+  // receipt is present, required typed facts must not silently under-count.
+  const call = extractLastGateToolCall(rows);
   if (call === undefined) return undefined;
 
+  const attemptEntryId = extractAttemptEntryId(rows);
+  if (!call.accepted) {
+    // Rejected historical dispatch is not a pairing key — omit it so a later
+    // independent direct officer summons remains its own round. Span is not
+    // validated here: accepted-only contract must not throw on rejected volumes.
+    return undefined;
+  }
   const span = requireAcceptedGateSpan(rows, filePath);
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
@@ -261,6 +303,7 @@ async function classifyAuditorVolume(
       officer,
       status,
       ...(reason === undefined ? {} : { reason }),
+      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
     };
   }
 
@@ -280,6 +323,7 @@ async function classifyAuditorVolume(
     findings,
     findingsCount,
     officerWallMs: span.wallMs,
+    ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
   };
 }
 
@@ -305,7 +349,14 @@ function pairGateRounds(
       const candidate = ordered[j]!;
       if (candidate.kind !== "officer") continue;
       if (candidate.officer !== vol.officer) continue;
-      // First unused later officer with matching identity.
+      // Durable invocation association — seat/time alone must not pair.
+      if (
+        vol.attemptEntryId === undefined
+        || candidate.attemptEntryId === undefined
+        || candidate.attemptEntryId !== vol.attemptEntryId
+      ) {
+        continue;
+      }
       match = { index: j, officer: candidate };
       break;
     }
@@ -320,12 +371,34 @@ function pairGateRounds(
       officerEndedAt: match.officer.endedAt,
       findings: match.officer.findings,
       findingsCount: match.officer.findingsCount,
-      dispatchStatus: vol.status,
-      ...(vol.reason === undefined ? {} : { dispatchReason: vol.reason }),
+      origin: {
+        kind: "historical_dispatch",
+        ...(vol.reason === undefined ? {} : { reason: vol.reason }),
+      },
     });
   }
 
-  return rounds;
+  // Current direct-summons volumes have no preceding province dispatch. Every
+  // accepted officer receipt not consumed by a historical pair is its own round.
+  for (let i = 0; i < ordered.length; i += 1) {
+    const vol = ordered[i]!;
+    if (vol.kind !== "officer" || usedOfficerIdx.has(i)) continue;
+    rounds.push({
+      roundIndex: 0,
+      officer: vol.officer,
+      status: vol.status,
+      officerWallMs: vol.officerWallMs,
+      officerStartedAt: vol.startedAt,
+      officerEndedAt: vol.endedAt,
+      findings: vol.findings,
+      findingsCount: vol.findingsCount,
+      origin: { kind: "direct" },
+    });
+  }
+
+  return rounds
+    .sort((a, b) => a.officerStartedAt.localeCompare(b.officerStartedAt))
+    .map((round, index) => ({ ...round, roundIndex: index + 1 }));
 }
 
 /**

@@ -27,7 +27,6 @@ import {
   createRoleRuntimeExtension,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "../../src/stream-idle-guard.ts";
 import {
   flushEventLoopTurns,
@@ -229,7 +228,7 @@ test(
             },
           ],
         }, async ({ session, sessionManager }) => {
-          // Judge → scripted Gatekeeper → Notary → injected silent compliance child.
+          // Judge → scripted direct Notary → injected silent compliance child.
           // The institutional children read their seat from the resolution page at
           // the parent run directory (composed at admission in public-cli; here the
           // in-process fixture writes the shared seat table directly).
@@ -237,7 +236,6 @@ test(
           if (parentFile !== undefined) {
             const parentRunDir = join(dirname(dirname(parentFile)));
             await writeInstitutionalSeatTable(parentRunDir, {
-              gatekeeper: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
               notary: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
               auditor: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
             });
@@ -248,12 +246,6 @@ test(
               complianceStreamAttempts += 1;
               await new Promise<never>(() => {});
               throw new Error("unreachable compliance completion");
-            }
-            if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-              return fauxAssistantMessage(
-                fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-                { stopReason: "toolUse" },
-              );
             }
             if (names.includes(NOTARY_OUTPUT_TOOL)) {
               return fauxAssistantMessage(
