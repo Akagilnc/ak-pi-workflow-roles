@@ -15,6 +15,7 @@ import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispa
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
+import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
@@ -1267,7 +1268,7 @@ export function createRoleRuntimeExtension(
       if (receiptDelivery.nextAction() === "request-delivery") {
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
-        // one-shot roles must not mistake this delivery request for later caller input.
+        // receipt delivery must not be mistaken for later caller input.
         envelopeHost.appendEntry("ak-receipt-delivery-request");
         try {
           sitianReport({
@@ -1519,6 +1520,22 @@ export function createRoleRuntimeExtension(
             throw new Error("Collector GitHub transport is not configured");
           }
           return dependencies.createCollectorTransport();
+        },
+        createLedger(config, collectorClock, context) {
+          const append = context.sessionManager?.appendCustomEntry;
+          return createCollectorLedger(config, {
+            clock: collectorClock,
+            ...(append === undefined
+              ? {}
+              : {
+                journal: {
+                  append(customType, data) {
+                    context.sessionManager?.appendCustomEntry?.(customType, data);
+                  },
+                },
+              }),
+            dossierEntries: context.sessionManager?.getEntries?.() ?? [],
+          });
         },
         ...(dependencies.createCollectorClock === undefined
           ? {}
