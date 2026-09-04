@@ -6,6 +6,7 @@ import {
   runGatekeeper,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
+  MISSING_ARGUMENTS_SUBMISSION,
 } from "../../src/gatekeeper-role.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
@@ -102,6 +103,31 @@ test("direct officer settlement without a receipt stays loud and typed", async (
       assert.equal(result.stage, "inspector");
       assert.equal(result.facts.acceptedReceipt, false);
     }
+  });
+});
+
+test("direct officer missing arguments is one-shot serializable transport failure", async () => {
+  await withParent(async (context, faux) => {
+    let turns = 0;
+    faux.setResponses([
+      (ctx: any) => {
+        turns += 1;
+        if (turns > 1) throw new Error("must not retry missing officer arguments");
+        return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: undefined }], [])(ctx);
+      },
+    ]);
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion", material: "completion" },
+    });
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
+      assert.equal(result.stage, "inspector");
+      assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
+    }
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+    assert.equal(turns, 1);
   });
 });
 
