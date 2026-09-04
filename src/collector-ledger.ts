@@ -418,7 +418,7 @@ export function createCollectorLedger(
     } else {
       Object.assign(existing, attempt);
     }
-    if (attempt.status === "ambiguous_loss") {
+    if (attempt.status === "ambiguous_loss" && !transportFailures.some((failure) => failure.requestId === attempt.requestId && failure.observedHead === attempt.observedHead)) {
       transportFailures.push({
         failureId: sha256Text(`loss:${attempt.attemptId}`).slice(0, 16),
         kind: "ambiguous_request_loss",
@@ -429,8 +429,10 @@ export function createCollectorLedger(
         recovered: false,
       });
     }
-    mutationGeneration += 1;
-    finalObservationCompleted = false;
+    if (attempt.status === "succeeded" || attempt.status === "ambiguous_loss") {
+      mutationGeneration += 1;
+      finalObservationCompleted = false;
+    }
   };
 
   const commitWaitRecord = (wait: CollectorWaitRecord): void => {
@@ -839,8 +841,11 @@ export function createCollectorLedger(
         startedAt,
         status: "started",
       };
-      attempts.push(attempt);
-      attemptKeys.add(attemptKey);
+      commitRequestAttempt(attempt, attemptKey, undefined);
+      appendJournal(COLLECTOR_REQUEST_ENTRY_TYPE, {
+        attempt: { ...attempt },
+        attemptKey,
+      });
 
       const result = await transport.createIssueComment({
         owner: config.repository.owner,
@@ -897,6 +902,8 @@ export function createCollectorLedger(
 
       attempt.status = "rejected";
       attempt.responseDiagnostics = result.diagnostics;
+      commitRequestAttempt(attempt, attemptKey, undefined);
+      journalRequest(undefined);
       throw latchFatal(`通进司请求被拒：${result.diagnostics}`);
     },
 
