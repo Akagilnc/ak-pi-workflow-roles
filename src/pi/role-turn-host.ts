@@ -142,6 +142,10 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
       ];
     case "inspector":
       return ["--ak-role", "inspector"];
+    case "gatekeeper":
+      return ["--ak-role", "gatekeeper"];
+    case "navigator":
+      return ["--ak-role", "navigator"];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;

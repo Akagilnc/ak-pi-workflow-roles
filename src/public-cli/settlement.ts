@@ -45,6 +45,7 @@ import {
 // interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "../collector-ledger.ts";
@@ -103,6 +104,16 @@ import {
   validateRecordedInspectorOutput,
 } from "../inspector-contracts.ts";
 import {
+  GATEKEEPER_OUTPUT_TOOL_NAME,
+  gatekeeperDecisiveFacts,
+  validateRecordedGatekeeperOutput,
+} from "../package-contracts/gatekeeper-output.ts";
+import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorDecisiveFacts,
+  validateRecordedNavigatorOutput,
+} from "../package-contracts/navigator-output.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -110,6 +121,7 @@ import {
 import {
   classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
+  hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   NAVIGATOR_INVOCATION_ENTRY,
@@ -135,6 +147,8 @@ import {
   type AdmittedCountersignInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedInspectorInvocation,
+  type AdmittedGatekeeperInvocation,
+  type AdmittedNavigatorInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -1624,6 +1638,7 @@ function boundErroredToolCandidate(
 /** Collector operational tools that fail closed via host infrastructure abort. */
 const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 ]);
@@ -1633,12 +1648,22 @@ type InfrastructureFailureSpec = Readonly<{
   matchTool: (toolName: string) => boolean;
   cause: ControlledFailureCause;
   identityName: string;
+  /**
+   * Errored results only count as infrastructure when the durable details carry
+   * the typed navigator fact. ak_collector_read also rejects known correctable
+   * misuses (CollectorUnknownEvidenceError pointer bounces) as errored tool
+   * results — those must not surface as CollectorInfrastructureError.
+   */
+  requireInfrastructureFact?: (toolName: string) => boolean;
 }>;
 
 const COLLECTOR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
   matchTool: (toolName) => COLLECTOR_INFRASTRUCTURE_TOOLS.has(toolName),
   cause: "activation",
   identityName: "CollectorInfrastructureError",
+  // read alone has a correctable rejection mode (unknown/non-openable pointers);
+  // only its typed infrastructure-failure fact counts as a real host failure.
+  requireInfrastructureFact: (toolName) => toolName === COLLECTOR_READ_TOOL,
 };
 
 const ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC: InfrastructureFailureSpec = {
@@ -1667,6 +1692,9 @@ function extractInfrastructureToolFailure(
       !spec.matchTool(message.toolName)
     ) {
       continue;
+    }
+    if (spec.requireInfrastructureFact?.(message.toolName) === true) {
+      if (!hasNavigatorInfrastructureFailureBase(message.details)) continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
@@ -3128,7 +3156,13 @@ export async function trySettleDoctorTerminalResult(
  * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
  */
 type OneShotAcceptedSettlementSpec = {
-  readonly role: "notary" | "countersign" | "gleaner-left" | "inspector";
+  readonly role:
+    | "notary"
+    | "countersign"
+    | "gleaner-left"
+    | "inspector"
+    | "gatekeeper"
+    | "navigator";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
   readonly projectAccepted: (
@@ -3156,7 +3190,13 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
 }
 
 async function settleLawfulOneShotAcceptedTerminalResult(
-  admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation | AdmittedInspectorInvocation,
+  admitted:
+    | AdmittedNotaryInvocation
+    | AdmittedCountersignInvocation
+    | AdmittedGleanerLeftInvocation
+    | AdmittedInspectorInvocation
+    | AdmittedGatekeeperInvocation
+    | AdmittedNavigatorInvocation,
   authority: DurablePrincipalAuthority,
   spec: OneShotAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
@@ -3221,10 +3261,22 @@ async function settleLawfulOneShotAcceptedTerminalResult(
     }
     return undefined;
   }
+  if (!spec.tryAcceptDetails(roleOutcome.decisiveFacts)) {
+    return settleFailureTerminalResult(
+      admitted,
+      {
+        cause: "output",
+        diagnostic: spec.nonUsableDiagnostic,
+        details: { candidate: roleOutcome.decisiveFacts, acceptedReceipt: false },
+      },
+      authority,
+    );
+  }
+  const acceptedOutcome = spec.projectAccepted(roleOutcome);
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: spec.projectAccepted(roleOutcome),
+      roleOutcome: acceptedOutcome,
       navigator,
       artifacts: [],
       runId: admitted.runId,
@@ -3437,6 +3489,82 @@ export async function trySettleInspectorTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulInspectorTerminalResult(admitted, authority);
+}
+
+/** Lawful Gatekeeper accepted outcome (dispatch | pass, #639). */
+export type LawfulGatekeeperRoleOutcome = {
+  kind: "accepted";
+  role: "gatekeeper";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulGatekeeperTerminalResult(
+  admitted: AdmittedGatekeeperInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "gatekeeper",
+    toolName: GATEKEEPER_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "门下省决议无显式 dispatch/pass",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedGatekeeperOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedGatekeeperOutput(sealed.decisiveFacts);
+      const accepted: LawfulGatekeeperRoleOutcome = {
+        kind: "accepted",
+        role: "gatekeeper",
+        status: output.status,
+        decisiveFacts: gatekeeperDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+/** Try to settle a lawful Gatekeeper Terminal; undefined only for genuine absence. */
+export async function trySettleGatekeeperTerminalResult(
+  admitted: AdmittedGatekeeperInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulGatekeeperTerminalResult(admitted, authority);
+}
+
+/** Lawful Navigator accepted outcome (route advice, #639). */
+export type LawfulNavigatorRoleOutcome = {
+  kind: "accepted";
+  role: "navigator";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulNavigatorTerminalResult(
+  admitted: AdmittedNavigatorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "navigator",
+    toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "游奕使回执无显式路线建议",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedNavigatorOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedNavigatorOutput(sealed.decisiveFacts);
+      const accepted: LawfulNavigatorRoleOutcome = {
+        kind: "accepted",
+        role: "navigator",
+        status: "advice",
+        decisiveFacts: navigatorDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+/** Try to settle a lawful Navigator Terminal; undefined only for genuine absence. */
+export async function trySettleNavigatorTerminalResult(
+  admitted: AdmittedNavigatorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulNavigatorTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

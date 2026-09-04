@@ -4,9 +4,9 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context, type Pr
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
-  GATEKEEPER_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOSSIER = "ak_get_run_dossier";

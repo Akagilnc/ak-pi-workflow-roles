@@ -6,13 +6,13 @@ import test from "node:test";
 import { fauxAssistantMessage, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   runGatekeeper,
-  GATEKEEPER_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
   MISSING_ARGUMENTS_SUBMISSION,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { INSTITUTIONAL_RESOLUTION_FILE } from "../../src/institutional-resolution.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
@@ -57,6 +57,7 @@ async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvid
 test("scripted Inspector pass projects typed receipt and loads Inspector session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
+  const auditLaw = await readFile(resolve(packageRoot, "souls/audit-law.md"), "utf8");
   const gateGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const inspectorSoul = await readFile(resolve(packageRoot, "souls/inspector.md"), "utf8");
@@ -83,13 +84,14 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
     assert.equal(seen.length, 2);
     // #443/#476: constitution + soul + gate guide; gatekeeper + inspector carry quality-law.
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
+    // #649: inspector carries audit-law.
     assert.equal(
       seen[0],
       `${[constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
     assert.equal(
       seen[1],
-      `${[constitution, inspectorSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
+      `${[constitution, inspectorSoul, auditLaw, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
   });
 });
@@ -97,6 +99,7 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
 test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
+  const auditLaw = await readFile(resolve(packageRoot, "souls/audit-law.md"), "utf8");
   const gateGuide = await readFile(resolve(packageRoot, "souls/gate-output-guide.md"), "utf8");
   const gatekeeperSoul = await readFile(resolve(packageRoot, "souls/gatekeeper.md"), "utf8");
   const notarySoul = await readFile(resolve(packageRoot, "souls/notary.md"), "utf8");
@@ -128,13 +131,14 @@ test("scripted officer bounce projects rewrite disposition and loads that office
     assert.equal(seen.length, 2);
     // #443/#476: scripted Notary real entry receives constitution + soul + gate guide.
     // #495 S2: machine INVOCATION_OVERLAY removed; 取证授权 lives in gate-output-guide only.
+    // #649: notary carries audit-law.
     assert.equal(
       seen[0],
       `${[constitution, gatekeeperSoul, qualityLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
     assert.equal(
       seen[1],
-      `${[constitution, notarySoul, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
+      `${[constitution, notarySoul, auditLaw, gateGuide].join("\n\n")}\nCurrent working directory: ${context.runDirectory}`,
     );
   });
 });

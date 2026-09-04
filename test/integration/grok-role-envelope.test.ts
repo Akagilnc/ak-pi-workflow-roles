@@ -24,7 +24,11 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import { resolvePackagedMethodSkillPath, stripSkillFrontmatter } from "../../src/package-resources/method-skill.ts";
 import { buildGrokSkillExpansion, prepareGrokRoleEnvelope, projectGrokActivationFlags } from "../../src/grok/role-envelope.ts";
-import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
+import type { RoleRuntimeDependencies } from "../../src/role-runtime.ts";
+import { COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL, COLLECTOR_READ_TOOL } from "../../src/collector-role.ts";
+import type { CollectorClock } from "../../src/collector-evidence.ts";
+import { readLatestSubmissionOutcome, readSealedSubmission } from "../../src/submission-ledger.ts";
+import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { uuidv7 } from "../../src/uuidv7.ts";
 import { createGrokRoleTurnHost } from "../../src/grok/role-turn-host.ts";
 import {
@@ -39,7 +43,6 @@ import {
 import { buildNotaryTurnRequest } from "../../src/public-cli/notary-run.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -1057,5 +1060,122 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Collector Grok-seam fixtures: one fake transport with a long-body courtesy comment. */
+function grokCollectorDependencies(root: string): {
+  body: string;
+  transport: ReturnType<typeof createFakeGitHubTransport>;
+  dependencies: RoleRuntimeDependencies;
+}
+{  const body = `评审结论与额度说明。${"本栏目评论正文超过观察头部摘录，正文必须经指针开卷。".repeat(60)}`;
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-1" }),
+    reviews: [],
+    issueComments: [{
+      id: 9001,
+      userLogin: "coderabbitai[bot]",
+      machineIdentity: { userType: "Bot", userId: 136622811 },
+      body,
+      createdAt: "2026-01-01T00:01:00Z",
+      updatedAt: "2026-01-01T00:01:00Z",
+      htmlUrl: "https://github.com/acme/widgets/pull/1#issuecomment-9001",
+      raw: { id: 9001 },
+    }],
+    reviewComments: [],
+  });
+  const clock: CollectorClock = {
+    wallNow: () => new Date("2026-01-01T00:00:00Z"),
+    monoNow: () => 0,
+    sleep: async () => {},
+  };
+  return {
+    body,
+    transport,
+    dependencies: {
+      loadCollectorSoul: async () => "COLLECTOR SOUL",
+      createCollectorTransport: () => transport,
+      createCollectorClock: () => clock,
+      loadJudgeSoul: async () => "JUDGE SOUL",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      activationTraceWriter: async () => {},
+    },
+  };
+}
+
+test("Grok collector keeps observe bounded, opens full bodies by pointer, and rejects unknown finding pointers as retryable", async () => {
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const root = await mkdtemp(join(tmpdir(), "ak-grok-collector-"));
+    const priorHome = process.env.HOME;
+    const priorRun = process.env.AK_ROLE_RUN_DIR;
+    process.env.HOME = root;
+    delete process.env.AK_ROLE_RUN_DIR;
+    try {
+      const runId = "grok-collector";
+      const { body, dependencies } = grokCollectorDependencies(root);
+      const prepared = await prepareGrokRoleEnvelope({
+        request: {
+          principal: {}, activation: { role: "collector", repo: "acme/widgets", pr: "1" }, methods: [],
+          continuation: { kind: "initial", prompt: "collect" },
+          model: { provider: "xai", model: "grok-4.5" }, cwd: process.cwd(), home: root,
+          agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, `${runId}@collector`),
+        } as RoleTurnRequest,
+        socketPath: join(root, "mcp.sock"),
+        dependencies,
+      });
+      try {
+        const server = prepared.mcpServers[0] as McpServer;
+        const observe = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
+        assert.equal(observe.error, undefined);
+        const result = observe.result as { content?: Array<{ type: string; text?: string }>; structuredContent?: Record<string, unknown> };
+        const structured = result.structuredContent as { evidence?: Array<{ evidenceId?: string; body?: string; kind?: string }> };
+        assert.ok(structured, "observe result must expose structuredContent");
+        const entry = structured.evidence?.find((record) => record.kind === "issue_comment");
+        assert.ok(entry, "observed comment must be pointer-reachable in structuredContent");
+
+        // Provider-visible structuredContent carries only the bounded head — never
+        // the full body (Grok/ACP relays tool details as MCP structuredContent).
+        assert.notEqual(entry.body, body);
+        assert.ok(Buffer.byteLength(entry.body ?? "", "utf8") < Buffer.byteLength(body, "utf8"));
+
+        // Full body enters context only by explicit pointer open.
+        const read = await callThroughMcp(server, COLLECTOR_READ_TOOL, { evidenceId: entry.evidenceId });
+        assert.equal(read.error, undefined);
+        const readResult = read.result as { structuredContent?: { evidenceId?: string; body?: string } };
+        assert.equal(readResult.structuredContent?.evidenceId, entry.evidenceId);
+        assert.equal(readResult.structuredContent?.body, body);
+
+        // Unknown finding pointer is a correctable rejection — retryable in the
+        // same ACP round, never an infrastructure abort; ledger records typed-bounce.
+        const bounced = await callThroughMcp(server, COLLECTOR_OUTPUT_TOOL, { findings: [{ evidenceId: "missing0000000000" }] });
+        assert.equal(bounced.error, undefined);
+        const bouncedResult = bounced.result as { isError?: boolean; structuredContent?: { code?: string }; content?: Array<{ type: string; text?: string }> };
+        assert.equal(bouncedResult.isError, true);
+        assert.equal(bouncedResult.structuredContent?.code, "CollectorUnknownEvidenceError");
+        assert.equal(prepared.abortSignal?.aborted, false, "pointer correction must not arm infrastructure abort");
+
+        const closure = await prepared.closeRound();
+        assert.equal(closure.accepted, false);
+        assert.ok("retry" in closure, "correctable pointer bounce must retry in the same ACP session");
+        assert.equal(closure.retry.code, "CollectorUnknownEvidenceError");
+        assert.equal(closure.retry.toolCallIds.length, 1);
+
+        const outcome = await readLatestSubmissionOutcome(process.cwd(), runId, root);
+        assert.equal(outcome?.outcome, "correctable-rejection");
+        assert.equal(outcome?.code, "typed-bounce");
+      } finally {
+        await prepared.dispose?.();
+      }
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      await rm(root, { recursive: true, force: true });
+    }
+  } finally {
+    process.exitCode = priorExitCode;
   }
 });
