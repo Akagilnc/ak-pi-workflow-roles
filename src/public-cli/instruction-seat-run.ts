@@ -10,8 +10,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
-  buildGatekeeperTransportPrompt,
-  buildNavigatorTransportPrompt,
+  buildInstructionTransportPrompt,
   type AdmittedGatekeeperInvocation,
   type AdmittedNavigatorInvocation,
   type ParseInstructionArgvResult,
@@ -80,39 +79,6 @@ export async function runPublicInstructionSeat(
   argv: readonly string[],
   env: InstructionSeatRunEnv,
   io: CliIo,
-  role: "gatekeeper",
-  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedGatekeeperInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeat(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: "navigator",
-  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedNavigatorInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeat(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  role: InstructionSeatRole,
-  parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedInstructionSeatInvocation;
-  terminal?: TerminalResult;
-}>;
-export async function runPublicInstructionSeat(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
   role: InstructionSeatRole,
   parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
@@ -160,22 +126,13 @@ export async function runPublicInstructionSeat(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt:
-        admitted.role === "gatekeeper"
-          ? buildGatekeeperTransportPrompt(
-              admitted,
-              engineSessionMaterialFromOptions({
-                ...(env.engine === undefined ? {} : { engine: env.engine }),
-                packageRoot: env.packageRoot,
-              }),
-            )
-          : buildNavigatorTransportPrompt(
-              admitted,
-              engineSessionMaterialFromOptions({
-                ...(env.engine === undefined ? {} : { engine: env.engine }),
-                packageRoot: env.packageRoot,
-              }),
-            ),
+      prompt: buildInstructionTransportPrompt(
+        admitted,
+        engineSessionMaterialFromOptions({
+          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          packageRoot: env.packageRoot,
+        }),
+      ),
     },
   });
 
