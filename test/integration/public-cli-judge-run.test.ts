@@ -687,6 +687,43 @@ test(
       assert.equal(activation!.correlation?.kind, "caller");
       assert.equal(activation!.correlation?.id, "corr-106-e2e");
 
+      // Reuse the same public parent-role tracer: 门下省 dispatches Notary, whose
+      // third-state receipt must settle as a typed royal decision rather than bounce/failure.
+      const escalated = await runAkRole(
+        [
+          "judge", "--model", "ak-audit-failure/faux-1", "--thinking", "off",
+          "--project", project, "Exercise officer escalation settlement.",
+        ],
+        {
+          packageRoot,
+          home,
+          agentDir,
+          cwd: project,
+          createRunId: () => "run-e2e-judge-officer-escalate-001",
+          judgeExtraPiArgs: ["-e", providerPath],
+          judgeTimeoutMs: 90_000,
+          io: { stdout() {}, stderr() {} },
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
+              const subprocess = await runPiSubprocess([...args], {
+                cwd: options.cwd,
+                env: { ...options.env, PI_OFFLINE: "1", AK_GATE_MODE: "notary-escalate" },
+                timeoutMs: options.timeoutMs ?? 90_000,
+              });
+              return { code: subprocess.code, stdout: subprocess.stdout, stderr: subprocess.stderr, timedOut: subprocess.localTimeout, args: [...args] };
+            },
+            extraPiArgs: ["-e", providerPath],
+          }),
+        },
+      );
+      assert.equal(escalated.exitCode, 0);
+      assert.equal(escalated.terminal?.roleOutcome.kind, "audit_escalation");
+      assert.equal(escalated.terminal?.roleOutcome.status, "audit_escalation");
+      assert.equal(escalated.terminal?.roleOutcome.decisiveFacts.officer, "notary");
+      assert.equal(escalated.terminal?.roleOutcome.decisiveFacts.reason, "third review remains unresolved");
+
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);
     } finally {

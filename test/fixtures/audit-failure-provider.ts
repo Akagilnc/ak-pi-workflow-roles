@@ -152,7 +152,9 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
           NOTARY_OUTPUT_TOOL,
           gateMode === "notary-no-pass"
             ? { status: "ok-enough" }
-            : { status: "pass", findings: [] },
+            : gateMode === "notary-escalate"
+              ? { status: "escalate", reason: "third review remains unresolved", findings: ["authority conflict"] }
+              : { status: "pass", findings: [] },
         ),
         { stopReason: "toolUse" },
       );
