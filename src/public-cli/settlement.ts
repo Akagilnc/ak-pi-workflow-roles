@@ -3444,9 +3444,7 @@ export async function hasLawfulCoderTerminalResult(
 ): Promise<boolean> {
   try {
     const outcome = await sealedLedgerOutcome(admitted);
-    if (outcome?.role === "coder") return true;
-    const escalation = await auditEscalationLedgerOutcome(admitted, "coder");
-    return escalation !== undefined;
+    return outcome?.role === "coder";
   } catch {
     return false;
   }
@@ -3471,9 +3469,7 @@ export async function hasLawfulFixerTerminalResult(
 ): Promise<boolean> {
   try {
     const outcome = await sealedLedgerOutcome(admitted);
-    if (outcome?.role === "fixer") return true;
-    const escalation = await auditEscalationLedgerOutcome(admitted, "fixer");
-    return escalation !== undefined;
+    return outcome?.role === "fixer";
   } catch {
     return false;
   }

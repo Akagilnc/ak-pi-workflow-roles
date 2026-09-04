@@ -191,36 +191,41 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
   });
 });
 
-test("coder settlement reads durable audit escalation", async () => {
+test("public coder coordinator settles durable audit escalation", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const admitted = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
+    const runId = "run-coder-escalate-001";
+    const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${runId}@coder`);
+    const captured = captureIo();
+    const result = await runAkRole(["coder", "--project", project, "Escalate the gate decision."], {
+      packageRoot,
       home,
       cwd: project,
-      phase: "apply",
-      instruction: "Escalate the gate decision.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-escalate-001",
+      createRunId: () => runId,
+      io: captured.io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          await mkdir(join(runDirectory, "session"), { recursive: true });
+          await writeFile(join(runDirectory, "session", "session.jsonl"), "", "utf8");
+          await recordAuditEscalationSubmission({
+            cwd: project,
+            home,
+            runId,
+            runDirectory,
+            role: "coder",
+            details: { kind: "audit_escalation", conflicts: ["authority conflict"] },
+          });
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      }),
     });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "", "utf8");
-    await recordAuditEscalationSubmission({
-      cwd: project,
-      home,
-      runId: admitted.runId,
-      runDirectory: admitted.runDirectory,
-      role: "coder",
-      details: { kind: "audit_escalation", conflicts: ["authority conflict"] },
-    });
-    const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
-    const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-    });
-    assert.equal(terminal.roleOutcome.kind, "audit_escalation");
-    assert.deepEqual(terminal.roleOutcome.decisiveFacts.conflicts, ["authority conflict"]);
+    assert.equal(result.exitCode, 0, captured.stderr.join(""));
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.conflicts, ["authority conflict"]);
   });
 });
 
