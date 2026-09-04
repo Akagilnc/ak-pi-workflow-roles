@@ -186,16 +186,13 @@ export type PackagedRole = PublicRoleRecord["role"];
 /**
  * Seats that refuse resume. Collector/doctor/notary remain pending independent
  * authority review; countersign/gleaner-left revoked by #599 (DK-1/2/3).
- * Inspector is one-shot on the filed-officer envelope (#568 / ADR 0074);
- * gatekeeper/navigator are one-shot under #639 pending unified #633 resume.
+ * Inspector is one-shot on the filed-officer envelope (#568 / ADR 0074).
  */
 export const ONE_SHOT_ROLES: readonly PackagedRole[] = [
   "collector",
   "doctor",
   "notary",
   "inspector",
-  "gatekeeper",
-  "navigator",
 ];
 
 /**

@@ -1145,7 +1145,7 @@ export async function admitNavigatorInvocation(
 }
 
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
-function buildInstructionTransportPrompt(
+export function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
   engineMaterial?: EngineSessionMaterial,
 ): string {
@@ -1175,19 +1175,6 @@ export function buildInspectorTransportPrompt(
   return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 
-export function buildGatekeeperTransportPrompt(
-  admitted: AdmittedGatekeeperInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export function buildNavigatorTransportPrompt(
-  admitted: AdmittedNavigatorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
 
 export type AdmitCountersignInvocationOptions = {
   home: string;

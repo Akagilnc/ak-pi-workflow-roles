@@ -18,7 +18,6 @@ import test from "node:test";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -131,73 +130,5 @@ test("ak-role gatekeeper admits instruction and delivers typed pass terminal", a
         : undefined,
       "pass",
     );
-  });
-});
-
-test("instruction-seat resume rejects both durable roles before dispatch", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const cases = [
-      {
-        role: "gatekeeper" as const,
-        runId: "01a0gate01-0000-7000-8000-000000000639",
-        toolName: GATEKEEPER_OUTPUT_TOOL,
-        details: { status: "pass", findings: [] },
-      },
-      {
-        role: "navigator" as const,
-        runId: "01a0navi01-0000-7000-8000-000000000639",
-        toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-        details: { status: "advice", candidates: [] },
-      },
-    ];
-
-    for (const scenario of cases) {
-      const fresh = await runAkRole(
-        [scenario.role, "--project", project, "initial instruction"],
-        {
-          home,
-          packageRoot,
-          cwd: project,
-          io: captureIo().io,
-          createRunId: () => scenario.runId,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: scriptedTerminatingToolSession({
-              role: scenario.role,
-              toolName: scenario.toolName,
-              details: scenario.details,
-            }),
-          }),
-        },
-      );
-      assert.equal(fresh.exitCode, 0);
-
-      let resumeDispatches = 0;
-      const resumed = await runAkRole(
-        ["resume", "--host", "missing", scenario.runId],
-        {
-          home,
-          packageRoot,
-          cwd: project,
-          io: captureIo().io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async () => {
-              resumeDispatches += 1;
-              throw new Error("one-shot instruction seat must not dispatch resume");
-            },
-          }),
-        },
-      );
-      assert.equal(resumed.exitCode, 2);
-      assert.equal(resumed.hostFailure, undefined);
-      assert.equal(resumeDispatches, 0);
-    }
   });
 });
