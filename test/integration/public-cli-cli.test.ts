@@ -117,14 +117,16 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
           candidate: row.details,
           acceptedReceipt: false,
         });
+      } else if (row.status === "escalate") {
+        assert.equal(outcome.kind, "audit_escalation");
+        assert.equal(outcome.status, "audit_escalation");
+        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+        assert.equal(outcome.decisiveFacts.reason, row.reason);
       } else {
         assert.equal(outcome.kind, "accepted");
         if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
         assert.equal(outcome.status, row.status);
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
-        if (row.reason) {
-          assert.equal(outcome.decisiveFacts.reason, row.reason);
-        }
       }
     }
   });

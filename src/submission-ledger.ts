@@ -328,6 +328,23 @@ export function createSubmissionLedgerHost(
               throw error;
             }
           }
+          if (
+            (role === "inspector" || role === "notary") &&
+            typeof result.details === "object" &&
+            result.details !== null &&
+            !Array.isArray(result.details) &&
+            (result.details as Record<string, unknown>).status === "escalate"
+          ) {
+            const details = result.details as Record<string, unknown>;
+            result = projectAuditEscalation({
+              status: "escalate",
+              officer: role,
+              ...(typeof details.reason === "string" ? { reason: details.reason } : {}),
+              ...(Array.isArray(details.findings)
+                ? { findings: details.findings.filter((finding): finding is string => typeof finding === "string") }
+                : {}),
+            });
+          }
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];
             candidates.push({
