@@ -116,10 +116,11 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         prNumber: 42,
-        instruction: "",
+        instruction: "original admitted collector instruction",
         repo: "acme/widgets",
         createRunId: () => runId,
       }),
+    originalInstruction: "original admitted collector instruction",
     sealedDetails: (admitted) =>
       ({
         host: "github.com",
@@ -148,10 +149,11 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
         issueNumber: DOCTOR_ISSUE_NUMBER,
-        instruction: "",
+        instruction: "original admitted doctor instruction",
         createRunId: () => runId,
       });
     },
+    originalInstruction: "original admitted doctor instruction",
     sealedDetails: (admitted) => {
       const caseIdentity = admitted.caseIdentity as {
         issueNumber: number;
@@ -265,6 +267,7 @@ for (const spec of SEAT_SPECS) {
       assert.equal(resumed.exitCode, 0);
       assert.ok(resumed.terminal);
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
+      assert.equal(resumed.terminal!.roleOutcome.role, spec.role);
       assert.equal(resumed.terminal!.runId, runId);
       assert.equal(resumed.terminal!.resume, undefined);
 
