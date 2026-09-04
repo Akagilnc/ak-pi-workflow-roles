@@ -2,7 +2,11 @@ import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
-import { auditorRunDirectory, createAuditorDossierTool } from "./auditor-dossier-tool.ts";
+import {
+  auditorRunDirectory,
+  createAuditorDossierTool,
+  persistGateSubmissionCandidate,
+} from "./auditor-dossier-tool.ts";
 import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-executor.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
@@ -229,6 +233,12 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
   // Resolve once so dossier tool and child session share the same run binding (#632).
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
+  // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
+  const submissionCandidate =
+    runDirectory === undefined
+      ? undefined
+      : persistGateSubmissionCandidate(runDirectory, options.context);
   try {
     const officerRun = await executeAuditorChild({
       context: options.context,
@@ -238,7 +248,10 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       prompt: "卷宗已受理。",
       tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
       // Same locator as 审刑院 — run directory + path identifiers only; no receipt body (#632).
-      dossierTool: createAuditorDossierTool(runDirectory),
+      dossierTool: createAuditorDossierTool(
+        runDirectory,
+        submissionCandidate === undefined ? undefined : { submissionCandidate },
+      ),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(runDirectory === undefined ? {} : { runDirectory }),
     });
