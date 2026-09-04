@@ -495,15 +495,24 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
         ].map((row) => JSON.stringify(row)).join("\n") + "\n",
         "utf8",
       );
+      const queuedCommandExpectations = [
+        { entryId: "sess.jsonl:2", transcript: "立" },
+        {
+          entryId: "sess.jsonl:3",
+          transcript:
+            "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
+        },
+      ];
       const ccBlocks = readCcSessionBlocks({
         projectsRoot: join(home, ".claude", "projects"),
         cwds: [project],
       });
-      for (const entryId of ["sess.jsonl:2", "sess.jsonl:3"]) {
+      for (const { entryId, transcript } of queuedCommandExpectations) {
         const queuedBlock = ccBlocks.find(
           (block) => block.sourceRef.entryId === entryId,
         );
         assert.equal(queuedBlock?.isUserTurn, true);
+        assert.equal(queuedBlock?.transcript, transcript);
         assert.deepEqual(queuedBlock?.sourceRef, { sessionFile, entryId });
       }
       assert.equal(
@@ -537,11 +546,12 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.ok(refs.some((r) => r.entryId === 42));
       assert.ok(refs.some((r) => r.path === adrRel));
       assert.ok(refs.some((r) => r.entryId === "u-cc"));
-      for (const entryId of ["sess.jsonl:2", "sess.jsonl:3"]) {
+      for (const { entryId, transcript } of queuedCommandExpectations) {
         const queued = volume.entries.find(
           (entry) => entry.sourceRef.entryId === entryId,
         );
         assert.equal(queued?.sourceKind, "cc-session");
+        assert.equal(queued?.transcript, transcript);
         assert.deepEqual(queued?.sourceRef, { sessionFile, entryId });
       }
     },
