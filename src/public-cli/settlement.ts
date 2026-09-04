@@ -180,7 +180,11 @@ async function auditEscalationLedgerOutcome(
   role: TerminalRoleName,
   authority: DurablePrincipalAuthority,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
-  const entries = await readBoundSessionEntries(coordinatesFromAdmitted(authority, admitted).sessionFile);
+  // Missing bound session is absence: do not fall through to ledger last-attempt fallback.
+  const entries = await readLawfulSettlementEntries(
+    coordinatesFromAdmitted(authority, admitted).sessionFile,
+  );
+  if (entries === undefined) return undefined;
   const currentAttemptId = latestUserAttemptId(entries);
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
