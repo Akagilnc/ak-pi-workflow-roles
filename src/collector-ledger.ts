@@ -103,7 +103,6 @@ export type CollectorLedgerHydrationState = {
   readonly latestCompleteSnapshotId?: string | undefined;
   readonly finalObservationRequired?: boolean | undefined;
   readonly finalObservationCompleted?: boolean | undefined;
-  readonly outputCandidate?: boolean | undefined;
 };
 
 export type CollectorLedger = {
@@ -197,7 +196,7 @@ export function createCollectorLedger(
 ): CollectorLedger {
   let fatal = false;
   let fatalReason: string | undefined;
-  let outputCandidate = hydration?.outputCandidate ?? false;
+  let outputCandidate = false;
   let activationTime: Date | undefined;
   let deadlineTime: Date | undefined;
   let activationMono: number | undefined;
@@ -926,7 +925,6 @@ export function hydrateCollectorLedgerFromSession(
   const customWaits: CollectorWaitRecord[] = [];
   let customMutationGen: number | undefined;
   let customObservedGen: number | undefined;
-  let outputCandidate = false;
 
   let earliestSessionTime: string | undefined;
   const toolSnapshots: CollectorSnapshot[] = [];
@@ -953,9 +951,7 @@ export function hydrateCollectorLedgerFromSession(
       const data = entry.data as any;
       if (!data || typeof data !== "object") continue;
 
-      if (customType === "ak-collector-output-candidate") {
-        outputCandidate = true;
-      } else if (customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
+      if (customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
         if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
           customActivation = { activationTime: data.activationTime, deadlineTime: data.deadlineTime };
         }
@@ -1103,8 +1099,6 @@ export function hydrateCollectorLedgerFromSession(
           if (typeof details.effectiveMs === "number") {
             toolWaits.push(details);
           }
-        } else if (toolName === COLLECTOR_OUTPUT_TOOL && msg.isError !== true) {
-          outputCandidate = true;
         }
       }
     }
@@ -1156,6 +1150,5 @@ export function hydrateCollectorLedgerFromSession(
     mutationGeneration,
     observedGeneration,
     latestCompleteSnapshotId: snapshots.at(-1)?.snapshotId,
-    outputCandidate,
   };
 }
