@@ -19,6 +19,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { extractGateFactFromSessionDirectory } from "../../src/public-cli/settlement.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import {
   installPackedArtifactIntoPiNpm,
@@ -406,6 +407,15 @@ test(
         const sealed = await readSealedSubmission(project, runId, home);
         assert.ok(sealed, "sealed submission must be recorded");
         assert.equal(sealed.status, "completed");
+
+        // #634: worker shared seam spot-check — real entry summons direct Inspector, no Gatekeeper.
+        const gate = await extractGateFactFromSessionDirectory(
+          join(runDirectory, "session"),
+        );
+        assert.ok(gate, "typed gate fact must exist after completed coder");
+        assert.deepEqual(gate.actualSeats, ["inspector"]);
+        assert.equal(gate.rounds[0]!.dispatch.kind, "direct");
+        assert.equal(gate.rounds[0]!.dispatch.officer, "inspector");
 
       },
     );
