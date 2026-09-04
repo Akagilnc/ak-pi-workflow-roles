@@ -10,7 +10,7 @@ export const INSPECTOR_ACCEPTED_TEXT = "察院回执已接受";
 export type InspectorOutput =
   | { readonly status: "pass"; readonly findings?: unknown }
   | { readonly status: "bounce"; readonly findings?: unknown }
-  | { readonly status: "escalate"; readonly reason?: string; readonly findings?: unknown };
+  | { readonly status: "escalate"; readonly reason?: unknown; readonly findings?: unknown };
 
 export function validateRecordedInspectorOutput(value: unknown): InspectorOutput {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

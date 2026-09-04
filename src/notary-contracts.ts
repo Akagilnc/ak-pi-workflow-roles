@@ -62,8 +62,8 @@ export type NotaryOutput =
     }
   | {
       readonly status: "escalate";
-      readonly reason?: string;
-      readonly findings?: readonly string[];
+      readonly reason?: unknown;
+      readonly findings?: unknown;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,11 +95,7 @@ export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefi
     return clone as NotaryOutput;
   }
   if (status === "escalate") {
-    const clone = structuredClone(value) as Record<string, unknown>;
-    if (clone.findings !== undefined && !Array.isArray(clone.findings)) {
-      clone.findings = asStringArray(clone.findings);
-    }
-    return clone as NotaryOutput;
+    return structuredClone(value) as NotaryOutput;
   }
   return undefined;
 }
