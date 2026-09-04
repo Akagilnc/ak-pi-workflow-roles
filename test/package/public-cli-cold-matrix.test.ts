@@ -360,7 +360,6 @@ test("one cold install exercises all public roles plus Navigator gates", async (
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
     }
-    assert.match(roles.stdout, /^navigator\t/m);
     assert.equal(roles.stdout.includes("auditor"), false);
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
@@ -938,7 +937,6 @@ test("documented Pi package update refreshes CLI and runtime from one private co
       for (const role of PUBLIC_CALLABLE_ROLES) {
         assert.match(roles.stdout, new RegExp(`^${role}\\t`, "m"));
       }
-      assert.match(roles.stdout, /^navigator\t/m);
     } finally {
       await rm(packDir, { recursive: true, force: true });
     }

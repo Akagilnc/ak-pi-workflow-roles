@@ -194,10 +194,6 @@ function projectProvinceDecision(decision: unknown): GatekeeperResult | { status
   const projected = projectLawfulGatekeeperOutput(decision);
   if (projected === undefined) return noUsableReleaseFailure("gatekeeper", decision);
   if (projected.status === "dispatch") {
-    // package-contract sets officer on every lawful dispatch; narrow for the province result type.
-    if (projected.officer !== "inspector" && projected.officer !== "notary") {
-      return noUsableReleaseFailure("gatekeeper", decision);
-    }
     return { status: "dispatch", officer: projected.officer };
   }
   // Lawful non-dispatch release — province may pass without dispatching an officer
