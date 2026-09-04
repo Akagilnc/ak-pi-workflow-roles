@@ -16,13 +16,19 @@ import {
 } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
+  COLLECTOR_ACTIVATION_ENTRY_TYPE,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_REQUEST_ENTRY_TYPE,
   COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_SNAPSHOT_ENTRY_TYPE,
+  COLLECTOR_WAIT_ENTRY_TYPE,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
+  hydrateCollectorLedgerFromSession,
   type CollectorLedger,
 } from "./collector-ledger.ts";
+import { readLedgerSessionJsonl } from "./ledger-session-read.ts";
 import {
   buildCollectorReceipt,
   type CollectorReceipt,
@@ -195,6 +201,15 @@ export function createCollectorRoleRuntime(
       if (!firstDispatchDone) {
         firstDispatchDone = true;
         activation.ledger.recordActivation(activation.clock);
+        try {
+          ctx.sessionManager?.appendCustomEntry?.(
+            COLLECTOR_ACTIVATION_ENTRY_TYPE,
+            {
+              activationTime: activation.ledger.activationTime?.toISOString(),
+              deadlineTime: activation.ledger.deadlineTime?.toISOString(),
+            },
+          );
+        } catch {}
       }
 
       return {
@@ -222,6 +237,15 @@ export function createCollectorRoleRuntime(
         return {
           block: true,
           reason: `通进司禁用工具 ${event.toolName}`,
+        };
+      }
+      if (
+        activation.ledger.outputCandidate &&
+        event.toolName !== COLLECTOR_OUTPUT_TOOL
+      ) {
+        return {
+          block: true,
+          reason: "通进司已产出输出候选，本局不再受理操作",
         };
       }
       return undefined;
@@ -263,7 +287,19 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          activation.ledger.completeOperational(toolCallId);
+          try {
+            ctx.sessionManager?.appendCustomEntry?.(
+              COLLECTOR_SNAPSHOT_ENTRY_TYPE,
+              {
+                snapshot,
+                evidence: activation.ledger.allEvidence(),
+                mutationGeneration: activation.ledger.mutationGeneration,
+                observedGeneration: activation.ledger.observedGeneration,
+                activationTime: activation.ledger.activationTime?.toISOString(),
+                deadlineTime: activation.ledger.deadlineTime?.toISOString(),
+              },
+            );
+          } catch {}
           if (snapshot.prState !== "OPEN") {
             // Non-OPEN observed as latest complete snapshot is target-state failure at output,
             // but observe itself may return the fact. If this is a final observation, still return.
@@ -277,6 +313,8 @@ export function createCollectorRoleRuntime(
           };
         } catch (error) {
           hostActions.failInfrastructure(error, ctx);
+        } finally {
+          activation.ledger.completeOperational(toolCallId);
         }
       },
     });
@@ -299,7 +337,29 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          activation.ledger.completeOperational(toolCallId);
+          try {
+            const attempts = activation.ledger.requestAttempts();
+            const lastAttempt = attempts.at(-1);
+            if (lastAttempt) {
+              const attemptKey = [
+                activation.repository.canonical,
+                String(activation.prNumber),
+                lastAttempt.observedHead,
+                lastAttempt.requestId,
+              ].join("|");
+              ctx.sessionManager?.appendCustomEntry?.(
+                COLLECTOR_REQUEST_ENTRY_TYPE,
+                {
+                  attempt: lastAttempt,
+                  attemptKey,
+                  commentEvidence: lastAttempt.commentEvidenceId
+                    ? activation.ledger.getEvidence(lastAttempt.commentEvidenceId)
+                    : undefined,
+                  mutationGeneration: activation.ledger.mutationGeneration,
+                },
+              );
+            }
+          } catch {}
           return {
             content: [{
               type: "text" as const,
@@ -309,6 +369,8 @@ export function createCollectorRoleRuntime(
           };
         } catch (error) {
           hostActions.failInfrastructure(error, ctx);
+        } finally {
+          activation.ledger.completeOperational(toolCallId);
         }
       },
     });
@@ -330,7 +392,19 @@ export function createCollectorRoleRuntime(
             activation.clock,
             signal,
           );
-          activation.ledger.completeOperational(toolCallId);
+          try {
+            const waits = activation.ledger.waits();
+            const lastWait = waits.at(-1);
+            if (lastWait) {
+              ctx.sessionManager?.appendCustomEntry?.(
+                COLLECTOR_WAIT_ENTRY_TYPE,
+                {
+                  waitRecord: lastWait,
+                  mutationGeneration: activation.ledger.mutationGeneration,
+                },
+              );
+            }
+          } catch {}
           return {
             content: [{
               type: "text" as const,
@@ -340,6 +414,8 @@ export function createCollectorRoleRuntime(
           };
         } catch (error) {
           hostActions.failInfrastructure(error, ctx);
+        } finally {
+          activation.ledger.completeOperational(toolCallId);
         }
       },
     });
@@ -361,7 +437,13 @@ export function createCollectorRoleRuntime(
             params,
             activation.clock,
           );
-          activation.ledger.completeOperational(toolCallId);
+          activation.ledger.recordOutputCandidate();
+          try {
+            ctx.sessionManager?.appendCustomEntry?.(
+              "ak-collector-output-candidate",
+              { candidateTime: activation.clock.wallNow().toISOString() },
+            );
+          } catch {}
           const acceptedDetails = receipt;
           return {
             content: [{
@@ -380,6 +462,8 @@ export function createCollectorRoleRuntime(
             hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           throw error;
+        } finally {
+          activation.ledger.completeOperational(toolCallId);
         }
       },
     });
@@ -488,11 +572,39 @@ export function createCollectorRoleRuntime(
 
         const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
         const transport = dependencies.createTransport();
-        const ledger = createCollectorLedger({
+
+        let entries: Iterable<unknown> = ctx.sessionManager?.getEntries?.() ?? [];
+        const entriesArray = Array.from(entries);
+        if (entriesArray.length === 0) {
+          const sessionFile = ctx.sessionManager?.getSessionFile?.();
+          if (sessionFile) {
+            try {
+              entries = await readLedgerSessionJsonl(sessionFile);
+            } catch {}
+          }
+        } else {
+          entries = entriesArray;
+        }
+
+        const hydration = hydrateCollectorLedgerFromSession(entries, {
           repository,
           prNumber,
           manifest,
         });
+
+        const ledger = createCollectorLedger(
+          {
+            repository,
+            prNumber,
+            manifest,
+          },
+          hydration,
+          clock,
+        );
+
+        if (ledger.activationRecorded) {
+          firstDispatchDone = true;
+        }
 
       activation = {
         soul,
