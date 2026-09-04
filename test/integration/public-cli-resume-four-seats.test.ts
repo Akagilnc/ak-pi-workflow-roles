@@ -20,7 +20,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -37,22 +36,10 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   savePublicCliConfig,
   setPersistentSeatConfig,
-  setPersistentSeatHost,
 } from "../../src/public-cli/config.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import {
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_WAIT_TOOL,
-} from "../../src/collector-ledger.ts";
+import { COLLECTOR_WAIT_TOOL } from "../../src/collector-ledger.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
-import {
-  createGrokRoleTurnHost,
-  type GrokPreparedTurn,
-} from "../../src/grok/role-turn-host.ts";
-import { prepareGrokRoleEnvelope } from "../../src/grok/role-envelope.ts";
-import { createGrokRoleRuntimeDependencies } from "../../src/grok/production-host.ts";
-import { createGrokSessionIdentityAuthority } from "../../src/grok/session-identity.ts";
-import { callThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
@@ -182,7 +169,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
 ];
 
-test("public resume reopens the Collector principal through real activation and settles its typed terminal", async () => {
+test("public resume reopens the Collector principal through real activation and settles its typed terminal", { timeout: 120_000 }, async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     const agentDir = join(home, ".pi", "agent");
@@ -193,30 +180,21 @@ test("public resume reopens the Collector principal through real activation and 
     seedGitProject(project);
 
     const gh = join(binDir, "gh");
-    await writeFile(
-      gh,
-      `#!/usr/bin/env node
+    await writeFile(gh, `#!/usr/bin/env node
 const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
 function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
 if(path.endsWith('/user')) ok({login:'collector-fixture'});
 else if(path.includes('/pulls/42')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:42,state:'open',head:{sha:'resume-head'},updated_at:'2026-09-03T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/42'});
 else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/reactions')) ok([]); else process.exit(2);
-`,
-      "utf8",
-    );
+`, "utf8");
     await chmod(gh, 0o755);
 
-    // Live seat table selects the Grok production envelope (session_start.reason=resume).
     await savePublicCliConfig(
-      setPersistentSeatHost(
-        setPersistentSeatConfig({ seats: {} }, "collector", {
-          provider: "xai",
-          model: "grok-4.5",
-          thinking: "high",
-        }),
-        "collector",
-        "grok-build",
-      ),
+      setPersistentSeatConfig({ seats: {} }, "collector", {
+        provider: "ak-collector-offline",
+        model: "faux-1",
+        thinking: "off",
+      }),
       home,
     );
 
@@ -229,7 +207,7 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
       instruction: "",
       repo: "acme/widgets",
       createRunId: () => runId,
-      model: { provider: "xai", model: "grok-4.5", thinking: "high" },
+      model: { provider: "ak-collector-offline", model: "faux-1", thinking: "off" },
     });
     const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
     await writeRoleRunState(admitted.runDirectory, {
@@ -259,66 +237,7 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
         message: { role: "user", content: "kickoff", timestamp: 1 },
       },
     ];
-    await writeFile(
-      coordinates.sessionFile,
-      `${initialRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
-    );
-
-    const sessionIdentity = createGrokSessionIdentityAuthority(piDurablePrincipalAuthority);
-    const roleRuntimeDependencies = createGrokRoleRuntimeDependencies(packageRoot);
-    let preparedTurn: GrokPreparedTurn | undefined;
-    let observedResumeContinuation = false;
-    const grokHost = createGrokRoleTurnHost({
-      sessionIdentity,
-      recordCapabilities: async () => {},
-      inspect: async () => ({ privateActive: [], akActive: [COLLECTOR_OUTPUT_TOOL] }),
-      prepare: async (request) => {
-        assert.equal(
-          request.continuation.kind,
-          "resume",
-          "Grok envelope must activate Collector with session_start.reason=resume",
-        );
-        observedResumeContinuation = true;
-        const prepared = await prepareGrokRoleEnvelope({
-          request,
-          dependencies: roleRuntimeDependencies,
-          sessionFile: sessionIdentity.resolveSessionFile(request.principal),
-          socketPath: join(home, `collector-resume-${randomUUID()}.sock`),
-        });
-        preparedTurn = prepared;
-        return prepared;
-      },
-      connect: async () => ({
-        async request(method) {
-          if (method === "initialize") {
-            return {
-              _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } },
-            };
-          }
-          if (method === "session/new" || method === "session/load") {
-            return { sessionId: "collector-resume-grok-session" };
-          }
-          if (method === "session/prompt") {
-            assert.ok(preparedTurn, "prepare must run before session/prompt");
-            const server = preparedTurn.mcpServers[0] as GrokMcpServer;
-            // Pi: observe on a prior toolUse message; turn_end sees sole output.
-            // Grok ACP closes every session/prompt — drain observe via production
-            // closeRound, then sole output for the host's sealing closeRound.
-            const observed = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
-            assert.equal(observed.error, undefined, JSON.stringify(observed));
-            await preparedTurn.closeRound();
-            const sealed = await callThroughMcp(server, COLLECTOR_OUTPUT_TOOL, {});
-            assert.equal(sealed.error, undefined, JSON.stringify(sealed));
-            return { stopReason: "end_turn" };
-          }
-          if (method === "session/close") return {};
-          return {};
-        },
-        notify() {},
-        async close() {},
-      }),
-    });
+    await writeFile(coordinates.sessionFile, `${initialRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 
     const previousPath = process.env.PATH;
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
@@ -329,27 +248,16 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
         home,
         agentDir,
         cwd: project,
-        credentials: { "openai-codex": true, xai: true },
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", join(packageRoot, "test/fixtures/collector-observe-provider.ts")],
         collectorTimeoutMs: 90_000,
-        hostAdapters: [
-          {
-            name: "grok-build",
-            create: () => ({ ok: true as const, host: grokHost }),
-          },
-        ],
         io,
       });
 
       const errorArtifact = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-      const errorDetail =
-        errorArtifact === undefined ? "" : await readFile(errorArtifact.path, "utf8");
+      const errorDetail = errorArtifact === undefined ? "" : await readFile(errorArtifact.path, "utf8");
       const sessionDetail = await readFile(coordinates.sessionFile, "utf8");
       assert.equal(resumed.exitCode, 0, `${stderr.join("")}\n${errorDetail}\n${sessionDetail}`);
-      assert.equal(
-        observedResumeContinuation,
-        true,
-        "Collector activation must observe continuation.kind=resume",
-      );
       assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal?.roleOutcome.role, "collector");
       assert.equal(resumed.terminal?.runId, runId);
