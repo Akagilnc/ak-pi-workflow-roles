@@ -28,11 +28,9 @@ export const gatekeeperOutputSchema = withInfrastructureFailureDeclaration(
   ),
 );
 
-export type GatekeeperDirectOutput = {
-  readonly status: "dispatch" | "pass";
-  readonly officer?: "inspector" | "notary";
-  readonly findings?: readonly string[];
-};
+export type GatekeeperDirectOutput =
+  | { readonly status: "dispatch"; readonly officer: "inspector" | "notary" }
+  | { readonly status: "pass"; readonly findings?: readonly string[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -82,8 +80,7 @@ export function gatekeeperDecisiveFacts(
   const facts: Record<string, unknown> = { status: output.status };
   if (output.status === "dispatch") {
     facts.officer = output.officer;
-  }
-  if (Array.isArray(output.findings)) {
+  } else if (Array.isArray(output.findings)) {
     facts.findingsCount = output.findings.length;
   }
   return facts;
