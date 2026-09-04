@@ -95,27 +95,13 @@ export function attachDirectErrnoCode(error: Error, cause: unknown): void {
   if (typeof code === "string") (error as NodeJS.ErrnoException).code = code;
 }
 
-/** Minimal exclusive-claim failure facts actually consumed by callers/tests. */
-export type SitianInfrastructureFailureDisposition =
-  | "contention"
-  | "cleanup";
-
-/** Options for SitianInfrastructureError; preserves ErrorOptions / knownCause compatibility. */
-export type SitianInfrastructureErrorOptions = ErrorOptions & {
-  readonly failureDisposition?: SitianInfrastructureFailureDisposition;
-};
-
 /** Typed infrastructure error for real ledger persistence / IO failures. */
 export class SitianInfrastructureError extends Error {
   readonly knownCause = "session" as const;
-  readonly failureDisposition?: SitianInfrastructureFailureDisposition;
 
-  constructor(message: string, options?: SitianInfrastructureErrorOptions) {
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "SitianInfrastructureError";
-    if (options?.failureDisposition !== undefined) {
-      this.failureDisposition = options.failureDisposition;
-    }
     attachDirectErrnoCode(this, options?.cause);
   }
 }
