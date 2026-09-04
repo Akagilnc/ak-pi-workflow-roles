@@ -31,7 +31,6 @@ export function buildCollectorReceipt(
   clock?: CollectorClock,
 ): CollectorReceipt {
   ledger.assertNotFatal();
-  if (ledger.outputAccepted) fail("Collector output is singleton");
   if (ledger.unresolvedTransportFailure) fail("Collector cannot output while a transport failure is unrecovered");
   if (ledger.latestCompleteSnapshotId === undefined) fail("Collector output requires a complete final snapshot");
   if (ledger.activationTime === undefined || ledger.deadlineTime === undefined) fail("Collector output requires activation timeline");

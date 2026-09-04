@@ -109,21 +109,6 @@ export function createCollectorRoleRuntime(
   let toolsRegistered = false;
   let firstDispatchDone = false;
 
-  // Output accept during execute is provisional until the shared submission
-  // ledger adjudicates turn sole-ness. A correctable non-sole rejection must
-  // release only that latch so a later sole output can accept (#633).
-  const priorDeliverSubmissionRejection = pi.deliverSubmissionRejection?.bind(pi);
-  pi.deliverSubmissionRejection = async (rejection) => {
-    if (
-      rejection.code === "non-sole-round"
-      && activation !== undefined
-      && activation.ledger.outputAccepted
-    ) {
-      activation.ledger.releaseProvisionalOutputAccepted();
-    }
-    await priorDeliverSubmissionRejection?.(rejection);
-  };
-
   pi.registerFlag("ak-collector-repo", {
     description:
       "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
@@ -239,17 +224,6 @@ export function createCollectorRoleRuntime(
           reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
-      // Concurrency is owned at execute (beginOperational), not announced-batch preflight.
-      // Pi may emit tool_call for every part before any execute runs (ADR 0041).
-      if (
-        activation.ledger.outputAccepted &&
-        event.toolName !== COLLECTOR_OUTPUT_TOOL
-      ) {
-        return {
-          block: true,
-          reason: "回执已受理，本局不再受理操作",
-        };
-      }
       return undefined;
     });
 
@@ -260,7 +234,7 @@ export function createCollectorRoleRuntime(
 
     pi.on("session_shutdown", () => {
       if (activation === undefined) return;
-      if (!activation.ledger.outputAccepted || activation.ledger.fatal) {
+      if (activation.ledger.fatal) {
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
         }
@@ -387,7 +361,6 @@ export function createCollectorRoleRuntime(
             params,
             activation.clock,
           );
-          activation.ledger.markOutputAccepted();
           activation.ledger.completeOperational(toolCallId);
           const acceptedDetails = receipt;
           return {
