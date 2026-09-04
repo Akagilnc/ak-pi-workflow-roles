@@ -384,9 +384,9 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   }
   // The child reaches this faux over the real OpenAI-completions HTTP server (models.json).
   // Choose the only registered direct officer tool; no province response is scripted.
-  faux.provider.stream = ((_model: unknown, context: { tools?: Array<{ name?: string; function?: { name?: string } }>; systemPrompt?: string }) => {
+  faux.provider.stream = ((_model: unknown, context: { tools?: Array<{ name?: string; function?: { name?: string } }> }) => {
     const names = new Set(context.tools?.map((entry) => entry.name ?? entry.function?.name));
-    const inspector = names.has(INSPECTOR_OUTPUT_TOOL) || context.systemPrompt?.includes("# 察院 Soul");
+    const inspector = names.has(INSPECTOR_OUTPUT_TOOL);
     const tool = inspector ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
     const stream = createAssistantMessageEventStream();
     queueMicrotask(() => stream.end(
