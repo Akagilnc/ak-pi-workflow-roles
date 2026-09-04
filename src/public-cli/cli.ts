@@ -74,7 +74,7 @@ import {
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
-import { runPublicInstructionSeat } from "./instruction-seat-run.ts";
+import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
@@ -98,7 +98,7 @@ import {
  * adapters live in each seat's resume module.
  */
 const RESUME_SEAT_DISPATCH: Record<
-  Exclude<NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>, "gatekeeper" | "navigator">,
+  NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>, 
   {
     readonly seat: PublicCallableRole;
     readonly run: (
@@ -123,6 +123,8 @@ const RESUME_SEAT_DISPATCH: Record<
   doctor: { seat: "doctor", run: runPublicDoctorResume },
   notary: { seat: "notary", run: runPublicNotaryResume },
   inspector: { seat: "inspector", run: runPublicInspectorResume },
+  gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
+  navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -1181,11 +1183,6 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      if (resumeRole === "gatekeeper" || resumeRole === "navigator") {
-        throw new CliUsageError(
-          `${resumeRole} role runs cannot be resumed`,
-        );
-      }
       // #633: single authoritative resume dispatch — the seat follows the
       // durable admitted role; missing durable role keeps the judge path.
       const dispatch =
