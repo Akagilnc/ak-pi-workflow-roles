@@ -39,7 +39,6 @@ import {
 } from "../../src/public-cli/config.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { COLLECTOR_WAIT_TOOL } from "../../src/collector-ledger.ts";
-import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
@@ -169,7 +168,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
 ];
 
-test("public resume reopens the Collector principal through real activation and settles its typed terminal", { timeout: 120_000 }, async () => {
+test("public resume reopens the Collector principal through real activation and settles its typed terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     const agentDir = join(home, ".pi", "agent");
