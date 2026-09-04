@@ -10,6 +10,7 @@ import {
   existsSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -99,15 +100,42 @@ function autopsySitianVolumeLock(lockFile: string): SitianVolumeLockAutopsy {
 }
 
 /**
- * Remove one lock whose re-read autopsy is still a verified-dead holder, or
- * leave it otherwise. The pre-unlink re-read means a contender that re-locked
- * between the first autopsy and the unlink cannot have its live lock stolen.
+ * Take ownership of one lock inode via rename, then unlink only that owned
+ * path when it is still a verified-dead holder. A contender that removes the
+ * dead lock and installs a live replacement at the original pathname cannot
+ * be unlinked by this reclaim — the replacement is a different directory
+ * entry than the renamed reclaim path (same ownership shape as #629's
+ * "never unlink from a stale observation after an intervening mutation",
+ * closed here by binding the unlink target to the observed inode).
  */
 function reclaimDeadSitianVolumeLock(lockFile: string): boolean {
-  const current = autopsySitianVolumeLock(lockFile);
-  if (current.verdict !== "dead") return false;
+  const reclaimPath = `${lockFile}.${process.pid}.${randomUUID()}.reclaim`;
   try {
-    unlinkSync(lockFile);
+    renameSync(lockFile, reclaimPath);
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return false;
+    throw error;
+  }
+  const current = autopsySitianVolumeLock(reclaimPath);
+  if (current.verdict !== "dead") {
+    try {
+      renameSync(reclaimPath, lockFile);
+    } catch (restoreError) {
+      if (errorCodeOf(restoreError) !== "EEXIST") throw restoreError;
+      // Replacement already owns the pathname. Only delete the moved inode
+      // when it is not a live holder — never unlink a live lock we renamed.
+      if (current.verdict !== "alive") {
+        try {
+          unlinkSync(reclaimPath);
+        } catch (unlinkError) {
+          if (errorCodeOf(unlinkError) !== "ENOENT") throw unlinkError;
+        }
+      }
+    }
+    return false;
+  }
+  try {
+    unlinkSync(reclaimPath);
     return true;
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return false;
