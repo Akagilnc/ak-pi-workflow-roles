@@ -143,17 +143,6 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   }),
 ] as const);
 
-/** Countersign private transport: admitted ticket binding for Notary gate (ADR 0075). */
-const COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
-  Object.freeze({
-    name: "ak-countersign-ticket-number",
-    definition: Object.freeze({
-      description: "Admitted ticketNumber for countersign Notary inner-gate material",
-      type: "string" as const,
-    }),
-  }),
-] as const);
-
 /** Notary private transport: optional court-diary ticket (ADR 0018 / 0075 — envelope-owned). */
 const NOTARY_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
@@ -908,9 +897,6 @@ export function createRoleRuntimeExtension(
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
-      roleHost.registerFlag(flag.name, flag.definition);
-    }
-    for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of NOTARY_TRANSPORT_FLAGS) {

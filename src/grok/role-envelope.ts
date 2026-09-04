@@ -87,9 +87,8 @@ export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string
     flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
     if (activation.ticketNumber !== undefined) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
   }
-  if (activation.role === "countersign" && activation.ticketNumber !== undefined) {
-    flags.set("ak-countersign-ticket-number", String(activation.ticketNumber));
-  }
+  // countersign ticketNumber stays on activation/admission/invocation only —
+  // no private transport flag (inner-gate material path deleted in #632).
   if (activation.role === "notary" && activation.ticketNumber !== undefined) {
     flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
   }
