@@ -237,9 +237,14 @@ test("pipeline ledger records dispatched officer escalation as durable audit clo
       throw new GatekeeperEscalationError({
         status: "escalate",
         officer: "inspector",
-        reason: "third review unresolved",
-        findings: ["authority conflict"],
-        submission: { status: "escalate" },
+        reason: { source: "third-review-limit" },
+        findings: ["authority conflict", { source: "original-finding" }],
+        submission: {
+          status: "escalate",
+          reason: { source: "third-review-limit" },
+          findings: ["authority conflict", { source: "original-finding" }],
+          officerNote: "retain the complete officer submission",
+        },
       });
     });
     await escalating.start("officer-escalate");
@@ -254,7 +259,15 @@ test("pipeline ledger records dispatched officer escalation as durable audit clo
     const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.decisiveFacts.officer, "inspector");
-    assert.equal(projection?.decisiveFacts.reason, "third review unresolved");
+    assert.deepEqual(projection?.decisiveFacts.reason, { source: "third-review-limit" });
+    assert.deepEqual(projection?.decisiveFacts.findings, [
+      "authority conflict",
+      { source: "original-finding" },
+    ]);
+    assert.equal(
+      projection?.decisiveFacts.officerNote,
+      "retain the complete officer submission",
+    );
   });
 });
 

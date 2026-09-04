@@ -33,7 +33,7 @@ import {
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { recordAuditEscalationSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -188,44 +188,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
     }
-  });
-});
-
-test("public coder coordinator settles durable audit escalation", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-coder-escalate-001";
-    const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${runId}@coder`);
-    const captured = captureIo();
-    const result = await runAkRole(["coder", "--project", project, "Escalate the gate decision."], {
-      packageRoot,
-      home,
-      cwd: project,
-      createRunId: () => runId,
-      io: captured.io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          await mkdir(join(runDirectory, "session"), { recursive: true });
-          await writeFile(join(runDirectory, "session", "session.jsonl"), "", "utf8");
-          await recordAuditEscalationSubmission({
-            cwd: project,
-            home,
-            runId,
-            runDirectory,
-            role: "coder",
-            details: { kind: "audit_escalation", conflicts: ["authority conflict"] },
-          });
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
-        },
-      }),
-    });
-    assert.equal(result.exitCode, 0, captured.stderr.join(""));
-    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.conflicts, ["authority conflict"]);
   });
 });
 

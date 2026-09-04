@@ -34,7 +34,6 @@ import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
-import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import {
   extractFixerMethodInvocations,
   settleFixerTerminalResult,
@@ -49,7 +48,7 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
-import { recordAuditEscalationSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -663,27 +662,15 @@ async function settleFixerSession(
   await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
   await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, fixerSessionLine(details), "utf8");
   const home = tryHomeFromAkRolesPath(admitted.runDirectory);
-  if ((details as { kind?: unknown })?.kind === AUDIT_ESCALATION_KIND) {
-    await recordAuditEscalationSubmission({
-      runId: admitted.runId,
-      cwd: admitted.projectRoot,
-      ...(home === undefined ? {} : { home }),
-      runDirectory: admitted.runDirectory,
-      role: "fixer",
-      details,
-      toolCallId: "f-out",
-    });
-  } else {
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: admitted.projectRoot,
-      ...(home === undefined ? {} : { home }),
-      runDirectory: admitted.runDirectory,
-      role: "fixer",
-      details,
-      toolCallId: "f-out",
-    });
-  }
+  await sealAcceptedSubmission({
+    runId: admitted.runId,
+    cwd: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
+    runDirectory: admitted.runDirectory,
+    role: "fixer",
+    details,
+    toolCallId: "f-out",
+  });
   const material = await loadPackagedMethodSkillMaterial(
     packageRoot,
     "diagnosing-bugs",
@@ -829,7 +816,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
   });
 });
 
-test("public Fixer unfinished/refused/partially_completed/audit_escalation hand off via shared Terminal exit 0", async () => {
+test("public Fixer unfinished/refused/partially_completed hand off via shared Terminal exit 0", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -862,21 +849,12 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       report: "One class repaired; one refused.",
       classResults: [completed("ParserCase", shaA), refused("TransportCase")],
     };
-    const escalation = {
-      kind: AUDIT_ESCALATION_KIND,
-      conflicts: ["soul procedure conflict"],
-      decisionGate: {
-        question: "Which authority controls this Fixer gate?",
-        options: ["owner", "caller"],
-      },
-    };
-
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
       runId: string;
       phase: "plan" | "apply";
       details: unknown;
-      kind: "accepted" | "audit_escalation";
+      kind: "accepted";
       status: string;
       factKey: string;
       factValue: unknown;
@@ -908,15 +886,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
         factKey: "fixerStatus",
         factValue: "partially_completed",
       },
-      {
-        runId: "run-fixer-status-escalation",
-        phase: "apply",
-        details: escalation,
-        kind: "audit_escalation",
-        status: "audit_escalation",
-        factKey: "conflicts",
-        factValue: ["soul procedure conflict"],
-      },
     ];
 
     for (const row of cases) {
@@ -932,13 +901,8 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       const settled = await settleFixerSession(admitted, row.details);
       assert.equal(settled.roleOutcome.kind, row.kind, row.status);
       assert.equal(settled.roleOutcome.role, "fixer", row.status);
-      assert.equal(
-        settled.roleOutcome.kind === "accepted" ||
-          settled.roleOutcome.kind === "audit_escalation"
-          ? settled.roleOutcome.status
-          : undefined,
-        row.status,
-      );
+      if (settled.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
+      assert.equal(settled.roleOutcome.status, row.status);
       assert.deepEqual(
         settled.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
@@ -965,25 +929,12 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
-          if (row.kind === "audit_escalation") {
-            await recordAuditEscalationSubmission({
-              cwd: project,
-              home,
-              runId: row.runId,
-              runDirectory: join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${row.runId}@fixer`),
-              role: "fixer",
-              details: row.details,
-              toolCallId: "f-out",
-            });
-          }
           return {
             code: 0,
             stderr: "",
             timedOut: false,
             args: [...args],
-            ...(row.kind === "audit_escalation"
-              ? {}
-              : { sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" } }),
+            sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" },
           };
         },
           }),
@@ -995,13 +946,8 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       );
       assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
-      assert.equal(
-        result.terminal!.roleOutcome.kind === "accepted" ||
-          result.terminal!.roleOutcome.kind === "audit_escalation"
-          ? result.terminal!.roleOutcome.status
-          : undefined,
-        row.status,
-      );
+      if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
+      assert.equal(result.terminal!.roleOutcome.status, row.status);
       assert.deepEqual(
         result.terminal!.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,

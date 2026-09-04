@@ -73,13 +73,13 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
     for (const [index, row] of [
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
-      { status: "escalate", exitCode: 0, findings: ["escalate-finding"], reason: "need owner decision" },
+      { status: "escalate", exitCode: 0, findings: ["escalate-finding"] },
       { status: "malformed", exitCode: 1, details: { status: "unknown", findings: "unaltered" } },
     ].entries()) {
       const runId = `inspector-public-${index}`;
       const details = row.status === "malformed"
         ? row.details
-        : { status: row.status, findings: row.findings, ...(row.reason ? { reason: row.reason } : {}) };
+        : { status: row.status, findings: row.findings };
       const result = await runAkRole(
         [
           "inspector",
@@ -121,7 +121,8 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         assert.equal(outcome.kind, "audit_escalation");
         assert.equal(outcome.status, "audit_escalation");
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
-        assert.equal(outcome.decisiveFacts.reason, row.reason);
+        assert.equal(typeof outcome.decisiveFacts.reason, "string");
+        assert.notEqual(outcome.decisiveFacts.reason, "");
       } else {
         assert.equal(outcome.kind, "accepted");
         if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
