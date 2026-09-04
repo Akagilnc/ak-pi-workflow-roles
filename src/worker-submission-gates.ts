@@ -25,7 +25,6 @@ export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce"
 
 /** Statuses that enter the officer submission gate (ADR 0066 gate-1-status-matrix / ADR 0072 skip-statuses). */
 export const WORKER_DONE_STATUSES: ReadonlySet<string> = new Set(["completed", "partially_completed"]);
-const DONE = WORKER_DONE_STATUSES;
 /** Historical package hook ownership marker — uninstall criterion only. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 const HOOKS_DIR = "ak-roles-hooks";
@@ -301,7 +300,7 @@ export function createWorkerSubmissionGate(
           throw new WorkerUnfinishedReasonReminderError();
         }
       }
-      if (baseline === undefined || root === undefined || !DONE.has(status)) return;
+      if (baseline === undefined || root === undefined || !WORKER_DONE_STATUSES.has(status)) return;
       const now = head(root);
       const headMoved = now !== null && (baseline === null || now !== baseline);
 

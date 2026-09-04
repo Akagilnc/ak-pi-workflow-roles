@@ -70,6 +70,7 @@ async function seedGatePair(
         officer: input.officer,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       },
+      attemptEntryId: "attempt-historical-1",
     }),
     "utf8",
   );
@@ -84,6 +85,7 @@ async function seedGatePair(
         status: "pass",
         findings: input.findings === undefined ? ["ok"] : [...input.findings],
       },
+      attemptEntryId: "attempt-historical-1",
     }),
     "utf8",
   );
