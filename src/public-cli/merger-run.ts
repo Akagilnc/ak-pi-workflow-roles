@@ -36,7 +36,6 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
-  hasLawfulMergerTerminalResult,
   isLawfulTypedTerminalOutcome,
   presentStructuralRejection,
   trySettleMergerTerminalResult,
@@ -105,7 +104,6 @@ function mergerAdapters(
           }),
     shouldPresentSettled: (t) =>
       isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
-    hasLawfulTerminalResult: (admitted, authority) => hasLawfulMergerTerminalResult(admitted, authority),
   };
 }
 

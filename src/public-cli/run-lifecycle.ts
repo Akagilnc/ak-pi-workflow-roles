@@ -175,19 +175,6 @@ export async function readTypedHttp429Observation(
   return { httpStatus: 429, provider: observation.provider };
 }
 
-/**
- * @deprecated #416: 429-only resumability predicate removed from gating. Kept for compatibility.
- * True only when a typed HTTP 429 was observed and no lawful terminal exists.
- * Callers must pass the lawful-terminal fact from settlement, not re-infer it.
- */
-export function isV1ResumableFailure(input: {
-  readonly hasLawfulTerminalResult: boolean;
-  readonly typedHttp429?: TypedHttp429Observation;
-}): boolean {
-  if (input.hasLawfulTerminalResult) return false;
-  return input.typedHttp429 !== undefined;
-}
-
 /** Complete public resume command. Run ID is revealed only through this command text. */
 export function renderResumeCommand(runId: string): string {
   return `ak-role resume ${runId}`;

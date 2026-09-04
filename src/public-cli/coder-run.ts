@@ -28,7 +28,6 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
-  hasLawfulCoderTerminalResult,
   presentStructuralRejection,
   trySettleCoderTerminalResult,
 } from "./settlement.ts";
@@ -87,7 +86,6 @@ function coderAdapters(
       trySettleCoderTerminalResult(admitted, authority, {
         ...(methodProvenance === undefined ? {} : { methodProvenance }),
       }),
-    hasLawfulTerminalResult: (admitted, authority) => hasLawfulCoderTerminalResult(admitted, authority),
   };
 }
 
