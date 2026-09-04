@@ -5,7 +5,10 @@
  * Free-text cells are JSON-string encoded so legitimate newlines/tabs cannot forge
  * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
-import { renderPublicAkRoleCommand } from "./command-renderer.ts";
+import {
+  isPublicCallableRole,
+  renderPublicAkRoleCommand,
+} from "./command-renderer.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
@@ -124,8 +127,8 @@ export type TerminalNavigatorFact =
       disposition: "recommendation";
       next: { role: string; phase: NavigatorPhase };
       reason: string;
-      /** Registry-rendered public command — never model prose. */
-      command: string;
+      /** Present only when role/phase is sufficient for a truthful public command. */
+      command?: string;
       route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
       advisoryDiagnostic?: string;
     }
@@ -239,19 +242,19 @@ export function recommendationNavigatorFact(input: {
   modelCommand?: string;
 }): TerminalNavigatorFact {
   void input.modelCommand;
-  const command = renderPublicAkRoleCommand(input.next);
-  if (command === undefined) {
+  if (!isPublicCallableRole(input.next.role)) {
     return {
       disposition: "unavailable",
       source: "unknown",
       reason: `recommended role is not a public callable seat: ${input.next.role}`,
     };
   }
+  const command = renderPublicAkRoleCommand(input.next);
   return {
     disposition: "recommendation",
     next: input.next,
     reason: input.reason,
-    command,
+    ...(command === undefined ? {} : { command }),
     ...(input.route === undefined ? {} : { route: input.route }),
     ...(input.advisoryDiagnostic === undefined ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }),
   };
@@ -293,7 +296,9 @@ export function formatTerminalResult(result: TerminalResult): string {
       `next\t${result.navigator.next.role}\t${result.navigator.next.phase ?? "none"}`,
     );
     lines.push(`reason\t${encodeTerminalField(result.navigator.reason)}`);
-    lines.push(`command\t${encodeTerminalField(result.navigator.command)}`);
+    if (result.navigator.command !== undefined) {
+      lines.push(`command\t${encodeTerminalField(result.navigator.command)}`);
+    }
   } else if (result.navigator.disposition === "unavailable") {
     lines.push(
       `unavailable\t${result.navigator.source}\t${encodeTerminalField(result.navigator.reason)}`,

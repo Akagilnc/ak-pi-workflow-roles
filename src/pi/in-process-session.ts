@@ -724,6 +724,9 @@ export async function openPiInstitutionalSession(
         if (options.signal?.aborted) abortSession();
         else options.signal?.addEventListener("abort", abortSession, { once: true });
 
+        const assistantCountBefore = session.messages.filter(
+          (message) => message.role === "assistant",
+        ).length;
         let promptError: unknown;
         try {
           await session.prompt(text);
@@ -749,7 +752,10 @@ export async function openPiInstitutionalSession(
           }
         }
 
-        if (promptError !== undefined && lastAssistant === undefined) {
+        const producedAssistant = session.messages.filter(
+          (message) => message.role === "assistant",
+        ).length > assistantCountBefore;
+        if (promptError !== undefined && !producedAssistant) {
           throw promptError;
         }
 
@@ -777,21 +783,29 @@ export async function openPiInstitutionalSession(
         if (closed) return;
         closed = true;
         listeners.clear();
+        const cleanupFailures: unknown[] = [];
         try {
           unsubscribeSession();
-        } finally {
-          // spec-3: handle.close must always dispose the child session even when
-          // unsubscribing throws (the throwing unsubscribe is a cleanup failure the
-          // caller aggregates, never a reason to skip session teardown).
-          session.dispose();
+        } catch (error) {
+          cleanupFailures.push(error);
         }
-
+        try {
+          session.dispose();
+        } catch (error) {
+          cleanupFailures.push(error);
+        }
         if (scratchDir !== undefined) {
           try {
             await rm(scratchDir, { recursive: true, force: true });
           } catch (error) {
-            throw error;
+            cleanupFailures.push(error);
           }
+        }
+        if (cleanupFailures.length === 1) throw cleanupFailures[0];
+        if (cleanupFailures.length > 1) {
+          throw new AggregateError(cleanupFailures, `${label} close cleanup failures`, {
+            cause: cleanupFailures[0],
+          });
         }
       },
     };

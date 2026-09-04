@@ -77,6 +77,7 @@ export const PUBLIC_ROLE_RECORDS = [
   {
     role: "reviewer",
     phases: [null],
+    bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
     inputFlag: undefined,
     phaseFlag: undefined,
@@ -92,6 +93,7 @@ export const PUBLIC_ROLE_RECORDS = [
   {
     role: "collector",
     phases: [null],
+    bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
     inputFlag: undefined,
     phaseFlag: undefined,
@@ -101,6 +103,7 @@ export const PUBLIC_ROLE_RECORDS = [
   {
     role: "doctor",
     phases: [null],
+    bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     inputFlag: "ak-doctor-case",
     phaseFlag: undefined,
@@ -119,6 +122,7 @@ export const PUBLIC_ROLE_RECORDS = [
   {
     role: "notary",
     phases: [null],
+    bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     inputFlag: "ak-notary-source-run",
     phaseFlag: undefined,
@@ -137,6 +141,7 @@ export const PUBLIC_ROLE_RECORDS = [
   {
     role: "gleaner-left",
     phases: [null],
+    bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     inputFlag: undefined,
     phaseFlag: undefined,

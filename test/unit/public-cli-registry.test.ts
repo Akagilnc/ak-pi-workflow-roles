@@ -43,6 +43,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "reviewer",
     phases: [null],
+    bareCommand: false,
     outputTool: "ak_reviewer_output",
     inputFlag: undefined,
     phaseFlag: undefined,
@@ -51,6 +52,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "collector",
     phases: [null],
+    bareCommand: false,
     outputTool: "ak_collector_output",
     inputFlag: undefined,
     phaseFlag: undefined,
@@ -59,6 +61,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "doctor",
     phases: [null],
+    bareCommand: false,
     outputTool: "ak_doctor_output",
     inputFlag: "ak-doctor-case",
     phaseFlag: undefined,
@@ -75,6 +78,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "notary",
     phases: [null],
+    bareCommand: false,
     outputTool: "ak_notary_output",
     inputFlag: "ak-notary-source-run",
     phaseFlag: undefined,
@@ -91,6 +95,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
   {
     role: "gleaner-left",
     phases: [null],
+    bareCommand: false,
     outputTool: "ak_gleaner_left_output",
     inputFlag: undefined,
     phaseFlag: undefined,
