@@ -66,6 +66,7 @@ import {
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-resume-four-seats-"));
@@ -322,48 +323,49 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
 
     const previousPath = process.env.PATH;
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-    try {
-      const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        agentDir,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        hostAdapters: [
-          {
-            name: "grok-build",
-            create: () => ({ ok: true as const, host: grokHost }),
-          },
-        ],
-        io,
-      });
+    await withPrimaryAwareCleanup(
+      async () => {
+        const { io, stderr } = captureIo();
+        const resumed = await runAkRole(["resume", runId], {
+          packageRoot,
+          home,
+          agentDir,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          hostAdapters: [
+            {
+              name: "grok-build",
+              create: () => ({ ok: true as const, host: grokHost }),
+            },
+          ],
+          io,
+        });
 
-      const errorArtifact = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-      const errorDetail = errorArtifact === undefined ? "" : await readFile(errorArtifact.path, "utf8");
-      const sessionDetail = await readFile(coordinates.sessionFile, "utf8");
-      assert.equal(resumed.exitCode, 0, `${stderr.join("")}\n${errorDetail}\n${sessionDetail}`);
-      assert.equal(
-        observedResumeContinuation,
-        true,
-        "Collector activation must observe continuation.kind=resume",
-      );
-      assert.equal(promptCount, 2, "non-sole observe+output must retry with a second prompt");
-      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(resumed.terminal?.roleOutcome.role, "collector");
-      assert.equal(resumed.terminal?.runId, runId);
-      const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);
-      assert.equal(durable?.state, "terminal");
-      assert.equal(durable?.sessionFile, coordinates.sessionFile);
-    } finally {
-      try {
+        const errorArtifact = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+        const errorDetail = errorArtifact === undefined ? "" : await readFile(errorArtifact.path, "utf8");
+        const sessionDetail = await readFile(coordinates.sessionFile, "utf8");
+        assert.equal(resumed.exitCode, 0, `${stderr.join("")}\n${errorDetail}\n${sessionDetail}`);
+        assert.equal(
+          observedResumeContinuation,
+          true,
+          "Collector activation must observe continuation.kind=resume",
+        );
+        assert.equal(promptCount, 2, "non-sole observe+output must retry with a second prompt");
+        assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+        assert.equal(resumed.terminal?.roleOutcome.role, "collector");
+        assert.equal(resumed.terminal?.runId, runId);
+        const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);
+        assert.equal(durable?.state, "terminal");
+        assert.equal(durable?.sessionFile, coordinates.sessionFile);
+      },
+      async () => {
         await preparedTurn?.dispose?.();
-      } catch {
-        // Prefer the tracer assertion/activation failure over dispose noise.
-      }
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-    }
+      },
+      async () => {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      },
+    );
   });
 });
 
