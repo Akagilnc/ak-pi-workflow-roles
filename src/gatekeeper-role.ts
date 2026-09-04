@@ -12,7 +12,6 @@ import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
   gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
-  projectLawfulGatekeeperOutput,
 } from "./package-contracts/gatekeeper-output.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
@@ -25,10 +24,9 @@ export type GatekeeperSubject =
 
 export type GatekeeperResult =
   /**
-   * Lawful release. Officer present = officer seat pass; officer absent =
-   * province non-dispatch release (ADR 0074 gate-non-mandatory; #597).
+   * Lawful direct-officer release.
    */
-  | { readonly status: "pass"; readonly officer?: "inspector" | "notary"; readonly findings: readonly string[] }
+  | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
   | {
       readonly status: "bounce";
       readonly officer: "inspector" | "notary";
@@ -43,10 +41,10 @@ export type GatekeeperResult =
       readonly findings: unknown;
       readonly submission: unknown;
     }
-  | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
+  | { readonly status: "no_receipt"; readonly stage: "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
       readonly status: "transport_failure";
-      readonly stage: "gatekeeper" | "inspector" | "notary";
+      readonly stage: "inspector" | "notary";
       readonly reason: string;
       /** Original unusable submission retained for the failure channel. */
       readonly submission?: unknown;
@@ -57,15 +55,8 @@ export type GatekeeperNonPassResult = Extract<
   { status: "bounce" | "no_receipt" }
 >;
 
-function gateSeatLabel(stage: "gatekeeper" | "inspector" | "notary"): string {
-  switch (stage) {
-    case "gatekeeper":
-      return "门下省";
-    case "inspector":
-      return "察院";
-    case "notary":
-      return "符宝郎";
-  }
+function gateSeatLabel(stage: "inspector" | "notary"): string {
+  return stage === "inspector" ? "察院" : "符宝郎";
 }
 
 export { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -83,7 +74,7 @@ export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly loadSoul?: (role: "gatekeeper" | "inspector" | "notary") => Promise<string>;
+  readonly loadSoul?: (role: "inspector" | "notary") => Promise<string>;
   /** Run directory carrying the institutional resolution page (#518). Derives
    * from context when absent. */
   readonly runDirectory?: string;
@@ -154,7 +145,7 @@ export function createGatekeeperOutputTool(): AuditorDecisionTool {
   };
 }
 
-async function defaultLoadSoul(role: "gatekeeper" | "inspector" | "notary"): Promise<string> {
+async function defaultLoadSoul(role: "inspector" | "notary"): Promise<string> {
   return loadGatekeeperSessionMaterials(role);
 }
 
@@ -190,13 +181,13 @@ function retainedSubmission(decision: unknown): unknown {
  * Original submission is retained for the failure channel (#475).
  */
 function noUsableReleaseFailure(
-  stage: "gatekeeper" | "inspector" | "notary",
+  stage: "inspector" | "notary",
   decision: unknown,
 ): Extract<GatekeeperResult, { status: "transport_failure" }> {
   return {
     status: "transport_failure",
     stage,
-    reason: stage === "gatekeeper" ? "decision 无显式 dispatch" : "decision 无显式 pass/bounce/escalate",
+    reason: "decision 无显式 pass/bounce/escalate",
     submission: retainedSubmission(decision),
   };
 }
@@ -204,19 +195,6 @@ function noUsableReleaseFailure(
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
-}
-
-function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
-  // Lawful dispatch/pass discriminant is owned by package-contracts; province
-  // wraps undefined into transport_failure while retaining the submission.
-  const projected = projectLawfulGatekeeperOutput(decision);
-  if (projected === undefined) return noUsableReleaseFailure("gatekeeper", decision);
-  if (projected.status === "dispatch") {
-    return { status: "dispatch", officer: projected.officer };
-  }
-  // Lawful non-dispatch release — province may pass without dispatching an officer
-  // (ADR 0074 gate-non-mandatory; gate-output-guide pass = 正常放行; #597).
-  return { status: "pass", findings: projected.findings ?? [] };
 }
 
 function projectOfficerDecision(
@@ -253,37 +231,14 @@ function projectOfficerDecision(
   return noUsableReleaseFailure(officer, decision);
 }
 
+/** Submission-gate summons: subject kind determines the officer without a province child. */
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
   const loadSoul = options.loadSoul ?? defaultLoadSoul;
-  let provinceRun: Awaited<ReturnType<typeof executeAuditorChild>>;
+  const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
   try {
-    // Seat identity only — shared executor owns model config/registry/auth (#453 / ADR 0018).
-    provinceRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel: "Gatekeeper",
-      gateSeat: "gatekeeper",
-      systemPrompt: await loadSoul("gatekeeper"),
-      prompt: "卷宗已受理。",
-      tool: createGatekeeperOutputTool(),
-      dossierTool: subjectTool(options.subject),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-    });
-  } catch (error) {
-    return { status: "transport_failure", stage: "gatekeeper", reason: failureReason(error) };
-  }
-  if (provinceRun.noReceiptLifecycle !== undefined) {
-    return { status: "no_receipt", stage: "gatekeeper", reason: `${gateSeatLabel("gatekeeper")}未产生已接受回执即散局`, facts: provinceRun.noReceiptLifecycle };
-  }
-  const province = projectProvinceDecision(provinceRun.decision);
-  if (province.status !== "dispatch") return province;
-
-  const officer = province.officer;
-  try {
-    const roleLabel = officer === "inspector" ? "Inspector" : "Notary";
     const officerRun = await executeAuditorChild({
       context: options.context,
-      roleLabel,
+      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
       gateSeat: officer,
       systemPrompt: await loadSoul(officer),
       prompt: "卷宗已受理。",
@@ -317,7 +272,7 @@ export async function requireGatekeeperPass(options: {
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {
     // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`门下省 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
+    const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
       stage: typeof gatekeeper.stage;
       reason: string;
       submission?: unknown;

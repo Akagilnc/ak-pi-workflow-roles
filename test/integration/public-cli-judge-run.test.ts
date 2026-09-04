@@ -473,25 +473,6 @@ for (const scenario of [
     },
   },
   {
-    name: "gatekeeper-no-dispatch",
-    runId: "run-e2e-judge-gate-gk-001",
-    childEnv: { AK_GATE_MODE: "gatekeeper-no-dispatch" },
-    expectDetails: {
-      stage: "gatekeeper",
-      // Unusable non-pass/non-dispatch; lawful province pass is not failure (#597).
-      submission: { status: "ok-enough" },
-    },
-  },
-  {
-    name: "officer-no-pass",
-    runId: "run-e2e-judge-gate-officer-001",
-    childEnv: { AK_GATE_MODE: "officer-no-pass" },
-    expectDetails: {
-      stage: "inspector",
-      submission: { status: "ok-enough" },
-    },
-  },
-  {
     name: "notary-no-pass",
     runId: "run-e2e-judge-gate-notary-001",
     childEnv: { AK_GATE_MODE: "notary-no-pass" },
@@ -635,6 +616,11 @@ test(
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");
+      // #634: real public entry summons direct Notary; no Gatekeeper province seat.
+      assert.ok(terminal.gate);
+      assert.deepEqual(terminal.gate!.actualSeats, ["notary"]);
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.officer, "notary");
       assert.equal(terminal.navigator.disposition, "recommendation");
       if (terminal.navigator.disposition === "recommendation") {
         assert.equal(terminal.navigator.next.role, "reviewer");

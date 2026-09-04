@@ -152,13 +152,15 @@ export type TerminalResume = {
 /** Current English gate seat faces projected on Terminal (#478). */
 export type TerminalGateSeat = "gatekeeper" | "inspector" | "notary";
 
-/** One accepted province dispatch receipt (status/officer + optional reduce-seat reason). */
-export type TerminalGateDispatch = {
-  readonly status: string;
-  readonly officer: "inspector" | "notary";
-  /** Present only when the accepted dispatch wrote a non-empty reason. */
-  readonly reason?: string;
-};
+/** Honest discriminant: direct summons vs historical province dispatch. */
+export type TerminalGateDispatch =
+  | { readonly kind: "direct"; readonly officer: "inspector" | "notary" }
+  | {
+      readonly kind: "historical_dispatch";
+      readonly officer: "inspector" | "notary";
+      /** Present only when the accepted dispatch wrote a non-empty reason. */
+      readonly reason?: string;
+    };
 
 /** One accepted officer report: seat, status, full typed findings. */
 export type TerminalGateOfficerReport = {
@@ -167,7 +169,7 @@ export type TerminalGateOfficerReport = {
   readonly findings: readonly string[];
 };
 
-/** One paired dispatch↔officer gate round on the public Terminal. */
+/** One direct or historical paired gate round on the public Terminal. */
 export type TerminalGateRound = {
   readonly roundIndex: number;
   readonly dispatch: TerminalGateDispatch;
@@ -175,12 +177,12 @@ export type TerminalGateRound = {
 };
 
 /**
- * Optional gate province projection (#478).
- * Absent when no accepted paired gate rounds exist (no-gate zero change).
- * Only durable accepted child receipts — never soul-derived expected/missing seats.
+ * Optional gate projection (#478).
+ * Absent when no accepted officer rounds exist. Only durable accepted child
+ * receipts — never soul-derived expected/missing seats.
  */
 export type TerminalGateFact = {
-  /** Seats that actually ran, derived from accepted paired receipts. */
+  /** Seats that actually ran, derived from accepted receipts. */
   readonly actualSeats: readonly TerminalGateSeat[];
   readonly rounds: readonly TerminalGateRound[];
 };
@@ -211,8 +213,8 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * Optional gate province facts (#478). Present only when accepted paired
-   * gate rounds exist under session/auditor-roles; omitted on no-gate runs.
+   * Optional gate facts (#478). Present when accepted direct or historical
+   * paired rounds exist under session/auditor-roles; omitted on no-gate runs.
    */
   gate?: TerminalGateFact;
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
@@ -315,11 +317,12 @@ export function formatTerminalResult(result: TerminalResult): string {
     );
     for (const round of result.gate.rounds) {
       const reason =
-        round.dispatch.reason === undefined
-          ? ""
-          : encodeTerminalField(round.dispatch.reason);
+        round.dispatch.kind === "historical_dispatch"
+        && round.dispatch.reason !== undefined
+          ? encodeTerminalField(round.dispatch.reason)
+          : "";
       lines.push(
-        `gate-round\t${round.roundIndex}\t${round.dispatch.status}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
+        `gate-round\t${round.roundIndex}\t${round.dispatch.kind}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
       );
     }
   }

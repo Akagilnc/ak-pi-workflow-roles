@@ -47,7 +47,7 @@ import {
   WORKFLOW_ROLES,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
+
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -257,12 +257,6 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const invoke = async (label: string) => {
           const response = (context: Context, _options: unknown, _state: unknown, requestModel: { provider: string; id: string }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
-            if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-              return fauxAssistantMessage(
-                fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-                { stopReason: "toolUse" },
-              );
-            }
             if (names.includes(NOTARY_OUTPUT_TOOL)) {
               return fauxAssistantMessage(
                 fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),

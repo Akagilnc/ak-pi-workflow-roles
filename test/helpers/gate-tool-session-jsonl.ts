@@ -16,6 +16,11 @@ export function gateToolSessionJsonl(input: {
   readonly cwd?: string;
   /** Default accepted receipt. `rejected` = isError toolResult; `omit` = no toolResult. */
   readonly receipt?: GateToolSessionReceipt;
+  /**
+   * Durable parent-attempt association (`ak_auditor_parent_attempt_binding`).
+   * Historical dispatch↔officer pairs must share this typed key.
+   */
+  readonly attemptEntryId?: string;
 }): string {
   const receipt = input.receipt ?? "accepted";
   const header = {
@@ -43,6 +48,21 @@ export function gateToolSessionJsonl(input: {
       ],
     },
   };
+  const binding =
+    input.attemptEntryId === undefined
+      ? undefined
+      : {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          id: `${input.id}-binding`,
+          parentId: null,
+          timestamp: input.startedAt,
+          data: {
+            version: 1,
+            parent: { attemptEntryId: input.attemptEntryId },
+          },
+        };
+  const prefix = binding === undefined ? [header] : [header, binding];
   if (receipt === "omit") {
     // Tail keeps span endedAt without a toolResult — unpaired call is not a receipt.
     const tail = {
@@ -56,7 +76,7 @@ export function gateToolSessionJsonl(input: {
         content: [{ type: "text", text: "no-result" }],
       },
     };
-    return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
+    return [...prefix, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
   }
   const tail = {
     type: "message",
@@ -72,5 +92,5 @@ export function gateToolSessionJsonl(input: {
       content: [{ type: "text", text: receipt === "rejected" ? "rejected" : "ok" }],
     },
   };
-  return [header, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
+  return [...prefix, call, tail].map((row) => JSON.stringify(row)).join("\n") + "\n";
 }

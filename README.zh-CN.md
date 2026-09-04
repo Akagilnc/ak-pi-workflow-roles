@@ -47,7 +47,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# 门下省交卷闸官席（察院/符宝郎交卷自动出席，亦可直调；给事中票庭由调用者直召，见「调用百官」）
+# 门下省官席（DONE 交卷直接传召察院/符宝郎；门下省仍可独立直调；给事中票庭由调用者直召，见「调用百官」）
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -67,7 +67,7 @@ ak-role config set-auto-resume-limit 3
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
-门下省交卷闸：完成侧交卷时包可在本局结算前起省（`gatekeeper` 派 `inspector`／`notary`），封驳＝当场重写重交，不是角色失败；`planned`／`refused`／`unfinished` 不调省；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。
+门下省交卷闸：DONE 侧交卷（`completed`／`partially_completed`）时包按受审物直接传召官（将作监/修内司→`inspector`；大理寺判牒/给事中署章→`notary`），不再起门下省子 session 选席；封驳＝当场重写重交，不是角色失败；`planned`／`refused`／`unfinished` 不传召官、直接结算；`ak-role gatekeeper` 仍可独立 dispatch/pass；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。
 
 ## 调用百官
 
@@ -135,7 +135,7 @@ ak-role resume <runId> "<裁定>"
 | **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
-| **门下省** | gatekeeper（交卷自动出席，亦可 `ak-role gatekeeper` 直调） | **审署诏敕与质量保证的省。** 交卷时判断受审物、够不够审、该谁审，派察院或符宝郎；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召（皆非闸派）；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)。 |
+| **门下省** | gatekeeper（交卷闸不再自动出席；可 `ak-role gatekeeper` 独立直调） | **审署诏敕与质量保证的省。** 交卷闸按受审物直接传召察院/符宝郎，本省不介入选席；调用者仍可独立传召本省作 dispatch/pass；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
 | **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。票庭流水线在本席 turn 前跑起居郎工序（调用者无感）；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
 | **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
