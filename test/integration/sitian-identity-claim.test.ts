@@ -29,6 +29,7 @@ import {
   type SitianInfrastructureFailureDisposition,
   type SitianRecordInput,
 } from "../../src/sitian-contracts.ts";
+import { readSitianRecords } from "../../src/sitian-reader.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -191,31 +192,40 @@ function spawnAppendChild(args: {
   readonly kind: string;
   readonly marker: string;
   readonly expectFailure: boolean;
+  readonly retryLiveContention?: boolean;
 }): ChildProcess {
+  const retryLiveContention = args.retryLiveContention === true;
   const script = `
     import { appendSitianRecord } from ${JSON.stringify(join(packageRoot, "src/sitian-appender.ts"))};
-    try {
-      const pointer = appendSitianRecord({
-        level: "event",
-        kind: ${JSON.stringify(args.kind)},
-        identity: ${JSON.stringify(args.identity)},
-        home: ${JSON.stringify(args.home)},
-        cwd: ${JSON.stringify(args.cwd)},
-        payload: { marker: ${JSON.stringify(args.marker)} },
-      });
-      process.stdout.write(JSON.stringify({ ok: true, pointer }) + "\\n");
-      process.exit(${args.expectFailure ? 2 : 0});
-    } catch (error) {
-      const failureDisposition =
-        error && typeof error === "object" && "failureDisposition" in error
-          ? error.failureDisposition
-          : undefined;
-      process.stdout.write(JSON.stringify({
-        ok: false,
-        name: error instanceof Error ? error.name : typeof error,
-        failureDisposition,
-      }) + "\\n");
-      process.exit(${args.expectFailure ? 0 : 1});
+    const input = {
+      level: "event",
+      kind: ${JSON.stringify(args.kind)},
+      identity: ${JSON.stringify(args.identity)},
+      home: ${JSON.stringify(args.home)},
+      cwd: ${JSON.stringify(args.cwd)},
+      payload: { marker: ${JSON.stringify(args.marker)} },
+    };
+    for (;;) {
+      try {
+        const pointer = appendSitianRecord(input);
+        process.stdout.write(JSON.stringify({ ok: true, pointer }) + "\\n");
+        process.exit(${args.expectFailure ? 2 : 0});
+      } catch (error) {
+        const failureDisposition =
+          error && typeof error === "object" && "failureDisposition" in error
+            ? error.failureDisposition
+            : undefined;
+        if (${retryLiveContention ? "true" : "false"} && failureDisposition === "live-contention") {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+          continue;
+        }
+        process.stdout.write(JSON.stringify({
+          ok: false,
+          name: error instanceof Error ? error.name : typeof error,
+          failureDisposition,
+        }) + "\\n");
+        process.exit(${args.expectFailure ? 0 : 1});
+      }
     }
   `;
   return spawn(
@@ -224,6 +234,7 @@ function spawnAppendChild(args: {
     { cwd: packageRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
 }
+
 
 type PoisonedClaimCtx = {
   readonly home: string;
@@ -348,6 +359,63 @@ test("successful appendSitianRecord publishes one row and removes claim sidecars
       volumeSurfaceNames(sessionDir, recordFile),
       [basename(recordFile)],
       "successful publish must not leave permanent claim/recovery sidecars",
+    );
+  });
+});
+
+test("healthy cross-process concurrent same-identity append yields one readable row without sidecars", async () => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "healthy-concurrent-same-identity";
+    const kind = "identity-claim-healthy-concurrent";
+    const input: SitianRecordInput = {
+      level: "event",
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "parent-observe" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+
+    const children = [
+      spawnAppendChild({
+        home,
+        cwd,
+        identity,
+        kind,
+        marker: "child-a",
+        expectFailure: false,
+        retryLiveContention: true,
+      }),
+      spawnAppendChild({
+        home,
+        cwd,
+        identity,
+        kind,
+        marker: "child-b",
+        expectFailure: false,
+        retryLiveContention: true,
+      }),
+    ];
+
+    await withPrimaryAwareCleanup(
+      async () => {
+        const codes = await Promise.all(children.map((child) => waitChildExit(child)));
+        assert.deepEqual(codes, [0, 0]);
+        assert.equal(countIdentityRows(recordFile, identity), 1);
+        const read = await readSitianRecords(recordFile);
+        const matching = read.records.filter((row) => row.identity === identity);
+        assert.equal(matching.length, 1);
+        assert.deepEqual(
+          volumeSurfaceNames(sessionDir, recordFile),
+          [basename(recordFile)],
+          "healthy concurrent publish must not leave claim/recovery sidecars",
+        );
+      },
+      async () => {
+        await Promise.all(children.map((child) => settleSpawnedChild(child)));
+      },
     );
   });
 });
