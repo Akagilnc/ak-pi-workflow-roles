@@ -288,7 +288,10 @@ export function createCollectorRoleRuntime(
             COLLECTOR_SNAPSHOT_ENTRY_TYPE,
             {
               snapshot,
-              evidence: activation.ledger.allEvidence(),
+              evidence: snapshot.evidenceIds.flatMap((id) => {
+                const record = activation!.ledger.getEvidence(id);
+                return record === undefined ? [] : [record];
+              }),
               mutationGeneration: activation.ledger.mutationGeneration,
               observedGeneration: activation.ledger.observedGeneration,
               activationTime: activation.ledger.activationTime?.toISOString(),
