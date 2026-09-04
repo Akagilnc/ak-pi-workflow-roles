@@ -55,14 +55,7 @@ export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<vo
     }
     if (toolNames.includes(INSPECTOR_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
-        fauxToolCall(INSPECTOR_OUTPUT_TOOL, process.env.AK_TEST_GATE_ESCALATE === "1"
-          ? {
-              status: "escalate",
-              reason: { source: "third-review-limit" },
-              findings: ["authority conflict", { source: "original-finding" }],
-              officerNote: "retain the complete officer submission",
-            }
-          : { status: "pass", findings: [] }),
+        fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
       );
     }
