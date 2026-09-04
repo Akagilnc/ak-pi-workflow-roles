@@ -12,20 +12,22 @@ export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 export const GATEKEEPER_ACCEPTED_TEXT = "门下省决议已受理";
 
 /** Same open decision shape the province uses inside audit sessions. */
-export const gatekeeperOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObject(
-    Type.Object({
-      status: Type.Unknown({
-        description: "dispatch | pass — 形状指引，非 schema 闸",
-      }),
-      officer: Type.Unknown({
-        description: "status 为 dispatch 时为 inspector | notary",
-      }),
-      findings: Type.Unknown({
-        description: "status 为 pass 时可选 string[] findings",
-      }),
+export const gatekeeperDecisionSchema = openToolObject(
+  Type.Object({
+    status: Type.Unknown({
+      description: "dispatch | pass — 形状指引，非 schema 闸",
     }),
-  ),
+    officer: Type.Unknown({
+      description: "status 为 dispatch 时为 inspector | notary",
+    }),
+    findings: Type.Unknown({
+      description: "status 为 pass 时可选 string[] findings",
+    }),
+  }),
+);
+
+export const gatekeeperOutputSchema = withInfrastructureFailureDeclaration(
+  gatekeeperDecisionSchema,
 );
 
 export type GatekeeperDirectOutput =

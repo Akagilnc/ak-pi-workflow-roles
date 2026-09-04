@@ -3205,10 +3205,24 @@ async function settleLawfulOneShotAcceptedTerminalResult(
     }
     return undefined;
   }
+  let acceptedOutcome: TerminalRoleOutcome;
+  try {
+    acceptedOutcome = spec.projectAccepted(roleOutcome);
+  } catch {
+    return settleFailureTerminalResult(
+      admitted,
+      {
+        cause: "output",
+        diagnostic: spec.nonUsableDiagnostic,
+        details: { candidate: roleOutcome.decisiveFacts, acceptedReceipt: false },
+      },
+      authority,
+    );
+  }
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
-      roleOutcome: spec.projectAccepted(roleOutcome),
+      roleOutcome: acceptedOutcome,
       navigator,
       artifacts: [],
       runId: admitted.runId,
