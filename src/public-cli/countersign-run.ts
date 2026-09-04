@@ -16,9 +16,6 @@ import {
   type DiaristRunResult,
 } from "../diarist.ts";
 import {
-  createGhTicketExistenceChecker,
-  createHermesDiaristTicketResolver,
-  resolveDiaristTicketFromInstruction,
   type DiaristTicketResolution,
 } from "../diarist-ticket-resolution.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
@@ -26,11 +23,11 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
-  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
+import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
   runPostAdmissionOneShot,
@@ -99,7 +96,6 @@ export async function runPublicCountersign(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(parsed.ticket === undefined ? {} : { ticket: parsed.ticket }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
@@ -218,24 +214,7 @@ export async function resolveCountersignTicketBinding(
   admitted: AdmittedCountersignInvocation,
   env: Pick<CountersignRunEnv, "packageRoot" | "cwd">,
 ): Promise<DiaristTicketResolution | undefined> {
-  if (admitted.ticketNumber !== undefined) return undefined;
-
-  const resolver = createHermesDiaristTicketResolver({
-    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
-    cwd: admitted.projectRoot,
-  });
-  const checkExistence = createGhTicketExistenceChecker();
-  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
-  const resolution = await resolveDiaristTicketFromInstruction({
-    instruction: admitted.instruction,
-    origin,
-    resolver,
-    checkExistence,
-  });
-  if (resolution.kind === "ticket") {
-    await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
-  }
-  return resolution;
+  return resolveSeatTicketBinding(admitted, env);
 }
 
 /**

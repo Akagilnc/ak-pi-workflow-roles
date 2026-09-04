@@ -16,6 +16,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitCountersignInvocation,
+  bindAdmittedTicketNumber,
   parseCountersignArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -130,13 +131,12 @@ test("countersign admission freezes attachments and binds the countersign role",
   });
 });
 
-test("countersign --ticket admits and projects activation.ticketNumber onto turn request", async () => {
+test("countersign admission ignores attachment frontmatter; --ticket is unknown", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const ticket = join(project, "ticket.md");
-    // Frontmatter ticket is present; explicit --ticket must win.
     await writeFile(ticket, "---\nticketNumber: 100\n---\n\n五问。\n", "utf8");
 
     const admitted = await admitCountersignInvocation({
@@ -145,10 +145,9 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
       cwd: project,
       instruction: "裁",
       attachmentPaths: [ticket],
-      ticket: 582,
       createRunId: () => "01a0sign00-0000-7000-8000-000000000582",
     });
-    assert.equal(admitted.ticketNumber, 582);
+    assert.equal(admitted.ticketNumber, undefined);
 
     const turn = buildCountersignTurnRequest(admitted, {
       packageRoot,
@@ -157,15 +156,20 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
       continuation: { kind: "initial", prompt: "裁" },
     });
     assert.equal(turn.activation.role, "countersign");
-    assert.ok(turn.activation.role === "countersign");
-    assert.equal(turn.activation.ticketNumber, 582);
-
-    // Pi adapter output contract: structured argv carries the admitted binding.
-    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
-    const flagAt = piArgv.indexOf("--ak-countersign-ticket-number");
-    assert.ok(flagAt >= 0);
-    assert.equal(piArgv[flagAt + 1], "582");
+    assert.equal(
+      "ticketNumber" in turn.activation ? turn.activation.ticketNumber : undefined,
+      undefined,
+    );
   });
+
+  assert.throws(
+    () => parseCountersignArgv(["--ticket", "582", "裁"]),
+    (error: unknown) =>
+      error instanceof CliUsageError
+      && /unknown countersign option: --ticket/.test(
+        error instanceof Error ? error.message : String(error),
+      ),
+  );
 });
 
 test("countersign argv rejects unknown options", async () => {
@@ -341,9 +345,9 @@ test("public countersign diarist station: issue face/comments/ADR from gh seam; 
       cwd: project,
       instruction: "裁",
       attachmentPaths: [probe],
-      ticket: 582,
       createRunId: () => "01a0sign00-0000-7000-8000-000000000d01",
     });
+    await bindAdmittedTicketNumber(admitted, 582);
     assert.equal(admitted.ticketNumber, 582);
     assert.equal(admitted.attachments.length, 1);
     const frozenAttachment = admitted.attachments[0]!.frozenPath;
@@ -406,9 +410,9 @@ test("public countersign diarist station: referenced ADR missing fails typed", a
       cwd: project,
       instruction: "裁",
       attachmentPaths: [],
-      ticket: 582,
       createRunId: () => "01a0sign00-0000-7000-8000-000000000d02",
     });
+    await bindAdmittedTicketNumber(admitted, 582);
 
     await assert.rejects(
       () =>
@@ -435,9 +439,9 @@ test("public countersign diarist station: bound ticket issue-source failure is t
       cwd: project,
       instruction: "裁",
       attachmentPaths: [],
-      ticket: 582,
       createRunId: () => "01a0sign00-0000-7000-8000-000000000d03",
     });
+    await bindAdmittedTicketNumber(admitted, 582);
     assert.equal(admitted.ticketNumber, 582);
 
     await assert.rejects(
@@ -485,9 +489,9 @@ test("public countersign diarist station: issue-unavailable fetcher fails typed 
       cwd: project,
       instruction: "裁",
       attachmentPaths: [],
-      ticket: 582,
       createRunId: () => "01a0sign00-0000-7000-8000-000000000d04",
     });
+    await bindAdmittedTicketNumber(admitted, 582);
 
     await assert.rejects(
       () =>
@@ -758,13 +762,16 @@ test("runPublicCountersign: diarist beforeDispatch failure settles terminal (not
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // No origin → diarist station throws origin-unresolved after markRunRunning.
+    // No origin → seat ticket verify / diarist station throws origin-unresolved after markRunRunning.
+    await installHermesFixture(join(home, "bin"), {
+      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
+    });
 
     let turnStarted = false;
     const { io, stderr } = captureIo();
     const runId = "01a0sign00-0000-7000-8000-000000000d10";
     const result = await runPublicCountersign(
-      ["--ticket", "582", "裁：本票是否足以开工。"],
+      ["裁：本票 #582 是否足以开工。"],
       {
         home,
         agentDir: join(home, ".pi"),
@@ -818,6 +825,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     );
 
     await installHermesFixture(join(home, "bin"), {
+      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
       collectorResponse: {
         selections: [
           {
@@ -887,7 +895,7 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
     };
 
     const result = await runPublicCountersign(
-      ["--ticket", "582", "--attach", ticketPath, "裁：本票是否足以开工。"],
+      ["--attach", ticketPath, "裁：本票 #582 是否足以开工。"],
       {
         home,
         agentDir: join(home, ".pi"),
@@ -978,26 +986,21 @@ function countersignPathEnv(input: {
   };
 }
 
-test("public countersign path: explicit --ticket binds without re-resolution", async () => {
+test("public countersign path: --ticket is unknown-option reject (exit 2)", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["--ticket", "582", "裁：本票是否足以开工。"],
       countersignPathEnv({
         home,
         project,
         runId: "01a0sign00-0000-7000-8000-000000000p01",
-        onTurn: (req) => {
-          turnTicket =
-            req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
-        },
+        blockTurn: true,
       }),
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, 582);
-    assert.equal(turnTicket, 582);
+    assert.equal(result.exitCode, 2);
+    assert.equal(result.admitted, undefined);
   });
 });
 
