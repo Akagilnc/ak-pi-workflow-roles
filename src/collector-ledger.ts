@@ -268,6 +268,7 @@ export function createCollectorLedger(
   let fatal = false;
   let fatalReason: string | undefined;
   let outputCandidate = false;
+  let pendingOutputCallId: string | undefined;
   let activationTime: Date | undefined;
   let deadlineTime: Date | undefined;
   let activationMono: number | undefined;
@@ -592,7 +593,7 @@ export function createCollectorLedger(
       return fatalReason;
     },
     get outputCandidate() {
-      return outputCandidate;
+      return outputCandidate || pendingOutputCallId !== undefined;
     },
     get activationRecorded() {
       return activationTime !== undefined;
@@ -654,8 +655,15 @@ export function createCollectorLedger(
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (outputCandidate && toolName !== COLLECTOR_OUTPUT_TOOL) {
+      if (
+        toolName !== COLLECTOR_OUTPUT_TOOL &&
+        (outputCandidate || pendingOutputCallId !== undefined)
+      ) {
         throw new Error("通进司已产出输出候选，本局不再受理操作");
+      }
+      if (toolName === COLLECTOR_OUTPUT_TOOL) {
+        pendingOutputCallId = toolCallId;
+        return;
       }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {
@@ -665,10 +673,6 @@ export function createCollectorLedger(
         throw latchFatal("通进司操作调用已在进行");
       }
 
-      if (toolName === COLLECTOR_OUTPUT_TOOL) {
-        return;
-      }
-
       if (!isOperationalTool(toolName)) {
         throw latchFatal(`未知通进司工具 ${toolName}`);
       }
@@ -676,6 +680,9 @@ export function createCollectorLedger(
     },
 
     completeOperational(toolCallId) {
+      if (pendingOutputCallId === toolCallId) {
+        pendingOutputCallId = undefined;
+      }
       if (activeOperationalCallId === toolCallId) {
         activeOperationalCallId = undefined;
       }

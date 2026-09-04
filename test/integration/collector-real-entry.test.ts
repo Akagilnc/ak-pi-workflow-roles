@@ -79,9 +79,14 @@ async function runRealCollectorScript(options: {
   reviews?: any[];
   issueComments?: any[];
   reviewComments?: any[];
+  requests?: Array<{ id: string; body: string }>;
   responses: Array<CollectorScriptResponse | ((context: any) => CollectorScriptResponse)>;
 }) {
   return withActivationHome({ prefix: "ak-collector-real-script-" }, async ({ agentDir, home }) => {
+    const manifest = resolve(home, "requests.json");
+    if (options.requests !== undefined) {
+      await writeFile(manifest, JSON.stringify({ requests: options.requests }));
+    }
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull({ headOid: "head-1" }),
@@ -96,7 +101,12 @@ async function runRealCollectorScript(options: {
       activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
       extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
       noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
-      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" },
+      flags: {
+        "ak-role": "collector",
+        "ak-collector-repo": "acme/widgets",
+        "ak-collector-pr": "1",
+        ...(options.requests === undefined ? {} : { "ak-collector-request-manifest": manifest }),
+      },
     }, async ({ session, sessionManager }) => {
       await session.prompt("start");
       const entries = [...sessionManager.getEntries()] as any[];
@@ -363,6 +373,28 @@ test("#641 chain② declaration with an unassemblable receipt keeps the shared h
   } finally {
     process.exitCode = priorExitCode;
   }
+});
+
+test("Collector output candidate blocks a same-turn request before GitHub POST", async () => {
+  const result = await runRealCollectorScript({
+    requests: [{ id: "reviewer", body: "Please review." }],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const observed = providerObserveViews(context.messages).at(-1);
+        assert.ok(observed);
+        return fauxAssistantMessage([
+          fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "output-first" }),
+          fauxToolCall(COLLECTOR_REQUEST_TOOL, {
+            requestId: "reviewer",
+            snapshotId: observed.snapshotId,
+          }, { id: "request-after-output" }),
+        ], { stopReason: "toolUse" });
+      },
+    ],
+  });
+
+  assert.equal(result.transport.calls.create, 0, "the blocked sibling must not reach GitHub POST");
 });
 
 test("#641 P2 read tool real failure writes the typed host fact settlement classifies", async () => {
