@@ -484,6 +484,41 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
   );
 });
 
+test("cc human queued_command attachment is exposed as a user turn", async () => {
+  await withHermeticHome({ prefix: "ak-diarist-queued-command-" }, async ({ home }) => {
+    const root = join(home, ".claude", "projects");
+    const sessionDir = join(root, "-work");
+    mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = join(sessionDir, "queued.jsonl");
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        type: "attachment",
+        attachment: {
+          type: "queued_command",
+          prompt: "可以。就这样做",
+          origin: { kind: "human" },
+          message: "must not replace prompt",
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    const blocks = readCcSessionBlocks({ projectsRoot: root, cwds: ["/work"] });
+
+    assert.deepEqual(blocks, [
+      {
+        sourceKind: "cc-session",
+        sourceRef: { sessionFile, entryId: "queued.jsonl:1" },
+        transcript: "可以。就这样做",
+        timestamp: new Date(0).toISOString(),
+        isUserTurn: true,
+        isNotification: false,
+      },
+    ]);
+  });
+});
+
 test("referenced ADR missing fails typed (not silent skip)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-adr-miss-" }, async ({ home }) => {
     const root = join(home, "src-root");
