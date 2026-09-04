@@ -121,7 +121,8 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   process.env.XDG_CONFIG_HOME = next.XDG_CONFIG_HOME;
   process.env.XDG_DATA_HOME = next.XDG_DATA_HOME;
   process.env.XDG_CACHE_HOME = next.XDG_CACHE_HOME;
-  process.env.PATH = next.PATH;
+  if (next.PATH === undefined) delete process.env.PATH;
+  else process.env.PATH = next.PATH;
 
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
