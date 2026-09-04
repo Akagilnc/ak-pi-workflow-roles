@@ -182,6 +182,8 @@ export function createSubmissionLedgerHost(
   const states = new Map<string, Promise<LedgerState>>();
   type PendingCandidate = { toolCallId: string; toolName: TerminatingToolName; role: TerminalRoleName; result: HostToolResult<unknown>; context: HostContext; auditProjection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> };
   const rounds = new Map<string, PendingCandidate[]>();
+  /** Roles wrap deliver on the returned facade; turn_end must call through it. */
+  const deliverySurface: { current: RoleHost } = { current: host };
   const resolveHomeFromContext = (context: HostContext): string | undefined => {
     if (options?.home !== undefined) return options.home;
     const sessionFile = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
@@ -237,11 +239,11 @@ export function createSubmissionLedgerHost(
       const sole = calls.length === 1 && candidates.length === 1 && calls[0]?.id === candidates[0]?.toolCallId;
       if (!sole) {
         for (const candidate of candidates) appendFor(state, context, runId, attemptId, { type: "outcome", attemptId, toolCallId: candidate.toolCallId, outcome: "correctable-rejection", code: "non-sole-round" });
-        if (host.deliverSubmissionRejection === undefined) {
+        if (deliverySurface.current.deliverSubmissionRejection === undefined) {
           throw new Error("宿主未提供模型可见的交卷封驳接缝");
         }
         context.abort();
-        await host.deliverSubmissionRejection({
+        await deliverySurface.current.deliverSubmissionRejection({
           kind: "correctable-rejection",
           code: "non-sole-round",
           toolCallIds: candidates.map(({ toolCallId }) => toolCallId),
@@ -268,7 +270,7 @@ export function createSubmissionLedgerHost(
     }
   });
 
-  return {
+  const facade: RoleHost = {
     ...host,
     registerTool(tool) {
       const role = outputTools.get(tool.name);
@@ -358,4 +360,6 @@ export function createSubmissionLedgerHost(
       });
     },
   };
+  deliverySurface.current = facade;
+  return facade;
 }

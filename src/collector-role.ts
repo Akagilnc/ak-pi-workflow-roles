@@ -109,6 +109,21 @@ export function createCollectorRoleRuntime(
   let toolsRegistered = false;
   let firstDispatchDone = false;
 
+  // Output accept during execute is provisional until the shared submission
+  // ledger adjudicates turn sole-ness. A correctable non-sole rejection must
+  // release only that latch so a later sole output can accept (#633).
+  const priorDeliverSubmissionRejection = pi.deliverSubmissionRejection?.bind(pi);
+  pi.deliverSubmissionRejection = async (rejection) => {
+    if (
+      rejection.code === "non-sole-round"
+      && activation !== undefined
+      && activation.ledger.outputAccepted
+    ) {
+      activation.ledger.releaseProvisionalOutputAccepted();
+    }
+    await priorDeliverSubmissionRejection?.(rejection);
+  };
+
   pi.registerFlag("ak-collector-repo", {
     description:
       "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",

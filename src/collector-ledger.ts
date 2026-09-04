@@ -108,6 +108,8 @@ export type CollectorLedger = {
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
   markOutputAccepted(): void;
+  /** Clears a provisional accept after correctable non-sole rejection (pre-seal only). */
+  releaseProvisionalOutputAccepted(): void;
   noteCutoffObserved(): void;
   assertOutputObservationLaw(clock: CollectorClock): void;
 
@@ -370,6 +372,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       assertNotFatal();
       if (outputAccepted) throw latchFatal("通进司回执为唯一终局");
       outputAccepted = true;
+    },
+
+    releaseProvisionalOutputAccepted() {
+      assertNotFatal();
+      outputAccepted = false;
     },
 
     noteCutoffObserved() {
