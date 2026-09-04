@@ -95,17 +95,10 @@ export function attachDirectErrnoCode(error: Error, cause: unknown): void {
   if (typeof code === "string") (error as NodeJS.ErrnoException).code = code;
 }
 
-/** Stable claim/recovery failure dispositions — typed fields, not message classification. */
+/** Minimal exclusive-claim failure facts actually consumed by callers/tests. */
 export type SitianInfrastructureFailureDisposition =
-  | "live-contention"
-  | "malformed-claim"
-  | "malformed-recovery"
-  | "post-commit-cleanup"
-  | "disappeared"
-  | "dead-recovery"
-  | "unreadable-claim"
-  | "unreadable-recovery"
-  | "row-invisible";
+  | "contention"
+  | "cleanup";
 
 /** Options for SitianInfrastructureError; preserves ErrorOptions / knownCause compatibility. */
 export type SitianInfrastructureErrorOptions = ErrorOptions & {

@@ -16,11 +16,6 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import {
-  describeErrorIdentity,
-  errorCodeOf,
-  isProcessAlive,
-} from "../error-identity.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -31,8 +26,6 @@ export {
   readLatestTypedProviderHttpObservation,
   type TypedProviderHttpObservation,
 } from "../typed-provider-http.ts";
-/** Re-export shared error identity for public-cli callers (#648). */
-export { describeErrorIdentity } from "../error-identity.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
@@ -529,6 +522,46 @@ export type RunWriterLease = {
 
 /** Kind of a writer-lease diagnostic sent on the existing sink. */
 export type WriterLeaseDiagnosticKind = "stale-reclaimed";
+
+
+/**
+ * True error identity for diagnostics — name/code/message as-is, never a
+ * guessed label (failure-honesty constitution).
+ */
+export function describeErrorIdentity(error: unknown): string {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const name =
+    typeof candidate?.name === "string" && candidate.name !== ""
+      ? candidate.name
+      : typeof error;
+  const code =
+    typeof candidate?.code === "string" || typeof candidate?.code === "number"
+      ? ` code=${String(candidate.code)}`
+      : "";
+  const message =
+    typeof candidate?.message === "string" && candidate.message !== ""
+      ? `: ${candidate.message}`
+      : "";
+  return `${name}${code}${message}`;
+}
+
+function errorCodeOf(error: unknown): unknown {
+  return (error as { code?: unknown }).code;
+}
+
+/**
+ * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
+ * (e.g. EPERM) means the holder process exists.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCodeOf(error) !== "ESRCH";
+  }
+}
+
 
 type WriterLockAutopsy =
   | { verdict: "absent"; readFailure?: unknown }
