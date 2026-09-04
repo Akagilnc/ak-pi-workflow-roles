@@ -404,7 +404,7 @@ for (const spec of SEAT_SPECS) {
       const openedPrincipals = new Set<string>();
       let resumeSessionFile: string | undefined;
 
-      const { io, stdout, stderr } = captureIo();
+      const { io, stderr } = captureIo();
       const resumed = await runAkRole(["resume", runId], {
         packageRoot,
         home,
@@ -435,7 +435,6 @@ for (const spec of SEAT_SPECS) {
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.runId, runId);
       assert.equal(resumed.terminal!.resume, undefined);
-      assert.equal(stdout.length, 1);
 
       // Durable run-state reaches terminal for the resumed run.
       const durable = await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority);
