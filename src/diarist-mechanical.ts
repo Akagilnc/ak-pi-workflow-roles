@@ -223,7 +223,7 @@ function isNotificationRow(type: string, text: string): boolean {
 }
 
 /**
- * Enumerate cc session user/assistant turns under Claude projects roots.
+ * Enumerate cc session user/assistant turns and human queued-command attachments under Claude projects roots.
  * cc-sessions-first source family (ADR 0075).
  * Directory/file/non-empty JSONL line failures throw DiaristSourceReadError
  * (失败诚实：不得把未读懂洗成没有来源块).
@@ -301,11 +301,22 @@ export function readCcSessionBlocks(
             { cause: error },
           );
         }
-        // Unknown row shape (not user/assistant) is ignored — not a read failure.
+        // Unknown row shape (not user/assistant or a human queued-command attachment) is ignored — not a read failure.
         if (!isRecord(parsed)) continue;
         const type = typeof parsed.type === "string" ? parsed.type : "";
-        if (type !== "user" && type !== "assistant") continue;
-        const transcript = messageText(parsed.message ?? parsed);
+        const queuedCommand =
+          type === "attachment" &&
+          isRecord(parsed.attachment) &&
+          parsed.attachment.type === "queued_command" &&
+          isRecord(parsed.attachment.origin) &&
+          parsed.attachment.origin.kind === "human" &&
+          typeof parsed.attachment.prompt === "string"
+            ? parsed.attachment.prompt
+            : undefined;
+        if (type !== "user" && type !== "assistant" && queuedCommand === undefined) {
+          continue;
+        }
+        const transcript = queuedCommand ?? messageText(parsed.message ?? parsed);
         if (transcript.trim() === "") continue;
         const entryId =
           typeof parsed.uuid === "string"
@@ -323,7 +334,7 @@ export function readCcSessionBlocks(
           sourceRef: { sessionFile, entryId },
           transcript,
           timestamp,
-          isUserTurn: type === "user",
+          isUserTurn: type === "user" || queuedCommand !== undefined,
           isNotification: notification,
         });
       }

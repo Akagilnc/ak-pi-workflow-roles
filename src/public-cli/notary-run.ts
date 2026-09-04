@@ -14,9 +14,16 @@ import {
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
-import { markRunAdmitted } from "./run-lifecycle.ts";
+import {
+  loadResumableNotaryRun,
+  markRunAdmitted,
+  type PublicResumeRequest,
+} from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
   trySettleNotaryTerminalResult,
@@ -109,11 +116,53 @@ export async function runPublicNotary(
     env,
     io,
     request: turnRequest,
-    adapters: {
-      trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
-      // Accepted receipts and failure terminals both present via shared path.
-      shouldPresentSettled: () => true,
+    adapters: notaryAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
+}
+
+function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
+  return {
+    trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
+    // Accepted receipts and failure terminals both present via shared path.
+    shouldPresentSettled: () => true,
+  };
+}
+
+/**
+ * Resume a previously admitted Notary run (#633). Source-run locator restores
+ * from the durable admitted request (never re-resolved); the session principal reopens.
+ */
+export async function runPublicNotaryResume(
+  request: PublicResumeRequest,
+  env: NotaryRunEnv,
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedNotaryInvocation;
+  terminal?: TerminalResult;
+}> {
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () => {
+      if (request.message !== undefined) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
+        );
+      }
+      return loadResumableNotaryRun(
+        env.home,
+        request.runId,
+        env.principalAuthority,
+      );
     },
+    buildTurnRequest: (admitted) => buildNotaryTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
+    adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

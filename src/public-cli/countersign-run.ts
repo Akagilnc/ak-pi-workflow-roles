@@ -33,14 +33,14 @@ import {
 } from "./invocation.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
-  runPostAdmissionManualResume,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
   loadResumableCountersignRun,
   markRunAdmitted,
-  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -187,47 +187,21 @@ export async function runPublicCountersignResume(
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableCountersignRun(
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () =>
+      loadResumableCountersignRun(
       env.home,
       request.runId,
       env.principalAuthority,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-  const turnRequest = buildCountersignTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
-    },
-  });
-
-  return await runPostAdmissionManualResume({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
+    ),
+    buildTurnRequest: (admitted) =>
+      buildCountersignTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
     adapters: countersignAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

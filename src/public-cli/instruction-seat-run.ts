@@ -17,10 +17,14 @@ import {
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
+  runPostAdmissionSeatResume,
+  resumeTurnRequestProjectionOptions,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
 import {
+  loadResumableInstructionSeatRun,
   markRunAdmitted,
+  type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -73,6 +77,29 @@ function instructionSeatAdapters() {
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
   };
+}
+
+export async function runPublicInstructionSeatResume(
+  request: PublicResumeRequest,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<{ exitCode: number; terminal?: TerminalResult }> {
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: () => loadResumableInstructionSeatRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    ),
+    buildTurnRequest: (admitted) => buildInstructionSeatTurnRequest(
+      admitted,
+      resumeTurnRequestProjectionOptions(admitted, request, env),
+    ),
+    adapters: instructionSeatAdapters(),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
 }
 
 export async function runPublicInstructionSeat(

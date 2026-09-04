@@ -4,7 +4,7 @@
  * runDiarist enters production composition only: real cc/issue/ADR files + PATH hermes.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   accessSync,
   chmodSync,
@@ -453,9 +453,74 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
           },
         ],
       };
-      await seedCcSession(home, project, [
+      const sessionFile = await seedCcSession(home, project, [
         { uuid: "u-cc", content: "cc turn about 起居录" },
       ]);
+      const queuedCommandExpectations = [
+        { entryId: "sess.jsonl:2", transcript: "立" },
+        {
+          entryId: "sess.jsonl:3",
+          transcript:
+            "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
+        },
+      ] as const;
+      await appendFile(
+        sessionFile,
+        [
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt: queuedCommandExpectations[0].transcript,
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt: queuedCommandExpectations[1].transcript,
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "other",
+              prompt: "wrong attachment type",
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt: "wrong origin",
+              origin: { kind: "system" },
+            },
+          },
+        ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+        "utf8",
+      );
+      const ccBlocks = readCcSessionBlocks({
+        projectsRoot: join(home, ".claude", "projects"),
+        cwds: [project],
+      });
+      for (const { entryId } of queuedCommandExpectations) {
+        const queuedBlock = ccBlocks.find(
+          (block) => block.sourceRef.entryId === entryId,
+        );
+        assert.equal(queuedBlock?.isUserTurn, true);
+        assert.deepEqual(queuedBlock?.sourceRef, { sessionFile, entryId });
+      }
+      assert.equal(
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:4"),
+        false,
+      );
+      assert.equal(
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:5"),
+        false,
+      );
 
       const result = await runDiarist({
         ticketNumber: 99,
@@ -479,6 +544,14 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.ok(refs.some((r) => r.entryId === 42));
       assert.ok(refs.some((r) => r.path === adrRel));
       assert.ok(refs.some((r) => r.entryId === "u-cc"));
+      for (const { entryId, transcript } of queuedCommandExpectations) {
+        const queued = volume.entries.find(
+          (entry) => entry.sourceRef.entryId === entryId,
+        );
+        assert.equal(queued?.sourceKind, "cc-session");
+        assert.equal(queued?.transcript, transcript);
+        assert.deepEqual(queued?.sourceRef, { sessionFile, entryId });
+      }
     },
     { selectAllCandidates: true },
   );
