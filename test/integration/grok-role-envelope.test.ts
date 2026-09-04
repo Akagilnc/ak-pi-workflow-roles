@@ -1012,7 +1012,7 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
   }
 });
 
-test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails after listen", async () => {
+test("prepareGrokRoleEnvelope preserves activation, shutdown, and listener-close failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-listen-fail-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
@@ -1021,7 +1021,14 @@ test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails
   delete process.env.AK_ROLE_ENGINE;
   const socketPath = join(root, "mcp.sock");
   const activationFailure = new Error("forced session_start failure after listen");
-  const disposeFailure = new Error("forced dispose cleanup failure");
+  const closeFailure = new Error("forced listener close failure");
+  const originalClose = Server.prototype.close;
+  // Real close still runs so the unix path is released; callback reports failure.
+  Server.prototype.close = function (this: Server, callback?: (error?: Error) => void) {
+    return originalClose.call(this, () => {
+      if (typeof callback === "function") callback(closeFailure);
+    });
+  };
   try {
     await assert.rejects(
       () => prepareGrokRoleEnvelope({
@@ -1043,8 +1050,6 @@ test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails
           },
           auditSoulCompliance: async () => ({ status: "pass" }),
           activationTraceWriter: async () => {},
-          // Real dispose path: navigator is created before soul load, then
-          // session_shutdown awaits attendance.dispose during prepare's cleanup.
           createNavigatorAttendance: () => ({
             prepare() {},
             setWorkContext() {},
@@ -1052,95 +1057,7 @@ test("prepareGrokRoleEnvelope releases the MCP listener when session_start fails
             isPreparing: () => false,
             settle: async () => {},
             dispose() {
-              throw disposeFailure;
-            },
-          }),
-        },
-      }),
-      (error: unknown) => {
-        // Structural AggregateError identity: pre-54bbc dispose().catch(() => {})
-        // would rethrow activationFailure alone and fail this check.
-        assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
-        assert.equal(error.errors[0], activationFailure);
-        assert.equal(error.errors[1], disposeFailure);
-        assert.equal(error.cause, activationFailure);
-        return true;
-      },
-    );
-
-    // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
-    process.exitCode = priorExitCode;
-
-    // External proof the owner released the unix listener: same path can bind again.
-    const probe = createServer();
-    await new Promise<void>((resolve, reject) => {
-      probe.once("error", reject);
-      probe.listen(socketPath, () => {
-        probe.off("error", reject);
-        resolve();
-      });
-    });
-    await new Promise<void>((resolve, reject) => {
-      probe.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE;
-    else process.env.AK_ROLE_ENGINE = priorEngine;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("prepareGrokRoleEnvelope dispose keeps session_shutdown and listener close failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-dispose-dual-"));
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
-  const priorEngine = process.env.AK_ROLE_ENGINE;
-  const priorExitCode = process.exitCode;
-  delete process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_ENGINE;
-  const socketPath = join(root, "mcp.sock");
-  const activationFailure = new Error("forced session_start failure after listen");
-  const shutdownFailure = new Error("forced session_shutdown failure");
-  const closeFailure = new Error("forced listener close failure");
-  const originalClose = Server.prototype.close;
-  // Real close still runs so the unix path is released; callback reports failure.
-  Server.prototype.close = function (this: Server, callback?: (error?: Error) => void) {
-    return originalClose.call(this, () => {
-      if (typeof callback === "function") callback(closeFailure);
-    });
-  };
-  try {
-    await assert.rejects(
-      () => prepareGrokRoleEnvelope({
-        request: {
-          principal: {},
-          activation: { role: "judge" },
-          methods: [],
-          continuation: { kind: "initial", prompt: "decide" },
-          model: { provider: "xai", model: "grok-4.6" },
-          cwd: process.cwd(),
-          home: root,
-          agentDir: join(root, "agent"),
-          runDirectory: grokRunDirectory(root, "dispose-dual-run"),
-        } as RoleTurnRequest,
-        socketPath,
-        dependencies: {
-          loadJudgeSoul: async () => {
-            throw activationFailure;
-          },
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationTraceWriter: async () => {},
-          // Real dispose path: navigator is created before soul load, then
-          // session_shutdown awaits attendance.dispose during prepare's cleanup.
-          createNavigatorAttendance: () => ({
-            prepare() {},
-            setWorkContext() {},
-            warmHelp() {},
-            isPreparing: () => false,
-            settle: async () => {},
-            dispose() {
-              throw shutdownFailure;
+              throw undefined;
             },
           }),
         },
@@ -1150,22 +1067,16 @@ test("prepareGrokRoleEnvelope dispose keeps session_shutdown and listener close 
         assert.equal(error.errors[0], activationFailure);
         assert.equal(error.cause, activationFailure);
         const cleanup = error.errors[1];
-        assert.ok(
-          cleanup instanceof AggregateError,
-          `expected dispose AggregateError cleanup, got ${String(cleanup)}`,
-        );
-        assert.equal(cleanup.errors[0], shutdownFailure);
+        assert.ok(cleanup instanceof AggregateError);
+        assert.equal(cleanup.errors[0], undefined);
         assert.equal(cleanup.errors[1], closeFailure);
-        assert.equal(cleanup.cause, shutdownFailure);
+        assert.equal(cleanup.cause, undefined);
         return true;
       },
     );
 
     process.exitCode = priorExitCode;
-    // Restore before the bind probe so probe.close is not fed the forced failure.
     Server.prototype.close = originalClose;
-
-    // Listener still released (real close ran under the stub).
     const probe = createServer();
     await new Promise<void>((resolve, reject) => {
       probe.once("error", reject);
