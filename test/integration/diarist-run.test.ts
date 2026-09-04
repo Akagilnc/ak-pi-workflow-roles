@@ -24,9 +24,6 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import {
-  withPrimaryAwareCleanup,
-} from "../helpers/primary-aware-cleanup.ts";
-import {
   installHermesFixture,
   type HermesFixtureOptions,
 } from "../helpers/hermes-fixture.ts";
@@ -54,7 +51,6 @@ import {
   type TicketProvenanceWatermarkReason,
 } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
-
 
 function block(
   partial: Partial<DiaristSourceBlock> &
