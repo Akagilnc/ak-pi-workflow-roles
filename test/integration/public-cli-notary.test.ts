@@ -16,7 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import {
+  issuePiDurablePrincipalCoordinates,
+  piDurablePrincipalAuthority,
+} from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   activationBookDirectory,
@@ -31,14 +34,21 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitNotaryInvocation,
+  buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildNotaryActivationExtraArgs } from "../../src/public-cli/notary-run.ts";
 import {
   readRoleRunState,
   writeRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import {
+  argvFlagValue,
+  createMinimalHost,
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -76,52 +86,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-function sessionRows(toolArgs: unknown, options: { isError?: boolean } = {}) {
-  const toolCallId = "call_notary_1";
-  return [
-    {
-      type: "message",
-      id: "user-1",
-      parentId: null,
-      timestamp: "2026-08-25T00:00:00.000Z",
-      message: { role: "user", content: "kickoff", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "assistant-1",
-      parentId: "user-1",
-      timestamp: "2026-08-25T00:00:01.000Z",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: toolCallId,
-            name: NOTARY_OUTPUT_TOOL_NAME,
-            arguments: toolArgs,
-          },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message",
-      id: "result-1",
-      parentId: "assistant-1",
-      timestamp: "2026-08-25T00:00:02.000Z",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        content: [{ type: "text", text: "Notary output accepted" }],
-        details: toolArgs,
-        isError: options.isError === true,
-        timestamp: 3,
-      },
-    },
-  ];
-}
-
 const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
 const CANONICAL_SOURCE_ROLE = "judge" as const;
 
@@ -130,7 +94,7 @@ async function seedCanonicalSourceRun(
   home: string,
   project: string,
 ): Promise<string> {
-  const coords = roleRunSessionCoordinates({
+  const coords = issuePiDurablePrincipalCoordinates({
     cwd: project,
     runId: CANONICAL_SOURCE_RUN_ID,
     role: CANONICAL_SOURCE_ROLE,
@@ -177,33 +141,69 @@ async function seedProjectProjection(project: string): Promise<string> {
   return await realpath(sourceDir);
 }
 
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  if (index < 0) return undefined;
-  return args[index + 1];
+function scriptedNotarySession(
+  details: unknown,
+  options: { isError?: boolean; seal?: boolean } = {},
+) {
+  const isError = options.isError === true;
+  const lawful =
+    !isError &&
+    typeof details === "object" &&
+    details !== null &&
+    "status" in details &&
+    ((details as { status?: unknown }).status === "pass" ||
+      (details as { status?: unknown }).status === "bounce");
+  return scriptedTerminatingToolSession({
+    role: "notary",
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    details,
+    isError,
+    seal: options.seal ?? lawful,
+  });
 }
 
-function scriptedNotarySession(
-  toolArgs: unknown,
-  options: { isError?: boolean } = {},
-) {
-  return async (extraArgs: readonly string[]) => {
-    const sessionFile = flagValue(extraArgs, "--session");
-    assert.ok(sessionFile);
-    await mkdir(join(sessionFile, ".."), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${sessionRows(toolArgs, options).map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
+const flagValue = argvFlagValue;
+
+test("#620 notary public entry injects gatekeeper inheritance into RoleTurnRequest.model", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
+    const credentials = { "openai-codex": true, xai: true } as const;
+
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+          { home, packageRoot, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
     );
-    return {
-      code: 0,
-      timedOut: false,
-      stderr: "",
-      args: [...extraArgs],
-    };
-  };
-}
+
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    await runAkRole(["notary", "--source-run", sourceRunPath], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      createRunId: () => "01a0notary-0000-7000-8000-000000000620",
+      io: captureIo().io,
+      roleTurnHost: createMinimalHost((request) => {
+        captured.current = request;
+        return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+      }),
+    });
+    const inherited = captured.current!;
+    assert.equal(inherited.activation.role, "notary");
+    assert.deepEqual(inherited.model, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
+    });
+  });
+});
 
 test("notary argv rejects caller prompt and attachment projection", async () => {
   assert.throws(
@@ -239,34 +239,6 @@ test("notary argv rejects caller prompt and attachment projection", async () => 
     );
     assert.equal(withAttach.exitCode, 2);
     assert.equal(withAttach.terminal, undefined);
-  });
-});
-
-test("notary activation binds locator only — zero instruction/attachment on admitted request", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project);
-
-    const admitted = await admitNotaryInvocation({
-      home,
-      cwd: project,
-      sourceRun: sourceRunPath,
-      createRunId: () => "01a0notary-0000-7000-8000-000000000001",
-    });
-
-    assert.equal(admitted.role, "notary");
-    assert.equal(admitted.instruction, "");
-    assert.equal(admitted.instructionEmpty, true);
-    assert.deepEqual(admitted.attachments, []);
-    assert.equal(admitted.sourceRunPath, sourceRunPath);
-    assert.equal(admitted.sourceRun.runId, "01a034f1-75bf-71a6-bcf5-d1299145b1a5");
-    assert.equal(admitted.sourceRun.role, "judge");
-
-    const extra = buildNotaryActivationExtraArgs(admitted, { packageRoot });
-    assert.equal(flagValue(extra, "--ak-role"), "notary");
-    assert.equal(flagValue(extra, "--ak-notary-source-run"), sourceRunPath);
   });
 });
 
@@ -347,7 +319,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     const runId = CANONICAL_SOURCE_RUN_ID;
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
-      activationBookDirectory(resolveActivationLedgerHome(() => home), bookKey),
+      activationBookDirectory(resolveActivationLedgerHome(home), bookKey),
       "runs",
       `${runId}@${inventedRole}`,
     );
@@ -381,7 +353,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       "utf8",
     );
 
-    assert.equal(await readRoleRunState(runDirectory), undefined);
+    assert.equal(await readRoleRunState(runDirectory, piDurablePrincipalAuthority), undefined);
 
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;
@@ -450,7 +422,11 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-0000000000aa",
-        piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
+          }),
       },
     );
     assert.equal(admittedBare.exitCode, 0);
@@ -493,7 +469,11 @@ test("layer ① accepted pass/bounce exit 0 via public entry", async () => {
           io,
           createRunId: () =>
             `01a0notary-0000-7000-8000-${String(index).padStart(12, "0")}`,
-          piRunner: scriptedNotarySession(receipt),
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession(receipt),
+          }),
         },
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
@@ -528,7 +508,11 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000002",
-        piRunner: scriptedNotarySession(bad),
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedNotarySession(bad),
+          }),
       },
     );
 
@@ -568,7 +552,10 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000003",
         notaryTimeoutMs: 5_000,
-        piRunner: async (extraArgs, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (extraArgs, options) => {
           const sessionFile = flagValue(extraArgs, "--session");
           assert.ok(sessionFile);
           await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -605,6 +592,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
             args: [...extraArgs],
           };
         },
+          }),
       },
     );
 
@@ -639,10 +627,14 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000004",
         notaryTimeoutMs: 5_000,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           void args;
           throw new Error("provider disconnected");
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 1);
@@ -671,7 +663,10 @@ test("default judge public path admits no notary seat intake (observable run)", 
         cwd: project,
         io,
         createRunId: () => judgeRunId,
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           dispatchedArgs = args;
           const sessionFile = flagValue(args, "--session");
           assert.ok(sessionFile);
@@ -685,6 +680,7 @@ test("default judge public path admits no notary seat intake (observable run)", 
             args: [...args],
           };
         },
+          }),
       },
     );
 

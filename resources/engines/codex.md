@@ -1,6 +1,6 @@
 # codex engine method material
 
-This file is packaged technical material for the optional `codex` labor engine
+This file is packaged technical material for the `codex` labor engine
 (Codex CLI on the host).
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path

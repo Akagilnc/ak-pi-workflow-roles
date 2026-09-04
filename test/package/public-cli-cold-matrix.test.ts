@@ -23,6 +23,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import test from "node:test";
 
@@ -38,13 +39,12 @@ import {
   withHermeticHome,
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
-import { roleRunSessionCoordinates } from "../../src/archivist-role-run-coordinates.ts";
+import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
@@ -308,12 +308,9 @@ async function installFromTarball(
 }
 
 test("one cold install exercises all public roles plus automatic Navigator gates", async () => {
-  assert.deepEqual(
-    [...PUBLIC_CALLABLE_ROLES],
-    PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
-  );
-
   await withHermeticHome({ prefix: "ak-cold-matrix-" }, async ({ home }) => {
+    // #604: hermetic home is also the package user profile (test preload).
+    // Fresh profile ⇒ blank seats; no real-home snapshot/restore.
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
@@ -333,11 +330,17 @@ test("one cold install exercises all public roles plus automatic Navigator gates
 
     await writeFile(
       resolve(piAgentDir, "auth.json"),
-      JSON.stringify({ "openai-codex": { type: "oauth", access: "test" } }),
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: "test" },
+        xai: { type: "api-key", access: "test" },
+        "kimi-coding": { type: "api-key", access: "test" },
+      }),
       "utf8",
     );
 
-    const project = resolve(home, "work");
+    // Book key under hermetic package home (test user-profile preload).
+    const bookKey = `work-604-${Date.now().toString(36)}`;
+    const project = resolve(home, bookKey);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     execFileSync(
@@ -346,7 +349,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       { cwd: project, stdio: "ignore" },
     );
 
-    // Discoverability: seven callable + automatic Navigator; no auditors.
+    // Discoverability: packaged callable seats + automatic Navigator; no auditors.
     const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
@@ -402,22 +405,11 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     const shimDir = resolve(home, "pi-shim-matrix");
     const argvLog = resolve(home, "matrix-pi-argv.json");
     await writePiArgvShim(shimDir, argvLog);
+    await installHermesFixture(shimDir);
     const shimEnv = {
       PATH: `${shimDir}:${process.env.PATH ?? ""}`,
       PI_OFFLINE: "1",
     };
-
-    // Inspector — cold-installed executable reaches its isolated internal seat.
-    {
-      await runAkRoleBin(
-        installed.akRoleBin,
-        ["inspector", "--project", project, "Review this material."],
-        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
-      );
-      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-      assert.equal(flagValue(args, "--ak-role"), "inspector");
-      assert.equal(args.includes("--no-skills"), true);
-    }
 
     // judge — retained role gate: Internal --ak-role judge, no ambient skills.
     {
@@ -430,6 +422,61 @@ test("one cold install exercises all public roles plus automatic Navigator gates
       assertNoDeferredSlice("judge", `${result.stdout}\n${result.stderr}`);
       const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
       assert.equal(flagValue(args, "--ak-role"), "judge");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
+    // countersign — instruction-seat gate: Internal --ak-role countersign, no ambient skills.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["countersign", "--project", project, "裁：所附计划是否足以开工。"],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("countersign", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "countersign");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
+    // gleaner-left — unanchored seat; required --base; empty instruction is the lawful path.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["gleaner-left", "--project", project, "--base", "HEAD"],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("gleaner-left", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "gleaner-left");
+      assert.equal(flagValue(args, "--ak-gleaner-left-base"), "HEAD");
+      assert.equal(args.includes("--no-skills"), true);
+      assert.equal(args.includes("-e"), true);
+      const entry = flagValue(args, "-e");
+      assert.ok(entry);
+      assert.equal(entry.endsWith(INTERNAL_ROLE_ENTRYPOINT_RELATIVE), true);
+    }
+
+    // inspector — direct 察院 command; Internal --ak-role inspector, no ambient skills.
+    {
+      const result = await runAkRoleBin(
+        installed.akRoleBin,
+        ["inspector", "--project", project, "Review this material."],
+        { home, agentDir: piAgentDir, cwd: project, env: shimEnv },
+      );
+      assert.equal(result.localTimeout, false, result.stderr);
+      assertNoDeferredSlice("inspector", `${result.stdout}\n${result.stderr}`);
+      const args = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+      assert.equal(flagValue(args, "--ak-role"), "inspector");
       assert.equal(args.includes("--no-skills"), true);
       assert.equal(args.includes("-e"), true);
       const entry = flagValue(args, "-e");
@@ -601,7 +648,7 @@ test("one cold install exercises all public roles plus automatic Navigator gates
     // notary — machine-ledger source-run locator only; zero prompt/attachment.
     {
       const sourceRunId = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
-      const coords = roleRunSessionCoordinates({
+      const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,
         runId: sourceRunId,
         role: "judge",

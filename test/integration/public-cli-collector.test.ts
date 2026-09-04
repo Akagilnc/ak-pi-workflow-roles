@@ -9,6 +9,8 @@ import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 
 function seedProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
@@ -56,12 +58,17 @@ test("typed groups travel from real output settlement into the report artifact",
       credentials: { "openai-codex": true, xai: false },
       createRunId: () => "collector-groups-run",
       io: { stdout: (text) => stdout.push(text), stderr: () => undefined },
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         assert.equal(args.some((arg) => arg.includes("collector-legs")), false);
         const sessionFile = args[args.indexOf("--session") + 1]!;
-        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details: receipt() } })}\n`);
-        return { code: 0, timedOut: false, stderr: "", args: [...args] };
+        const details = receipt();
+        await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
+        return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
       },
+          }),
     });
     assert.equal(result.exitCode, 0);
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, [{

@@ -27,10 +27,10 @@ import {
   readOAuthKeepaliveProviders,
   type OAuthKeepaliveScheduler,
 } from "../../src/oauth-keepalive.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
   flushEventLoopTurns,
-  withHermeticHome,
+  withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 
@@ -128,17 +128,15 @@ function createOAuthMockProvider(options: {
   };
 }
 
-function minimalRoleDeps(oauthKeepalive?: {
+function minimalRoleExtension(oauthKeepalive: {
   providers?: readonly string[];
   intervalMs?: number;
   scheduler?: OAuthKeepaliveScheduler;
 }) {
-  return {
+  return createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
-    transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" as const }),
-    ...(oauthKeepalive === undefined ? {} : { oauthKeepalive }),
-  };
+  }, { oauthKeepalive });
 }
 
 async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
@@ -151,7 +149,7 @@ async function fireTick(ticks: Array<() => void>, index = 0): Promise<void> {
 test(
   "#351 e2e success: real session entry → ≥2 expiry windows → oauth.refresh ≥2 → next model request succeeds",
   async () => {
-    await withHermeticHome({ prefix: "ak-oauth-keepalive-e2e-" }, async ({ home, agentDir }) => {
+    await withActivationHome({ prefix: "ak-oauth-keepalive-e2e-" }, async ({ home, agentDir }) => {
       const { scheduler, ticks } = manualScheduler();
       const counters: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
       const faux = fauxProvider({
@@ -166,6 +164,8 @@ test(
       await withInProcessPi(
         {
           cwd: home,
+          home,
+          activationLedgerSession: true,
           agentDir,
           faux,
           provider,
@@ -177,9 +177,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createRoleRuntimeExtension(
-              minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-            ),
+            minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
           ],
         },
         async ({ session }) => {
@@ -231,7 +229,7 @@ test(
 test(
   "#351 non-target provider: keepalive providers filter leaves unconfigured oauth refresh at 0",
   async () => {
-    await withHermeticHome({ prefix: "ak-oauth-keepalive-nontarget-" }, async ({ home, agentDir }) => {
+    await withActivationHome({ prefix: "ak-oauth-keepalive-nontarget-" }, async ({ home, agentDir }) => {
       const { scheduler, ticks } = manualScheduler();
       const target: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
       const side: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
@@ -254,6 +252,8 @@ test(
       await withInProcessPi(
         {
           cwd: home,
+          home,
+          activationLedgerSession: true,
           agentDir,
           faux,
           provider: targetProvider,
@@ -265,9 +265,7 @@ test(
           mode: "print",
           flags: {},
           extensionFactories: [
-            createRoleRuntimeExtension(
-              minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-            ),
+            minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
           ],
         },
         async ({ modelRuntime }) => {
@@ -286,7 +284,7 @@ test(
 );
 
 test("#351 shutdown: session_shutdown then advance scheduler yields zero further ticks", async () => {
-  await withHermeticHome({ prefix: "ak-oauth-keepalive-shutdown-" }, async ({ home, agentDir }) => {
+  await withActivationHome({ prefix: "ak-oauth-keepalive-shutdown-" }, async ({ home, agentDir }) => {
     const { scheduler, ticks } = manualScheduler();
     const counters: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
     const faux = fauxProvider({
@@ -301,6 +299,8 @@ test("#351 shutdown: session_shutdown then advance scheduler yields zero further
     await withInProcessPi(
       {
         cwd: home,
+          home,
+          activationLedgerSession: true,
         agentDir,
         faux,
         provider,
@@ -314,9 +314,7 @@ test("#351 shutdown: session_shutdown then advance scheduler yields zero further
         // Emit production session_shutdown on teardown (same hook keepalive owns).
         reviewerShutdown: true,
         extensionFactories: [
-          createRoleRuntimeExtension(
-            minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-          ),
+          minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
         ],
       },
       async ({ session }) => {
@@ -340,7 +338,7 @@ test("#351 shutdown: session_shutdown then advance scheduler yields zero further
 });
 
 test("#351 unexpired window: tick is no-op (zero network / zero oauth.refresh)", async () => {
-  await withHermeticHome({ prefix: "ak-oauth-keepalive-fresh-" }, async ({ home, agentDir }) => {
+  await withActivationHome({ prefix: "ak-oauth-keepalive-fresh-" }, async ({ home, agentDir }) => {
     const { scheduler, ticks } = manualScheduler();
     const counters: OAuthCounters = { refreshCount: 0, networkCalls: 0, lastAccess: undefined };
     const faux = fauxProvider({
@@ -360,6 +358,8 @@ test("#351 unexpired window: tick is no-op (zero network / zero oauth.refresh)",
     await withInProcessPi(
       {
         cwd: home,
+          home,
+          activationLedgerSession: true,
         agentDir,
         faux,
         provider,
@@ -371,9 +371,7 @@ test("#351 unexpired window: tick is no-op (zero network / zero oauth.refresh)",
         mode: "print",
         flags: {},
         extensionFactories: [
-          createRoleRuntimeExtension(
-            minimalRoleDeps({ providers: ["kimi-coding"], scheduler }),
-          ),
+          minimalRoleExtension({ providers: ["kimi-coding"], scheduler }),
         ],
       },
       async () => {
@@ -657,7 +655,7 @@ test("#351 notify throw: falls back once to console.warn with provider/class and
 test(
   "#351 production setting seam: non-default oauth-keepalive.json drives real session refresh filter",
   async () => {
-    await withHermeticHome({ prefix: "ak-oauth-keepalive-setting-" }, async ({ home, agentDir }) => {
+    await withActivationHome({ prefix: "ak-oauth-keepalive-setting-" }, async ({ home, agentDir }) => {
       // Default-provider read branch (absorbed from the former constants test):
       // with no oauth-keepalive.json present, the production reader falls back
       // to the default provider set — a real ENOENT branch, not a constant pin.
@@ -699,6 +697,8 @@ test(
       await withInProcessPi(
         {
           cwd: home,
+          home,
+          activationLedgerSession: true,
           agentDir,
           faux,
           provider: customProvider,
@@ -711,9 +711,7 @@ test(
           flags: {},
           extensionFactories: [
             // Same production seam: setting-read providers enter createRoleRuntimeExtension.
-            createRoleRuntimeExtension(
-              minimalRoleDeps({ providers, scheduler }),
-            ),
+            minimalRoleExtension({ providers, scheduler }),
           ],
         },
         async ({ modelRuntime }) => {
@@ -733,7 +731,7 @@ test(
 test(
   "#351 setting whitespace: padded provider id is normalized into refresh providers",
   async () => {
-    await withHermeticHome(
+    await withActivationHome(
       { prefix: "ak-oauth-keepalive-ws-" },
       async ({ agentDir }) => {
         await writeFile(

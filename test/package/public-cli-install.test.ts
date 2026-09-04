@@ -17,6 +17,7 @@ import test from "node:test";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   installPackedArtifactIntoPiNpm,
+  machineLedgerHome,
   packageRoot,
   piCli,
   runPiSubprocess,
@@ -40,6 +41,10 @@ function seedGitProject(root: string): void {
 
 test("isolated Pi home installs packed artifact and discovers ak-role via private npm bin", async () => {
   await withHermeticHome({ prefix: "ak-public-cli-bin-" }, async ({ home, agentDir }) => {
+    // #604: runPublicCliSubprocess points packageMachineHome at this hermetic
+    // home via test user-profile preload — seats/ledger never touch real home.
+    const ledgerHome = machineLedgerHome(home);
+    const configPath = resolve(ledgerHome, "public-cli.json");
     // Use a Pi-shaped agent dir under the hermetic home (not the harness default .pi-agent label).
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
@@ -67,7 +72,9 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     };
     await assertHostPeersAbsent();
 
-    const project = resolve(home, "identity-work");
+    // Book key = project basename under hermetic package home.
+    const bookKey = `identity-work-604-${Date.now().toString(36)}`;
+    const project = resolve(home, bookKey);
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const machinePiOnPath = execFileSync("sh", ["-c", "command -v pi"], {
@@ -90,7 +97,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       );
       assert.equal(run.localTimeout, false, run.stderr);
       assert.equal(run.code, 1, run.stderr);
-      const runsRoot = resolve(home, ".ak-roles", "books", "identity-work", "runs");
+      const runsRoot = resolve(ledgerHome, "books", bookKey, "runs");
       const names = (await readdir(runsRoot)).filter((name) => name.endsWith("@coder")).sort();
       const runRoot = resolve(runsRoot, names.at(-1)!);
       const invocation = JSON.parse(
@@ -189,7 +196,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     assert.equal(again.code, 0, again.stderr);
     assert.match(again.stdout, /^coder\tcallable\tpersistent\txai\/grok-4\.5:high$/m);
 
-    const before = await readFile(resolve(home, ".ak-roles", "public-cli.json"), "utf8");
+    const before = await readFile(configPath, "utf8");
     const overridden = await runAkRoleBin(
       installed.akRoleBin,
       ["roles", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "high"],
@@ -200,7 +207,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       overridden.stdout,
       /^coder\tcallable\tinvocation\topenai-codex\/gpt-5\.6-luna:high$/m,
     );
-    const after = await readFile(resolve(home, ".ak-roles", "public-cli.json"), "utf8");
+    const after = await readFile(configPath, "utf8");
     assert.equal(after, before);
 
     // Internal entrypoint remains on the same installed package copy.

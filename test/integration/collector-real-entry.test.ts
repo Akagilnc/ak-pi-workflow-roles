@@ -11,8 +11,9 @@ import {
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
 } from "../../src/collector-role.ts";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { CollectorClock } from "../../src/collector-evidence.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { createFakeGitHubTransport, samplePull, sampleUser } from "../helpers/fake-github-transport.ts";
 import { withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
@@ -47,15 +48,21 @@ async function runRealCollector(options: { request?: boolean; wait?: number }) {
     ] as any);
     let receipt: any;
     await withInProcessPi({
-      activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null,
-      extensionFactories: [createRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }) })],
+      activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
       noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
       flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", ...(options.request ? { "ak-collector-request-manifest": manifest } : {}) },
     }, async ({ session, sessionManager }) => {
       await session.prompt("start");
       const output = [...sessionManager.getEntries()].reverse().find((entry: any) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL && entry.message.isError === false) as any;
       assert.ok(output, "real role must accept its sole-final output");
-      receipt = output.message.details;
+      assert.deepEqual(output.message.details, { submissionDisposition: "pending-round-closure" });
+      const headerId = sessionManager.getHeader?.()?.id;
+      assert.ok(headerId);
+      // #604: sealed volume lives under hermetic package home (session path-derive).
+      const sealed = await readSealedSubmission(home, headerId, home);
+      assert.ok(sealed, "typed turn_end must seal sole candidate");
+      receipt = sealed.decisiveFacts;
     });
     return { receipt, transport, elapsed: collectorClock.elapsed() };
   });
@@ -80,33 +87,6 @@ test("ak-role Collector wait honors the real eligibility cutoff", async () => {
   assert.ok(result.receipt.snapshots.length >= 2);
 });
 
-test("ak-role Collector rejects output that is not the sole final call", async () => {
-  await withActivationHome({ prefix: "ak-collector-sole-final-" }, async ({ agentDir, home }) => {
-    const transport = createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] });
-    const faux = fauxProvider({ api: "collector-sole-final", provider: "collector-sole-final", tokenSize: { min: 1000, max: 1000 } });
-    let completions = 0;
-    const respond = (message: ReturnType<typeof fauxAssistantMessage>) => () => {
-      completions += 1;
-      return message;
-    };
-    faux.setResponses([
-      respond(fauxAssistantMessage([fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe" }), fauxToolCall(COLLECTOR_OUTPUT_TOOL, {}, { id: "output" })], { stopReason: "toolUse" })),
-      respond(fauxAssistantMessage("done")),
-      respond(fauxAssistantMessage("still no receipt")),
-    ]);
-    await withInProcessPi({ activationLedgerSession: true, cwd: home, agentDir, faux, modelsPath: null, extensionFactories: [createRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: clock, transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }) })], noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin", flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1" } }, async ({ session, sessionManager }) => {
-      await session.prompt("start");
-      const entries = sessionManager.getEntries() as any[];
-      const output = entries.find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === COLLECTOR_OUTPUT_TOOL);
-      assert.equal(output?.message.isError, true, "the original non-sole-final output remains rejected");
-      assert.equal(process.exitCode, undefined, "package-owned delivery must not enter Collector's later-input failure path");
-      assert.equal(completions, 3, "the lifecycle consumes the rejection turn and one bounded delivery turn");
-      assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request").length, 1,
-        "the rejected receipt plus one request consume the shared two-turn budget");
-    });
-  });
-});
-
 test("Collector failed reactivation clears a previously successful real role activation", async () => {
   const flags = new Map<string, unknown>([["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"]]);
   const tools = new Map<string, any>(); let active: string[] = [];
@@ -116,25 +96,4 @@ test("Collector failed reactivation clears a previously successful real role act
   await runtime.activate(context, { reason: "new" }); flags.delete("ak-collector-repo");
   await assert.rejects(() => runtime.activate(context, { reason: "new" }), /requires --ak-collector-repo/);
   await assert.rejects(() => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined), /通进司未激活/);
-});
-
-test("Collector output routes an infrastructure-failure declaration to the host before any receipt", async () => {
-  const flags = new Map<string, unknown>([["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"]]);
-  const tools = new Map<string, any>(); let active: string[] = []; let hostCalls = 0;
-  const pi = { registerFlag() {}, getFlag: (name: string) => flags.get(name), getCommands: () => [], getAllTools: () => [...tools.values()], registerTool: (tool: any) => tools.set(tool.name, tool), setActiveTools: (names: string[]) => { active = names; }, getActiveTools: () => active, on() {} };
-  const runtime = createCollectorRoleRuntime(pi as any, { loadSoul: async () => soul, createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }), createClock: clock }, { failInfrastructure(error: unknown, _ctx: unknown, id?: string) { hostCalls += 1; assert.equal(id, "infra"); throw error instanceof Error ? error : new Error(String(error)); } });
-  const context = { mode: "print" } as any;
-  await runtime.activate(context, { reason: "new" });
-  const output = tools.get(COLLECTOR_OUTPUT_TOOL);
-  assert.ok(output, "Collector output tool must be registered after activation");
-  const parameters = { infrastructureFailure: { diagnostic: "collector engine 541" } };
-  await assert.rejects(
-    output.execute("infra", parameters, undefined, undefined, { mode: "print" }),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "collector engine 541");
-      return true;
-    },
-  );
-  assert.equal(hostCalls, 1, "the collector infra declaration reaches the host exactly once");
 });

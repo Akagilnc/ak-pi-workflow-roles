@@ -1,8 +1,23 @@
-import { writeSync } from "node:fs";
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync, writeSync } from "node:fs";
+import { join as pathJoin } from "node:path";
+import {
+  loadNotarySourceRunLocator,
+  NotarySourceRunError,
+} from "./notary-source-run.ts";
+import {
+  ExplicitInternalActivationError,
+  type HostContext,
+  type HostToolResult,
+  type RoleEnvelopeHost,
+  type RoleHost,
+} from "./host-contracts.ts";
+import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
 import { Value } from "typebox/value";
+import { sitianReport } from "./sitian-facade.ts";
+import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
 import {
   appendAcceptedActivationToBook,
   buildAcceptedActivationFact,
@@ -24,8 +39,6 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "./oauth-keepalive.ts";
-
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -38,23 +51,37 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
-import { createNotaryRoleRuntime } from "./notary-role.ts";
-import { inspectorOutputSchema, projectInspectorReceipt } from "./inspector-role.ts";
-import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import {
+  createNotaryRoleRuntime,
+  NOTARY_SESSION_BOUND_ENTRY,
+  projectNotaryBoundFromFlags,
+  readNotaryTicketFlag,
+} from "./notary-role.ts";
+import { NOTARY_TICKET_FLAG } from "./notary-contracts.ts";
+import {
+  COUNTERSIGN_TOOL_SPEC,
+  type CountersignRuntimeDependencies,
+} from "./countersign-role.ts";
+import { COUNTERSIGN_ACCEPTED_TEXT } from "./countersign-contracts.ts";
+import {
+  GLEANER_LEFT_TOOL_SPEC,
+  type GleanerLeftRuntimeDependencies,
+} from "./gleaner-left-role.ts";
+import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
+import {
+  INSPECTOR_TOOL_SPEC,
+  type InspectorRuntimeDependencies,
+} from "./inspector-role.ts";
+import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
-  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+  extractInfrastructureFailureEvidence,
   NAVIGATOR_INVOCATION_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import {
-  ExplicitInternalActivationError,
-  recordReviewerDispatchRejectionSync,
-} from "./public-cli/explicit-internal.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
@@ -106,6 +133,33 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
       description: "Typed ticketNumber for Spec self-fetch primary path",
       type: "string" as const,
     }),
+  }),
+] as const);
+
+/** Countersign private transport: admitted ticket binding for Notary gate (ADR 0075). */
+const COUNTERSIGN_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-countersign-ticket-number",
+    definition: Object.freeze({
+      description: "Admitted ticketNumber for countersign Notary inner-gate material",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
+/** Notary private transport: optional court-diary ticket (ADR 0018 / 0075 — envelope-owned). */
+const NOTARY_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: NOTARY_TICKET_FLAG.name,
+    definition: NOTARY_TICKET_FLAG.definition,
+  }),
+] as const);
+
+/** Gleaner-left private transport: comparison-base revision (ADR 0018 / #502). */
+const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: GLEANER_LEFT_BASE_FLAG.name,
+    definition: GLEANER_LEFT_BASE_FLAG.definition,
   }),
 ] as const);
 
@@ -200,7 +254,13 @@ import {
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
+  type CoderSkillExpansionEvidenceMissingResult,
 } from "./worker-role.ts";
+
+/** One envelope map for Gatekeeper non-pass and other correct submission rejects (#525). */
+type SubmissionNonPassResult =
+  | GatekeeperNonPassResult
+  | CoderSkillExpansionEvidenceMissingResult;
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
@@ -210,6 +270,7 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 export {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
+  extractInfrastructureFailureEvidence,
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
@@ -271,7 +332,7 @@ export {
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 export { executeAuditorChild } from "./evidence-child-executor.ts";
-export type { AuditorCompletion, AuditorDecisionTool } from "./evidence-child-executor.ts";
+export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -303,10 +364,13 @@ export {
 } from "./reviewer-role.ts";
 export {
   CODER_OUTPUT_TOOL_NAME,
+  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
+  CoderSkillExpansionEvidenceMissingError,
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
   type CoderOutput,
+  type CoderSkillExpansionEvidenceMissingResult,
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
@@ -339,7 +403,7 @@ export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
-export { MERGER_INPUT_FLAG, MERGER_ACTIVE_TOOLS, createMergerRoleRuntime } from "./merger-role.ts";
+export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
 export { createProductionMergerGitState } from "./merger-git-state.ts";
@@ -347,19 +411,19 @@ export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } fr
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
 type WorkerArmable = {
-  activate(context?: ExtensionContext): Promise<void>;
+  activate(context?: HostContext): Promise<void>;
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
 
 type ActivationRuntime = {
   event: { reason: string };
-  context: ExtensionContext;
+  context: HostContext;
   judge: { activate(): Promise<void> };
   fixer: WorkerArmable;
   coder: WorkerArmable;
   reviewer: {
     activate(
-      context: ExtensionContext,
+      context: HostContext,
       admitted: ReviewerAdmittedInputs,
     ): Promise<ReviewerActivation>;
   };
@@ -367,9 +431,15 @@ type ActivationRuntime = {
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
-  collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
+  collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
   doctor: { activate(): Promise<void> };
-  notary: { activate(): Promise<void> };
+  notary: {
+    activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
+  };
+  /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
+  decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
+  countersign: { activate(): Promise<void> };
+  gleanerLeft: { activate(): Promise<void> };
   inspector: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
@@ -407,7 +477,15 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
-    case "notary": return { id: "load-and-install", run: async () => runtime.notary.activate() };
+    case "notary": return {
+      id: "load-and-install",
+      run: async () => {
+        // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
+        await runtime.notary.activate(runtime.decodeNotaryAdmitted());
+      },
+    };
+    case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
+    case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
     case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -474,6 +552,25 @@ export const ROLE_FLAG = {
   },
 } as const;
 
+/** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
+export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
+  if (metadata?.inputFlag !== undefined) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== undefined) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
+}
+
 type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
   Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
 
@@ -491,29 +588,30 @@ export type RoleRuntimeDependencies = {
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadNotarySoul?(): Promise<string>;
-  loadInspectorSoul?(): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
+  loadCountersignSoul?(): Promise<string>;
+  loadGleanerLeftSoul?(): Promise<string>;
+  loadInspectorSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
-  auditDoctorCompliance?(options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
   runReviewerDispatch?(
     dispatch: AcceptedReviewerExecution,
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
-    options: { context: ExtensionContext; signal?: AbortSignal },
+    options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
@@ -522,20 +620,13 @@ export type RoleRuntimeDependencies = {
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
-  /**
-   * #351 OAuth keepalive: providers/interval/scheduler.
-   * Production extension root reads oauth-keepalive.json and passes providers here
-   * (default ["kimi-coding"] when the setting file is absent). Tests may inject.
-   */
-  oauthKeepalive?: OAuthKeepaliveOptions;
 };
 
-function abortContext(ctx: ExtensionContext): void {
-  const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
-  if (typeof abort === "function") abort.call(ctx);
+function abortContext(ctx: { abort(): void }): void {
+  ctx.abort();
 }
 
-function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
+function failInfrastructure(error: unknown, ctx: { mode: string; abort(): void }): never {
   abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
@@ -549,18 +640,6 @@ type PendingInfrastructureFailure = {
   readonly details: Record<string, unknown>;
 };
 
-function extractInfrastructureFailureEvidence(error: unknown): Record<string, unknown> {
-  if (typeof error !== "object" || error === null) return {};
-  const record = error as Record<string, unknown>;
-  const evidence: Record<string, unknown> = {};
-  for (const key of NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS) {
-    if (!Object.hasOwn(record, key)) continue;
-    // undefined → null so JSON durable details retain the empty-candidate key.
-    evidence[key] = record[key] === undefined ? null : record[key];
-  }
-  return evidence;
-}
-
 function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructureFailure {
   return {
     details: {
@@ -570,11 +649,11 @@ function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructur
   };
 }
 
-function navigatorPhase(pi: ExtensionAPI, role: string): NavigatorPhase {
+function navigatorPhase(roleHost: RoleHost, role: string): NavigatorPhase {
   const metadata = packagedRoleMetadata(role);
   if (metadata === undefined || metadata.phases[0] === null) return null;
   const phaseFlag = packagedRolePhaseFlag(role);
-  const requested = phaseFlag === undefined ? undefined : pi.getFlag(phaseFlag);
+  const requested = phaseFlag === undefined ? undefined : roleHost.getFlag(phaseFlag);
   return requested === "apply" ? "apply" : "plan";
 }
 
@@ -601,21 +680,317 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   }
   const status = typeof details.status === "string"
     ? details.status
-    : typeof details.judgeStatus === "string" ? details.judgeStatus : undefined;
+    : typeof details.judgeStatus === "string" ? details.judgeStatus
+    : typeof details.countersignStatus === "string" ? details.countersignStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
   return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
 }
 
+export async function projectClosedSubmissionLifecycle(
+  projection: import("./submission-ledger.ts").ClosedSubmissionProjection,
+  context: HostContext,
+  phase: NavigatorPhase,
+  recordAccepted: () => void,
+  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
+): Promise<void> {
+  recordAccepted();
+  const closure = {
+    toolName: navigatorOutputTool(projection.role)!,
+    isError: false,
+    details: projection.decisiveFacts,
+  };
+  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
+  await settle(publicNavigatorSettlement(projection.role, phase, closure));
+}
+
+/** Typed cause when admitted countersign ticket binding cannot be resolved. */
+export type CountersignInvocationBindingReason =
+  | "flag-invalid"
+  | "unreadable"
+  | "unparseable";
+
+export class CountersignInvocationBindingError extends Error {
+  readonly code = "countersign-invocation-binding" as const;
+  readonly reason: CountersignInvocationBindingReason;
+  constructor(
+    reason: CountersignInvocationBindingReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "CountersignInvocationBindingError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Resolve admitted ticketNumber for the Notary inner gate (ADR 0075).
+ * Prefer the activation transport flag (admitted typed binding along the seam).
+ * Flag absent → fall back to invocation.json.
+ * Flag present-but-invalid → typed failure (never wash into unbound / invocation fallback).
+ * Invocation present-but-unreadable/unparseable → typed failure.
+ * Invocation absent or field absent → legal unbound.
+ */
+function readBoundTicketNumberForNotaryGate(roleHost: RoleHost): number | undefined {
+  const fromFlag = roleHost.getFlag("ak-countersign-ticket-number");
+  if (fromFlag !== undefined) {
+    if (typeof fromFlag === "string" && /^[1-9]\d*$/.test(fromFlag)) {
+      const n = Number(fromFlag);
+      if (Number.isSafeInteger(n) && n >= 1) return n;
+    }
+    throw new CountersignInvocationBindingError(
+      "flag-invalid",
+      "countersign Notary gate: ak-countersign-ticket-number is present but not a safe positive integer string",
+    );
+  }
+
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") return undefined;
+  const invocationPath = pathJoin(runDir, "invocation.json");
+  let rawText: string;
+  try {
+    rawText = readFileSync(invocationPath, "utf8");
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err && err.code === "ENOENT") return undefined;
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      `countersign Notary gate: invocation.json unreadable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawText);
+  } catch (error) {
+    throw new CountersignInvocationBindingError(
+      "unparseable",
+      `countersign Notary gate: invocation.json unparseable (${invocationPath})`,
+      { cause: error },
+    );
+  }
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    typeof (raw as { ticketNumber?: unknown }).ticketNumber === "number" &&
+    Number.isSafeInteger((raw as { ticketNumber: number }).ticketNumber) &&
+    (raw as { ticketNumber: number }).ticketNumber >= 1
+  ) {
+    return (raw as { ticketNumber: number }).ticketNumber;
+  }
+  return undefined;
+}
+
+/**
+ * Assemble Notary inner-gate material for countersign verdict.
+ * ticket-bound → ticketNumber; true-unbound → sourceRun via sole notary-source-run loader.
+ * Gate attendance itself never branches away.
+ */
+async function buildCountersignNotaryGateMaterial(input: {
+  readonly roleHost: RoleHost;
+  readonly parameters: unknown;
+}): Promise<string> {
+  const ticketNumber = readBoundTicketNumberForNotaryGate(input.roleHost);
+  if (ticketNumber !== undefined) {
+    return JSON.stringify({ verdict: input.parameters, ticketNumber });
+  }
+  const runDir = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDir !== "string" || runDir.trim() === "") {
+    throw new CountersignInvocationBindingError(
+      "unreadable",
+      "countersign Notary gate: true-unbound material requires AK_ROLE_RUN_DIR source-run locator",
+    );
+  }
+  let sourceRun;
+  try {
+    // Sole authority for run-dir name + retained identity (DRY #14 / notary-source-run).
+    sourceRun = await loadNotarySourceRunLocator(runDir);
+  } catch (error) {
+    if (error instanceof NotarySourceRunError) {
+      throw new CountersignInvocationBindingError(
+        "unreadable",
+        `countersign Notary gate: source-run locator unusable (${error.message})`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return JSON.stringify({ verdict: input.parameters, sourceRun });
+}
+
+/** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
+type FiledOfficerBeforeAccept = (input: {
+  readonly toolCallId: string;
+  readonly parameters: unknown;
+  readonly signal: AbortSignal | undefined;
+  readonly ctx: HostContext;
+}) => Promise<void>;
+
+/**
+ * Shared registration envelope for filed officers (ADR 0018 / #572):
+ * activate, tool register, before_agent_start prompt, inventory check.
+ * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
+ * Optional beforeAccept is the sole extension seam (e.g. countersign Notary gate).
+ */
+function createFiledOfficerRuntime(
+  roleHost: RoleHost,
+  spec: {
+    role: string;
+    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
+    acceptedText: string;
+    soulTag: string;
+    beforeAccept?: FiledOfficerBeforeAccept;
+  },
+  dependencies: { loadSoul(): Promise<string> },
+) {
+  let soul: string | undefined;
+  let registered = false;
+  return {
+    async activate() {
+      const loaded = (await dependencies.loadSoul()).trim();
+      if (loaded.length === 0) throw new Error(`${spec.role} soul is empty`);
+      soul = loaded;
+      if (!registered) {
+        registered = true;
+        roleHost.registerTool({
+          name: spec.tool.name,
+          label: spec.tool.label,
+          description: spec.tool.description,
+          promptSnippet: spec.tool.promptSnippet,
+          parameters: spec.tool.parameters as never,
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
+            if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+            if (spec.beforeAccept !== undefined) {
+              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
+            }
+            // Accept-as-is + terminate only. Shape is not an admission gate
+            // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
+            return {
+              content: [{ type: "text" as const, text: spec.acceptedText }],
+              details: parameters,
+              terminate: true as const,
+            };
+          },
+        });
+        roleHost.on("before_agent_start", (event) => {
+          if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
+          const tail = `\n\n<${spec.soulTag}_soul>\n${soul}\n</${spec.soulTag}_soul>`;
+          return { systemPrompt: `${event.systemPrompt}${tail}` };
+        });
+      }
+      const all = roleHost.getAllTools().map((tool) => tool.name);
+      if (all.filter((name) => name === spec.tool.name).length !== 1) {
+        throw new Error(`${spec.role} required tool collision or missing: ${spec.tool.name}`);
+      }
+    },
+  };
+}
+
+export function createGleanerLeftRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: GleanerLeftRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "gleaner-left",
+      tool: GLEANER_LEFT_TOOL_SPEC,
+      acceptedText: GLEANER_LEFT_ACCEPTED_TEXT,
+      soulTag: "gleaner-left",
+    },
+    dependencies,
+  );
+}
+
+function decodeGleanerLeftBase(getFlag: (name: string) => unknown): string {
+  const baseRevision = getFlag(GLEANER_LEFT_BASE_FLAG.name);
+  if (typeof baseRevision !== "string" || !baseRevision.trim()) {
+    throw new Error("Gleaner-left role requires --ak-gleaner-left-base");
+  }
+  return baseRevision;
+}
+
+export function createInspectorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: InspectorRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "inspector",
+      tool: INSPECTOR_TOOL_SPEC,
+      acceptedText: INSPECTOR_ACCEPTED_TEXT,
+      soulTag: "inspector",
+    },
+    dependencies,
+  );
+}
+
+export function createCountersignRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: CountersignRuntimeDependencies,
+  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
+) {
+  // Notary inner gate difference only — lifecycle stays on the shared envelope.
+  // Always-present: ticket-bound material carries ticketNumber; true-unbound
+  // carries the current countersign source-run locator (never bare verdict).
+  const beforeAccept: FiledOfficerBeforeAccept | undefined =
+    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const material = await buildCountersignNotaryGateMaterial({
+            roleHost,
+            parameters,
+          });
+          await roleHost.requireGatekeeperPass!({
+            context: ctx,
+            subject: { kind: "countersign_verdict", material },
+            ...(signal === undefined ? {} : { signal }),
+            hostActions,
+            toolCallId,
+          });
+        }
+      : undefined;
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "countersign",
+      tool: COUNTERSIGN_TOOL_SPEC,
+      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
+      soulTag: "countersign",
+      ...(beforeAccept === undefined ? {} : { beforeAccept }),
+    },
+    dependencies,
+  );
+}
+
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
-): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+): (envelopeHost: RoleEnvelopeHost) => void {
+  return (envelopeHost) => {
+    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
+      throw new Error("角色终局投射接缝尚未初始化");
+    };
+    const roleHost = createSubmissionLedgerHost(
+      envelopeHost.host,
+      new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
+      failInfrastructure,
+      async (projection, context) => projectClosedSubmission(projection, context),
+    );
+    roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
     for (const flag of REVIEWER_TRANSPORT_FLAGS) {
-      pi.registerFlag(flag.name, flag.definition);
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of COUNTERSIGN_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of NOTARY_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
     }
 
     let admitted = false;
@@ -627,21 +1002,68 @@ export function createRoleRuntimeExtension(
     let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
-    const oauthKeepalive = createOAuthKeepalive(dependencies.oauthKeepalive);
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
-    // Envelope-owned execute→tool_result bridge for Gatekeeper non-pass (ADR 0018).
-    const pendingGatekeeperNonPassByToolCallId = new Map<string, GatekeeperNonPassResult>();
+    // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
+    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    pi.on("input", (event) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
+      const attendance = navigatorAttendance;
+      if (settlement === undefined || attendance === undefined) return;
+      const workContext = navigatorWorkContext;
+      const pending = (async () => {
+        if (settlement.kind !== "accepted") {
+          await attendance.settle(settlement);
+          return;
+        }
+        const settlePromise = attendance.settle(settlement);
+        const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
+        if (raced.status !== "timeout") return;
+        if (pendingNavigatorPresentation === undefined) {
+          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
+          const report: NavigatorReport = {
+            disposition: "unavailable",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          const event: NavigatorEvent = {
+            version: 1,
+            disposition: "unavailable",
+            invocationId: "post-role-grace-timeout",
+            role: settlement.role,
+            phase: settlement.phase,
+            subjectKey: workContext?.subjectKey ?? "",
+            unavailableReason: "Navigator exceeded post-role delivery grace",
+            unavailableSource: "unknown",
+            unavailableCause: "unknown",
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
+          };
+          pendingNavigatorPresentation = { event, report };
+        }
+        await attendance.dispose();
+        void settlePromise.catch(() => undefined);
+      })();
+      pendingNavigatorSettlement = pending;
+      await pending;
+    };
+    projectClosedSubmission = async (projection, context) => projectClosedSubmissionLifecycle(
+      projection,
+      context,
+      navigatorPhase(roleHost, projection.role),
+      () => receiptDelivery.recordAccepted(),
+      settleNavigatorProjection,
+    );
+    roleHost.on("input", (event) => {
+      const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
       if (
@@ -659,11 +1081,19 @@ export function createRoleRuntimeExtension(
       }
       return { action: "continue" as const };
     });
-    pi.on("before_agent_start", (event, ctx) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
+    roleHost.on("before_agent_start", async (event, ctx) => {
+      const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+      // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
+      // Ticket flag register/read + session entry live here; role projects admitted bound only.
+      if (role === "notary") {
+        const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
+        if (bound !== undefined) {
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
+        }
       }
       if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
         // Flagged roles already have a concrete packet/task/case/review input.
@@ -687,7 +1117,7 @@ export function createRoleRuntimeExtension(
               authority,
               subjectProvenance,
             };
-            navigatorAttendance.setWorkContext(navigatorWorkContext);
+            await navigatorAttendance.setWorkContext(navigatorWorkContext);
           }
         }
       }
@@ -697,7 +1127,10 @@ export function createRoleRuntimeExtension(
         if (!reviewerExpansionCaptured) {
           if (
             reviewerOriginalRequest === undefined
-            || activeReviewerParent.skillBinding.captureExpansion(event.prompt, reviewerOriginalRequest) === undefined
+            || activeReviewerParent.skillBinding.captureExpansion(
+              roleHost.capabilities?.skillExpansion(event.prompt),
+              reviewerOriginalRequest,
+            ) === undefined
           ) {
             failInfrastructure(
               new Error("Canonical code-review Skill expansion did not match the captured request"),
@@ -716,7 +1149,7 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    pi.on("tool_result", async (event) => {
+    roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
@@ -731,77 +1164,30 @@ export function createRoleRuntimeExtension(
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
-      } else if (outputClassification?.kind === "accepted") {
-        receiptDelivery.recordAccepted();
       } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
         const reason = (event.content ?? [])
-          .map((part) => part.type === "text" ? part.text : "")
+          .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
           .trim() || "terminating tool rejected";
         receiptDelivery.recordRejected(reason);
       }
-      const settlement = publicNavigatorSettlement(
-        role,
-        navigatorPhase(pi, role),
-        classified,
-      );
-      if (settlement !== undefined) {
-        const attendance = navigatorAttendance;
-        if (attendance !== undefined) {
-          const workContext = navigatorWorkContext;
-          const pending = (async () => {
-          // Accepted role terminal starts the post-role Navigator grace (#101/#106).
-          if (settlement.kind !== "accepted") {
-            await attendance.settle(settlement);
-            // Emission stays on agent_settled (normal completion) or session_shutdown
-            // flush (abort/infrastructure teardown that skips agent_settled).
-            return;
-          }
-          const settlePromise = attendance.settle(settlement);
-          const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
-          if (raced.status === "timeout") {
-            if (pendingNavigatorPresentation === undefined) {
-              const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
-              const report: NavigatorReport = {
-                disposition: "unavailable",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              const navigatorEvent: NavigatorEvent = {
-                version: 1,
-                disposition: "unavailable",
-                invocationId: "post-role-grace-timeout",
-                role,
-                phase: navigatorPhase(pi, role),
-                subjectKey: workContext?.subjectKey ?? "",
-                unavailableReason: "Navigator exceeded post-role delivery grace",
-                unavailableSource: "unknown",
-                unavailableCause: "unknown",
-                ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
-              };
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
-            }
-            attendance.dispose();
-            void settlePromise.catch(() => undefined);
-          }
-        })();
-          pendingNavigatorSettlement = pending;
-          await pending;
-        }
-      }
+      // Accepted/human terminal projection belongs exclusively to typed ledger
+      // closure. tool_result retains only infrastructure settlement.
+      const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
+        ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
+        : undefined;
+      await settleNavigatorProjection(settlement);
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
         return { details: infrastructureDetails, isError: true };
       }
-      // Gatekeeper non-pass: throw kept message text for the model; project the
+      // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
-      const gatekeeperNonPass = pendingGatekeeperNonPassByToolCallId.get(event.toolCallId);
-      if (gatekeeperNonPass !== undefined) {
-        pendingGatekeeperNonPassByToolCallId.delete(event.toolCallId);
-        return { details: gatekeeperNonPass, isError: true };
+      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
+      if (submissionNonPass !== undefined) {
+        pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
+        return { details: submissionNonPass, isError: true };
       }
       // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
@@ -818,7 +1204,7 @@ export function createRoleRuntimeExtension(
     // already decided no queued continuation will run, so a triggerTurn there is
     // too late for print/json sessions. `agent_end` is the last production seam
     // whose queued next turn is consumed before settlement.
-    pi.on("agent_end", (event) => {
+    roleHost.on("agent_end", (event, ctx) => {
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
@@ -831,8 +1217,18 @@ export function createRoleRuntimeExtension(
         receiptDelivery.recordDeliveryRequest();
         // Keep the package-owned continuation off the public input lifecycle:
         // one-shot roles must not mistake this delivery request for later caller input.
-        pi.appendEntry("ak-receipt-delivery-request");
-        pi.sendMessage({
+        envelopeHost.appendEntry("ak-receipt-delivery-request");
+        try {
+          sitianReport({
+            level: "event",
+            kind: "receipt-delivery",
+            cwd: ctx.cwd,
+            sessionParent: ctx.sessionManager.getSessionFile(),
+            payload: { type: "ak-receipt-delivery-request" },
+            source: "role-runtime",
+          });
+        } catch {}
+        envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: RECEIPT_DELIVERY_PROMPT,
           display: false,
@@ -841,14 +1237,22 @@ export function createRoleRuntimeExtension(
         const runPointer = process.env.AK_ROLE_RUN_DIR;
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          pi.appendEntry(
-            NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-            receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` }),
-          );
+          const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+          envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+          try {
+            sitianReport({
+              level: "event",
+              kind: "no-receipt-lifecycle",
+              cwd: ctx.cwd,
+              sessionParent: ctx.sessionManager.getSessionFile(),
+              payload: facts,
+              source: "role-runtime",
+            });
+          } catch {}
         }
       }
     });
-    pi.on("agent_settled", async () => {
+    roleHost.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
         await pendingNavigatorSettlement;
       }
@@ -863,23 +1267,23 @@ export function createRoleRuntimeExtension(
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
-      await pi.sendMessage({
+      await envelopeHost.sendMessage({
         customType: NAVIGATOR_EVENT_TYPE,
         content: formatNavigatorReport(presentation.report),
         display: true,
         details: presentation.event,
       }, { triggerTurn: false });
     });
-    pi.on("session_shutdown", async () => {
+    roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
-      oauthKeepalive.stop();
+      envelopeHost.stopKeepalive();
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation !== undefined) {
         try {
-          await pi.sendMessage({
+          await envelopeHost.sendMessage({
             customType: NAVIGATOR_EVENT_TYPE,
             content: formatNavigatorReport(presentation.report),
             display: true,
@@ -889,27 +1293,27 @@ export function createRoleRuntimeExtension(
           // Teardown must not mask the original role failure cause.
         }
       }
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingGatekeeperNonPassByToolCallId.clear();
+      pendingSubmissionNonPassByToolCallId.clear();
       observationFace.reset();
     });
 
     const hostActions = {
-      failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never {
+      failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never {
         if (toolCallId !== undefined) {
           pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
         failInfrastructure(error, ctx);
       },
-      bindGatekeeperNonPass(toolCallId: string, result: GatekeeperNonPassResult): void {
-        pendingGatekeeperNonPassByToolCallId.set(toolCallId, result);
+      bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
+        pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
     const judge = createJudgeRoleRuntime(
-      pi,
+      roleHost,
       {
         loadSoul: dependencies.loadJudgeSoul,
         auditSoulCompliance: dependencies.auditSoulCompliance,
@@ -917,7 +1321,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const fixer = createFixerRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadFixerSoul === undefined) {
@@ -935,7 +1339,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const coder = createCoderRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadCoderSoul === undefined) {
@@ -959,7 +1363,7 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const reviewer = createReviewerRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadReviewerSoul === undefined) {
@@ -990,48 +1394,12 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
-    const doctor = createDoctorRoleRuntime(pi, {
+    const doctor = createDoctorRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
-    let inspectorSoul: string | undefined;
-    let inspectorRegistered = false;
-    const inspector = {
-      async activate(): Promise<void> {
-        if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
-        inspectorSoul = (await dependencies.loadInspectorSoul()).trim();
-        if (inspectorSoul.length === 0) throw new Error("Inspector soul is empty");
-        if (!inspectorRegistered) {
-          inspectorRegistered = true;
-          pi.registerTool({
-            name: INSPECTOR_OUTPUT_TOOL_NAME,
-            label: "给事中输出",
-            description: "给事中终局回执，状态为 pass 或 bounce。",
-            promptSnippet: "给事中终局回执",
-            parameters: inspectorOutputSchema,
-            async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
-              failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
-              const leaf = ctx.sessionManager.getLeafEntry();
-              const calls = leaf?.type === "message" && leaf.message.role === "assistant"
-                ? leaf.message.content.filter((part) => part.type === "toolCall")
-                : [];
-              if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== INSPECTOR_OUTPUT_TOOL_NAME) {
-                throw new Error("给事中回执非唯一终局工具调用");
-              }
-              return projectInspectorReceipt(parameters);
-            },
-          });
-          pi.on("before_agent_start", (event) => {
-            if (inspectorSoul === undefined) throw new Error("给事中未激活");
-            return { systemPrompt: `${event.systemPrompt}\n\n<inspector_soul>\n${inspectorSoul}\n</inspector_soul>` };
-          });
-        }
-        const tools = pi.getAllTools().filter((tool) => tool.name === INSPECTOR_OUTPUT_TOOL_NAME);
-        if (tools.length !== 1) throw new Error(`Inspector required tool collision or missing: ${INSPECTOR_OUTPUT_TOOL_NAME}`);
-      },
-    };
-    const notary = createNotaryRoleRuntime(pi, {
+    const notary = createNotaryRoleRuntime(roleHost, {
       async loadSoul() {
         if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
         return dependencies.loadNotarySoul();
@@ -1041,8 +1409,32 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNotarySourceRun(path);
       },
     }, hostActions);
+    const countersign = createCountersignRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
+        return dependencies.loadCountersignSoul();
+      },
+    }, hostActions);
+    const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadGleanerLeftSoul) throw new Error("Gleaner-left runtime dependencies are not configured");
+        return dependencies.loadGleanerLeftSoul();
+      },
+    });
+    const gleanerLeft = {
+      async activate() {
+        decodeGleanerLeftBase((name) => envelopeHost.host.getFlag(name));
+        return gleanerLeftRuntime.activate();
+      },
+    };
+    const inspector = createInspectorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
+        return dependencies.loadInspectorSoul();
+      },
+    });
     let sessionMergerGitState = dependencies.mergerGitState;
-    const merger = createMergerRoleRuntime(pi, {
+    const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
       gitState: {
@@ -1051,7 +1443,7 @@ export function createRoleRuntimeExtension(
       },
     }, hostActions);
     const collector = createCollectorRoleRuntime(
-      pi,
+      roleHost,
       {
         async loadSoul() {
           if (dependencies.loadCollectorSoul === undefined) {
@@ -1091,7 +1483,7 @@ export function createRoleRuntimeExtension(
     // (abort + nonzero print/json exit) with the original cause before that swallow.
     const observe = async (
       run: () => void | Promise<void>,
-      ctx: ExtensionContext,
+      ctx: HostContext,
     ): Promise<void> => {
       try {
         await run();
@@ -1099,20 +1491,20 @@ export function createRoleRuntimeExtension(
         failInfrastructure(error, ctx);
       }
     };
-    pi.on("tool_execution_start", async (event, ctx) => {
+    roleHost.on("tool_execution_start", async (event, ctx) => {
       await observe(() => observationFace.onStart(event), ctx);
     });
-    pi.on("tool_execution_update", async (event, ctx) => {
+    roleHost.on("tool_execution_update", async (event, ctx) => {
       await observe(() => observationFace.onUpdate(event), ctx);
     });
-    pi.on("tool_execution_end", async (event, ctx) => {
+    roleHost.on("tool_execution_end", async (event, ctx) => {
       await observe(() => observationFace.onEnd(event), ctx);
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
     // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
     // write failure must surface — never silently drop authorized error evidence.
-    pi.on("after_provider_response", async (event, ctx) => {
+    roleHost.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
       const provider = ctx.model?.provider;
@@ -1138,7 +1530,7 @@ export function createRoleRuntimeExtension(
       }
     });
 
-    pi.on("session_start", async (event, ctx) => {
+    roleHost.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;
@@ -1150,19 +1542,19 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
-      pendingGatekeeperNonPassByToolCallId.clear();
+      pendingSubmissionNonPassByToolCallId.clear();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
-      oauthKeepalive.start(ctx);
-      const rawRole = pi.getFlag(ROLE_FLAG.name);
+      envelopeHost.startKeepalive(ctx);
+      const rawRole = roleHost.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
       if (entry === undefined) {
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      navigatorAttendance?.dispose();
+      await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       const runtime: ActivationRuntime = {
         event,
@@ -1172,14 +1564,22 @@ export function createRoleRuntimeExtension(
         coder,
         reviewer,
         decodeReviewerAdmitted() {
-          return decodeReviewerAdmittedInputs((name) => pi.getFlag(name));
+          return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
         },
         bindReviewerParent(activation) {
           activeReviewerParent = activation;
         },
+        decodeNotaryAdmitted() {
+          const ticketNumber = readNotaryTicketFlag(
+            roleHost.getFlag(NOTARY_TICKET_FLAG.name),
+          );
+          return ticketNumber === undefined ? undefined : { ticketNumber };
+        },
         collector,
         doctor,
         notary,
+        countersign,
+        gleanerLeft,
         inspector,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
@@ -1195,7 +1595,8 @@ export function createRoleRuntimeExtension(
         // deferred SM materialization must not wipe an in-memory principal marker.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
-        const ledgerHome = resolveActivationLedgerHome();
+        const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
+        const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
         if (dependencies.createNavigatorAttendance !== undefined) {
@@ -1207,7 +1608,12 @@ export function createRoleRuntimeExtension(
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
-              work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+              work = await dependencies.loadNavigatorWorkContext({
+                context: ctx,
+                role: entry.role,
+                phase: navigatorPhase(roleHost, entry.role),
+                getFlag: (name) => roleHost.getFlag(name),
+              });
               contextError = work.contextError;
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
@@ -1221,8 +1627,8 @@ export function createRoleRuntimeExtension(
           // session_start is process activation: resume unfinished principal only when marker
           // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
           // missing marker, or terminal already completed.
-          const sessionEntries = ctx.sessionManager.getEntries();
-          const invocationPhase = navigatorPhase(pi, entry.role);
+          const sessionEntries = [...ctx.sessionManager.getEntries()];
+          const invocationPhase = navigatorPhase(roleHost, entry.role);
           const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
             role: entry.role,
             phase: invocationPhase,
@@ -1230,12 +1636,23 @@ export function createRoleRuntimeExtension(
           });
           const invocationId = lifecyclePrincipal.invocationId;
           if (!lifecyclePrincipal.resume) {
-            pi.appendEntry(NAVIGATOR_INVOCATION_ENTRY, {
+            const data = {
               invocationId,
               role: entry.role,
               phase: invocationPhase,
               subjectKey: work.subjectKey,
-            });
+            };
+            envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
+            try {
+              sitianReport({
+                level: "event",
+                kind: "attendance",
+                cwd: ctx.cwd,
+                sessionParent: ctx.sessionManager.getSessionFile(),
+                payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
+                source: "role-runtime",
+              });
+            } catch {}
           }
           navigatorAttendance = await dependencies.createNavigatorAttendance({
             context: ctx,
@@ -1267,7 +1684,7 @@ export function createRoleRuntimeExtension(
         // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
         // Gate is env presence only — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {
-          engineDetourRegistered = registerEngineDetourTool(pi, hostActions);
+          engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
         }
         // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.

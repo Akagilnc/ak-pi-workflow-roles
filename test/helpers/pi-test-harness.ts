@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
   cp,
@@ -15,6 +16,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import {
+  assertWritableTestAgentDir,
+  realMachineAgentDir,
+  realMachineHome,
+} from "./test-agent-dir-guard.ts";
+
+export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -27,6 +35,7 @@ import {
 import {
   type CredentialStore,
   type FauxProviderHandle,
+  fauxProvider,
   InMemoryCredentialStore,
   type Model,
   type Provider,
@@ -810,6 +819,49 @@ export function machineLedgerHome(home: string): string {
   return join(home, ".ak-roles");
 }
 
+/**
+ * #604: temporary package home whose run/session paths sit under `.ak-roles/`
+ * so path-derive never falls through to the real machine home. Prefer this over
+ * bare mkdtemp run dirs whenever archivist/sitian/ledger may resolve from session.
+ */
+export function createTempPackageHomeLedger(input: {
+  prefix: string;
+  runName?: string;
+}): {
+  home: string;
+  bookKey: string;
+  ledgerHome: string;
+  runDirectory: string;
+  sessionDirectory: string;
+  sessionFile: string;
+  dispose(): void;
+} {
+  const home = mkdtempSync(join(tmpdir(), input.prefix));
+  const bookKey = basename(home);
+  const ledgerHome = machineLedgerHome(home);
+  const runDirectory = join(
+    ledgerHome,
+    "books",
+    bookKey,
+    "runs",
+    input.runName ?? "test-run",
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  mkdirSync(sessionDirectory, { recursive: true });
+  const sessionFile = join(sessionDirectory, "session.jsonl");
+  return {
+    home,
+    bookKey,
+    ledgerHome,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    dispose() {
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
 /** Book key for a git cwd whose common-dir host basename is the directory name. */
 export function activationBookKeyFor(cwd: string): string {
   return basename(cwd);
@@ -859,15 +911,18 @@ export function persistActivationSessionFile(input: {
 export function activationExtensionContext(input: {
   cwd: string;
   mode?: ExtensionContext["mode"];
-  home?: string;
+  /** Required hermetic home — no ambient/real HOME fallback. */
+  home: string;
   bookKey?: string;
   sessionDir?: string;
   sessionFile?: string | null;
   abort?: () => void;
 }): ExtensionContext {
-  const home = input.home ?? process.env.HOME;
+  // Explicit home only — never silently fall back to ambient/real HOME
+  // (2026-08-29 faux-leak: missing test HOME → real ~/.pi/agent poison).
+  const home = input.home;
   if (typeof home !== "string" || home.length === 0) {
-    throw new Error("activationExtensionContext requires home or process.env.HOME");
+    throw new Error("activationExtensionContext requires explicit home");
   }
   const bookKey = input.bookKey ?? activationBookKeyFor(input.cwd);
   let sessionFile: string | undefined;
@@ -892,6 +947,9 @@ export function activationExtensionContext(input: {
     cwd: input.cwd,
     abort: input.abort ?? (() => {}),
     sessionManager: {
+      getLeafEntry: () => undefined,
+      getLeafId: () => null,
+      getEntries: () => [],
       getSessionDir: () => sessionDir,
       getSessionFile: () => sessionFile,
     },
@@ -985,6 +1043,7 @@ export async function runPiSubprocess(
 export interface InProcessPiOptions {
   cwd: string;
   agentDir: string;
+  home?: string;
   faux: FauxProviderHandle;
   model?: Model<any>;
   provider?: Provider;
@@ -1010,8 +1069,9 @@ export interface InProcessPiOptions {
   /**
    * Opt-in at activation-owning tests only: real parent SessionManager whose
    * getSessionFile/getSessionDir share a persisted directory under the machine
-   * ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
-   * in-process callers must leave this unset so they incur no git discovery or
+   * ledger book (ADR 0048). Requires explicit `home` (or `agentDir` under that
+   * home) and a git cwd — never process.env.HOME (#604). Generic in-process
+   * callers must leave this unset so they incur no git discovery or
    * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
    */
   activationLedgerSession?: boolean;
@@ -1033,6 +1093,254 @@ export interface InProcessPiFixture {
   >["extensionsResult"];
   session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   sessionManager: SessionManager;
+}
+
+export interface MockProviderServerObservers {
+  /** Observe the model id each child stream request carries (model.id round-trips
+   * in the OpenAI-completions body). Lets tests assert which model the real child
+   * resolved from its seat selection through the actual provider entry. */
+  onModel?: (modelId: string, body: Record<string, unknown>) => void;
+  /** Observe each inbound child HTTP request. Headers prove models.json auth was consumed. */
+  onRequest?: (request: { headers: IncomingHttpHeaders }) => void;
+  /** Observe the real listener so lifecycle tests can assert its externally visible state. */
+  onServer?: (server: Server) => void;
+}
+
+export async function createMockProviderServer(
+  faux: ReturnType<typeof fauxProvider>,
+  observers: MockProviderServerObservers = {},
+): Promise<{ server: Server; baseUrl: string; close: () => Promise<void> }> {
+  const server = createServer(async (req, res) => {
+    try {
+      // Prevent keep-alive sockets from holding the test process ~10s after close.
+      res.setHeader("Connection", "close");
+      observers.onRequest?.({ headers: req.headers });
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      if (typeof body?.model === "string") observers.onModel?.(body.model, body);
+      const tools = (body.tools ?? []).map((tool: any) => ({
+        name: tool.function?.name ?? tool.name,
+        description: tool.function?.description ?? tool.description,
+        parameters: tool.function?.parameters ?? tool.parameters,
+      }));
+      const systemMessage = (body.messages ?? []).find((m: any) => m.role === "system");
+      const systemPrompt = body.system ?? (typeof systemMessage?.content === "string" ? systemMessage.content : undefined);
+      const messages = (body.messages ?? [])
+        .map((m: any) => {
+          if (m.role === "system") return undefined;
+          if (m.role === "tool") {
+            const isError = typeof m.content === "string"
+              ? /^Tool\s+.+ not found$|^Error:/.test(m.content.trim())
+              : false;
+            let toolName = m.name ?? "";
+            if (!toolName && typeof m.content === "string") {
+              const match = /^Tool\s+(.+)\s+not found$/i.exec(m.content.trim());
+              if (match) toolName = match[1];
+            }
+            return {
+              role: "toolResult",
+              toolCallId: m.tool_call_id,
+              toolName,
+              content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
+              isError,
+            };
+          }
+          if (m.role === "assistant") {
+            const content: any[] = [];
+            if (typeof m.content === "string" && m.content.length > 0) {
+              content.push({ type: "text", text: m.content });
+            }
+            if (Array.isArray(m.tool_calls)) {
+              for (const tc of m.tool_calls) {
+                let parsedArgs = tc.function?.arguments;
+                if (typeof parsedArgs === "string") {
+                  try { parsedArgs = JSON.parse(parsedArgs); } catch {}
+                }
+                content.push({
+                  type: "toolCall",
+                  id: tc.id,
+                  name: tc.function?.name ?? tc.name,
+                  arguments: parsedArgs ?? {},
+                });
+              }
+            }
+            return {
+              role: "assistant",
+              content,
+              api: "faux",
+              provider: "faux",
+              model: faux.getModel().id,
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+              stopReason: m.tool_calls?.length ? "toolUse" : "stop",
+              timestamp: Date.now(),
+            };
+          }
+          return {
+            role: m.role ?? "user",
+            content: typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content ?? [],
+            timestamp: Date.now(),
+          };
+        })
+        .filter(Boolean);
+
+      const stream = faux.provider.stream(faux.getModel(), {
+        messages: messages as any,
+        ...(tools.length > 0 ? { tools } : {}),
+        ...(systemPrompt ? { systemPrompt } : {}),
+      });
+      const message = await stream.result();
+      if (message.stopReason === "error" || message.stopReason === "aborted") {
+        if (message.errorMessage?.includes("Cannot read properties of undefined (reading 'length')")) {
+          const payload = {
+            id: `chatcmpl-${Date.now()}`,
+            object: "chat.completion.chunk",
+            created: 1,
+            model: faux.getModel().id,
+            choices: [{
+              index: 0,
+              delta: {
+                role: "assistant",
+                tool_calls: [{
+                  index: 0,
+                  id: "call-1",
+                  type: "function",
+                  function: {
+                    name: "ak_undefined_decision",
+                    arguments: "{}",
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          };
+          res.writeHead(200, {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            connection: "keep-alive",
+          });
+          res.write(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`);
+          res.end();
+          return;
+        }
+        // Surface provider failures as an HTTP error so the real adapter's
+        // stream path records a transport failure (streamFailure) instead of a
+        // flattened normal completion — preserving typed transport_failure
+        // classification through the OpenAI-completions round-trip.
+        // When the scripted assistant message holds a direct statusCode/status,
+        // mirror it as the HTTP status so auth/quota classification stays typed
+        // through institutional open (host-neutral navigator/auditor children).
+        const messageRecord = message as unknown as {
+          statusCode?: unknown;
+          status?: unknown;
+          body?: unknown;
+          code?: unknown;
+          errno?: unknown;
+        };
+        const heldStatus = typeof messageRecord.statusCode === "number"
+          ? messageRecord.statusCode
+          : typeof messageRecord.status === "number"
+            ? messageRecord.status
+            : undefined;
+        // Only a scripted HTTP status becomes a structured Response. Defaulting
+        // unstructured error-stop to synthetic 500 would wash local/unrecognized
+        // failures as provider 5xx testimony (失败诚实).
+        if (heldStatus !== undefined && heldStatus >= 400 && heldStatus < 600) {
+          res.writeHead(heldStatus, { "content-type": "application/json" });
+          res.end(JSON.stringify({
+            error: { message: message.errorMessage ?? message.stopReason },
+            ...(messageRecord.body === undefined ? {} : { body: messageRecord.body }),
+            ...(messageRecord.code === undefined ? {} : { code: messageRecord.code }),
+            ...(messageRecord.errno === undefined ? {} : { errno: messageRecord.errno }),
+          }));
+          return;
+        }
+        // 2xx SSE with an error object: SDK folds the original message into
+        // error-stop without a non-success HTTP status (no synthetic 5xx testimony).
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(`data: ${JSON.stringify({
+          error: { message: message.errorMessage ?? message.stopReason },
+        })}\n\ndata: [DONE]\n\n`);
+        res.end();
+        return;
+      }
+      const toolCalls = message.content
+        .filter((p: { type: string }) => p.type === "toolCall")
+        .map((p: { type: string; id?: string; name?: string; arguments?: unknown }, index: number) => ({
+          index,
+          id: p.id,
+          type: "function",
+          function: {
+            name: p.name,
+            arguments: typeof p.arguments === "string" ? p.arguments : JSON.stringify(p.arguments ?? {}),
+          },
+        }));
+      const text = message.content
+        .filter((p: { type: string }) => p.type === "text")
+        .map((p: { type: string; text?: string }) => p.text)
+        .join("");
+
+      const payload = {
+        id: `chatcmpl-${Date.now()}`,
+        object: "chat.completion.chunk",
+        created: 1,
+        model: faux.getModel().id,
+        choices: [{
+          index: 0,
+          delta: {
+            role: "assistant",
+            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+            ...(text.length > 0 ? { content: text } : {}),
+          },
+          finish_reason: null,
+        }],
+      };
+      // OpenAI-completions emits usage on the terminal chunk (include_usage).
+      // Preserve the faux provider's typed usage so the adapter's parseChunkUsage
+      // round-trips real per-turn usage back to consumers (distinct-turn proofs).
+      const messageUsage = (message as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
+      const usageChunk = messageUsage === undefined ? {} : {
+        prompt_tokens: (messageUsage.input ?? 0) + (messageUsage.cacheRead ?? 0) + (messageUsage.cacheWrite ?? 0),
+        completion_tokens: messageUsage.output ?? 0,
+        prompt_tokens_details: {
+          cached_tokens: messageUsage.cacheRead ?? 0,
+          cache_write_tokens: messageUsage.cacheWrite ?? 0,
+        },
+      };
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        ...payload,
+        choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }],
+        ...(Object.keys(usageChunk).length > 0 ? { usage: usageChunk } : {}),
+      })}\n\n`);
+      res.end("data: [DONE]\n\n");
+    } catch (error) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }));
+    }
+  });
+  // Node defaults keep-alive ~5–10s; force immediate idle close so fixture teardown
+  // does not leave sockets holding the test process after closeAllConnections.
+  server.keepAliveTimeout = 1;
+  server.headersTimeout = 2;
+  observers.onServer?.(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}/v1`;
+  return {
+    server,
+    baseUrl,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    },
+  };
 }
 
 export async function withInProcessPi<T>(
@@ -1109,12 +1417,9 @@ export async function withInProcessPi<T>(
     // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
     // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
     // cwd/Navigator identity stays fixture-owned.
-    const hermeticHome = process.env.HOME;
+    const hermeticHome = options.home ?? (options.agentDir ? dirname(options.agentDir) : undefined);
     if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-      throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
-    }
-    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
-      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
+      throw new Error("withInProcessPi activationLedgerSession requires home or agentDir");
     }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);
@@ -1126,7 +1431,15 @@ export async function withInProcessPi<T>(
       "activation",
       "inprocess-pi",
     );
+    // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
+    // materializes the real principal without a synthetic assistant message.
     sessionManager = SessionManager.create(options.cwd, parentSessionDir);
+    const runDirectory = dirname(parentSessionDir);
+    await mkdir(runDirectory, { recursive: true });
+    await mkdir(parentSessionDir, { recursive: true });
+    const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
+    await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
+    await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
@@ -1168,6 +1481,153 @@ export async function withInProcessPi<T>(
     } finally {
       session.dispose();
     }
+  }
+}
+
+/**
+ * Seed the child institutional sub-session's provider from a faux provider over
+ * the real OpenAI-completions HTTP path. `openPiInstitutionalSession` builds its
+ * own child ModelRuntime that reads `<PI_CODING_AGENT_DIR>/models.json`, so tests
+ * that drive `executeAuditorChild`/`runGatekeeper`/`runComplianceAudit` directly
+ * (without `withInProcessPi`) must register the faux provider there. Starts a
+ * mock SSE server backed by `faux`, writes the model registration, runs `run`,
+ * then tears both down.
+ */
+export async function withInstitutionalProviderFixture<T>(
+  faux: ReturnType<typeof fauxProvider>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const mock = await createMockProviderServer(faux);
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
+  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+  try {
+    const modelsPath = resolve(tempAgentDir, "models.json");
+    const model = faux.getModel() as {
+      id: string;
+      reasoning?: boolean;
+      thinkingLevelMap?: Record<string, string>;
+    };
+    await writeFile(modelsPath, JSON.stringify({
+      providers: {
+        [faux.provider.id]: {
+          baseUrl: mock.baseUrl,
+          api: "openai-completions",
+          apiKey: "test",
+          models: [{
+            id: model.id,
+            name: model.id,
+            api: "openai-completions",
+            // Preserve faux model reasoning / thinking map so institutional
+            // children honor Navigator :max the same way the parent session does.
+            reasoning: model.reasoning === true,
+            ...(model.thinkingLevelMap === undefined
+              ? {}
+              : { thinkingLevelMap: model.thinkingLevelMap }),
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+            compat: { requiresToolResultName: true },
+          }],
+        },
+      },
+    }, null, 2), "utf8");
+    return await run();
+  } finally {
+    await mock.close();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(tempAgentDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Seed agentDir/models.json from a faux provider over the real OpenAI-completions
+ * HTTP path. Institutional children (gatekeeper/auditor/evidence) resolve auth
+ * from PI_CODING_AGENT_DIR/models.json after #518 S3 child-local ModelRuntime —
+ * pi.registerProvider alone is not visible to the child. Returns a closer for
+ * the mock server; callers must close (session_shutdown / finally).
+ */
+export async function seedAgentDirModelsJsonFromFaux(
+  faux: ReturnType<typeof fauxProvider>,
+  agentDir: string | undefined | null,
+  options?: { providerId?: string; observers?: MockProviderServerObservers },
+): Promise<{ close: () => Promise<void>; baseUrl: string }> {
+  assertWritableTestAgentDir(agentDir);
+  const mock = await createMockProviderServer(faux, options?.observers ?? {});
+  try {
+    const providerId = options?.providerId ?? faux.provider.id;
+    const modelsPath = resolve(agentDir, "models.json");
+    let existing: { providers?: Record<string, unknown> } = {};
+    try {
+      existing = JSON.parse(await readFile(modelsPath, "utf8")) as typeof existing;
+    } catch (error) {
+      // Only missing file is "fresh"; permission/I/O/parse errors keep their cause.
+      const code =
+        error !== null && typeof error === "object" && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (code !== "ENOENT") throw error;
+    }
+    await writeFile(
+      modelsPath,
+      JSON.stringify(
+        {
+          providers: {
+            ...(existing.providers ?? {}),
+            [providerId]: {
+              baseUrl: mock.baseUrl,
+              api: "openai-completions",
+              apiKey: "test",
+              models: (() => {
+                const model = faux.getModel() as {
+                  id: string;
+                  reasoning?: boolean;
+                  thinkingLevelMap?: Record<string, string>;
+                };
+                return [{
+                  id: model.id,
+                  name: model.id,
+                  api: "openai-completions",
+                  // Preserve faux model reasoning / thinking map so institutional
+                  // children honor Navigator :max the same way the parent session does.
+                  reasoning: model.reasoning === true,
+                  ...(model.thinkingLevelMap === undefined
+                    ? {}
+                    : { thinkingLevelMap: model.thinkingLevelMap }),
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128000,
+                  maxTokens: 16384,
+                  compat: { requiresToolResultName: true },
+                }];
+              })(),
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return { close: mock.close, baseUrl: mock.baseUrl };
+  } catch (error) {
+    await mock.close();
+    throw error;
+  }
+}
+
+export async function withAgentDirProviderFixture<T>(
+  faux: ReturnType<typeof fauxProvider>,
+  agentDir: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
+  try {
+    return await run();
+  } finally {
+    await seeded.close();
   }
 }
 

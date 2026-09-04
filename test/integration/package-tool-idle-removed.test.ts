@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import {
   fauxAssistantMessage,
@@ -17,8 +18,10 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
+import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
 import { DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES } from "../../src/evidence-child-executor.ts";
 import {
   createRoleRuntimeExtension,
@@ -31,7 +34,9 @@ import {
   waitForEventLoopCondition,
   withActivationHome,
   withInProcessPi,
+  withInstitutionalProviderFixture,
 } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 const PACKAGE_TOOL = "ak_package_owned_no_idle";
 
@@ -56,7 +61,10 @@ async function withPackageToolSession<T>(
     });
     return withInProcessPi({
       cwd: home,
+      home,
       agentDir,
+      // #604: nest session under hermetic .ak-roles (sitian/ledger path-derive).
+      activationLedgerSession: true,
       faux,
       modelsPath: null,
       noExtensions: true,
@@ -66,9 +74,8 @@ async function withPackageToolSession<T>(
       flags: {},
       extensionFactories: [
         (pi: ExtensionAPI) => {
-          createRoleRuntimeExtension({
+          createPiRoleRuntimeExtension({
             loadJudgeSoul: async () => "judge",
-            transcriptFromContext: () => "",
             auditSoulCompliance: async () => ({ status: "pass" }),
           })(pi);
           pi.registerTool(tool);
@@ -200,12 +207,8 @@ test(
           provider: "ak-judge-stream-idle-kept",
           tokenSize: { min: 1000, max: 1000 },
         });
-        const auditSoulCompliance = createPiJudgeAuditor(async () => {
-          complianceStreamAttempts += 1;
-          await new Promise<never>(() => {});
-          throw new Error("unreachable compliance completion");
-        });
-        await withInProcessPi({
+        const auditSoulCompliance = createPiJudgeAuditor();
+        await withInstitutionalProviderFixture(faux, () => withInProcessPi({
           activationLedgerSession: true,
           cwd: home,
           agentDir,
@@ -217,16 +220,35 @@ test(
           mode: "print",
           flags: { "ak-role": "judge" },
           extensionFactories: [
-            createRoleRuntimeExtension({
+            (pi) => {
+              const piHostAdapter = createPiRoleHostAdapter(pi);
+              createRoleRuntimeExtension({
               loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-              transcriptFromContext: () => "adjudication evidence",
-              auditSoulCompliance,
-            }),
+              auditSoulCompliance: (options) => auditSoulCompliance({ ...options, context: toPiContext(options.context) }),
+              })(piHostAdapter);
+            },
           ],
-        }, async ({ session }) => {
-          // Judge output → scripted Gatekeeper → Notary → injected silent compliance child.
-          const respond = (context: { tools?: Array<{ name: string }> }) => {
+        }, async ({ session, sessionManager }) => {
+          // Judge → scripted Gatekeeper → Notary → injected silent compliance child.
+          // The institutional children read their seat from the resolution page at
+          // the parent run directory (composed at admission in public-cli; here the
+          // in-process fixture writes the shared seat table directly).
+          const parentFile = sessionManager.getSessionFile();
+          if (parentFile !== undefined) {
+            const parentRunDir = join(dirname(dirname(parentFile)));
+            await writeInstitutionalSeatTable(parentRunDir, {
+              gatekeeper: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+              notary: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+              auditor: seatSelection("ak-judge-stream-idle-kept", "ak-judge-stream-idle-kept"),
+            });
+          }
+          const respond = async (context: { tools?: Array<{ name: string }> }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(JUDGE_AUDIT_TOOL_NAME)) {
+              complianceStreamAttempts += 1;
+              await new Promise<never>(() => {});
+              throw new Error("unreachable compliance completion");
+            }
             if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
               return fauxAssistantMessage(
                 fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
@@ -251,18 +273,20 @@ test(
             }
             return fauxAssistantMessage("continuation after compliance idle exhaustion");
           };
-          faux.setResponses(Array.from({ length: 6 }, () => respond));
+          faux.setResponses(Array.from({ length: 12 }, () => respond));
 
           const promptDone = session.prompt("adjudicate with silent compliance child");
+          let earlySettlement: unknown;
           void promptDone.then(
-            () => undefined,
-            () => undefined,
+            () => { earlySettlement = new Error("judge prompt settled before entering compliance child stream"); },
+            (error) => { earlySettlement = error; },
           );
 
           await waitForEventLoopCondition(
-            () => complianceStreamAttempts >= 1,
+            () => complianceStreamAttempts >= 1 || earlySettlement !== undefined,
             { label: "judge submission entered real compliance child stream once" },
           );
+          if (earlySettlement !== undefined) throw earlySettlement;
 
           t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
           await waitForEventLoopCondition(
@@ -302,7 +326,7 @@ test(
           assert.match(text, /stream idle timeout/i);
           assert.doesNotMatch(text, /PackageOwnedToolIdleTimeoutError/);
           assert.doesNotMatch(text, /package-owned tool idle timeout/i);
-        });
+        }));
       });
     } finally {
       process.exitCode = originalExitCode;

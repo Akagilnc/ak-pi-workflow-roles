@@ -1,3 +1,6 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #106 end-to-end: ak-role judge → existing Judge gate (real Pi + faux provider)
  * → one Terminal result with registry-rendered Navigator command.
@@ -10,8 +13,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
+import { readSitianRecords, resolveSitianRecordPath } from "../../src/sitian-facade.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
@@ -201,7 +204,10 @@ test(
             stdout: (text) => stdout.push(text),
             stderr: (text) => stderr.push(text),
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             const subprocess = await runPiSubprocess([...args], {
               cwd: options.cwd,
               env: {
@@ -219,6 +225,8 @@ test(
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", providerPath],
+          }),
         },
       );
 
@@ -254,11 +262,20 @@ test(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as any);
-      const retained = rows.filter(
-        (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
-      );
+      const recordFile = resolveSitianRecordPath({
+        level: "event",
+        kind: "auditor",
+        cwd: project,
+        sessionParent: sessionFile,
+      }).recordFile;
+      const retained = (await readSitianRecords(recordFile)).records.flatMap((record) => {
+        const payload = record.payload as { response?: { content?: any[] } } | undefined;
+        return payload?.response === undefined ? [] : [payload.response];
+      });
       assert.ok(retained.length >= 1, "retained auditor response must still land");
-      const retainedCall = retained[0].data.response.content.find(
+      const retainedResponse = retained[0];
+      assert.ok(retainedResponse);
+      const retainedCall = retainedResponse.content?.find(
         (part: any) => part.type === "toolCall",
       );
       assert.deepEqual(retainedCall.arguments, {
@@ -331,7 +348,10 @@ async function traceJudgeInfrastructureFailure(input: {
         judgeExtraPiArgs: ["-e", providerPath],
         judgeTimeoutMs: 90_000,
         io: { stdout() {}, stderr() {} },
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           const env: NodeJS.ProcessEnv = {
             ...options.env,
             PI_OFFLINE: "1",
@@ -353,6 +373,8 @@ async function traceJudgeInfrastructureFailure(input: {
             args: [...args],
           };
         },
+            extraPiArgs: ["-e", providerPath],
+          }),
       },
     );
 
@@ -456,7 +478,8 @@ for (const scenario of [
     childEnv: { AK_GATE_MODE: "gatekeeper-no-dispatch" },
     expectDetails: {
       stage: "gatekeeper",
-      submission: { status: "pass", findings: [] },
+      // Unusable non-pass/non-dispatch; lawful province pass is not failure (#597).
+      submission: { status: "ok-enough" },
     },
   },
   {
@@ -555,7 +578,10 @@ test(
               stderr.push(text);
             },
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             // Delivery outcome scripts a lawful soul-audit pass + Judge converge
             // and a typed Navigator recommendation (model command prose ignored).
             const subprocess = await runPiSubprocess([...args], {
@@ -575,6 +601,8 @@ test(
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", providerPath],
+          }),
         },
       );
 
@@ -593,27 +621,24 @@ test(
         "runs",
         "run-e2e-judge-001@judge",
       );
-      const terminal = await settleJudgeTerminalResult({
-        role: "judge",
-        runId: "run-e2e-judge-001",
-        runDirectory: runDir,
-        sessionDirectory: join(runDir, "session"),
-        sessionFile: join(runDir, "session", "session.jsonl"),
-        projectRoot: project,
-        bookKey,
-        instruction: "Canonical nonblank prose Judge request for navigation.",
-        instructionEmpty: false,
-        attachments: [],
-        admittedRequestPath: join(runDir, "admitted-request.json"),
-      });
+      const terminal = await settleJudgeTerminalResult(
+        fixtureJudgeAdmitted({
+          runId: "run-e2e-judge-001",
+          runDirectory: runDir,
+          projectRoot: project,
+          bookKey,
+          instruction: "Canonical nonblank prose Judge request for navigation.",
+          instructionEmpty: false,
+        }),
+        piDurablePrincipalAuthority,
+      );
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");
       assert.equal(terminal.navigator.disposition, "recommendation");
       if (terminal.navigator.disposition === "recommendation") {
         assert.equal(terminal.navigator.next.role, "reviewer");
-        assert.equal(terminal.navigator.command, "ak-role reviewer");
-        assert.equal(terminal.navigator.command.includes("pi --ak-role"), false);
+        assert.equal(terminal.navigator.command, undefined);
       }
       assert.equal(terminal.runId, "run-e2e-judge-001");
       assert.ok(terminal.artifacts.length >= 2);

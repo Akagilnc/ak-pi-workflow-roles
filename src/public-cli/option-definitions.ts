@@ -22,6 +22,7 @@ export type RolePhase = "plan" | "apply";
 export type OptionOwner =
   | "global"
   | "judge"
+  | "countersign"
   | "coder"
   | "fixer"
   | "reviewer"
@@ -29,6 +30,7 @@ export type OptionOwner =
   | "doctor"
   | "merger"
   | "notary"
+  | "gleaner-left"
   | "inspector"
   | "analyst";
 
@@ -298,8 +300,22 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
-      zh: "本调用可选劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。",
+      en: "Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
+      zh: "本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。",
+    },
+  },
+  {
+    id: "host",
+    owner: "global",
+    canonical: "--host",
+    aliases: [],
+    valueMetavar: "name",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Select the named main-session host adapter for this invocation (overrides persistent seat host; after config set-host the role command face is unchanged).",
+      zh: "为本调用选择具名主会话宿主适配器（覆盖席位持久 host；config set-host 后角色命令面不变）。",
     },
   },
   {
@@ -370,9 +386,47 @@ const JUDGE_OPTIONS = [
   bindOwner("judge", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const GLEANER_LEFT_OPTIONS = [
+  bindOwner("gleaner-left", SHARED_PROJECT_SEMANTICS),
+  // Unanchored seat: no --attach face (self-fetches the merge-candidate diff).
+  {
+    id: "base",
+    owner: "gleaner-left" as const,
+    canonical: "--base",
+    aliases: [],
+    valueMetavar: "revision",
+    required: true,
+    repeatable: false,
+    form: "option" as const,
+    description: {
+      en: "Required comparison-base revision for the unanchored merge-candidate diff.",
+      zh: "必填；无锚定合并候选 diff 的比较基线 revision。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
 const INSPECTOR_OPTIONS = [
   bindOwner("inspector", SHARED_PROJECT_SEMANTICS),
   bindOwner("inspector", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const COUNTERSIGN_OPTIONS = [
+  bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
+  bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "ticket",
+    owner: "countersign",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Ticket/issue number for court diary (diarist) and ticket-keyed provenance. Overrides attachment frontmatter when both present.",
+      zh: "票号：起居郎流水线与起居录票键。与附件 frontmatter 并存时以本旗为准。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -560,6 +614,20 @@ const NOTARY_OPTIONS = [
       zh: "必填源 run 定位符（簿内 runId@role，或该 run 目录路径）。零 prompt/附件投影。",
     },
   },
+  {
+    id: "ticket",
+    owner: "notary",
+    canonical: "--ticket",
+    aliases: [],
+    valueMetavar: "number",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Optional ticket/issue number when Notary reads the court diary (ticket-provenance) for a ticket.",
+      zh: "可选票号：符宝郎按票键调取起居录时使用。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const MERGER_OPTIONS = [
@@ -720,6 +788,8 @@ const ANALYST_OPTIONS = [
 export const PUBLIC_OPTION_TABLE = {
   global: GLOBAL_OPTIONS,
   judge: JUDGE_OPTIONS,
+  countersign: COUNTERSIGN_OPTIONS,
+  "gleaner-left": GLEANER_LEFT_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
   reviewer: REVIEWER_OPTIONS,
@@ -736,6 +806,8 @@ export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 /** Role/deterministic owners that appear on PUBLIC_ROLE_ARGV. */
 export const PUBLIC_ROLE_OPTION_OWNERS = [
   "judge",
+  "countersign",
+  "gleaner-left",
   "coder",
   "fixer",
   "reviewer",
@@ -1046,6 +1118,25 @@ const ROLE_COMMAND_HELP = {
       'ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."',
     ],
   },
+  countersign: {
+    command: "countersign",
+    summary: "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
+    usage: ["ak-role countersign [options] [instruction]"],
+    examples: [
+      'ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"',
+      'ak-role countersign --attach ./plan.md --attach ./adr.md "裁：方案五问。"',
+    ],
+  },
+  "gleaner-left": {
+    command: "gleaner-left",
+    summary:
+      "Unanchored pre-merge memorials; findings only, no bounce. Instruction may be empty; callers must not pass directional instruction.",
+    usage: ["ak-role gleaner-left --base <revision> [options] [instruction]"],
+    examples: [
+      "ak-role gleaner-left --base main",
+      "ak-role gleaner-left --base origin/main --project ./worktree",
+    ],
+  },
   coder: {
     command: "coder",
     summary: "First implementation; phase defaults to apply.",
@@ -1097,19 +1188,22 @@ const ROLE_COMMAND_HELP = {
       'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
     ],
   },
+  inspector: {
+    command: "inspector",
+    summary: "Direct Inspector (察院) complexity and test-quality check; pass or bounce.",
+    usage: ["ak-role inspector [options] [instruction]"],
+    examples: [
+      'ak-role inspector --attach ./change.patch "Review this material."',
+    ],
+  },
   notary: {
     command: "notary",
     summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
       "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+      "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@countersign --ticket 582",
     ],
-  },
-  inspector: {
-    command: "inspector",
-    summary: "Direct complexity and test-quality inspection.",
-    usage: ["ak-role inspector [options] [instruction]"],
-    examples: ['ak-role inspector --attach ./change.patch "Review this material."'],
   },
   analyst: {
     command: "analyst",
@@ -1136,18 +1230,21 @@ const SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model, labor-engine, and auto-resume defaults.",
+    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults.",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config unset <gatekeeper|inspector|notary>",
       "ak-role config set-engine <seat> <name>",
       "ak-role config unset-engine <seat>",
+      "ak-role config set-host <seat> <name>",
+      "ak-role config unset-host <seat>",
       "ak-role config set-auto-resume-limit <N>",
     ],
     examples: [
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
       "ak-role config unset gatekeeper",
       "ak-role config set-engine judge opus",
+      "ak-role config set-host judge grok-build",
       "ak-role config set-auto-resume-limit 3",
     ],
   },
@@ -1159,11 +1256,14 @@ const SUPPORT_COMMAND_HELP = {
   },
   resume: {
     command: "resume",
-    summary: "Reopen an exact role run whose Pi session principal still exists.",
+    summary:
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist.",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
       "ak-role resume 01abc… \"owner ruling\"",
+      "ak-role --host grok-build resume 01abc…",
+      "ak-role --engine agy resume 01abc…",
     ],
   },
 } as const satisfies Record<string, PublicCommandHelpFacts>;

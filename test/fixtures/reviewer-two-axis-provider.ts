@@ -9,6 +9,7 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 function axisFromPrompt(text: string): "standards" | "spec" | undefined {
   // Identity from typed package constant — no hard-coded version contract in the fixture.
@@ -100,11 +101,16 @@ export const REVIEWER_AMENDMENT_TRACE_A = REVIEWER_AMENDMENT_TRACE;
 export const REVIEWER_AMENDMENT_TRACE_B = REVIEWER_AMENDMENT_TRACE;
 
 /** Offline provider for public ak-role Reviewer fixed two-axis chain (no auditor after #495 S6). */
-export default function reviewerTwoAxisProvider(pi: ExtensionAPI): void {
+export default async function reviewerTwoAxisProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
     api: "ak-reviewer-two-axis",
     provider: "ak-reviewer-two-axis",
     tokenSize: { min: 1000, max: 1000 },
+  });
+  // Evidence-child auth is child-local via models.json (#518 S3).
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
+  pi.on("session_shutdown", () => {
+    void seeded.close();
   });
   const expectedAxes = expectedAxesFromEnv();
   const axisSeen = new Set<string>();

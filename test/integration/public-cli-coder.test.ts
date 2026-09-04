@@ -1,3 +1,7 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -21,19 +25,15 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+
 import {
-  buildCoderActivationExtraArgs,
-  buildCoderResumeActivationExtraArgs,
-} from "../../src/public-cli/coder-run.ts";
-import { admitCoderInvocation } from "../../src/public-cli/invocation.ts";
+  admitCoderInvocation,
+} from "../../src/public-cli/invocation.ts";
 import {
-  RESUME_TRANSPORT_ENVELOPE,
-} from "../../src/public-cli/run-lifecycle.ts";
-import {
-  extractCoderRoleOutcome,
   settleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -72,55 +72,122 @@ function seedGitProject(root: string): void {
 
 
 
-test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on plan", async () => {
+/**
+ * Replaces direct buildPiTurnExtraArgs argv locks — verifies behavior through
+ * the typed request contract, not argv string indexing.
+ */
+
+test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD method, plan omits it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const apply = await admitCoderInvocation({
-      home,
-      cwd: project,
-      phase: "apply",
-      instruction: "Apply the approved plan.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-apply-args",
-    });
-    const applyArgs = buildCoderActivationExtraArgs(apply, { packageRoot });
-    assert.equal(applyArgs.includes("--no-skills"), true);
-    assert.equal(applyArgs.includes("--skill"), true);
-    assert.equal(applyArgs.includes("--ak-coder-phase"), true);
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-phase") + 1], "apply");
-    assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-task") + 1], apply.taskPath);
-    // No ambient home skill path.
-    assert.equal(
-      applyArgs.some((a) => a.includes(".agents/skills")),
-      false,
-    );
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    const plan = await admitCoderInvocation({
-      home,
-      cwd: project,
-      phase: "plan",
-      instruction: "Plan only.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-plan-args",
-    });
-    const planArgs = buildCoderActivationExtraArgs(plan, { packageRoot });
-    assert.equal(planArgs.includes("--no-skills"), true);
-    assert.equal(planArgs.includes("--skill"), false);
-    assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
+    // Apply phase: TDD method binding present, phase = apply.
+    {
+      await runAkRole(
+        ["coder", "--project", project, "Apply the approved plan."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-apply-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "apply");
+      assert.equal(
+        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
+        true,
+        "apply must bind TDD method",
+      );
+      assert.equal(req.continuation.kind, "initial");
+    }
 
-    // Resume args preserve phase and package skill binding without resubmitting task prose.
-    const resumeApply = buildCoderResumeActivationExtraArgs(apply, { packageRoot });
-    assert.equal(resumeApply[resumeApply.indexOf("--ak-coder-phase") + 1], "apply");
-    assert.equal(resumeApply.includes("--skill"), true);
-    assert.equal(resumeApply.includes(RESUME_TRANSPORT_ENVELOPE), true);
-    assert.equal(resumeApply.includes(apply.instruction), false);
-    const resumePlan = buildCoderResumeActivationExtraArgs(plan, { packageRoot });
-    assert.equal(resumePlan[resumePlan.indexOf("--ak-coder-phase") + 1], "plan");
-    assert.equal(resumePlan.includes("--skill"), false);
-    assert.equal(resumePlan.includes(RESUME_TRANSPORT_ENVELOPE), true);
+    // Plan phase: no method bindings.
+    {
+      const result = await runAkRole(
+        ["coder", "plan", "--project", project, "Plan only."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-plan-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 1);
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "plan");
+      assert.equal(req.methods.length, 0, "plan must omit method bindings");
+    }
+
+    // Resume phase: default envelope (no explicit message) preserves apply bindings and selects typed resume continuation.
+    {
+      // First seed an admitted apply run with accessible session principal coordinates
+      await runAkRole(
+        ["coder", "--project", project, "Apply the approved plan."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-coder-resume-typed",
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: createMinimalHost(async (request) => {
+            const { sessionDirectory, sessionFile } =
+              piDurablePrincipalAuthority.decode(request.principal);
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(sessionFile, "", "utf8");
+            return { code: 1, stderr: "stop", timedOut: false };
+          }),
+        },
+      );
+
+      captured.current = undefined;
+      const result = await runAkRole(
+        ["resume", "run-coder-resume-typed"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          io: captureIo().io,
+          credentials: { "openai-codex": true, xai: true },
+          principalAuthority: piDurablePrincipalAuthority,
+          roleTurnHost: createMinimalHost((request) => {
+            captured.current = request;
+            return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 1);
+      const req = captured.current!;
+      assert.equal(req.activation.role, "coder");
+      assert.equal(req.activation.phase, "apply");
+      assert.equal(
+        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
+        true,
+        "resumed apply must bind TDD method",
+      );
+      // The two-argument invocation above selects the no-explicit-message branch;
+      // its structured request must still carry resume continuation semantics.
+      assert.equal(req.continuation.kind, "resume");
+    }
   });
 });
 
@@ -130,6 +197,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const admitted = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "apply",
@@ -137,7 +205,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       attachmentPaths: [],
       createRunId: () => "run-coder-settle-001",
     });
-    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     const receipt = {
       status: "completed" as const,
@@ -172,19 +240,21 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       }),
     ];
     await writeFile(
-      admitted.sessionFile,
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
       `${sessionLines.join("\n")}\n`,
       "utf8",
     );
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "coder",
+      details: receipt,
+      toolCallId: "c1",
+    });
 
-    const extracted = extractCoderRoleOutcome(
-      sessionLines.map((line) => JSON.parse(line)),
-    );
-    assert.equal(extracted?.outcome.role, "coder");
-    assert.equal(extracted?.outcome.kind, "accepted");
-    assert.equal(extracted?.outcome.status, "completed");
-
-    const terminal = await settleCoderTerminalResult(admitted, {
+    const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
     });
     assert.equal(terminal.roleOutcome.role, "coder");
@@ -235,6 +305,51 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
   });
 });
 
+test("alternate host seals accepted Terminal without Pi acceptance leaf", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const receipt = {
+      status: "completed" as const,
+      report: "Alternate host sealed through production ledger producer.",
+    };
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["coder", "--project", project, "Finish without a Pi session leaf."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-coder-alternate-host",
+        io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          const { sessionDirectory, sessionFile } =
+            piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          // No Pi acceptance leaf — alternate host walks production ledger → sealed → Terminal.
+          await writeFile(sessionFile, "", "utf8");
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            home,
+            runId: "run-coder-alternate-host",
+            runDirectory: request.runDirectory,
+            role: "coder",
+            details: receipt,
+            toolCallId: "alt-1",
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0, stdout.join("") || "alternate host failed");
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal!.roleOutcome.role, "coder");
+    assert.equal(result.terminal!.roleOutcome.status, "completed");
+  });
+});
+
 test("ak-role coder defaults apply, preserves plan, and rejects blank task structurally", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
@@ -249,9 +364,13 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         home,
         cwd: project,
         io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           throw new Error("must not dispatch");
         },
+          }),
       });
       assert.equal(result.exitCode, 2);
       assert.equal(stderr.join("").length > 0, true);
@@ -275,7 +394,10 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           cwd: project,
           createRunId: () => "run-cli-coder-plan",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             // Write a lawful planned receipt into the session the args reserved.
             const sessionIdx = args.indexOf("--session");
@@ -301,11 +423,13 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "p1" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "coder plan failed");
@@ -348,7 +472,10 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           cwd: project,
           createRunId: () => "run-cli-coder-apply",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -357,6 +484,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true);
@@ -388,7 +516,10 @@ test("ak-role resume continues coder with preserved plan phase and exact session
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -403,6 +534,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.ok(first.terminal?.resume, "coder plan 429 must be resumable");
@@ -434,15 +566,21 @@ test("ak-role resume continues coder with preserved plan phase and exact session
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-coder-task") + 1], admitted.taskPath);
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
+        const details = {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              };
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
@@ -452,21 +590,20 @@ test("ak-role resume continues coder with preserved plan phase and exact session
               toolCallId: "r1",
               toolName: CODER_OUTPUT_TOOL_NAME,
               isError: false,
-              details: {
-                status: "planned",
-                report: "Resumed plan remains plan phase.",
-              },
+              details,
             },
           })}\n`,
           "utf8",
         );
         return {
           code: 0,
+          sealedAcceptance: { role: "coder" as const, details, toolCallId: "r1" },
           stderr: "",
           timedOut: false,
           args: [...args],
         };
       },
+          }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "coder resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
@@ -509,7 +646,10 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-cli-coder-bare-model",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
@@ -534,11 +674,13 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
             );
             return {
               code: 0,
+              sealedAcceptance: { role: "coder" as const, details: receipt, toolCallId: "bare1" },
               stderr: "",
               timedOut: false,
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(
@@ -599,7 +741,10 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => "run-cli-coder-thinking-suffix",
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             captured = [...args];
             return {
               code: 1,
@@ -608,6 +753,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(Array.isArray(captured), true, stderr.join("") || "suffix dispatch missing args");
@@ -665,7 +811,10 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-cli-coder-unknown-model",
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           dispatched = true;
           captured = [...args];
           // Simulate existing typed model-resolution refusal from the host runtime.
@@ -676,6 +825,7 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(dispatched, true, stderr.join("") || "unknown model must reach pi dispatch");
@@ -726,7 +876,10 @@ test("malformed --model thinking suffix is rejected at public entry without disp
                   : "bogus"
             }`,
           io,
-          piRunner: async (args) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
             dispatched = true;
             return {
               code: 0,
@@ -735,6 +888,7 @@ test("malformed --model thinking suffix is rejected at public entry without disp
               args: [...args],
             };
           },
+          }),
         },
       );
       assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);

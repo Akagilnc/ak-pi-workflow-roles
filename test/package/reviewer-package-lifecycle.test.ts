@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #319 Batch 2 (M2): Reviewer-unique deep chain only
  * (public ak-role Reviewer → Judge; #495 S6 dropped reviewer-side auditor).
@@ -97,7 +99,10 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
               stderr.push(text);
             },
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: installedRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             const subprocess = await runPiSubprocess([...args], {
               cwd: options.cwd,
               env: {
@@ -116,6 +121,8 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", providerPath],
+          }),
         },
       );
 
@@ -216,7 +223,11 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
       );
       assert.equal(outputResults.length, 1, "single typed accept after legs");
       assert.equal(outputResults[0]?.message?.isError, false);
-      assert.deepEqual(outputResults[0]?.message?.details?.amendments, REVIEWER_AMENDMENT_TRACE);
+      const closureResults = sessionRows.filter(
+        (row) => row.type === "custom" && row.customType === "ak-role-submission-closure",
+      );
+      assert.equal(closureResults.length, 1, "single typed closure after legs");
+      assert.deepEqual(((closureResults[0] as any)?.data?.details ?? (closureResults[0] as any)?.details)?.amendments, REVIEWER_AMENDMENT_TRACE);
 
       // Caller-owned handoff: public Judge admits the frozen Reviewer receipt.
       const judgeProvider = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
@@ -250,7 +261,10 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
               judgeStderr.push(text);
             },
           },
-          piRunner: async (args, options) => {
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: installedRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
             const subprocess = await runPiSubprocess([...args], {
               cwd: options.cwd,
               env: {
@@ -268,6 +282,8 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
               args: [...args],
             };
           },
+            extraPiArgs: ["-e", judgeProvider],
+          }),
         },
       );
       assert.equal(judge.exitCode, 0, judgeStderr.join("") || "public judge failed");

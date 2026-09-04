@@ -18,6 +18,7 @@ import {
   ENGINE_DETOUR_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
+import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
 
@@ -64,11 +65,15 @@ function detourAlreadyCalled(context: Context): boolean {
   );
 }
 
-export default function reviewerEngineDetourProvider(pi: ExtensionAPI): void {
+export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
     api: "ak-reviewer-engine-detour",
     provider: "ak-reviewer-engine-detour",
     tokenSize: { min: 1000, max: 1000 },
+  });
+  const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
+  pi.on("session_shutdown", async () => {
+    await seeded.close();
   });
   const axisSeen = new Set<string>();
   const response = (context: Context) => {

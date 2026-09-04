@@ -18,6 +18,8 @@
  * first/last span missing/unknown/unparseable/inverted — also fails loudly via
  * the same throw→ledger `auditor-roles` unreadable seam. Unknown/non-contract
  * dispatch status stays loud (#475 abolished Gatekeeper incomplete special-case).
+ * Lawful province non-dispatch release (`pass` on a dispatch tool) opens no
+ * round and must not throw (#597 / ADR 0074 gate-non-mandatory).
  * True non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
  */
 import { readdir } from "node:fs/promises";
@@ -236,7 +238,11 @@ async function classifyAuditorVolume(
   const findingsCount = findings.length;
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    // Gatekeeper contract terminal is dispatch only (#475).
+    // Lawful province non-dispatch release — opens no round, never unreadable (#597).
+    if (status === "pass") {
+      return undefined;
+    }
+    // Pairing terminal is dispatch; unknown/non-contract status stays loud (#475).
     if (status !== "dispatch") {
       throw new Error(
         `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`,

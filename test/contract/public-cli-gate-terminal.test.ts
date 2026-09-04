@@ -1,3 +1,5 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
@@ -8,6 +10,7 @@
  *   1. normal dispatch + officer findings; non-empty reason kept as written
  *   2. seat reduction without written reason (reason key absent)
  *   3. no-gate → gate omitted
+ *   3b. lawful province pass → accepted Terminal stays; gate omitted (#597)
  *   4. damaged auditor-roles → must not wash to "no gate"
  *   5. ordinary controlled failure still projects accepted gate facts
  *   6. no_receipt projects accepted gate facts
@@ -195,6 +198,8 @@ async function runJudgePublic(input: {
     readonly code: number;
     readonly stderr?: string;
   };
+  /** When set, seals via production submission ledger (accepted path). */
+  sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(
@@ -205,7 +210,10 @@ async function runJudgePublic(input: {
       cwd: input.project,
       createRunId: () => input.runId,
       io,
-      piRunner: async (args) => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });
@@ -215,8 +223,17 @@ async function runJudgePublic(input: {
           stderr: input.piResult?.stderr ?? "",
           timedOut: false,
           args: [...args],
+          ...(input.sealedAcceptance === undefined
+            ? {}
+            : {
+                sealedAcceptance: {
+                  role: "judge" as const,
+                  details: input.sealedAcceptance.details,
+                },
+              }),
         };
       },
+          }),
     },
   );
   assert.ok(result.terminal, "public entry must settle a Terminal");
@@ -241,6 +258,7 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
       home,
       project,
       runId: "run-gate-normal",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -270,6 +288,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       home,
       project,
       runId: "run-gate-no-reason",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -300,6 +319,7 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       home,
       project,
       runId: "run-gate-no-gate",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
@@ -314,6 +334,41 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
   }, { prefix: "ak-gate-no-gate-" });
 });
 
+test("public CLI keeps accepted Terminal when auditor-roles holds lawful province pass", async () => {
+  // #597: province pass is a lawful non-dispatch release — zero paired rounds,
+  // gate omitted, accepted submission remains terminal (never exit 1 / unrecognized).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { terminal, exitCode } = await runJudgePublic({
+      home,
+      project,
+      runId: "run-gate-province-pass",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      seedSession: async (sessionDir) => {
+        await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
+        const auditorDir = join(sessionDir, "auditor-roles");
+        await mkdir(auditorDir, { recursive: true });
+        await writeFile(
+          join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),
+          gateToolSessionJsonl({
+            id: "province-pass",
+            startedAt: iso(0),
+            endedAt: iso(1_000),
+            toolName: "ak_gatekeeper_output",
+            args: { status: "pass", reason: "no officer needed" },
+          }),
+          "utf8",
+        );
+      },
+    });
+    assert.equal(exitCode, 0);
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.gate, undefined);
+  }, { prefix: "ak-gate-province-pass-" });
+});
+
 test("public CLI does not wash damaged auditor-roles into no-gate", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -323,6 +378,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       home,
       project,
       runId: "run-gate-damaged",
+      sealedAcceptance: { details: { judgeStatus: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");
@@ -430,7 +486,10 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           await mkdir(sessionDir, { recursive: true });
@@ -468,6 +527,7 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 1);

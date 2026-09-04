@@ -2,10 +2,10 @@
  * Persistent and effective per-seat model/thinking configuration for ak-role.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
+import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
   AUTOMATIC_CONFIGURABLE_SEATS,
   PUBLIC_CALLABLE_ROLES,
@@ -13,6 +13,7 @@ import {
   isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicConfigurableSeat,
+  seatModelOnly,
   type ModelRef,
   type PublicCallableRole,
   type PublicConfigurableSeat,
@@ -41,16 +42,17 @@ export type CredentialProviders = {
 export type SeatModelConfig = ModelRef;
 
 /**
- * Persistent seat row (#356/#384/#453): model fields and engine are independent
- * axes. Direct Inspector and Notary seats may retain an engine after model clear so
- * officer activation keeps its labor engine while province inheritance resumes.
- * All other seats keep the baseline provider/model required contract.
+ * Persistent seat row (#356/#384/#453/#522/#568): model, engine, and host are
+ * independent axes. Axis-only residuals: notary and inspector may keep
+ * host/engine after model clear; all other seats keep the baseline
+ * provider/model required contract.
  */
 export type PersistentSeatConfig = {
   provider?: string;
   model?: string;
   thinking?: PublicThinkingLevel;
   engine?: string;
+  host?: string;
 };
 
 export type PublicCliConfig = {
@@ -62,12 +64,26 @@ export type PublicCliConfig = {
    * bound (ADR 0035).
    */
   autoResumeLimit?: number;
+  /**
+   * #592: opaque seat rows this build does not own. Carried through every
+   * parse→save cycle so a write never silently erases neighboring-line rows
+   * in the shared machine-wide file (same survival duty as #422's sibling
+   * top-level key). Never consulted by resolveEffectiveSeat /
+   * effectiveSeatConfigurations — read consumption still skips them.
+   */
+  unknownSeats?: Record<string, unknown>;
 };
 
-export type EffectiveSource = "persistent" | "startup" | "invocation" | "unconfigured";
+export type EffectiveSource =
+  | "persistent"
+  | "startup"
+  | "invocation"
+  | "inherit-gatekeeper"
+  | "unconfigured";
 
 /** Engine axis source is independent of model source (#356). */
 export type EngineSource = "invocation" | "persistent" | "unconfigured";
+export type HostSource = "invocation" | "persistent" | "default";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
@@ -78,6 +94,8 @@ export type EffectiveSeat = {
   /** Selected engine name when configured; undefined = no engine (default path). */
   engine?: string;
   engineSource: EngineSource;
+  host: string;
+  hostSource: HostSource;
 };
 
 export type InvocationModelOverride = {
@@ -85,9 +103,10 @@ export type InvocationModelOverride = {
   thinking?: PublicThinkingLevel;
   /** Optional engine override for this invocation only (#356). */
   engine?: string;
+  host?: string;
 };
 
-const THINKING_LEVELS = new Set<PublicThinkingLevel>([
+export const THINKING_LEVELS = new Set<PublicThinkingLevel>([
   "off",
   "minimal",
   "low",
@@ -97,12 +116,15 @@ const THINKING_LEVELS = new Set<PublicThinkingLevel>([
   "max",
 ]);
 
-export function publicCliConfigPath(home: string = homedir()): string {
+export function publicCliConfigPath(home: string): string {
+  if (typeof home !== "string" || home.trim() === "") {
+    throw new Error("home must be explicitly provided");
+  }
   return join(home, ".ak-roles", "public-cli.json");
 }
 
 export async function loadPublicCliConfig(
-  home: string = homedir(),
+  home: string,
 ): Promise<PublicCliConfig> {
   const path = publicCliConfigPath(home);
   try {
@@ -122,12 +144,18 @@ export async function loadPublicCliConfig(
 
 export async function savePublicCliConfig(
   config: PublicCliConfig,
-  home: string = homedir(),
+  home: string,
 ): Promise<void> {
   const path = publicCliConfigPath(home);
   await mkdir(dirname(path), { recursive: true });
   const normalized = parsePublicCliConfig(config);
-  await writeFile(path, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  // Fold the opaque bucket back under seats for the on-disk shape. Do not
+  // emit unknownSeats as a top-level key — neighboring lines read seats only.
+  await writeFile(
+    path,
+    `${JSON.stringify(serializePublicCliConfig(normalized), null, 2)}\n`,
+    "utf8",
+  );
 }
 
 export function setPersistentSeatConfig(
@@ -146,6 +174,7 @@ export function setPersistentSeatConfig(
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
         ...(previous?.engine === undefined ? {} : { engine: previous.engine }),
+        ...(previous?.host === undefined ? {} : { host: previous.host }),
       },
     },
   };
@@ -154,9 +183,10 @@ export function setPersistentSeatConfig(
 /**
  * Clear a gate officer's persistent model override (#453).
  * Scope is GateOfficerSeat only — non-province seats have no destructive clear seam.
- * Directly callable gate officers may retain an engine-only residual so activation keeps
- * its labor engine while model resolution returns to startup / province inheritance.
- * Gatekeeper drops the whole row. Already-absent seats are a no-op.
+ * Notary and direct Inspector may retain host/engine residual axes while model
+ * resolution returns to gatekeeper inheritance (#522 two independent
+ * axes; #568 public Inspector; #620). Gatekeeper drops the whole row.
+ * Already-absent seats are a no-op.
  */
 export function clearPersistentSeatConfig(
   config: PublicCliConfig,
@@ -164,13 +194,19 @@ export function clearPersistentSeatConfig(
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) return config;
-  // Direct officer engine ownership survives an independent model clear.
-  if ((seat === "notary" || seat === "inspector") && previous.engine !== undefined) {
+  // Callable province seats keep independent host/engine residuals after model clear.
+  if (
+    (seat === "notary" || seat === "inspector") &&
+    (previous.engine !== undefined || previous.host !== undefined)
+  ) {
     return {
       ...config,
       seats: {
         ...config.seats,
-        [seat]: { engine: previous.engine },
+        [seat]: {
+          ...(previous.engine === undefined ? {} : { engine: previous.engine }),
+          ...(previous.host === undefined ? {} : { host: previous.host }),
+        },
       },
     };
   }
@@ -178,34 +214,31 @@ export function clearPersistentSeatConfig(
   return { ...config, seats };
 }
 
-/**
- * Province-only model selection (#453): officer persistent > gatekeeper persistent
- * > unset (caller inherits parent session). Never consults startup candidates —
- * direct `ak-role notary` keeps resolveEffectiveSeat; only province reads this.
- * Engine-only residual is not a model override.
- */
-export function resolveGateOfficerModelSelection(
+/** Set or clear the persistent main-session host on a callable role seat. */
+export function setPersistentSeatHost(
   config: PublicCliConfig,
-  officer: GateOfficerSeat,
-): SeatModelConfig | undefined {
-  const ownModel = seatModelOnly(config.seats[officer]);
-  if (ownModel !== undefined) return ownModel;
-  if (officer === "gatekeeper") return undefined;
-  return seatModelOnly(config.seats.gatekeeper);
-}
-
-/**
- * Seats that own the labor-engine axis (#391: PUBLIC_CALLABLE_ROLES only).
- * Navigator is configurable for model but has no independent activation path.
- */
-export function isEngineAxisSeat(seat: string): seat is PublicCallableRole {
-  return isPublicCallableRole(seat);
+  seat: PublicCallableRole,
+  host: string | undefined,
+): PublicCliConfig {
+  const previous = config.seats[seat];
+  if (previous === undefined) {
+    throw new Error(`config seat ${seat} has no persistent model; set provider/model[:thinking] before host`);
+  }
+  if (host === undefined) {
+    const { host: _dropped, ...rest } = previous;
+    if (seatModelOnly(rest) === undefined && rest.engine === undefined) {
+      const { [seat]: _row, ...seats } = config.seats;
+      return { ...config, seats };
+    }
+    return { ...config, seats: { ...config.seats, [seat]: rest } };
+  }
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
 }
 
 /**
  * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
- * First engine still requires an existing seat row (model, or direct-officer engine residual).
- * Clearing engine from an engine-only residual drops the empty row; clearing
+ * First engine still requires an existing seat row (model, or residual axes).
+ * Clearing engine from an axis-only residual drops the empty row; clearing
  * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
  * (navigator excluded at the type boundary).
  */
@@ -222,8 +255,8 @@ export function setPersistentSeatEngine(
   }
   if (engine === undefined) {
     const { engine: _dropped, ...modelOnly } = previous;
-    // Engine-only residual with engine cleared → drop the empty row.
-    if (seatModelOnly(modelOnly) === undefined) {
+    // Drop the row only after the final independent axis is cleared.
+    if (seatModelOnly(modelOnly) === undefined && modelOnly.host === undefined) {
       const { [seat]: _row, ...seats } = config.seats;
       return { ...config, seats };
     }
@@ -273,37 +306,23 @@ export function setAutoResumeLimit(
 }
 
 /**
- * Strip optional engine so activation model argv never sees the engine axis.
- * Engine-only residual (model cleared) yields undefined — not a model override.
+ * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
+ * engine names need only path-safety syntax (no closed material catalog;
+ * #376 / #378 / #391 / ADR 0069). Disk-handwritten automatic-seat axes are
+ * rejected. Syntax authority = assertLegalEngineName (no injected duplicate).
  */
-export function seatModelOnly(
-  seat: PersistentSeatConfig | undefined,
-): SeatModelConfig | undefined {
-  if (seat?.provider === undefined || seat.model === undefined) return undefined;
-  return seat.thinking === undefined
-    ? { provider: seat.provider, model: seat.model }
-    : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
-}
-
-/**
- * Config-parse seam: engine axis is PUBLIC_CALLABLE_ROLES; engine names need only
- * path-safety syntax (no closed material catalog; #376 / #378 / #391 / ADR 0069).
- * Disk-handwritten navigator.engine is rejected (no independent activation → silent
- * ineffective would violate failure honesty). Call after load / before dispatch (#356).
- * Syntax authority = assertLegalEngineName (no injected duplicate).
- */
-export function validatePublicCliConfigEngines(
+export function validatePublicCliConfigAxes(
   config: PublicCliConfig,
   _packageRoot: string,
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if (row?.engine === undefined) continue;
-    if (!isEngineAxisSeat(seat)) {
+    if ((row?.engine !== undefined || row?.host !== undefined) && !isPublicCallableRole(seat)) {
       throw new Error(
-        `config seat ${seat} cannot persist engine: no independent activation path; storing would be silently ineffective`,
+        `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`,
       );
     }
+    if (row?.engine === undefined) continue;
     try {
       assertLegalEngineName(row.engine);
     } catch (error) {
@@ -373,22 +392,64 @@ export function buildSeatModelCliArgs(model: SeatModelConfig | undefined): strin
   ];
 }
 
+/**
+ * Disk document shape for public-cli.json. Unknown seat rows live under
+ * `seats` (not a parallel top-level key) so every build — old or new — sees
+ * one seats map.
+ */
+function serializePublicCliConfig(config: PublicCliConfig): {
+  seats: Record<string, unknown>;
+  autoResumeLimit?: number;
+} {
+  return {
+    // Known seats win on any key clash; by construction the two maps are
+    // disjoint after parse, but prefer owned rows if a caller stuffed both.
+    seats: {
+      ...(config.unknownSeats ?? {}),
+      ...config.seats,
+    },
+    ...(config.autoResumeLimit === undefined
+      ? {}
+      : { autoResumeLimit: config.autoResumeLimit }),
+  };
+}
+
 function parsePublicCliConfig(value: unknown): PublicCliConfig {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record = value as { seats?: unknown; autoResumeLimit?: unknown };
+  const record = value as {
+    seats?: unknown;
+    autoResumeLimit?: unknown;
+    unknownSeats?: unknown;
+  };
   // #422 round-trip preservation: the sibling top-level key must survive every
   // parse→save cycle; an unknown-key drop would silently erase it on any write.
   let autoResumeLimit: number | undefined;
   if (record.autoResumeLimit !== undefined) {
     autoResumeLimit = parseAutoResumeLimit(record.autoResumeLimit);
   }
+  // #592: opaque bucket may already be present on an in-memory round-trip
+  // (load→set→save calls parse again). Carry it before seats iteration so a
+  // disk-shaped seats map and a memory-shaped bucket both survive.
+  const unknownSeats: Record<string, unknown> = {};
+  if (record.unknownSeats !== undefined) {
+    if (
+      record.unknownSeats === null ||
+      typeof record.unknownSeats !== "object" ||
+      Array.isArray(record.unknownSeats)
+    ) {
+      throw new Error("public CLI config.unknownSeats must be an object");
+    }
+    Object.assign(unknownSeats, record.unknownSeats as Record<string, unknown>);
+  }
+  const withOpaque = (seats: PublicCliConfig["seats"]): PublicCliConfig => ({
+    seats,
+    ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
+    ...(Object.keys(unknownSeats).length === 0 ? {} : { unknownSeats }),
+  });
   if (record.seats === undefined) {
-    return {
-      seats: {},
-      ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
-    };
+    return withOpaque({});
   }
   if (
     record.seats === null ||
@@ -401,15 +462,17 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   for (const [key, raw] of Object.entries(
     record.seats as Record<string, unknown>,
   )) {
-    if (!(PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(key)) {
-      throw new Error(`unknown configurable seat in config: ${key}`);
+    // #592: shared machine-wide public-cli.json may hold seat rows a newer CLI
+    // wrote. Do not consume them (resolve/enum stay owned-seat only), but keep
+    // the raw value in the opaque bucket so save can put them back under seats.
+    // Unknown field-level keys on known seats keep their existing tolerance.
+    if (!isPublicConfigurableSeat(key)) {
+      unknownSeats[key] = raw;
+      continue;
     }
-    seats[key as PublicConfigurableSeat] = parseSeatModelConfig(raw, key);
+    seats[key] = parseSeatModelConfig(raw, key);
   }
-  return {
-    seats,
-    ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
-  };
+  return withOpaque(seats);
 }
 
 function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfig {
@@ -422,19 +485,28 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   if (hasProvider !== hasModel) {
     throw new Error(`config seat ${seat} requires both provider and model`);
   }
+  if (raw.host !== undefined && (typeof raw.host !== "string" || raw.host.trim() === "")) {
+    throw new Error(`config seat ${seat} host must be a non-empty string`);
+  }
   if (raw.engine !== undefined && typeof raw.engine !== "string") {
     // Shape only: engine must be a string field. Path-safety syntax is deferred to
-    // validatePublicCliConfigEngines → assertLegalEngineName (single authority).
+    // validatePublicCliConfigAxes → assertLegalEngineName (single authority).
     throw new Error(`config seat ${seat} engine must be a string`);
   }
-  // Direct officer engine-only residual remains legal after model clear.
-  // All other seats keep the baseline provider/model required contract.
+  // #453/#522/#568: notary/inspector host/engine residuals remain legal after
+  // model clear. All other seats keep provider/model.
   if (!hasProvider) {
-    if ((seat === "notary" || seat === "inspector") && typeof raw.engine === "string") {
+    if (
+      (seat === "notary" || seat === "inspector") &&
+      (typeof raw.engine === "string" || typeof raw.host === "string")
+    ) {
       if (raw.thinking !== undefined) {
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
-      return { engine: raw.engine };
+      return {
+        ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+        ...(raw.host === undefined ? {} : { host: raw.host as string }),
+      };
     }
     throw new Error(`config seat ${seat} requires provider`);
   }
@@ -460,6 +532,7 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
       ? {}
       : { thinking: raw.thinking as PublicThinkingLevel }),
     ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+    ...(raw.host === undefined ? {} : { host: raw.host as string }),
   };
   return parsed;
 }
@@ -498,13 +571,26 @@ function pickStartupCandidate(
   return undefined;
 }
 
-function attachEngineAxis(
-  seat: EffectiveSeat,
+type UnhostedEffectiveSeat = Omit<EffectiveSeat, "host" | "hostSource">;
+
+function attachHostAxis(
+  seat: UnhostedEffectiveSeat,
   config: PublicCliConfig,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single isEngineAxisSeat predicate).
-  if (!isEngineAxisSeat(seat.seat)) {
+  if (invocation?.host !== undefined) return { ...seat, host: invocation.host, hostSource: "invocation" };
+  const persistent = config.seats[seat.seat]?.host;
+  if (persistent !== undefined) return { ...seat, host: persistent, hostSource: "persistent" };
+  return { ...seat, host: "pi", hostSource: "default" };
+}
+
+function attachEngineAxis(
+  seat: UnhostedEffectiveSeat,
+  config: PublicCliConfig,
+  invocation?: InvocationModelOverride,
+): UnhostedEffectiveSeat {
+  // #391: engine axis is PUBLIC_CALLABLE_ROLES only (single callable-seat predicate).
+  if (!isPublicCallableRole(seat.seat)) {
     return {
       ...seat,
       engineSource: "unconfigured",
@@ -535,8 +621,19 @@ function resolveBaseSeat(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
-): EffectiveSeat {
+): UnhostedEffectiveSeat {
   const automatic = isAutomaticConfigurableSeat(seat);
+  // #620: subordinate officers consume institutional-resolution authority result.
+  if (seat === "notary" || seat === "inspector") {
+    const resolved = resolveConfiguredProvinceOfficer(config, seat);
+    return {
+      seat,
+      automatic,
+      source: resolved.source,
+      ...(resolved.selection === undefined ? {} : { selection: resolved.selection }),
+      engineSource: "unconfigured",
+    };
+  }
   // Engine-only residual is not a persistent model source (#453).
   const persistentModel = seatModelOnly(config.seats[seat]);
   if (persistentModel !== undefined) {
@@ -572,7 +669,7 @@ export function resolveEffectiveSeat(
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
 
-  let modelSeat: EffectiveSeat;
+  let modelSeat: UnhostedEffectiveSeat;
   if (!hasModelInvocation || invocation === undefined) {
     modelSeat = resolveBaseSeat(config, seat, credentials);
   } else if (invocation.model !== undefined) {
@@ -607,7 +704,7 @@ export function resolveEffectiveSeat(
     }
   }
 
-  return attachEngineAxis(modelSeat, config, invocation);
+  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
 }
 
 export function effectiveSeatConfigurations(

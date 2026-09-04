@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { createHash } from "node:crypto";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import {
   context,
   candidate,
@@ -20,111 +20,102 @@ import {
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
 
-test("native provider stream seam resets per call and classifies terminal-less completion", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-native-reset-"));
-  const previous = process.env.PI_CODING_AGENT_DIR;
+test("host-neutral factory resets providerFailure per prompt and classifies terminal-less completion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-reset-"));
   try {
-    process.env.PI_CODING_AGENT_DIR = root;
     seedGitRepository(root);
+    const bookKey = basename(root);
+    const sessionFile = join(root, ".ak-roles", "books", bookKey, "runs", "nav", "session", "session.jsonl");
+    const hostContext = {
+      cwd: root,
+      mode: "print" as const,
+      model: undefined,
+      sessionManager: {
+        getLeafEntry: () => undefined,
+        getLeafId: () => null,
+        getEntries: () => [],
+        getSessionDir: () => dirname(sessionFile),
+        getSessionFile: () => sessionFile,
+      },
+      abort() {},
+    };
+    assert.equal("modelRegistry" in hostContext, false);
 
-    // Sequential contamination: quota then synchronous setup transport through factory → setModel → prompt.
+    // Sequential HTTP failures: each prompt resets then reclassifies as transport
+    // (institutional path has no free-text HTTP-status parse; see navigator-attendance.test).
     {
-      const faux = fauxProvider({ provider: "native-reset-sync", api: "native-reset-sync" });
+      const faux = fauxProvider({ provider: "nav-reset-sync", api: "openai-completions" });
       const model = faux.getModel();
-      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      let calls = 0;
-      const provider = {
-        ...faux.provider,
-        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
-          calls += 1;
-          if (calls === 1) {
-            const stream = createAssistantMessageEventStream();
-            const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque quota wording" });
-            queueMicrotask(() => {
-              void (async () => {
-                await options?.onResponse?.({ status: 429, headers: {} }, requestModel);
-                stream.push({ type: "error", reason: "error", error: human });
-              })();
-            });
-            return stream;
-          }
-          throw new Error("second setup transport");
-        },
-        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-          return this.stream(requestModel, streamContext, options);
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
-          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const session = await createNativeNavigatorSessionFactory()({
-        context: nativeContext,
-        subject: join(root, "session-reset"),
-        tool: createNavigatorPrepareTool(() => {}),
+      const setting = join(root, "navigator-model-reset.json");
+      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      faux.setResponses([
+        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }), { statusCode: 429, status: 429 }),
+        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque-2" }), { statusCode: 503, status: 503 }),
+      ]);
+      await withInstitutionalProviderFixture(faux, async () => {
+        const session = await createNativeNavigatorSessionFactory()({
+          context: hostContext,
+          subject: join(root, "session-reset"),
+          modelSettingPath: setting,
+          tool: createNavigatorPrepareTool(() => {}),
+        });
+        try {
+          await session.setModel?.(`${model.provider}/${model.id}`, "off");
+          await assert.rejects(
+            () => session.prompt("first"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === "quota"
+              && error.unavailableCause === "quota",
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
+          await assert.rejects(
+            () => session.prompt("second"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === "transport"
+              && error.unavailableCause === "transport",
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+        } finally {
+          await session.dispose();
+        }
       });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      await session.prompt("first");
-      assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      await session.prompt("second");
-      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
-      assert.equal(calls, 2);
-      session.dispose();
     }
 
-    // Terminal-less completion must classify no-response transport without hanging on result().
+    // Error-stop with no tool call: institutional prompt settles as transport failure
+    // (deterministic fixture — no hang oracle, no tautology).
     {
-      const faux = fauxProvider({ provider: "native-no-terminal", api: "native-no-terminal" });
+      const faux = fauxProvider({ provider: "nav-no-terminal", api: "openai-completions" });
       const model = faux.getModel();
-      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      const provider = {
-        ...faux.provider,
-        stream() {
-          const stream = createAssistantMessageEventStream();
-          queueMicrotask(() => stream.end());
-          return stream;
-        },
-        streamSimple() {
-          return this.stream();
-        },
-      };
-      const nativeContext = {
-        cwd: root,
-        modelRegistry: {
-          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
-          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-      } as never;
-      const session = await createNativeNavigatorSessionFactory()({
-        context: nativeContext,
-        subject: join(root, "session-no-terminal"),
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      await session.setModel?.(`${model.provider}/${model.id}`, "off");
-      const outcome = await Promise.race([
-        session.prompt("no terminal").then(() => "resolved" as const, () => "rejected" as const),
-        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
+      const setting = join(root, "navigator-model-noterm.json");
+      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "no terminal assistant" }),
       ]);
-      assert.equal(outcome, "resolved");
-      assert.deepEqual(session.providerFailure?.(), { source: "unknown", cause: "unknown" });
-      session.dispose();
+      await withInstitutionalProviderFixture(faux, async () => {
+        const session = await createNativeNavigatorSessionFactory()({
+          context: hostContext,
+          subject: join(root, "session-no-terminal"),
+          modelSettingPath: setting,
+          tool: createNavigatorPrepareTool(() => {}),
+        });
+        try {
+          await session.setModel?.(`${model.provider}/${model.id}`, "off");
+          await assert.rejects(
+            () => session.prompt("no terminal"),
+            (error: unknown) => error instanceof NavigatorUnavailableError
+              && error.unavailableSource === "transport"
+              && error.unavailableCause === "transport",
+          );
+          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+        } finally {
+          await session.dispose();
+        }
+      });
     }
   } catch (error) {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
     await cleanupTempDir(root, error);
     throw error;
   }
-  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = previous;
   await cleanupTempDir(root);
 });
 
@@ -265,15 +256,15 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
 
-  const ledgerSession = join(process.env.HOME!, ".ak-roles", "books", "repo", "issues", "28", "runs", "judge@src", "session");
+  const ledgerSession = "/custom/home/.ak-roles/books/repo/issues/28/runs/judge@src/session";
   assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath(ledgerSession, issue), issue);
-  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak-roles/books/repo/issues/28");
+  // Any `.ak-roles/books/...` tree is ledger topology (ADR 0048 / #604), not work identity —
+  // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
+  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
   const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     const { realpathSync } = await import("node:fs");
     const physicalIssue = resolve(home, ".ak/work/issues/28");
@@ -283,7 +274,6 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
     assert.equal(subjectPath(session, physicalIssue), physicalIssue);
     assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 
@@ -332,7 +322,7 @@ test("dispose during pending createSession drains the created session without pr
     });
     nav.prepare();
     while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
-    nav.dispose();
+    await nav.dispose();
     releaseCreate();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     // Allow the in-flight initializer to observe disposed and drain.
@@ -347,6 +337,56 @@ test("dispose during pending createSession drains the created session without pr
   }
   await cleanupTempDir(root);
 });
+
+test("attendance dispose settles session close rejection on the caller", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-attendance-close-"));
+  let releasePrompt: (() => void) | undefined;
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const closeBoom = new Error("session close failed");
+    let promptStarted!: () => void;
+    const prompted = new Promise<void>((resolve) => { promptStarted = resolve; });
+    const heldPrompt = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/repo/.ak/work/issues/28",
+      subject: "Fix issue 28",
+      authority: "owner decision",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+      modelSettingPath: setting,
+      createSession: async () => ({
+        async prompt() {
+          promptStarted();
+          await heldPrompt;
+        },
+        appendEntry() {},
+        entries: () => [],
+        async setModel() {},
+        getThinkingLevel: () => "off" as const,
+        recordPointer: () => "/fixture/navigator-record",
+        dispose() { return Promise.reject(closeBoom); },
+      }),
+      onEvent: async () => {},
+    });
+    nav.prepare();
+    await prompted;
+    await assert.rejects(
+      () => Promise.resolve(nav.dispose()),
+      (error: unknown) => error === closeBoom,
+    );
+  } catch (error) {
+    releasePrompt?.();
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  releasePrompt?.();
+  await cleanupTempDir(root);
+});
+
 
 test("settlement-bound rebind is always reachable and passes divergent advice through as-is", async () => {
   // Real defect under repair: speculative prepare cannot see the just-accepted terminal.

@@ -44,19 +44,15 @@ export async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: st
 }
 
 /**
- * Fixture injection stays below the production contract: hermetic process HOME
- * (os.homedir) — never a production invocation `home` field (ADR 0048).
+ * Test isolation helper providing a temporary `.ak-roles` ledger tree.
+ * Callers pass the supplied `home` explicitly to analyst APIs or `env.home`.
  */
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "analyst-home-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     await rm(home, { recursive: true, force: true });
   }
 }

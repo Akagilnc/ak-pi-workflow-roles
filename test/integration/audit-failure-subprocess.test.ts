@@ -5,7 +5,7 @@ import { existsSync, renameSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import {
@@ -15,18 +15,25 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
+import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 async function runCli(mode: "print" | "json") {
   return withHermeticHome(
     { prefix: "ak-audit-cli-" },
     async ({ home, agentDir }) => {
-      const sessionDirectory = resolve(
+      const runDir = resolve(
         home,
         ".ak-roles/books",
         resolveBookKeyFromGit(packageRoot),
-        "runs/audit-cli/session",
+        "runs/audit-cli",
       );
+      const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
+      await writeInstitutionalSeatTable(runDir, {
+        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
+        notary: seatSelection("ak-audit-failure", "faux-1"),
+        auditor: seatSelection("ak-audit-failure", "faux-1"),
+      });
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -67,16 +74,21 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
       const issueRoot = resolve(home, ".ak/work/issues/28");
       await mkdir(issueRoot, { recursive: true });
       // Role session under ledger book; Navigator subject still derives from issueRoot cwd.
-      const sessionDirectory = resolve(
+      const runDir = resolve(
         home,
         ".ak-roles",
         "books",
         basename(home),
         "runs",
         "judge-navigator",
-        "session",
       );
+      const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
+      await writeInstitutionalSeatTable(runDir, {
+        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
+        notary: seatSelection("ak-audit-failure", "faux-1"),
+        auditor: seatSelection("ak-audit-failure", "faux-1"),
+      });
       // The hermetic activation ledger owns Navigator records beside role runs.
       await mkdir(
         resolve(home, ".ak-roles", "books", basename(home), "navigator"),
@@ -163,10 +175,12 @@ function restoreReviewerGitTreeAfterInjection(cwd: string): void {
 }
 
 /** One shared review-target clone for the whole file — rows cp -R it. */
+let reviewerTargetTemplateRoot: string | undefined;
 let reviewerTargetTemplateMemo: Promise<string> | undefined;
 async function reviewerTargetTemplate(): Promise<string> {
   reviewerTargetTemplateMemo ??= (async () => {
     const root = await mkdtemp(resolve(tmpdir(), "ak-reviewer-fatal-template-"));
+    reviewerTargetTemplateRoot = root;
     execFileSync("git", ["clone", "--quiet", "--no-hardlinks", packageRoot, root], {
       stdio: "ignore",
     });
@@ -174,6 +188,12 @@ async function reviewerTargetTemplate(): Promise<string> {
   })();
   return reviewerTargetTemplateMemo;
 }
+
+after(async () => {
+  if (reviewerTargetTemplateRoot === undefined) return;
+  await rm(reviewerTargetTemplateRoot, { recursive: true, force: true });
+  reviewerTargetTemplateRoot = undefined;
+});
 
 async function materializeReviewerTarget(dest: string): Promise<void> {
   const template = await reviewerTargetTemplate();
@@ -420,6 +440,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
       };
       failedOutputAt: string;
       failedOutputCorrelation: boolean;
+      closureDetails: Record<string, unknown>;
     };
   };
   assert.equal(evidence.navigatorCalls, 1);
@@ -456,8 +477,9 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.equal(evidence.role.failedOutput.toolCallId, "fatal-judge");
   assert.equal(evidence.role.failedOutput.toolName, "ak_judge_output");
   assert.equal(evidence.role.failedOutput.isError, false);
-  assert.equal(evidence.role.failedOutput.details.judgeStatus, "converged");
-  const auditNoReceipt = evidence.role.failedOutput.details.auditNoReceipt as {
+  assert.deepEqual(evidence.role.failedOutput.details, { submissionDisposition: "pending-round-closure" });
+  assert.equal(evidence.role.closureDetails.judgeStatus, "converged");
+  const auditNoReceipt = evidence.role.closureDetails.auditNoReceipt as {
     acceptedReceipt: boolean;
     deliveryTurns: number;
     terminalToolCalled: boolean;
@@ -472,8 +494,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
   assert.match(auditNoReceipt.runPointer, /judge-navigator/);
   assert.notEqual(auditNoReceipt.attemptPointer, "");
-  assert.deepEqual(evidence.role.failedOutput.usage, auditNoReceipt.usage);
-  assert.ok((evidence.role.failedOutput.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the external Judge result");
+  assert.ok((auditNoReceipt.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the sealed Judge submission");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,

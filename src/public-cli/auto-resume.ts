@@ -13,13 +13,17 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { appendFile, lstat, mkdir, open, readFile } from "node:fs/promises";
+import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+  SessionCustomEntryAppender,
+} from "../host-contracts.ts";
 import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
-  isSessionPrincipalAvailable,
   acquireRunWriterLease,
   markRunTerminal,
   RunWriterLeaseHeldError,
@@ -192,7 +196,9 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
  * attempt can never overwrite an earlier attempt's file.
  */
 async function retainDispatchError(
-  admitted: { sessionFile: string; runDirectory: string },
+  admitted: { runDirectory: string; principal: DurablePrincipal },
+  principalAuthority: DurablePrincipalAuthority,
+  sessionAppender: SessionCustomEntryAppender,
   attempt: number,
   error: unknown,
 ): Promise<{ file: string; pointerError?: unknown }> {
@@ -216,6 +222,7 @@ async function retainDispatchError(
   // construction; a colliding name fails loudly instead of overwriting.
   // O_NOFOLLOW when the platform provides it keeps a planted symlink from
   // being followed; on platforms without it, exclusivity still holds.
+  // AK artifact owner stays here; only the session JSONL pointer uses Pi codec.
   const noFollowFlag =
     typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
   const handle = await open(
@@ -228,13 +235,8 @@ async function retainDispatchError(
   } finally {
     await handle.close();
   }
-  // Addressable pointer in the dossier (卷宗): reuses the session principal's
-  // appended custom-entry shape (mirrors pi SessionManager.appendCustomEntry,
-  // same mechanism as #419 attempt history — no second ledger introduced).
-  // The one-writer lease is held for the append (#426 review: production
-  // dispatchers release the lease in their finally before the rejection reaches
-  // this point); if a concurrent writer already holds it, the append is skipped
-  // gracefully — the error file itself is already durably retained.
+  // Addressable pointer in the dossier (卷宗): Pi session custom-entry codec
+  // (appendPiSessionCustomEntry). Lease still owned here with run-writer.
   let pointerLease: RunWriterLease;
   try {
     pointerLease = await acquireRunWriterLease(admitted.runDirectory);
@@ -243,32 +245,17 @@ async function retainDispatchError(
     throw error;
   }
   // Pointer-stage failure (#426 fix_now #5) is separated from the file write:
-  // once the error file is durably on disk, a failed readFile/JSON.parse/
-  // appendFile must not reject through here and orphan it — the file path is
-  // still handed back to the caller (retainedErrorFiles → terminal
-  // dispatchErrorFiles/artifacts), and the pointer failure is reported
-  // separately by the caller.
+  // once the error file is durably on disk, a failed session append must not
+  // reject through here and orphan it — the file path is still handed back.
   let pointerError: unknown;
   try {
-    const text = await readFile(admitted.sessionFile, "utf8");
-    // Session headers are not branch entries (#419 precedent in
-    // appendRunAttemptHistory excludes type === "session"); leave parentId null
-    // until a non-header entry exists so the pointer stays addressable.
-    let parentId: string | null = null;
-    for (const line of text.trim().split("\n").filter(Boolean)) {
-      const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    }
     const timestamp = new Date().toISOString();
-    const pointerLine = `${JSON.stringify({
-      type: "custom",
-      customType: DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
-      data: { version: 1, attempt, file: filePath, recordedAt: timestamp },
-      id: randomUUID(),
-      parentId,
-      timestamp,
-    })}\n`;
-    await appendFile(admitted.sessionFile, pointerLine, "utf8");
+    await sessionAppender(
+      principalAuthority,
+      admitted.principal,
+      DISPATCH_ERROR_RETENTION_ENTRY_TYPE,
+      { version: 1, attempt, file: filePath, recordedAt: timestamp },
+    );
   } catch (error) {
     pointerError = error;
   } finally {
@@ -331,15 +318,20 @@ function dispatchExceptionFailureTerminal(input: {
   };
 }
 
-export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(options: {
+export async function runWithAutoResumeLoop<
+  T extends AutoResumeDispatchResult,
+  TPayload = unknown,
+>(options: {
   admitted: {
-    sessionFile: string;
     runDirectory: string;
     /** Identity for the loop-owned typed failure terminal (dispatch-exception exhaustion). */
     role: TerminalRoleName;
     runId: string;
+    principal: DurablePrincipal;
   };
+  principalAuthority: DurablePrincipalAuthority;
   io: CliIo;
+  sessionAppender: SessionCustomEntryAppender;
   /**
    * Effective ceiling (#422), resolved by the caller before the loop; never re-read
    * per round. undefined = package default (AUTO_RESUME_LIMIT). Domain-validated at
@@ -347,9 +339,15 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
    * before the first dispatch instead of silently bypassing the ceiling comparison.
    */
   autoResumeLimit?: number | undefined;
-  buildInitialArgs: () => string[];
-  buildResumeArgs: () => string[];
-  dispatch: (extraArgs: string[], lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  buildInitialPayload: () => TPayload;
+  buildResumePayload: () => TPayload;
+  dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  /**
+   * After a non-lawful terminal or dispatch throw, stop further auto-resume when a unique sealed
+   * accepted projection is already readable (publication miss must not redispatch
+   * and destroy the sealed read — #648 / #599 alignment).
+   */
+  shouldStopAutoResume?: () => Promise<boolean>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -357,7 +355,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
   parseAutoResumeLimit(limit);
   let autoResumeAttempts = 0;
   let isFirst = true;
-  let currentExtraArgs = options.buildInitialArgs();
+  let currentPayload = options.buildInitialPayload();
   let dispatchOrdinal = 0;
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
@@ -379,7 +377,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
 
     let result: T | undefined;
     try {
-      result = await options.dispatch(currentExtraArgs, lease, isFirst, dummyIo);
+      result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
@@ -392,7 +390,13 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
         // Track the file as soon as it is durably written (#426 review):
         // a pointer-stage failure comes back separately (pointerError) and must
         // never orphan the retained file (#426 fix_now #5).
-        const { file, pointerError } = await retainDispatchError(options.admitted, attempt, error);
+        const { file, pointerError } = await retainDispatchError(
+          options.admitted,
+          options.principalAuthority,
+          options.sessionAppender,
+          attempt,
+          error,
+        );
         retainedErrorFiles.push(file);
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
@@ -425,12 +429,62 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
         }
         return result;
       }
+    }
 
+    // One sealed ledger authority before any redispatch (#648): shared for
+    // non-lawful return and direct throw. Authority throw fail-closes with
+    // preserved cause — never wash into unsealed redispatch. Only the sealed=true
+    // projection differs (present returned terminal vs throw-path synthetic).
+    // Fail-closed decision is independent of cause value: `throw undefined` is
+    // legal JS and must not fail open. One cause + endReason → one presentation.
+    if (options.shouldStopAutoResume !== undefined) {
+      let failClosed: { cause: unknown; endReason: string } | undefined;
+      let sealedStop = false;
+      try {
+        sealedStop = await options.shouldStopAutoResume();
+      } catch (authorityError) {
+        failClosed = {
+          cause: authorityError,
+          endReason: "sealed-acceptance authority failed closed",
+        };
+      }
+      if (failClosed === undefined && sealedStop) {
+        if (result !== undefined) {
+          const terminal = (result as { terminal?: TerminalResult }).terminal;
+          if (terminal !== undefined) presentTerminal(terminal, options.io);
+          return result;
+        }
+        failClosed = {
+          cause: lastThrownError,
+          endReason: "sealed accepted projection already present",
+        };
+      }
+      if (failClosed !== undefined) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: failClosed.cause,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: failClosed.endReason,
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal,
+        } as T;
+      }
+    }
+
+    if (result !== undefined) {
+      const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
@@ -453,7 +507,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
           terminal,
         } as T;
       }
-      if (!(await isSessionPrincipalAvailable(options.admitted.sessionFile))) {
+      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
@@ -473,7 +527,7 @@ export async function runWithAutoResumeLoop<T extends AutoResumeDispatchResult>(
     }
 
     autoResumeAttempts++;
-    currentExtraArgs = options.buildResumeArgs();
+    currentPayload = options.buildResumePayload();
     isFirst = false;
   }
 }

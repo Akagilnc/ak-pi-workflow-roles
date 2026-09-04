@@ -1,3 +1,4 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 // #420 整改移档（自 test/integration/public-cli-{coder,collector,doctor,fixer,engine-axis}.test.ts）：
 // 纯 parser / typed resolver 按性质归位快档。契约断言一字不减；
 // 真 admission（冻结 FS）与真子进程条仍留 integration。
@@ -20,7 +21,7 @@ import {
   parseDoctorArgv,
   parseFixerArgv,
 } from "../../src/public-cli/invocation.ts";
-import { extractDoctorRoleOutcome, formatTerminalResult } from "../../src/public-cli/settlement.ts";
+import { formatTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   resolveEffectiveSeat,
   setPersistentSeatConfig,
@@ -88,6 +89,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     await assert.rejects(
       () =>
         admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           phase: "apply",
@@ -101,6 +103,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     const source = join(home, "notes.txt");
     await writeFile(source, "attachment-v1", "utf8");
     const admitted = await admitCoderInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       phase: "plan",
@@ -222,77 +225,6 @@ function sampleCompletedDoctorOutput(
   };
 }
 
-test("extractDoctorRoleOutcome reads completed and refused decisive facts", () => {
-  const identity = {
-    issueNumber: 40,
-    runsPath: ".ak-roles/books/demo/issues/40/runs",
-  };
-  const completed = {
-    ...sampleCompletedDoctorOutput(identity),
-    auditNoReceipt: {
-      status: "no-receipt",
-      terminalToolCalled: false,
-      rejectedReceipts: [],
-      deliveryTurns: 2,
-      sessionCompletion: "settled-without-accepted-receipt",
-      runPointer: "/doctor-audit/run",
-      attemptPointer: "doctor-audit-attempt",
-      acceptedReceipt: false,
-    },
-  };
-  const extracted = extractDoctorRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: DOCTOR_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: completed,
-      },
-    },
-  ] as never);
-  assert.ok(extracted);
-  assert.equal(extracted.outcome.role, "doctor");
-  assert.equal(extracted.outcome.kind, "accepted");
-  assert.equal(extracted.outcome.status, "completed");
-  assert.equal(extracted.outcome.decisiveFacts.issueNumber, 40);
-  assert.equal(extracted.outcome.decisiveFacts.findingsCount, 0);
-  assert.equal((extracted.outcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-  assert.match(formatTerminalResult({
-    roleOutcome: extracted.outcome,
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "doctor-run",
-  }), /auditNoReceipt/);
-  assert.equal(
-    extracted.outcome.decisiveFacts.runsPath,
-    identity.runsPath,
-  );
-
-  const refused: DoctorOutput = {
-    status: "refused",
-    reason: "Session bytes are incomplete.",
-    missingEvidence: [{ need: "session header", targetKeys: ["case"] }],
-  };
-  const refusedExtracted = extractDoctorRoleOutcome([
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: DOCTOR_OUTPUT_TOOL_NAME,
-        isError: false,
-        details: refused,
-      },
-    },
-  ] as never);
-  assert.ok(refusedExtracted);
-  assert.equal(refusedExtracted.outcome.status, "refused");
-  assert.equal(
-    refusedExtracted.outcome.decisiveFacts.reason,
-    "Session bytes are incomplete.",
-  );
-  assert.equal(refusedExtracted.outcome.decisiveFacts.missingEvidenceCount, 1);
-});
 
 test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
   const isUsage = (error: unknown): boolean =>

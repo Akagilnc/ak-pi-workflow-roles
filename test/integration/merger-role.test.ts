@@ -4,13 +4,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -18,19 +20,22 @@ import { join } from "node:path";
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
 const input = { version: 1 as const, attemptId: "attempt", targetObjectId: oid("a"), sourceObjectId: oid("b"), materials: { task: mat("task"), authority: mat("authority"), targetIntent: mat("target intent"), sourceIntent: mat("source intent") }, expectedConflictPaths: ["same.txt"], resolutionScope: ["same.txt"], authorizedChecks: [{ name: "test", argv: ["npm", "test"] }] };
-function harness(flag: unknown = "/input.json") { const flags = new Map<string, unknown>([["ak-merger-input", flag]]); const tools = new Map<string, any>(); const handlers = new Map<string, any>(); let active: string[] = []; const host = ["read", "grep", "find", "ls", "bash", "write", "edit", "Agent", "web"]; const pi = { registerFlag(name: string) { if (!flags.has(name)) flags.set(name, undefined); }, getFlag(name: string) { return flags.get(name); }, registerTool(tool: any) { tools.set(tool.name, tool); }, getAllTools() { return [...host, ...tools.keys()].map(name => ({ name })); }, setActiveTools(names: string[]) { active = names; }, getActiveTools() { return active; }, on(name: string, fn: any) { handlers.set(name, fn); } }; return { pi, tools, handlers, active: () => active }; }
-function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
-function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(h.pi as unknown as ExtensionAPI, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx: ExtensionContext): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
+/** Grok-shaped host surface: getAllTools starts AK-empty; no Pi builtin names required. */
+function harness(flag: unknown = "/input.json") { const flags = new Map<string, unknown>([["ak-merger-input", flag]]); const tools = new Map<string, any>(); const handlers = new Map<string, any>(); let active: string[] = []; const pi = { registerFlag(name: string) { if (!flags.has(name)) flags.set(name, undefined); }, getFlag(name: string) { return flags.get(name); }, registerTool(tool: any) { tools.set(tool.name, tool); }, getAllTools() { return [...tools.keys()].map(name => ({ name })); }, setActiveTools(names: string[]) { active = names; }, getActiveTools() { return active; }, on(name: string, fn: any) { handlers.set(name, fn); } }; return { pi, tools, handlers, active: () => active }; }
+function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { cwd: process.cwd(), sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
+function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(createPiRoleHostAdapter(h.pi as unknown as ExtensionAPI).host, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
 
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 /** One conflicted-repo template per process; cases clone locally. */
+let conflictedTemplateRoot: string | undefined;
 let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function conflictedTemplate() {
   conflictedTemplateMemo ??= (async () => {
     const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
+    conflictedTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
     git(root, "config", "user.email", "merger@test.local");
@@ -49,6 +54,12 @@ async function conflictedTemplate() {
   })();
   return conflictedTemplateMemo;
 }
+
+after(async () => {
+  if (conflictedTemplateRoot === undefined) return;
+  await rm(conflictedTemplateRoot, { recursive: true, force: true });
+  conflictedTemplateRoot = undefined;
+});
 
 async function materializeConflictedRepo() {
   const template = await conflictedTemplate();
@@ -81,7 +92,7 @@ test("production extension observes session repository B, not ambient repository
     const realInput = { ...input, targetObjectId: target, sourceObjectId: source };
     const inputPath = resolve(repositoryB, "input.json"); await writeFile(inputPath, JSON.stringify(realInput));
     await writeFile(resolve(repositoryB, ".git/info/exclude"), "input.json\nexpected-index\n");
-    await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir }) => {
+    await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir, home }) => {
       // #443: merger session materials via production role-runtime wiring.
       const mergerSoul = [
         await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
@@ -96,7 +107,7 @@ test("production extension observes session repository B, not ambient repository
         },
         fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, { status: "completed", attemptId: "attempt", report: "resolved", mergeCommitId }, { id: "out" }), { stopReason: "toolUse" }),
       ]);
-      await withInProcessPi({ activationLedgerSession: true, cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
+      await withInProcessPi({ activationLedgerSession: true, home, cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
         await session.prompt("Resolve and settle.");
         assert.ok(mergerContext);
         assert.ok(
@@ -106,7 +117,14 @@ test("production extension observes session repository B, not ambient repository
           "provider receives constitution + merger soul from production role-runtime",
         );
         const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
-        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
+        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content));
+        assert.deepEqual(result?.message.details, { submissionDisposition: "pending-round-closure" });
+        const headerId = sessionManager.getHeader?.()?.id;
+        assert.ok(headerId);
+        // #604: sealed volume under hermetic package home (session path-derive).
+        const sealed = await readSealedSubmission(repositoryB, headerId, home);
+        assert.ok(sealed, "typed turn_end must seal sole candidate");
+        assert.equal((sealed.decisiveFacts as any)?.mergeCommitId, mergeCommitId);
       });
     });
   } finally { await rm(repositoryB, { recursive: true, force: true }); }
@@ -120,8 +138,8 @@ test("role extension binds Merger Git state to session cwd while preserving inje
       const roots: string[] = [];
       const states: object[] = [];
       const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
+      createPiRoleRuntimeExtension({
+        loadJudgeSoul: async () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
         loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
         createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
         ...(injected ? { mergerGitState: state } : {}),
@@ -132,18 +150,20 @@ test("role extension binds Merger Git state to session cwd while preserving inje
         mkdirSync(repo, { recursive: true });
         execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
       }
-      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoA }));
-      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoB }));
+      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoA, home }));
+      await h.handlers.get("session_start")({}, activationExtensionContext({ cwd: repoB, home }));
       assert.deepEqual(roots, injected ? [] : [repoA, repoB]);
       if (!injected) assert.notEqual(states[0], states[1]);
     }
   });
 });
 
-test("Merger activation preflights frozen identity and narrows to the exact resolution tools", async () => {
+test("Merger activation preflights frozen identity on host-neutral AK tool surface", async () => {
   const h = setup(); await h.runtime.activate();
-  assert.deepEqual(h.active(), ["read", "grep", "find", "ls", "bash", "write", "edit", MERGER_OUTPUT_TOOL_NAME]);
-  const prompt = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" });
+  // Host-neutral: activate must not require Pi builtin names or narrow active tools to them.
+  assert.deepEqual(h.active(), []);
+  assert.equal([...h.tools.keys()].filter((name) => name === MERGER_OUTPUT_TOOL_NAME).length, 1);
+  const prompt = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, context("prompt", {}));
   assert.match(prompt.systemPrompt, /MERGER LAW/); assert.match(prompt.systemPrompt, /target intent/); assert.match(prompt.systemPrompt, /npm/); assert.doesNotMatch(prompt.systemPrompt, /\/input\.json/);
 });
 
@@ -161,36 +181,6 @@ test("Merger accepts one honest escalation without Git success verification", as
   const result = await h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("out", args, undefined, undefined, context("out", args));
   assert.equal(result.terminate, true); assert.deepEqual(result.details, args); assert.equal(h.completedCalls(), 0);
   await assert.rejects(h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("again", args, undefined, undefined, context("again", args)));
-});
-
-test("Merger output routes an infrastructure-failure declaration to the host before any verification", async () => {
-  const h = setup(); await h.runtime.activate(); let aborted = 0;
-  const parameters = { infrastructureFailure: { diagnostic: "merger engine 541" } };
-  await assert.rejects(
-    h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("infra", parameters, undefined, undefined, context("infra", parameters, 1, () => aborted++)),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "merger engine 541");
-      return true;
-    },
-  );
-  assert.equal(h.completedCalls(), 0, "no Git verification runs for an infrastructure-failure declaration");
-  assert.equal(aborted, 1, "the host abort seam fires exactly once");
-});
-
-test("Merger terminal contract and singleton failures abort without accepting a receipt", async () => {
-  const valid = { status: "escalate", attemptId: "attempt", diagnosis: "new product decision", report: "both authorized intents cannot coexist" };
-  for (const { args, calls } of [
-    { args: { ...valid, attemptId: "wrong" }, calls: 1 },
-    { args: valid, calls: 2 },
-  ]) {
-    const h = setup(); await h.runtime.activate(); let aborted = 0;
-    const rejection = h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("out", args, undefined, undefined, context("out", args, calls, () => aborted++));
-    await assert.rejects(rejection);
-    assert.equal(aborted, 1);
-    const accepted = await h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("accepted", valid, undefined, undefined, context("accepted", valid));
-    assert.equal(accepted.terminate, true);
-  }
 });
 
 test("Merger completion requires exact parents, clean worktree, and no unmerged paths", async () => {

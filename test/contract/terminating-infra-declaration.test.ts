@@ -19,8 +19,11 @@ import { collectorOutputArgsSchema } from "../../src/collector-tool-schemas.ts";
 import { doctorSubmissionSchema } from "../../src/doctor-contracts.ts";
 import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { notaryOutputSchema } from "../../src/notary-contracts.ts";
+import { countersignVerdictSchema } from "../../src/countersign-role.ts";
+import { gleanerLeftOutputSchema } from "../../src/gleaner-left-role.ts";
+import { inspectorOutputSchema } from "../../src/inspector-role.ts";
 
-const EIGHT = [
+const TERMINATING_ROLE_SCHEMAS = [
   ["Judge", judgeVerdictSchema],
   ["Fixer", fixerOutputSchema],
   ["Coder", coderOutputSchema],
@@ -29,6 +32,9 @@ const EIGHT = [
   ["Doctor", doctorSubmissionSchema],
   ["Merger", mergerOutputSchema],
   ["Notary", notaryOutputSchema],
+  ["Countersign", countersignVerdictSchema],
+  ["Gleaner-Left", gleanerLeftOutputSchema],
+  ["Inspector", inspectorOutputSchema],
 ] as const;
 
 type Declared = {
@@ -37,9 +43,9 @@ type Declared = {
 };
 type SchemaObj = { properties: Record<string, unknown> };
 
-test("all eight output tool schemas advertise the same non-empty infrastructure-failure declaration", () => {
+test("every terminating output tool schema advertises the same non-empty infrastructure-failure declaration", () => {
   const diagnostics: string[] = [];
-  for (const [name, schema] of EIGHT) {
+  for (const [name, schema] of TERMINATING_ROLE_SCHEMAS) {
     const obj = schema as unknown as SchemaObj;
     const declaration = obj.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY] as
       | Declared
@@ -67,9 +73,9 @@ test("all eight output tool schemas advertise the same non-empty infrastructure-
       }),
     );
   }
-  // All eight must advertise the SAME declaration shape (no prose in comparison).
+  // Every terminating role must advertise the SAME declaration shape (no prose in comparison).
   const canonical = diagnostics[0];
   for (const d of diagnostics) {
-    assert.equal(d, canonical, "all eight output tool schemas must share one declaration");
+    assert.equal(d, canonical, "every terminating output tool schema must share one declaration");
   }
 });

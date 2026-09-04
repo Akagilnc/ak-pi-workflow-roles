@@ -1,3 +1,8 @@
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -25,9 +30,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildDoctorActivationExtraArgs,
-} from "../../src/public-cli/doctor-run.ts";
+
 import {
   admitDoctorInvocation,
 } from "../../src/public-cli/invocation.ts";
@@ -192,6 +195,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     const expectedPatient = await loadDoctorCase(seededRuns);
 
     const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 40,
@@ -207,8 +211,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
       join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-001@doctor"),
     );
     assert.equal(
-      admitted.sessionFile,
-      join(admitted.sessionDirectory, "session.jsonl"),
+      piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
+      join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"),
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
@@ -238,6 +242,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
     await mkdir(emptyRuns, { recursive: true });
     const emptyAdmitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: emptyIssue,
@@ -262,6 +267,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -276,6 +282,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -299,6 +306,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await assert.rejects(
       () =>
         admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           issueNumber: 40,
@@ -325,6 +333,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
       "utf8",
     );
     const admitted = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 40,
@@ -341,7 +350,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
   });
 });
 
-test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admitted runs root", async () => {
+test("doctor activation projects casePath/isolation flags through typed request via real entry", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -349,38 +358,30 @@ test("buildDoctorActivationExtraArgs pins isolation and --ak-doctor-case to admi
     const bookKey = resolveBookKeyFromGit(project);
     await seedIssueRuns(home, bookKey, 12);
 
-    const admitted = await admitDoctorInvocation({
-      home,
-      cwd: project,
-      issueNumber: 12,
-      instruction: "diagnose retries",
-      createRunId: () => "run-doctor-args",
-    });
-    const args = buildDoctorActivationExtraArgs(admitted, {
-      model: {
-        provider: "openai-codex",
-        model: "gpt-5.6-luna",
-        thinking: "high",
-      },
-    });
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    assert.equal(args.includes("--no-skills"), true);
-    assert.equal(args.includes("--no-prompt-templates"), true);
-    assert.equal(args.includes("--no-themes"), true);
-    assert.equal(args.includes("--no-context-files"), true);
-    assert.equal(args.includes("--skill"), false);
-    assert.equal(args[args.indexOf("--session") + 1], admitted.sessionFile);
-    assert.equal(
-      args[args.indexOf("--session-dir") + 1],
-      admitted.sessionDirectory,
+    await runAkRole(
+      ["doctor", "--issue", "12", "--project", project, "diagnose retries"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-doctor-typed",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
     );
-    assert.equal(args[args.indexOf("--ak-role") + 1], "doctor");
-    assert.equal(
-      args[args.indexOf("--ak-doctor-case") + 1],
-      admitted.caseRunsPath,
-    );
-    assert.equal(args[args.indexOf("--mode") + 1], "json");
-    assert.equal(args.at(-1), "diagnose retries");
+
+    const req = captured.current!;
+    assert.equal(req.activation.role, "doctor");
+    // Doctor activation derives casePath from the issued principal.
+    assert.ok(req.activation.casePath.length > 0, "doctor must project a casePath");
+    // Doctor activation does not bind skill methods.
+    assert.equal(req.methods.length, 0);
   });
 });
 
@@ -400,10 +401,14 @@ test("runAkRole doctor rejects malformed grammar before admission", async () => 
         cwd: project,
         credentials: { "openai-codex": true, xai: false },
         io: captured.io,
-        piRunner: async () => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
           dispatched = true;
           throw new Error("doctor must not dispatch for malformed issue");
         },
+          }),
       },
     );
     assert.equal(result.exitCode, 2);
@@ -432,12 +437,16 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         correlationId: "corr-doctor-113",
         io: completedIo.io,
         createRunId: () => "run-doctor-settle",
-        piRunner: async (args, options) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
           assert.equal(options.env.AK_CORRELATION_ID, "corr-doctor-113");
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -446,18 +455,20 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity, findingObservation),
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(completed.exitCode, 0);
@@ -481,6 +492,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(report.receipt.case.issueNumber, 40);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
+    // ② AK-owned run-state ledger reaches terminal for the one-shot real entry.
+    const runState = JSON.parse(
+      await readFile(
+        join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-settle@doctor", "run-state.json"),
+        "utf8",
+      ),
+    ) as { state: string };
+    assert.equal(runState.state, "terminal", "doctor one-shot run must settle run-state terminal");
+
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
     const refused = await runAkRole(
@@ -492,9 +512,19 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         credentials: { "openai-codex": true, xai: false },
         io: refusedIo.io,
         createRunId: () => "run-doctor-refuse",
-        piRunner: async (args) => {
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = {
+            status: "refused",
+            reason: "Need retained sessions",
+            missingEvidence: [
+              { need: "session header", targetKeys: ["case"] },
+            ],
+          };
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -503,24 +533,20 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: {
-                  status: "refused",
-                  reason: "Need retained sessions",
-                  missingEvidence: [
-                    { need: "session header", targetKeys: ["case"] },
-                  ],
-                },
+                details,
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
           };
         },
+          }),
       },
     );
     assert.equal(refused.exitCode, 0);
@@ -552,42 +578,113 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       caseRunsPath: string;
       caseIdentity: { issueNumber: number; runsPath: string };
     };
-    const settled = await settleDoctorTerminalResult({
-      role: "doctor",
-      runId: "run-doctor-settle",
-      bookKey,
-      projectRoot: project,
-      instruction: "inspect",
-      instructionEmpty: false,
-      attachments: [],
-      runDirectory,
-      sessionDirectory: join(runDirectory, "session"),
-      sessionFile: join(runDirectory, "session", "session.jsonl"),
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-      issueNumber: admittedSnap.issueNumber,
-      caseRunsPath: admittedSnap.caseRunsPath,
-      caseIdentity: admittedSnap.caseIdentity,
-    });
-    assert.equal(settled.roleOutcome.kind, "accepted");
-    assert.equal(
-      await trySettleDoctorTerminalResult({
-        role: "doctor",
-        runId: "missing",
+    const settled = await settleDoctorTerminalResult(
+      fixtureDoctorAdmitted({
+        runId: "run-doctor-settle",
         bookKey,
         projectRoot: project,
-        instruction: "",
-        instructionEmpty: true,
-        attachments: [],
-        runDirectory: join(runDirectory, "nope"),
-        sessionDirectory: join(runDirectory, "nope", "session"),
-        sessionFile: join(runDirectory, "nope", "session", "session.jsonl"),
-        admittedRequestPath: join(runDirectory, "nope", "admitted-request.json"),
+        instruction: "inspect",
+        instructionEmpty: false,
+        runDirectory,
         issueNumber: admittedSnap.issueNumber,
         caseRunsPath: admittedSnap.caseRunsPath,
         caseIdentity: admittedSnap.caseIdentity,
       }),
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(settled.roleOutcome.kind, "accepted");
+    assert.equal(
+      await trySettleDoctorTerminalResult(
+        fixtureDoctorAdmitted({
+          runId: "missing",
+          bookKey,
+          projectRoot: project,
+          instruction: "",
+          instructionEmpty: true,
+          runDirectory: join(runDirectory, "nope"),
+          issueNumber: admittedSnap.issueNumber,
+          caseRunsPath: admittedSnap.caseRunsPath,
+          caseIdentity: admittedSnap.caseIdentity,
+        }),
+        piDurablePrincipalAuthority,
+      ),
       undefined,
     );
+  });
+});
+
+test("terminal persistence write failure through public entry propagates loudly with no fake terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    await seedIssueRuns(home, bookKey, 41);
+    const runId = "run-doctor-terminal-write-fail";
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@doctor`,
+    );
+    const captured = captureIo();
+    const result = await runAkRole(
+      ["doctor", "--issue", "41", "--project", project, "inspect"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        createRunId: () => runId,
+        io: captured.io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+          const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
+          const patient = await loadDoctorCase(casePath);
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          await writeFile(
+            sessionFile,
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: DOCTOR_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: sampleCompletedDoctorOutput(patient.identity),
+              },
+            })}\n`,
+            "utf8",
+          );
+          // Real run-state seam: the facade admitted the run and the
+          // coordinator already marked it running; now occupy run-state.json
+          // with a directory so markRunTerminal's terminal write fails (EISDIR).
+          // No production hook, no direct markRunTerminal call, no new fixture.
+          await rm(join(runDirectory, "run-state.json"));
+          await mkdir(join(runDirectory, "run-state.json"));
+          return {
+            code: 0,
+            timedOut: false,
+            stderr: "",
+            args: [...args],
+          };
+        },
+          }),
+      },
+    );
+
+    // The original terminal-persistence error must propagate loudly and no
+    // fake terminal may be presented on stdout. If someone re-adds
+    // `.catch(() => undefined)` around the settled-path markRunTerminal, the
+    // failure would be swallowed and a terminal presented — this assertion
+    // then fails, so the restoration is killed.
+    assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
+    assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
+    assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
   });
 });
 
@@ -601,6 +698,7 @@ test("doctor resume is rejected as one-shot", async () => {
 
     // Create a durable doctor run-state so peek can see the role.
     const admit = await admitDoctorInvocation({
+      principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
       issueNumber: 5,
@@ -614,8 +712,8 @@ test("doctor resume is rejected as one-shot", async () => {
         state: "resumable",
         bookKey: admit.bookKey,
         projectRoot: admit.projectRoot,
-        sessionDirectory: admit.sessionDirectory,
-        sessionFile: admit.sessionFile,
+        sessionDirectory: piDurablePrincipalAuthority.decode(admit.principal).sessionDirectory,
+        sessionFile: piDurablePrincipalAuthority.decode(admit.principal).sessionFile,
         runDirectory: admit.runDirectory,
         admittedRequestPath: admit.admittedRequestPath,
       })}\n`,
@@ -629,9 +727,13 @@ test("doctor resume is rejected as one-shot", async () => {
       cwd: project,
       credentials: { "openai-codex": true, xai: false },
       io: captured.io,
-      piRunner: async () => {
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async () => {
         throw new Error("doctor must not resume");
       },
+          }),
     });
     assert.equal(result.exitCode, 2);
     assert.equal(captured.stdout.join(""), "");

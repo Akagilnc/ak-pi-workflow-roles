@@ -51,7 +51,6 @@ import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
-import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -67,6 +66,7 @@ import {
   withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { writeInstitutionalSeatTable, parentInheritedSeats } from "../helpers/institutional-seat-table.ts";
 
 import {
   textOf,
@@ -83,16 +83,21 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
   await withActivationHome({ prefix: "ak-tool-observation-" }, async ({ home, agentDir }) => {
     const issueRoot = resolve(home, ".ak/work/issues/79");
     await mkdir(issueRoot, { recursive: true });
-    const sessionDirectory = resolve(
+    const runDirectory = resolve(
       home,
       ".ak-roles",
       "books",
       basename(home),
       "runs",
       "judge-tool-observation",
-      "session",
     );
+    const sessionDirectory = resolve(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
+    // #518 S3: direct-Pi judge activation reads seat selection from the run page.
+    await writeInstitutionalSeatTable(
+      runDirectory,
+      parentInheritedSeats({ provider: "ak-tool-observation-bash", model: "faux-1", thinking: "off" }),
+    );
     await writeFile(resolve(issueRoot, "authority.md"), "owner authority for tool observation\n", "utf8");
     await writeFile(
       resolve(agentDir, "navigator-model.json"),
@@ -168,12 +173,25 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
 
 test("installed composition without --ak-role emits no tool-execution observation records", async () => {
   const manifest = await loadRawPackageManifest();
-  // Role-less observation: no activation substrate (no git seed, no durable session).
-  await withHermeticHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
+  // Role-less observation: no role admission. Package entrypoint still loads; give it a
+  // session under hermetic home/.ak-roles so ambient sitian path-derives (#604) instead
+  // of falling through to real books/<cwd-basename> (was books/workspace).
+  await withActivationHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
     const cwd = resolve(home, "workspace");
     await mkdir(cwd, { recursive: true });
+    const sessionDirectory = resolve(
+      home,
+      ".ak-roles",
+      "books",
+      basename(home),
+      "runs",
+      "no-role-observation",
+      "session",
+    );
+    await mkdir(sessionDirectory, { recursive: true });
     const result = await runPiSubprocess([
-      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+      "--session-dir", sessionDirectory,
       "-e", packageEntrypoint(manifest),
       "-e", resolve(packageRoot, "test/fixtures/tool-observation-bash-provider.ts"),
       "--provider", "ak-tool-observation-bash",

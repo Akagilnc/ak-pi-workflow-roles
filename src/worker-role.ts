@@ -1,15 +1,9 @@
-import { StringEnum } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  AgentToolResult,
-} from "@earendil-works/pi-coding-agent";
+import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
+import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
-import {
-  failOnInfrastructureFailureDeclaration,
-  withInfrastructureFailureDeclaration,
-} from "./package-contracts/terminating-infrastructure.ts";
+import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -32,13 +26,16 @@ import {
   parseFixerPrerequisites,
   type FixerInvocationInput,
 } from "./package-contracts/fixer-packet.ts";
-import { requireGatekeeperPass, type GatekeeperPassHostActions } from "./gatekeeper-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./worker-submission-gates.ts";
+import {
+  fixerBashSeatbeltDenyReason,
+  matchFixerBashForbiddenLiteral,
+} from "./fixer-bash-seatbelt.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -47,36 +44,20 @@ export {
 };
 export type { WorkerOutput };
 
-/** Exact case-sensitive substring literals blocked on Fixer bash only. */
-const FIXER_BASH_FORBIDDEN_LITERALS = [
-  "rm -rf",
-  "git reset --hard",
-  "git clean",
-  "git checkout --",
-] as const;
-
-function matchFixerBashForbiddenLiteral(
-  command: string,
-): (typeof FIXER_BASH_FORBIDDEN_LITERALS)[number] | undefined {
-  return FIXER_BASH_FORBIDDEN_LITERALS.find((literal) =>
-    command.includes(literal)
-  );
-}
-
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: StringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
+    status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
     report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["completed", "refused"] as const, {
+    status: stringEnum(["completed", "refused"] as const, {
       description:
         "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
     }),
     report: Type.String({ minLength: 1, description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: StringEnum(["unfinished"] as const, {
+    status: stringEnum(["unfinished"] as const, {
       description:
         "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
     }),
@@ -125,7 +106,26 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
   return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
 }
 
-export type WorkerRoleHostActions = GatekeeperPassHostActions;
+export type WorkerRoleHostActions = HostGatekeeperActions;
+
+/** Stable code for completed apply without host skill-expansion capability evidence (#525). */
+export const CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE =
+  "coder_skill_expansion_evidence_missing" as const;
+
+export type CoderSkillExpansionEvidenceMissingResult = {
+  readonly code: typeof CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
+};
+
+/** Correct completed rejection — not infrastructure; projected via submission non-pass bridge. */
+export class CoderSkillExpansionEvidenceMissingError extends CorrectableSubmissionError {
+  readonly code = CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
+  readonly result: CoderSkillExpansionEvidenceMissingResult;
+  constructor() {
+    super("Coder completed requires host skill-expansion capability evidence");
+    this.name = "CoderSkillExpansionEvidenceMissingError";
+    this.result = Object.freeze({ code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE });
+  }
+}
 
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -141,7 +141,7 @@ export type CoderRoleDependencies = {
 };
 
 export type WorkerRoleRuntime = {
-  activate(ctx?: ExtensionContext): Promise<void>;
+  activate(ctx?: HostContext): Promise<void>;
   /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds archivist durability. */
   armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
 };
@@ -165,26 +165,6 @@ export function validateWorkerOutput(
   return validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
 }
 
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  expectedToolName: string,
-  roleLabel: WorkerRoleLabel,
-  ctx: ExtensionContext,
-): void {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  const seat = roleLabel === "Fixer" ? "修内司" : "将作监";
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error(`${seat}回执非唯一终局工具调用`);
-  }
-  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 || call === undefined || call.id !== toolCallId ||
-    call.name !== expectedToolName
-  ) {
-    throw new Error(`${seat}回执非唯一终局工具调用`);
-  }
-}
 
 /** Reminder bounces stay typed rejects; IO/infrastructure keep identity via host failInfrastructure. */
 function assertAcceptableThroughHost(
@@ -192,7 +172,7 @@ function assertAcceptableThroughHost(
   status: string,
   details: unknown,
   hostActions: WorkerRoleHostActions,
-  ctx: ExtensionContext,
+  ctx: HostContext,
   toolCallId: string,
 ): void {
   try {
@@ -210,7 +190,7 @@ function assertAcceptableThroughHost(
 }
 
 export function createFixerRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: FixerRoleDependencies,
   hostActions: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
@@ -268,22 +248,13 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执",
+          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
-          async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
-            // #541: infra declaration fails via the shared host seam before any
-            // submission gate + Gatekeeper work.
-            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
-            requireSingletonSubmissionCall(
-              toolCallId,
-              FIXER_OUTPUT_TOOL_NAME,
-              "Fixer",
-              ctx,
-            );
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
             assertAcceptableThroughHost(
               submissionGate,
@@ -293,7 +264,7 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            await requireGatekeeperPass({
+            await pi.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "worker_completion", material: JSON.stringify(output) },
               ...(_signal === undefined ? {} : { signal: _signal }),
@@ -316,8 +287,7 @@ export function createFixerRoleRuntime(
           if (matched === undefined) return;
           return {
             block: true,
-            reason:
-              `修内司 bash 拦截：命中禁用字面量 ${matched}`,
+            reason: fixerBashSeatbeltDenyReason(matched),
           };
         });
         pi.on("before_agent_start", (event) => {
@@ -336,7 +306,7 @@ export function createFixerRoleRuntime(
 }
 
 export function createCoderRoleRuntime(
-  pi: ExtensionAPI,
+  pi: RoleHost,
   dependencies: CoderRoleDependencies,
   hostActions: WorkerRoleHostActions,
 ): WorkerRoleRuntime {
@@ -405,27 +375,18 @@ export function createCoderRoleRuntime(
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
-          async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
-            // #541: infra declaration fails via the shared host seam before any
-            // submission gate + Gatekeeper work.
-            failOnInfrastructureFailureDeclaration(parameters, hostActions, ctx, toolCallId);
-            requireSingletonSubmissionCall(
-              toolCallId,
-              CODER_OUTPUT_TOOL_NAME,
-              "Coder",
-              ctx,
-            );
             const output = validateWorkerOutput(parameters, phase, "Coder");
             if (
               phase === "apply" && output.status === "completed" &&
               !expansionCaptured
             ) {
-              throw new Error(
-                "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
-              );
+              const rejection = new CoderSkillExpansionEvidenceMissingError();
+              hostActions.bindSubmissionNonPass(toolCallId, rejection.result);
+              throw rejection;
             }
             assertAcceptableThroughHost(
               submissionGate,
@@ -435,7 +396,7 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            await requireGatekeeperPass({
+            await pi.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "worker_completion", material: JSON.stringify(output) },
               ...(_signal === undefined ? {} : { signal: _signal }),
@@ -483,7 +444,7 @@ export function createCoderRoleRuntime(
               expansionPending = false;
               if (originalRequest !== undefined) {
                 expansionCaptured = binding.captureExpansion(
-                  event.prompt,
+                  pi.capabilities?.skillExpansion(event.prompt),
                   originalRequest,
                 ) !== undefined;
               }

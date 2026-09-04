@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, readdir, realpath, rm, writeFile, mkdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -16,7 +16,6 @@ import {
   resolveInternalRoleEntrypoint,
   runAkRole,
 } from "../../src/public-cli/cli.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PUBLIC_CALLABLE_ROLES } from "../../src/public-cli/registry.ts";
 import {
   loadPublicCliConfig,
@@ -24,7 +23,15 @@ import {
   resolveEffectiveSeat,
   type CredentialProviders,
 } from "../../src/public-cli/config.ts";
-import { packageRoot, runPiSubprocess } from "../helpers/pi-test-harness.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import {
+  createMinimalHost,
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
@@ -52,19 +59,6 @@ function captureIo() {
   };
 }
 
-test("help document capabilities match typed registry without depending on layout", () => {
-  const doc = helpDocument();
-  assert.equal(doc.executable, "ak-role");
-  const names = doc.capabilities.map((c) => c.name);
-  assert.equal(names.includes("roles"), true);
-  assert.equal(names.includes("config"), true);
-  assert.equal(names.includes("help"), true);
-  for (const role of PUBLIC_CALLABLE_ROLES) {
-    assert.equal(names.includes(role), true);
-  }
-  assert.equal((names as readonly string[]).includes("navigator"), false);
-});
-
 test("Inspector public runner preserves typed pass, bounce, and malformed output", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
@@ -75,18 +69,22 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
     execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project, stdio: "ignore" });
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
-    const providerPath = resolve(packageRoot, "test/fixtures/inspector-public-provider.ts");
 
     for (const [index, row] of [
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
-      { status: "malformed", exitCode: 1, candidate: { status: "unknown", findings: "unaltered" } },
+      { status: "malformed", exitCode: 1, details: { status: "unknown", findings: "unaltered" } },
     ].entries()) {
       const runId = `inspector-public-${index}`;
+      const details = row.status === "malformed"
+        ? row.details
+        : { status: row.status, findings: row.findings };
       const result = await runAkRole(
         [
-          "inspector", "--model", "ak-inspector-offline/faux-1", "--thinking", "off",
-          "--project", project, "--attach", attachment, "Review this material.",
+          "inspector",
+          "--project", project,
+          "--attach", attachment,
+          "Review this material.",
         ],
         {
           packageRoot,
@@ -94,23 +92,16 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
           cwd: project,
           createRunId: () => runId,
           io: captureIo().io,
-          piRunner: async (args, options) => {
-            const forwarded = [...args];
-            const extensionIndex = forwarded.indexOf("-e");
-            assert.notEqual(extensionIndex, -1);
-            forwarded.splice(extensionIndex + 2, 0, "-e", providerPath);
-            const child = await runPiSubprocess(forwarded, {
-              cwd: options.cwd,
-              env: { ...options.env, AK_TEST_INSPECTOR_STATUS: row.status },
-              ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-            });
-            return {
-              code: child.code ?? 1,
-              stderr: child.stderr,
-              timedOut: child.localTimeout,
-              args: forwarded,
-            };
-          },
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: scriptedTerminatingToolSession({
+              role: "inspector",
+              toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+              details,
+              ...(row.status === "malformed" ? { seal: false } : {}),
+            }),
+          }),
         },
       );
 
@@ -122,7 +113,7 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
         assert.equal(outcome.cause, "output");
         assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
-          candidate: row.candidate,
+          candidate: row.details,
           acceptedReceipt: false,
         });
       } else {
@@ -131,25 +122,21 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         assert.equal(outcome.status, row.status);
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
       }
-
-      // Session evidence only corroborates that the public runner traversed the
-      // real Pi/runtime output tool; all behavior assertions above use Terminal.
-      const sessionDir = join(
-        home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs",
-        `${runId}@inspector`, "session",
-      );
-      const sessionFile = (await readdir(sessionDir)).find((name) => name.endsWith(".jsonl"));
-      assert.ok(sessionFile);
-      const entries = (await readFile(join(sessionDir, sessionFile), "utf8"))
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { message?: { toolName?: string } });
-      assert.equal(
-        entries.some((entry) => entry.message?.toolName === INSPECTOR_OUTPUT_TOOL_NAME),
-        true,
-      );
     }
   });
+});
+
+test("help document capabilities match typed registry without depending on layout", () => {
+  const doc = helpDocument();
+  assert.equal(doc.executable, "ak-role");
+  const names = doc.capabilities.map((c) => c.name);
+  assert.equal(names.includes("roles"), true);
+  assert.equal(names.includes("config"), true);
+  assert.equal(names.includes("help"), true);
+  for (const role of PUBLIC_CALLABLE_ROLES) {
+    assert.equal(names.includes(role), true);
+  }
+  assert.equal((names as readonly string[]).includes("navigator"), false);
 });
 
 // Config persistence round-trip on the typed seat face (#420 整改：原四条呈现案
@@ -354,6 +341,57 @@ test("config persistence round-trips across processes on the typed seat face", a
   });
 });
 
+test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRequest.model", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project);
+    execFileSync("git", ["init", "-b", "main"], { cwd: project, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "inspector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Inspector Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+      cwd: project,
+      stdio: "ignore",
+    });
+    const attachment = join(project, "material.txt");
+    await writeFile(attachment, "frozen review material", "utf8");
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "gatekeeper", "openai-codex/gpt-5.6-sol:low"],
+          { packageRoot, home, io: captureIo().io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    await runAkRole(
+      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        createRunId: () => "inspector-inherit-620",
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          captured.current = request;
+          return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
+        }),
+      },
+    );
+    const inherited = captured.current!;
+    assert.equal(inherited.activation.role, "inspector");
+    assert.deepEqual(inherited.model, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "low",
+    });
+  });
+});
+
 test("#453 config unset clears gate model only; keeps notary engine; refuses non-gate", async () => {
   await withTempHome(async (home) => {
     const setModel = await runAkRole(
@@ -428,12 +466,16 @@ test("every public callable role is a completed path (no deferred slice)", async
         packageRoot,
         home,
         io,
-        piRunner: async (args) => ({
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => ({
           code: 1,
           stderr: "forced runner stop",
           timedOut: false,
           args: [...args],
         }),
+          }),
       });
       assert.notEqual(result.exitCode, 0, role);
       assert.equal(
@@ -474,7 +516,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
     }
 
     const bookKey = resolveBookKeyFromGit(project);
-    const ledgerHome = resolveActivationLedgerHome(() => home);
+    const ledgerHome = resolveActivationLedgerHome(home);
     const piRunner = async (args: readonly string[]) => ({
       code: 1,
       stderr: "public ledger tracer",
@@ -497,7 +539,11 @@ test("public runs write one identity-bound invocation ledger for every role", as
         home,
         cwd: project,
         createRunId: () => scenario.runId,
-        piRunner,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner,
+        }),
         io: captureIo().io,
       });
 

@@ -11,12 +11,20 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
+import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
+import {
+  readAuditEscalationSubmission,
+  readLatestSubmissionOutcome,
+  readSealedSubmission,
+} from "../submission-ledger.ts";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
-import { knownFailureFromProviderStop, type ExplicitInternalKnownFailure, readReviewerDispatchRejection } from "./explicit-internal.ts";
+import type { RoleTurnKnownFailure } from "../host-contracts.ts";
+import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
+import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   RESUME_TRANSPORT_ENVELOPE,
   isV1ResumableProvider,
@@ -32,6 +40,8 @@ import {
   readComplianceCandidate,
   type ComplianceDecision,
 } from "../compliance-transport.ts";
+// COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
+// interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -78,6 +88,20 @@ import {
   type NotaryOutput,
 } from "../notary-contracts.ts";
 import {
+  COUNTERSIGN_OUTPUT_TOOL_NAME,
+  validateRecordedCountersignOutput,
+} from "../countersign-contracts.ts";
+import {
+  GLEANER_LEFT_OUTPUT_TOOL_NAME,
+  gleanerLeftDecisiveFacts,
+  validateRecordedGleanerLeftOutput,
+} from "../gleaner-left-contracts.ts";
+import {
+  INSPECTOR_OUTPUT_TOOL_NAME,
+  inspectorDecisiveFacts,
+  validateRecordedInspectorOutput,
+} from "../inspector-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -93,20 +117,69 @@ import {
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
-import { INSPECTOR_OUTPUT_TOOL_NAME } from "../inspector-contracts.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+  DurablePrincipalCoordinates,
+} from "../host-contracts.ts";
 import {
   ensureRunArtifactsDir,
+  homeFromRunDirectory,
   type AdmittedCoderInvocation,
   type AdmittedCollectorInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
-  type AdmittedInspectorInvocation,
   type AdmittedMergerInvocation,
+  type AdmittedCountersignInvocation,
+  type AdmittedGleanerLeftInvocation,
+  type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
+
+/** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
+function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
+  return homeFromRunDirectory(admitted.runDirectory);
+}
+
+async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
+  return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
+}
+
+/**
+ * Shared sealed-accepted detection for all resumable adapters (#648).
+ * Ledger projection is the sole authority — not optional per-role adapter wiring.
+ */
+export async function hasSealedAcceptedProjection(
+  admitted: AdmittedRoleInvocation,
+): Promise<boolean> {
+  // Ledger authority must not wash read failure into "unsealed" (#648).
+  // Callers treat throw as fail-closed: preserve true cause, never redispatch.
+  return (await sealedLedgerOutcome(admitted)) !== undefined;
+}
+
+async function auditEscalationLedgerOutcome(
+  admitted: AdmittedRoleInvocation,
+  role: "judge" | "doctor",
+): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
+  const projection = await readAuditEscalationSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    sealedLedgerHome(admitted),
+  );
+  if (projection?.role !== role) return undefined;
+  return projection;
+}
+
+/** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
+function coordinatesFromAdmitted(
+  authority: DurablePrincipalAuthority,
+  admitted: { readonly principal: DurablePrincipal },
+): DurablePrincipalCoordinates {
+  return authority.decode(admitted.principal);
+}
 import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
@@ -447,7 +520,7 @@ export function classifyPostAdmissionFailure(input: {
 
 /** One projection owner for the four audited public runners. */
 export function explicitInternalKnownFailureClassificationInput(
-  failure: ExplicitInternalKnownFailure | undefined,
+  failure: RoleTurnKnownFailure | undefined,
 ) {
   if (failure === undefined) return {};
   return {
@@ -636,8 +709,9 @@ export function extractSessionProviderStop(
   entries: readonly SessionEntry[],
 ): SessionProviderStop | undefined {
   // A resumed dispatch appends a typed top-level user turn to the same session.
-  // Retained audit state from an older attempt must not replace the newer attempt's
-  // native provider stop. Sessions without a user turn are the initial attempt.
+  // Older attempt native stops must not replace the newer attempt's stop.
+  // Sessions without a user turn are the initial attempt.
+  // Auditor retained responses live in Sitian (kind=auditor); see readSessionProviderStop.
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -647,17 +721,6 @@ export function extractSessionProviderStop(
     }
   }
 
-  // The shared auditor is a nested model turn. Within the current attempt its
-  // retained typed response is authoritative when failInfrastructure subsequently
-  // aborts the parent turn.
-  for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) continue;
-    const response = isRecord(entry.data) && isRecord(entry.data.response) ? entry.data.response : undefined;
-    const stop = sessionProviderStopFromAssistant(response);
-    if (stop !== undefined) return stop;
-    break;
-  }
   for (let i = entries.length - 1; i >= attemptStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -669,10 +732,46 @@ export function extractSessionProviderStop(
   return undefined;
 }
 
-/** Read the bound session principal and extract a typed provider-stop, if any. */
+/**
+ * Latest Sitian-retained auditor response stop for this parent session principal.
+ * Writer: retainComplianceResponse → sitianReport(kind=auditor, payload={version,response}).
+ * Payload stopReason is preserved as retained — aborted stays aborted; no 500/error wash here.
+ */
+async function readSitianRetainedAuditorProviderStop(
+  sessionFile: string,
+): Promise<SessionProviderStop | undefined> {
+  try {
+    const { recordFile } = resolveSitianRecordPath({
+      level: "event",
+      kind: "auditor",
+      sessionParent: sessionFile,
+      // Path is driven by sessionParent when under ledger home; cwd is a fallback only.
+      cwd: dirname(sessionFile),
+    });
+    const { records } = await readSitianRecords(recordFile);
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const payload = records[i]?.payload;
+      if (!isRecord(payload) || !isRecord(payload.response)) continue;
+      // Lifecycle events carry `type` (binding / compliance_failure); retain does not.
+      if (typeof payload.type === "string") continue;
+      const stop = sessionProviderStopFromAssistant(payload.response as SessionMessage);
+      if (stop !== undefined) return stop;
+      // Latest retain exists but is not a provider-stop — do not scan older retains
+      // (mirrors former session COMPLIANCE_RESPONSE preference break).
+      break;
+    }
+  } catch {
+    // Missing volume or unreadable path is absence, not a settlement failure.
+  }
+  return undefined;
+}
+
+/** Read retained auditor stop (Sitian) then native session assistant stop, if any. */
 export async function readSessionProviderStop(
   sessionFile: string,
 ): Promise<SessionProviderStop | undefined> {
+  const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
+  if (retained !== undefined) return retained;
   try {
     const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
@@ -688,7 +787,7 @@ export async function readSessionProviderStop(
  */
 export async function readBoundEvidenceChildKnownFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const childDirectory = join(dirname(sessionFile), "evidence-children");
   let names: string[];
   try {
@@ -740,13 +839,22 @@ async function loadBoundAuditorVolumes(
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
   const RESUME_ENVELOPE = RESUME_TRANSPORT_ENVELOPE;
+  // Keyed prefix on the transport token line only (#600 / 8e767152). Resume may
+  // append engine handbook presentation after the token; settlement must not
+  // treat those prose lines as a real user turn or key on their shape.
+  const isResumeEnvelopeBytes = (value: unknown): boolean => {
+    if (typeof value !== "string") return false;
+    const nl = value.indexOf("\n");
+    const firstLine = nl === -1 ? value : value.slice(0, nl);
+    return firstLine === RESUME_ENVELOPE;
+  };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;
     const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (text === RESUME_ENVELOPE) return true;
+    if (isResumeEnvelopeBytes(text)) return true;
     const content = (msg as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (p.text === RESUME_ENVELOPE || p.content === RESUME_ENVELOPE));
+      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
     }
     return false;
   };
@@ -798,7 +906,7 @@ async function loadBoundAuditorVolumes(
 
 function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -825,7 +933,7 @@ function complianceFailureFromAuditorVolumes(
 
 function providerStopFallbackFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   for (const { entries } of volumes) {
     const stop = extractSessionProviderStop(entries);
     if (stop === undefined) continue;
@@ -844,7 +952,7 @@ function providerStopFallbackFromAuditorVolumes(
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes)
@@ -854,7 +962,7 @@ export async function readBoundAuditorKnownFailure(
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
@@ -863,7 +971,7 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
-): Promise<ExplicitInternalKnownFailure | undefined> {
+): Promise<RoleTurnKnownFailure | undefined> {
   const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
@@ -871,7 +979,7 @@ async function readBoundAuditorProviderStopFallback(
 
 function typedFailedTerminatingToolKnownFailure(
   entries: readonly SessionEntry[],
-): ExplicitInternalKnownFailure | undefined {
+): RoleTurnKnownFailure | undefined {
   let attemptStart = 0;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     if (entries[i]?.type === "message" && entries[i]?.message?.role === "user") {
@@ -910,7 +1018,7 @@ function typedFailedTerminatingToolKnownFailure(
  * never re-read the sidecar in presentControlledFailure.
  */
 export type AuditedRunnerFailureResolution = {
-  readonly knownFailure?: ExplicitInternalKnownFailure;
+  readonly knownFailure?: RoleTurnKnownFailure;
   /** Successful sidecar read (not absence). */
   readonly typedHttpObservation?: TypedProviderHttpObservation;
   /**
@@ -922,7 +1030,7 @@ export type AuditedRunnerFailureResolution = {
 };
 
 function resolutionOf(
-  knownFailure: ExplicitInternalKnownFailure | undefined,
+  knownFailure: RoleTurnKnownFailure | undefined,
   typedHttp: {
     readonly settled: boolean;
     readonly observation?: TypedProviderHttpObservation;
@@ -937,9 +1045,9 @@ function resolutionOf(
 
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerFailureResolution(input: {
-  runner: ExplicitInternalKnownFailure | undefined;
+  runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
-  credential: ExplicitInternalKnownFailure | undefined;
+  credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
@@ -1065,12 +1173,12 @@ export async function resolveAuditedRunnerFailureResolution(input: {
 
 /** Sole evidence-priority owner for public runners with Soul auditors. */
 export async function resolveAuditedRunnerKnownFailure(input: {
-  runner: ExplicitInternalKnownFailure | undefined;
+  runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
-  credential: ExplicitInternalKnownFailure | undefined;
+  credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
-}): Promise<ExplicitInternalKnownFailure | undefined> {
+}): Promise<RoleTurnKnownFailure | undefined> {
   return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
 }
 
@@ -1086,7 +1194,7 @@ export async function resolveControlledFailureResumeObservation(input: {
   readonly typedHttpObservation?: TypedProviderHttpObservation;
 }): Promise<{
   readonly typedHttp429?: TypedHttp429Observation;
-  readonly observationReadFailure?: ExplicitInternalKnownFailure;
+  readonly observationReadFailure?: RoleTurnKnownFailure;
 }> {
   if (input.typedHttpObservationSettled === true) {
     const observation = input.typedHttpObservation;
@@ -1120,7 +1228,7 @@ export async function resolveControlledFailureResumeObservation(input: {
 export function controlledFailureInputFromResolution(
   resolution: AuditedRunnerFailureResolution,
 ): {
-  knownFailure?: ExplicitInternalKnownFailure;
+  knownFailure?: RoleTurnKnownFailure;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
 } {
@@ -1157,6 +1265,41 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   } catch {
     return {};
   }
+}
+
+/** Countersign terminal projection — escalate keeps decisionGate; continue keeps fix (#572 / ADR 0074). */
+function countersignDecisiveFacts(
+  verdict: object,
+  countersignStatus: string,
+): Record<string, unknown> {
+  const facts: Record<string, unknown> = { countersignStatus };
+  if (countersignStatus === "continue") {
+    const fix = safelyRead(verdict, "fix");
+    if (fix.readable && isRecord(fix.value)) {
+      const summary = safelyRead(fix.value, "summary");
+      if (summary.readable && typeof summary.value === "string") {
+        facts.fixSummary = summary.value;
+      }
+    }
+  }
+  if (countersignStatus === "escalate") {
+    const gate = safelyRead(verdict, "decisionGate");
+    if (gate.readable && isRecord(gate.value)) {
+      const question = safelyRead(gate.value, "question");
+      const options = safelyRead(gate.value, "options");
+      if (question.readable && typeof question.value === "string") {
+        facts.decisionQuestion = question.value;
+      }
+      if (options.readable && Array.isArray(options.value)) {
+        facts.decisionOptions = [...options.value];
+      }
+    }
+  }
+  const note = safelyRead(verdict, "note");
+  if (note.readable && note.value !== undefined) facts.note = note.value;
+  const evidence = safelyRead(verdict, "evidence");
+  if (evidence.readable && evidence.value !== undefined) facts.evidence = evidence.value;
+  return facts;
 }
 
 function judgeDecisiveFacts(
@@ -1817,10 +1960,10 @@ type AttemptHistorySource = {
  * the history entry backing the overwrite did not land (fail closed).
  */
 export async function appendRunAttemptHistory(
-  admitted: AttemptHistorySource,
+  source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
-  const entries = await readBoundSessionEntries(admitted.sessionFile);
+  const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId: string | null = null;
   let priorEntries = 0;
   for (const entry of entries) {
@@ -1833,22 +1976,35 @@ export async function appendRunAttemptHistory(
     }
   }
   const timestamp = new Date().toISOString();
-  // Shape mirrors pi SessionManager.appendCustomEntry.
+  const attemptData = {
+    sequence: priorEntries + 1,
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp,
+    outcome,
+  };
   const line = `${JSON.stringify({
     type: "custom",
     customType: ATTEMPT_HISTORY_ENTRY_TYPE,
-    data: {
-      sequence: priorEntries + 1,
-      role: admitted.role,
-      runId: admitted.runId,
-      recordedAt: timestamp,
-      outcome,
-    },
+    data: attemptData,
     id: randomUUID(),
     parentId,
     timestamp,
   })}\n`;
-  await appendFile(admitted.sessionFile, line, "utf8");
+  await appendFile(source.sessionFile, line, "utf8");
+  try {
+    sitianReport({
+      level: "event",
+      kind: "attempt-history",
+      subject: { runId: source.runId },
+      sessionParent: source.sessionFile,
+      payload: {
+        type: ATTEMPT_HISTORY_ENTRY_TYPE,
+        ...attemptData,
+      },
+      source: "settlement",
+    });
+  } catch {}
 }
 
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
@@ -1856,55 +2012,6 @@ export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
   { kind: "accepted" } | { kind: "audit_escalation" }
 >;
-
-export function extractJudgeRoleOutcome(
-  entries: readonly SessionEntry[],
-): LawfulJudgeRoleOutcome | undefined {
-  // Singleton marker↔terminal cardinality — ambiguous multi-terminal fails closed.
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    // Shared classifier owns accepted/human vs non-Receipt terminal discriminant.
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "judge",
-      JUDGE_OUTPUT_TOOL_NAME,
-    );
-    if (escalation !== undefined) {
-      return {
-        kind: "audit_escalation",
-        role: "judge",
-        status: "audit_escalation",
-        decisiveFacts: { ...escalation.details },
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    // The known discriminator selects the branch; optional presentation material
-    // must not become a second verdict-shape gate (ADR 0040).
-    if (!isRecord(details)) continue;
-    const statusRead = safelyRead(details, "judgeStatus");
-    if (!statusRead.readable || typeof statusRead.value !== "string") continue;
-    const judgeStatus = statusRead.value;
-    const statusBase = judgeStatus;
-    if (statusBase !== "converged" && statusBase !== "continue" && statusBase !== "escalate") continue;
-    return {
-      kind: "accepted",
-      role: "judge",
-      status: judgeStatus,
-      decisiveFacts: judgeDecisiveFacts(details, judgeStatus),
-    };
-  }
-  return undefined;
-}
-
 function navigatorPhaseValue(value: unknown): NavigatorPhase {
   if (value === "plan" || value === "apply") return value;
   return null;
@@ -2159,10 +2266,10 @@ export function extractNavigatorFact(
  * so the controlled-failure Terminal itself still settles.
  */
 async function extractNavigatorFactFromAdmittedSession(
-  admitted: AdmittedRoleInvocation,
+  sessionFile: string,
 ): Promise<TerminalNavigatorFact> {
   try {
-    const entries = await readBoundSessionEntries(admitted.sessionFile);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractNavigatorFact(entries);
   } catch (error) {
     if (isMissingPathError(error)) {
@@ -2183,11 +2290,11 @@ async function extractNavigatorFactFromAdmittedSession(
 export async function publishJudgeArtifacts(
   admitted: AdmittedJudgeInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2209,8 +2316,8 @@ export async function publishJudgeArtifacts(
     `${JSON.stringify(
       {
         runId: admitted.runId,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2237,13 +2344,13 @@ export async function publishJudgeArtifacts(
 export async function publishCoderArtifacts(
   admitted: AdmittedCoderInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
     readonly coderOutput?: CoderOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2271,8 +2378,8 @@ export async function publishCoderArtifacts(
         runId: admitted.runId,
         role: "coder",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         taskPath: admitted.taskPath,
         attachments: admitted.attachments.map((a) => ({
@@ -2303,44 +2410,15 @@ export type LawfulCoderRoleOutcome = {
   status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export function extractCoderRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulCoderRoleOutcome; output: CoderOutput } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      validateAcceptedDetails(CODER_OUTPUT_TOOL_NAME, message.details);
-      const output = validateAcceptedCoderDetails(message.details);
-      const outcome: LawfulCoderRoleOutcome = {
-        kind: "accepted",
-        role: "coder",
-        status: output.status,
-        decisiveFacts: coderDecisiveFacts(output),
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 /**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
  * Malformed JSONL / other read failures throw with knownCause=session.
  */
 async function readLawfulSettlementEntries(
-  admitted: AdmittedRoleInvocation,
+  sessionFile: string,
 ): Promise<SessionEntry[] | undefined> {
   try {
-    return await readBoundSessionEntries(admitted.sessionFile);
+    return await readBoundSessionEntries(sessionFile);
   } catch (error) {
     // Missing path is absence of a lawful outcome; callers classify via session inspect.
     if (isMissingPathError(error)) return undefined;
@@ -2359,10 +2437,21 @@ async function readLawfulSettlementEntries(
  */
 export async function readLawfulJudgeRoleOutcome(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  return extractJudgeRoleOutcome(entries);
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role === "judge") {
+    const details = sealed.decisiveFacts as Record<string, unknown>;
+    // sealed.status is the sole authority (written by acceptedFacts at seal).
+    return {
+      kind: "accepted",
+      role: "judge",
+      status: sealed.status,
+      decisiveFacts: judgeDecisiveFacts(details, sealed.status),
+    };
+  }
+  // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
+  return auditEscalationLedgerOutcome(admitted, "judge");
 }
 
 /**
@@ -2372,9 +2461,10 @@ export async function readLawfulJudgeRoleOutcome(
  */
 export async function hasLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    const outcome = await readLawfulJudgeRoleOutcome(admitted, authority);
     return outcome !== undefined && isLawfulTypedTerminalOutcome(outcome);
   } catch {
     return false;
@@ -2394,19 +2484,18 @@ export async function hasLawfulJudgeTerminalResult(
  */
 async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const roleOutcome = extractJudgeRoleOutcome(entries);
-  if (roleOutcome === undefined) {
-    return undefined;
-  }
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  if (roleOutcome === undefined) return undefined;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
   // Lawful outcome exists — artifact publication keeps original errno/name.
   const artifacts = await publishJudgeArtifacts(
     admitted,
     roleOutcome,
-    admitted.sessionDirectory,
+    coordinates,
   );
   return withOptionalGateProjection(
     {
@@ -2415,7 +2504,7 @@ async function settleLawfulJudgeTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    coordinates.sessionDirectory,
   );
 }
 
@@ -2426,8 +2515,9 @@ async function settleLawfulJudgeTerminalResult(
  */
 export async function settleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulJudgeTerminalResult(admitted);
+  const settled = await settleLawfulJudgeTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Judge Role run completed without a lawful typed terminal result",
@@ -2443,27 +2533,36 @@ export async function settleJudgeTerminalResult(
  */
 export async function trySettleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulJudgeTerminalResult(admitted);
+  return settleLawfulJudgeTerminalResult(admitted, authority);
 }
 
 async function settleLawfulCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractCoderRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "coder") return undefined;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const output = validateAcceptedCoderDetails(sealed.decisiveFacts);
+  const roleOutcome: LawfulCoderRoleOutcome = {
+    kind: "accepted",
+    role: "coder",
+    status: sealed.status,
+    decisiveFacts: coderDecisiveFacts(output),
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      coderOutput: extracted.output,
+      coderOutput: output,
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
@@ -2471,23 +2570,24 @@ async function settleLawfulCoderTerminalResult(
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    coordinates.sessionDirectory,
   );
 }
 
 /** Settle a lawful Coder Terminal from the admitted session (shared #106 success interface). */
 export async function settleCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCoderTerminalResult(admitted, options);
+  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Coder Role run completed without a lawful typed terminal result",
@@ -2548,14 +2648,14 @@ export function extractFixerMethodInvocations(
 export async function publishFixerArtifacts(
   admitted: AdmittedFixerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly fixerOutput?: FixerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2583,8 +2683,8 @@ export async function publishFixerArtifacts(
         runId: admitted.runId,
         role: "fixer",
         phase: admitted.phase,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         packetPath: admitted.packetPath,
         ...(admitted.prerequisitesPath === undefined
@@ -2620,50 +2720,27 @@ export type LawfulFixerRoleOutcome = {
   status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export function extractFixerRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulFixerRoleOutcome; output?: FixerOutput } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    // Residual audit_escalation faces are not lawful Fixer terminals after #242.
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      validateAcceptedDetails(FIXER_OUTPUT_TOOL_NAME, details);
-      const output = validateFixerOutput(details);
-      const outcome: LawfulFixerRoleOutcome = {
-        kind: "accepted",
-        role: "fixer",
-        status: output.status,
-        decisiveFacts: fixerDecisiveFacts(output),
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractFixerRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "fixer") return undefined;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const output = validateFixerOutput(sealed.decisiveFacts);
+  const roleOutcome: LawfulFixerRoleOutcome = {
+    kind: "accepted",
+    role: "fixer",
+    status: sealed.status,
+    decisiveFacts: fixerDecisiveFacts(output),
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
@@ -2673,35 +2750,36 @@ async function settleLawfulFixerTerminalResult(
   });
   const artifacts = await publishFixerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      ...(extracted.output === undefined ? {} : { fixerOutput: extracted.output }),
+      fixerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Fixer Terminal from the admitted session (shared #106 success interface). */
 export async function settleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulFixerTerminalResult(admitted, options);
+  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Fixer Role run completed without a lawful typed terminal result",
@@ -2713,12 +2791,12 @@ export async function settleFixerTerminalResult(
 export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly collectorReceipt?: CollectorReceipt;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2747,8 +2825,8 @@ export async function publishCollectorArtifacts(
         prNumber: admitted.prNumber,
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2772,45 +2850,19 @@ export async function publishCollectorArtifacts(
 export type LawfulCollectorRoleOutcome = {
   kind: "accepted";
   role: "collector";
-  /** Collector has no status leaf — synthesize a stable collected marker. */
-  status: "collected";
+  /** Collector has no status leaf — sealed projection carries acceptedFacts collected. */
+  status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export function extractCollectorRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulCollectorRoleOutcome; receipt: CollectorReceipt } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const receipt = validateAcceptedCollectorReceipt(message.details);
-      const outcome: LawfulCollectorRoleOutcome = {
-        kind: "accepted",
-        role: "collector",
-        status: "collected",
-        decisiveFacts: collectorDecisiveFacts(receipt),
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractCollectorRoleOutcome(entries);
-  if (extracted === undefined) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "collector") {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -2834,30 +2886,38 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  assertCollectorReceiptMatchesAdmitted(extracted.receipt, admitted);
+  const receipt = validateAcceptedCollectorReceipt(roleOutcome.decisiveFacts);
+  assertCollectorReceiptMatchesAdmitted(receipt, admitted);
+  const accepted: LawfulCollectorRoleOutcome = {
+    kind: "accepted",
+    role: "collector",
+    status: roleOutcome.status,
+    decisiveFacts: collectorDecisiveFacts(receipt),
+  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
-    { collectorReceipt: extracted.receipt },
+    accepted,
+    coordinates,
+    { collectorReceipt: receipt },
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Collector Terminal from the admitted session. */
 export async function settleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCollectorTerminalResult(admitted);
+  const settled = await settleLawfulCollectorTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Collector Role run completed without a lawful typed terminal result",
@@ -2869,19 +2929,20 @@ export async function settleCollectorTerminalResult(
 /** Try to settle a lawful Collector Terminal; undefined only for genuine absence. */
 export async function trySettleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCollectorTerminalResult(admitted);
+  return settleLawfulCollectorTerminalResult(admitted, authority);
 }
 
 export async function publishDoctorArtifacts(
   admitted: AdmittedDoctorInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly doctorOutput?: DoctorOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -2910,8 +2971,8 @@ export async function publishDoctorArtifacts(
         issueNumber: admitted.issueNumber,
         caseRunsPath: admitted.caseRunsPath,
         caseIdentity: admitted.caseIdentity,
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -2945,67 +3006,39 @@ export type LawfulDoctorRoleOutcome =
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     };
-
-export function extractDoctorRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulDoctorRoleOutcome; output?: DoctorOutput } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    const escalation = boundAuditEscalationForResult(
-      entries,
-      i,
-      message,
-      "doctor",
-      DOCTOR_OUTPUT_TOOL_NAME,
-    );
-    if (escalation !== undefined) {
-      return {
-        outcome: {
-          kind: "audit_escalation",
-          role: "doctor",
-          status: "audit_escalation",
-          decisiveFacts: { ...escalation.details },
-        },
-      };
-    }
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const output = validateRecordedDoctorOutput(details);
-      const outcome: LawfulDoctorRoleOutcome = {
-        kind: "accepted",
-        role: "doctor",
-        status: output.status,
-        decisiveFacts: doctorDecisiveFacts(output),
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractDoctorRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  const sealed = await sealedLedgerOutcome(admitted);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  if (sealed?.role !== "doctor") {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    if (escalation === undefined) return undefined;
+    const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
+    return withOptionalGateProjection(
+      {
+        roleOutcome: escalation,
+        navigator: extractNavigatorFact(entries),
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    );
+  }
+  const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
+  const roleOutcome: Extract<LawfulDoctorRoleOutcome, { kind: "accepted" }> = {
+    kind: "accepted",
+    role: "doctor",
+    status: sealed.status,
+    decisiveFacts: doctorDecisiveFacts(output),
+  };
   // Bind completed receipt case identity to the admitted Issue evidence case.
-  if (
-    extracted.output !== undefined &&
-    (String(extracted.output.status)) === "completed"
-  ) {
+  if (String(output.status) === "completed") {
     const completedCase = (
-      extracted.output as {
+      output as {
         case: { issueNumber: number; runsPath: string };
       }
     ).case;
@@ -3024,26 +3057,27 @@ async function settleLawfulDoctorTerminalResult(
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
-    extracted.output === undefined ? {} : { doctorOutput: extracted.output },
+    roleOutcome,
+    coordinates,
+    { doctorOutput: output },
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Doctor Terminal from the admitted session. */
 export async function settleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulDoctorTerminalResult(admitted);
+  const settled = await settleLawfulDoctorTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Doctor Role run completed without a lawful typed terminal result",
@@ -3055,85 +3089,119 @@ export async function settleDoctorTerminalResult(
 /** Try to settle a lawful Doctor Terminal; undefined only for genuine absence. */
 export async function trySettleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulDoctorTerminalResult(admitted);
+  return settleLawfulDoctorTerminalResult(admitted, authority);
 }
 
-export function extractInspectorRoleOutcome(entries: readonly SessionEntry[]): TerminalResult["roleOutcome"] | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult" || message.toolName !== INSPECTOR_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    if (typeof details !== "object" || details === null) continue;
-    const status = Reflect.get(details, "status");
-    if (status !== "pass" && status !== "bounce") continue;
-    const findings = Reflect.get(details, "findings");
-    return { kind: "accepted", role: "inspector", status, decisiveFacts: { findings } };
-  }
-  return undefined;
-}
+/**
+ * Shared accepted-settlement skeleton for one-shot seats that scan residual
+ * tool candidates then project sealed ledger outcome (#502 DRY).
+ * Role-specific validator / decisiveFacts / diagnostics stay on the seat.
+ */
+type OneShotAcceptedSettlementSpec = {
+  readonly role: "notary" | "countersign" | "gleaner-left" | "inspector";
+  readonly toolName: string;
+  readonly nonUsableDiagnostic: string;
+  readonly projectAccepted: (
+    sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
+  ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
+  readonly tryAcceptDetails: (details: unknown) => boolean;
+  /**
+   * When true, residual reverse-scan is bounded to the current attempt
+   * (entries after the latest top-level user turn). Resumable one-shot seats
+   * need this so a prior attempt residual cannot mask the current provider
+   * failure (#599). Notary stays whole-session (true one-shot).
+   */
+  readonly residualScanCurrentAttemptOnly?: boolean;
+};
 
-type UnusableOutputReceipt = Readonly<{
-  candidate: unknown;
-  diagnostic: string;
-}>;
-
-function findUnusableOutputReceipt(
-  entries: readonly SessionEntry[],
-  toolName: string,
-  isUsable: (candidate: unknown) => boolean,
-  diagnostic: string,
-): UnusableOutputReceipt | undefined {
-  let acceptedNonUsable: unknown | undefined;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult") continue;
-    const residual = boundErroredToolCandidate(entries, index, message, toolName);
-    if (residual !== undefined) {
-      return { candidate: residual.candidate, diagnostic: residual.diagnostic };
-    }
-    if (
-      acceptedNonUsable === undefined &&
-      message.toolName === toolName &&
-      isAcceptedPackagedRoleTerminalResult(message) &&
-      !isUsable(message.details)
-    ) {
-      acceptedNonUsable = message.details;
+/** Latest top-level user message index; 0 when the session has none (initial attempt). */
+function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      return i;
     }
   }
-  return acceptedNonUsable === undefined
-    ? undefined
-    : { candidate: acceptedNonUsable, diagnostic };
+  return 0;
 }
 
-export async function trySettleInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
+async function settleLawfulOneShotAcceptedTerminalResult(
+  admitted: AdmittedNotaryInvocation | AdmittedCountersignInvocation | AdmittedGleanerLeftInvocation | AdmittedInspectorInvocation,
+  authority: DurablePrincipalAuthority,
+  spec: OneShotAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const outcome = extractInspectorRoleOutcome(entries);
-  if (outcome !== undefined) {
-    return withOptionalGateProjection({
-      roleOutcome: outcome,
-      navigator: extractNavigatorFact(entries), artifacts: [], runId: admitted.runId,
-    }, admitted.sessionDirectory);
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== spec.role) {
+    // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
+    // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
+    // Resumable seats bound the scan to the current attempt so multi-attempt
+    // resume timeout/no-output is not masked by a prior residual (#599).
+    const scanStart = spec.residualScanCurrentAttemptOnly === true
+      ? currentAttemptStartIndex(entries)
+      : 0;
+    let acceptedNonUsable: unknown | undefined;
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        spec.toolName,
+      );
+      if (residual !== undefined) {
+        return settleFailureTerminalResult(admitted, {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details: { candidate: residual.candidate, acceptedReceipt: false },
+        }, authority);
+      }
+      if (
+        acceptedNonUsable === undefined &&
+        message.toolName === spec.toolName &&
+        isAcceptedPackagedRoleTerminalResult(message)
+      ) {
+        // Accepted once but not a lawful seat release — hold as fallback.
+        if (!spec.tryAcceptDetails(message.details)) {
+          acceptedNonUsable = message.details;
+        }
+      }
+    }
+    if (acceptedNonUsable !== undefined) {
+      return settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: spec.nonUsableDiagnostic,
+        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+      }, authority);
+    }
+    return undefined;
   }
-  const unusable = findUnusableOutputReceipt(
-    entries,
-    INSPECTOR_OUTPUT_TOOL_NAME,
-    (candidate) => isRecord(candidate) &&
-      (candidate.status === "pass" || candidate.status === "bounce"),
-    "给事中回执无显式 pass/bounce",
+  const navigator = extractNavigatorFact(entries);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: spec.projectAccepted(roleOutcome),
+      navigator,
+      artifacts: [],
+      runId: admitted.runId,
+    },
+    sessionDirectory,
   );
-  return unusable === undefined
-    ? undefined
-    : settleFailureTerminalResult(admitted, {
-      cause: "output",
-      diagnostic: unusable.diagnostic,
-      details: { candidate: unusable.candidate, acceptedReceipt: false },
-    });
+}
+
+function tryAcceptWithValidator(validate: (details: unknown) => unknown): (details: unknown) => boolean {
+  return (details) => {
+    try {
+      validate(details);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 }
 
 /** Lawful Notary accepted outcome (pass/bounce). */
@@ -3144,78 +3212,34 @@ export type LawfulNotaryRoleOutcome = {
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
 
-export function extractNotaryRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulNotaryRoleOutcome; output: NotaryOutput } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== NOTARY_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateRecordedNotaryOutput(message.details);
-      const outcome: LawfulNotaryRoleOutcome = {
-        kind: "accepted",
-        role: "notary",
-        status: String(output.status),
-        decisiveFacts: notaryDecisiveFacts(output),
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractNotaryRoleOutcome(entries);
-  if (extracted === undefined) {
-    const unusable = findUnusableOutputReceipt(
-      entries,
-      NOTARY_OUTPUT_TOOL_NAME,
-      (candidate) => {
-        try {
-          validateRecordedNotaryOutput(candidate);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      "符宝郎回执无显式 pass/bounce",
-    );
-    return unusable === undefined
-      ? undefined
-      : settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: unusable.diagnostic,
-        details: { candidate: unusable.candidate, acceptedReceipt: false },
-      });
-  }
-  const navigator = extractNavigatorFact(entries);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: extracted.outcome,
-      navigator,
-      artifacts: [],
-      runId: admitted.runId,
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "notary",
+    toolName: NOTARY_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
+      const accepted: LawfulNotaryRoleOutcome = {
+        kind: "accepted",
+        role: "notary",
+        status: sealed.status,
+        decisiveFacts: notaryDecisiveFacts(output),
+      };
+      return accepted;
     },
-    admitted.sessionDirectory,
-  );
+  });
 }
 
 /** Settle a lawful Notary Terminal from the admitted session. */
 export async function settleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulNotaryTerminalResult(admitted);
+  const settled = await settleLawfulNotaryTerminalResult(admitted, authority);
   if (settled === undefined) {
     throw new Error(
       "Notary Role run completed without a lawful typed terminal result",
@@ -3227,28 +3251,172 @@ export async function settleNotaryTerminalResult(
 /** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */
 export async function trySettleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulNotaryTerminalResult(admitted);
+  return settleLawfulNotaryTerminalResult(admitted, authority);
+}
+
+/** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
+export type LawfulCountersignRoleOutcome = {
+  kind: "accepted";
+  role: "countersign";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "countersign",
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "给事中回执无显式 署/封驳/上呈",
+    residualScanCurrentAttemptOnly: true,
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedCountersignOutput),
+    projectAccepted: (sealed) => {
+      const verdict = validateRecordedCountersignOutput(sealed.decisiveFacts);
+      const accepted: LawfulCountersignRoleOutcome = {
+        kind: "accepted",
+        role: "countersign",
+        status: sealed.status,
+        decisiveFacts: countersignDecisiveFacts(verdict as object, sealed.status),
+      };
+      return accepted;
+    },
+  });
+}
+
+/** Settle a lawful Countersign Terminal from the admitted session. */
+export async function settleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCountersignTerminalResult(admitted, authority);
+  if (settled === undefined) {
+    throw new Error(
+      "Countersign Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Countersign Terminal; undefined only for genuine absence. */
+export async function trySettleCountersignTerminalResult(
+  admitted: AdmittedCountersignInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCountersignTerminalResult(admitted, authority);
+}
+
+/** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
+export type LawfulGleanerLeftRoleOutcome = {
+  kind: "accepted";
+  role: "gleaner-left";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "gleaner-left",
+    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "左拾遗回执无显式 completed",
+    residualScanCurrentAttemptOnly: true,
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedGleanerLeftOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedGleanerLeftOutput(sealed.decisiveFacts);
+      const accepted: LawfulGleanerLeftRoleOutcome = {
+        kind: "accepted",
+        role: "gleaner-left",
+        status: sealed.status,
+        decisiveFacts: gleanerLeftDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+/** Settle a lawful Gleaner-Left Terminal from the admitted session. */
+export async function settleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority);
+  if (settled === undefined) {
+    throw new Error(
+      "Gleaner-Left Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Gleaner-Left Terminal; undefined only for genuine absence. */
+export async function trySettleGleanerLeftTerminalResult(
+  admitted: AdmittedGleanerLeftInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulGleanerLeftTerminalResult(admitted, authority);
+}
+
+/** Lawful Inspector accepted outcome (pass/bounce). */
+export type LawfulInspectorRoleOutcome = {
+  kind: "accepted";
+  role: "inspector";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
+    role: "inspector",
+    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "察院回执无显式 pass/bounce",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedInspectorOutput(sealed.decisiveFacts);
+      const accepted: LawfulInspectorRoleOutcome = {
+        kind: "accepted",
+        role: "inspector",
+        status: sealed.status,
+        decisiveFacts: inspectorDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+export async function trySettleInspectorTerminalResult(
+  admitted: AdmittedInspectorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulInspectorTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
 export async function trySettleCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCoderTerminalResult(admitted, options);
+  return settleLawfulCoderTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulCoderTerminalResult(
   admitted: AdmittedCoderInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === undefined) return false;
-    const extracted = extractCoderRoleOutcome(entries);
-    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "coder";
   } catch {
     return false;
   }
@@ -3257,23 +3425,23 @@ export async function hasLawfulCoderTerminalResult(
 /** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
 export async function trySettleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulFixerTerminalResult(admitted, options);
+  return settleLawfulFixerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === undefined) return false;
-    const extracted = extractFixerRoleOutcome(entries);
-    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "fixer";
   } catch {
     return false;
   }
@@ -3313,14 +3481,14 @@ export function extractReviewerMethodInvocations(
 export async function publishReviewerArtifacts(
   admitted: AdmittedReviewerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly reviewerReceipt?: RuntimeReviewerReceiptV2;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3346,8 +3514,8 @@ export async function publishReviewerArtifacts(
       {
         runId: admitted.runId,
         role: "reviewer",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
         authorityRefs: [...admitted.authorityRefs],
@@ -3387,49 +3555,27 @@ export type LawfulReviewerRoleOutcome = {
   status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export function extractReviewerRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulReviewerRoleOutcome; receipt?: RuntimeReviewerReceiptV2 } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    const details = message.details;
-    // Residual audit_escalation faces are not lawful Reviewer terminals after #495 S6.
-    if (isUnboundAuditEscalationFace(details)) continue;
-    try {
-      const receipt = validateRuntimeReviewerReceipt(details);
-      const outcome: LawfulReviewerRoleOutcome = {
-        kind: "accepted",
-        role: "reviewer",
-        status: receipt.status,
-        decisiveFacts: reviewerDecisiveFacts(receipt),
-      };
-      return { receipt, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractReviewerRoleOutcome(entries);
-  if (extracted === undefined) return undefined;
+  const sealed = await sealedLedgerOutcome(admitted);
+  if (sealed?.role !== "reviewer") return undefined;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const receipt = validateRuntimeReviewerReceipt(sealed.decisiveFacts);
+  const roleOutcome: LawfulReviewerRoleOutcome = {
+    kind: "accepted",
+    role: "reviewer",
+    status: sealed.status,
+    decisiveFacts: reviewerDecisiveFacts(receipt),
+  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
@@ -3439,35 +3585,36 @@ async function settleLawfulReviewerTerminalResult(
   });
   const artifacts = await publishReviewerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    roleOutcome,
+    coordinates,
     {
-      ...(extracted.receipt === undefined ? {} : { reviewerReceipt: extracted.receipt }),
+      reviewerReceipt: receipt,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Reviewer Terminal from the admitted session (shared #106 success interface). */
 export async function settleReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulReviewerTerminalResult(admitted, options);
+  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Reviewer Role run completed without a lawful typed terminal result",
@@ -3479,23 +3626,23 @@ export async function settleReviewerTerminalResult(
 /** Try to settle a lawful Reviewer Terminal; undefined only for genuine absence. */
 export async function trySettleReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulReviewerTerminalResult(admitted, options);
+  return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === undefined) return false;
-    const extracted = extractReviewerRoleOutcome(entries);
-    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "reviewer";
   } catch {
     return false;
   }
@@ -3552,14 +3699,14 @@ export function extractMergerMethodInvocations(
 export async function publishMergerArtifacts(
   admitted: AdmittedMergerInvocation,
   roleOutcome: TerminalRoleOutcome,
-  sessionDirectory: string,
+  coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
     readonly mergerOutput?: MergerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(admitted, roleOutcome);
+  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
@@ -3585,8 +3732,8 @@ export async function publishMergerArtifacts(
       {
         runId: admitted.runId,
         role: "merger",
-        sessionDirectory,
-        sessionFile: admitted.sessionFile,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         mergerInputPath: admitted.mergerInputPath,
         derived: admitted.derived,
@@ -3618,68 +3765,41 @@ export type LawfulMergerRoleOutcome = {
   status: string;
   decisiveFacts: Readonly<Record<string, unknown>>;
 };
-
-export function extractMergerRoleOutcome(
-  entries: readonly SessionEntry[],
-): { outcome: LawfulMergerRoleOutcome; output: MergerOutput } | undefined {
-  if (!isReceiptSettlementBindingClear(entries)) return undefined;
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
-    try {
-      const output = validateMergerOutput(message.details);
-      const outcome: LawfulMergerRoleOutcome = {
-        kind: "accepted",
-        role: "merger",
-        status: output.status,
-        decisiveFacts: mergerDecisiveFacts(output),
-      };
-      return { output, outcome };
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
 async function settleLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const entries = await readLawfulSettlementEntries(admitted);
-  if (entries === undefined) return undefined;
-  const extracted = extractMergerRoleOutcome(entries);
-  if (extracted === undefined) {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted);
+  if (roleOutcome?.role !== "merger") {
+    // Ledger owns 0041: a non-sole closed round is not residual-incomplete material.
+    const latestOutcome = await readLatestSubmissionOutcome(
+      admitted.projectRoot,
+      admitted.runId,
+      sealedLedgerHome(admitted),
+    );
+    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
+      return undefined;
+    }
+    // Residual incomplete: shape/identity fail after the sole-round barrier passed (ledger typed).
+    // Settlement does not re-judge calls.length.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === undefined) continue;
-      const callMessage = entries[residual.callIndex]?.message;
-      const calls = callMessage?.role === "assistant" && Array.isArray(callMessage.content)
-        ? callMessage.content.filter((part) => isRecord(part) && part.type === "toolCall")
-        : [];
       const attemptId = isRecord(residual.candidate)
         ? safelyRead(residual.candidate, "attemptId")
         : { readable: true as const, value: undefined };
-      // Mirror the execution boundary's established precedence: ADR 0041 sole-final,
-      // then ADR 0037 admitted-attempt identity, and only then output shape.
-      if (
-        calls.length !== 1 ||
-        calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME ||
-        !attemptId.readable ||
-        attemptId.value !== admitted.runId
-      ) {
-        continue;
-      }
+      // Admitted-attempt identity binding only (ADR 0037) — not sole-final cardinality.
+      if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
       try {
         validateMergerOutput(residual.candidate, admitted.runId);
       } catch {
@@ -3697,6 +3817,13 @@ async function settleLawfulMergerTerminalResult(
     }
     return undefined;
   }
+  const output = validateMergerOutput(roleOutcome.decisiveFacts, admitted.runId);
+  const accepted: LawfulMergerRoleOutcome = {
+    kind: "accepted",
+    role: "merger",
+    status: roleOutcome.status,
+    decisiveFacts: mergerDecisiveFacts(output),
+  };
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -3708,35 +3835,36 @@ async function settleLawfulMergerTerminalResult(
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishMergerArtifacts(
     admitted,
-    extracted.outcome,
-    admitted.sessionDirectory,
+    accepted,
+    coordinates,
     {
-      mergerOutput: extracted.output,
+      mergerOutput: output,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
   );
   return withOptionalGateProjection(
     {
-      roleOutcome: extracted.outcome,
+      roleOutcome: accepted,
       navigator,
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
 /** Settle a lawful Merger Terminal from the admitted session (shared #106 success interface). */
 export async function settleMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulMergerTerminalResult(admitted, options);
+  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options);
   if (settled === undefined) {
     throw new Error(
       "Merger Role run completed without a lawful typed terminal result",
@@ -3748,23 +3876,23 @@ export async function settleMergerTerminalResult(
 /** Try to settle a lawful Merger Terminal; undefined only for genuine absence. */
 export async function trySettleMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulMergerTerminalResult(admitted, options);
+  return settleLawfulMergerTerminalResult(admitted, authority, options);
 }
 
 export async function hasLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
+  authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
   try {
-    const entries = await readLawfulSettlementEntries(admitted);
-    if (entries === undefined) return false;
-    const extracted = extractMergerRoleOutcome(entries);
-    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+    const outcome = await sealedLedgerOutcome(admitted);
+    return outcome?.role === "merger";
   } catch {
     return false;
   }
@@ -3891,7 +4019,9 @@ async function writeFailureJsonRetainingCause(
 export async function publishFailureArtifacts(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
 ): Promise<TerminalArtifactRef[]> {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory,
   );
@@ -3902,13 +4032,13 @@ export async function publishFailureArtifacts(
   // strand the original controlled failure outside settlement — it rides
   // publicationIssues instead of aborting durability.
   try {
-    await appendRunAttemptHistory(admitted, {
+    await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile }, {
       kind: "failure",
       role: admitted.role,
       ...failure,
     });
   } catch (error) {
-    priorIssues.push(publicationAttemptFromError(admitted.sessionFile, error));
+    priorIssues.push(publicationAttemptFromError(sessionFile, error));
   }
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
@@ -3960,8 +4090,8 @@ export async function publishFailureArtifacts(
 
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
-    sessionDirectory: admitted.sessionDirectory,
-    sessionFile: admitted.sessionFile,
+    sessionDirectory: sessionDirectory,
+    sessionFile: sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -4054,13 +4184,16 @@ function redactNavigatorFactForPublicTerminal(
 export async function settleFailureTerminalResult(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
   // #288 is lawful only when the lifecycle owner persisted an exhausted,
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(admitted.sessionFile).catch(() => undefined);
+    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
     if (entries !== undefined) {
       let attemptStart = 0;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -4078,11 +4211,11 @@ export async function settleFailureTerminalResult(
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-                navigator: await extractNavigatorFactFromAdmittedSession(admitted),
+                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
                 artifacts: [],
                 runId: admitted.runId,
               },
-              admitted.sessionDirectory,
+              sessionDirectory,
             );
           }
         } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
@@ -4090,9 +4223,9 @@ export async function settleFailureTerminalResult(
     }
   }
   // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(admitted);
+  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts: Record<string, unknown> = {
     cause: failure.cause,
     diagnostic: failure.diagnostic,
@@ -4131,7 +4264,7 @@ export async function settleFailureTerminalResult(
         artifacts: [],
         resume: options.resume,
       },
-      admitted.sessionDirectory,
+      sessionDirectory,
     );
   }
   const roleOutcome: TerminalRoleOutcome = {
@@ -4149,7 +4282,7 @@ export async function settleFailureTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    admitted.sessionDirectory,
+    sessionDirectory,
   );
 }
 
@@ -4157,9 +4290,10 @@ export async function settleFailureTerminalResult(
 export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
+  authority: DurablePrincipalAuthority,
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
-  return settleFailureTerminalResult(admitted, failure, options);
+  return settleFailureTerminalResult(admitted, failure, authority, options);
 }
 
 /**
