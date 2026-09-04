@@ -1,9 +1,11 @@
 /**
  * #648 correctness — identity uniqueness without unsafe volume-lock reclaim.
  * Seam: appendSitianRecord (real entry). Concurrent same-identity converges on
- * one JSONL row via exclusive identity claim (linkSync), not pathname lock reclaim.
+ * one JSONL row via exclusive identity claim (linkSync). Dead unpublished claims
+ * recover from the claim's write-ahead row or fail closed — never wait forever.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -20,8 +22,24 @@ import {
   appendSitianRecord,
   resolveSitianRecordPath,
 } from "../../src/sitian-appender.ts";
+import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+function identityClaimPath(recordFile: string, identity: string): string {
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex");
+  return `${recordFile}.id-${digest}`;
+}
+
+async function exitedChildPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], {
+    stdio: "ignore",
+  });
+  const code = await childExit(child);
+  assert.equal(code, 0);
+  assert.ok(typeof child.pid === "number" && child.pid > 0);
+  return child.pid;
+}
 
 function sleepBriefly(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -196,6 +214,88 @@ test("concurrent same-identity appendSitianRecord commits one volume row", async
       async () => {
         await Promise.all([settleChild(childA), settleChild(childB)]);
       },
+    );
+  });
+});
+
+test("dead unpublished identity claim recovers one JSONL row from claim write-ahead", async () => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "dead-claim-recovery";
+    const input = {
+      level: "event" as const,
+      kind: "identity-claim-dead-recovery",
+      identity,
+      home,
+      cwd,
+      payload: { marker: "recovered-from-claim" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+
+    const deadPid = await exitedChildPid();
+    const row = `${JSON.stringify({
+      level: "event",
+      kind: input.kind,
+      identity,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      host: "pi",
+      payload: { marker: "recovered-from-claim" },
+    })}\n`;
+    writeFileSync(identityClaimPath(recordFile, identity), `${deadPid}\n${row}`, "utf8");
+
+    const pointer = appendSitianRecord(input);
+
+    assert.equal(pointer.identity, identity);
+    assert.equal(pointer.recordFile, recordFile);
+    assert.equal(
+      countIdentityRows(recordFile, identity),
+      1,
+      "dead claim recovery must publish exactly one JSONL row",
+    );
+    assert.match(readFileSync(recordFile, "utf8"), /recovered-from-claim/);
+  });
+});
+
+test("dead claim with dead recovery residue fails closed without waiting", async () => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "dead-claim-dead-recovery";
+    const input = {
+      level: "event" as const,
+      kind: "identity-claim-dead-recovery-residue",
+      identity,
+      home,
+      cwd,
+      payload: { marker: "should-not-publish" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+
+    const deadClaimPid = await exitedChildPid();
+    const deadRecoveryPid = await exitedChildPid();
+    const claimPath = identityClaimPath(recordFile, identity);
+    const row = `${JSON.stringify({
+      level: "event",
+      kind: input.kind,
+      identity,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      host: "pi",
+      payload: { marker: "should-not-publish" },
+    })}\n`;
+    writeFileSync(claimPath, `${deadClaimPid}\n${row}`, "utf8");
+    writeFileSync(`${claimPath}.recovery`, `${deadRecoveryPid}\n`, "utf8");
+
+    assert.throws(
+      () => appendSitianRecord(input),
+      (error: unknown) => {
+        assert.ok(error instanceof SitianInfrastructureError);
+        assert.match(error.message, /stayed unpublished|not safely reclaimable/);
+        return true;
+      },
+    );
+    assert.equal(
+      countIdentityRows(recordFile, identity),
+      0,
+      "fail-closed residue must not append a JSONL row",
     );
   });
 });
