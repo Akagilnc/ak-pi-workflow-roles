@@ -115,7 +115,7 @@ export type RoleTurnActivation =
     }
   | {
       readonly role: "countersign";
-      /** Admitted ticket binding for Notary inner-gate material (ADR 0075). */
+      /** Admitted ticket on activation/admission/invocation (diarist; no private role flag). */
       readonly ticketNumber?: number;
     }
   | {
