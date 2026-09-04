@@ -28,6 +28,9 @@ export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
       findings: Type.Unknown({
         description: "随交卷留存的问题记录",
       }),
+      reason: Type.Optional(Type.Unknown({
+        description: "status 为 escalate 时的上呈理由",
+      })),
     }),
   ),
 );
