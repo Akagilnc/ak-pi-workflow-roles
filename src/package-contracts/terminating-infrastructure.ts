@@ -12,6 +12,7 @@
  * Error so settlement keeps the original cause (kind=failure, exit 1).
  */
 import { Type, type TSchema } from "typebox";
+import type { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 
 export const INFRASTRUCTURE_FAILURE_DECLARATION_KEY =
   "infrastructureFailure" as const;
@@ -115,15 +116,26 @@ function infrastructureFailureError(diagnostic: string): Error {
  * The one early call for every terminating output `execute`: if the parameters
  * carry the infra declaration, hand the diagnostic error to the shared host
  * `failInfrastructure` seam (which aborts the run). No-op otherwise.
+ *
+ * #641 chain②: an optional seat-owned bounce hook may intercept the
+ * declaration first — when the seat can machine-verify a lawful normal
+ * completion, it returns a correctable error and the declaration is treated as
+ * model misuse (交件契约封驳) instead of a host failure. Returning undefined
+ * keeps the shared failure path.
  */
 export function failOnInfrastructureFailureDeclaration<C>(
   parameters: unknown,
   hostActions: TerminatingInfrastructureHostActions<C>,
   ctx: C,
   toolCallId: string,
+  bounceInfrastructureDeclaration?: (params: unknown, toolCallId: string, ctx: C) => CorrectableSubmissionError | undefined,
 ): void {
   const diagnostic = infrastructureFailureDiagnostic(parameters);
   if (diagnostic === undefined) return;
+  if (bounceInfrastructureDeclaration !== undefined) {
+    const bounce = bounceInfrastructureDeclaration(parameters, toolCallId, ctx);
+    if (bounce !== undefined) throw bounce;
+  }
   hostActions.failInfrastructure(
     infrastructureFailureError(diagnostic),
     ctx,
