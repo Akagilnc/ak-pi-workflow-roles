@@ -8,7 +8,7 @@ import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
+import { GatekeeperDecisionError, GatekeeperEscalationError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { AcceptedDetailsContractError } from "../../src/package-contracts/terminating-tools.ts";
@@ -228,6 +228,33 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
     await retry.tool().execute("after-audit", {}, undefined, undefined, retry.context);
     await retry.close();
     assert.equal((await readSealedSubmission(f.root, "run-ledger", f.root))?.status, "converged");
+  });
+});
+
+test("pipeline ledger records dispatched officer escalation as durable audit closure", async () => {
+  await withLedgerFixture(async (f) => {
+    const escalating = registerTool(f.root, async () => {
+      throw new GatekeeperEscalationError({
+        status: "escalate",
+        officer: "inspector",
+        reason: "third review unresolved",
+        findings: ["authority conflict"],
+        submission: { status: "escalate" },
+      });
+    });
+    await escalating.start("officer-escalate");
+    await escalating.tool().execute(
+      "officer-escalate",
+      { report: "candidate" },
+      undefined,
+      undefined,
+      escalating.context,
+    );
+    await escalating.close();
+    const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
+    assert.equal(projection?.kind, "audit_escalation");
+    assert.equal(projection?.decisiveFacts.officer, "inspector");
+    assert.equal(projection?.decisiveFacts.reason, "third review unresolved");
   });
 });
 
