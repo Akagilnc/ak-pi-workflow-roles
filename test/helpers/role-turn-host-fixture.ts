@@ -19,7 +19,10 @@ import {
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { sealAcceptedSubmissionForSpawn } from "./submission-ledger-fixture.ts";
+import {
+  SCRIPTED_TERMINATING_USER_ATTEMPT_ID,
+  sealAcceptedSubmissionForSpawn,
+} from "./submission-ledger-fixture.ts";
 
 /** Read a dashed flag value from argv (shared by public-CLI tracers). */
 export function argvFlagValue(
@@ -53,7 +56,7 @@ export function scriptedTerminatingToolSession(input: {
   const rows = [
     {
       type: "message",
-      id: "user-1",
+      id: SCRIPTED_TERMINATING_USER_ATTEMPT_ID,
       parentId: null,
       timestamp: "2026-08-30T00:00:00.000Z",
       message: { role: "user", content: "kickoff", timestamp: 1 },
@@ -61,7 +64,7 @@ export function scriptedTerminatingToolSession(input: {
     {
       type: "message",
       id: "assistant-1",
-      parentId: "user-1",
+      parentId: SCRIPTED_TERMINATING_USER_ATTEMPT_ID,
       timestamp: "2026-08-30T00:00:01.000Z",
       message: {
         role: "assistant",
