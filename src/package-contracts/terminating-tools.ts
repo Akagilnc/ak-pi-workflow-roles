@@ -193,10 +193,10 @@ export function validateAcceptedDetails(
     [COLLECTOR_OUTPUT_TOOL]: [],
     [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
     [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
     [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
     [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"],
-    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
+    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;

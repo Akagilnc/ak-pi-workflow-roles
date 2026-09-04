@@ -162,7 +162,7 @@ export async function hasSealedAcceptedProjection(
 
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
-  role: "judge" | "doctor",
+  role: TerminalRoleName,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
@@ -194,6 +194,7 @@ import {
   type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalResume,
+  type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
@@ -2546,23 +2547,30 @@ async function settleLawfulCoderTerminalResult(
   } = {},
 ): Promise<TerminalResult | undefined> {
   const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "coder") return undefined;
+  let roleOutcome: TerminalRoleOutcome;
+  let output: CoderOutput | undefined;
+  if (sealed?.role === "coder") {
+    output = validateAcceptedCoderDetails(sealed.decisiveFacts);
+    roleOutcome = {
+      kind: "accepted",
+      role: "coder",
+      status: sealed.status,
+      decisiveFacts: coderDecisiveFacts(output),
+    };
+  } else {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "coder");
+    if (escalation === undefined) return undefined;
+    roleOutcome = escalation;
+  }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const output = validateAcceptedCoderDetails(sealed.decisiveFacts);
-  const roleOutcome: LawfulCoderRoleOutcome = {
-    kind: "accepted",
-    role: "coder",
-    status: sealed.status,
-    decisiveFacts: coderDecisiveFacts(output),
-  };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCoderArtifacts(
     admitted,
     roleOutcome,
     coordinates,
     {
-      coderOutput: output,
+      ...(output === undefined ? {} : { coderOutput: output }),
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
@@ -2730,17 +2738,24 @@ async function settleLawfulFixerTerminalResult(
   },
 ): Promise<TerminalResult | undefined> {
   const sealed = await sealedLedgerOutcome(admitted);
-  if (sealed?.role !== "fixer") return undefined;
+  let roleOutcome: TerminalRoleOutcome;
+  let output: FixerOutput | undefined;
+  if (sealed?.role === "fixer") {
+    output = validateFixerOutput(sealed.decisiveFacts);
+    roleOutcome = {
+      kind: "accepted",
+      role: "fixer",
+      status: sealed.status,
+      decisiveFacts: fixerDecisiveFacts(output),
+    };
+  } else {
+    const escalation = await auditEscalationLedgerOutcome(admitted, "fixer");
+    if (escalation === undefined) return undefined;
+    roleOutcome = escalation;
+  }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const output = validateFixerOutput(sealed.decisiveFacts);
-  const roleOutcome: LawfulFixerRoleOutcome = {
-    kind: "accepted",
-    role: "fixer",
-    status: sealed.status,
-    decisiveFacts: fixerDecisiveFacts(output),
-  };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
@@ -2753,7 +2768,7 @@ async function settleLawfulFixerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      fixerOutput: output,
+      ...(output === undefined ? {} : { fixerOutput: output }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -3137,6 +3152,19 @@ async function settleLawfulOneShotAcceptedTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted);
   if (roleOutcome?.role !== spec.role) {
+    const escalationOutcome = await auditEscalationLedgerOutcome(admitted, spec.role as TerminalRoleName);
+    if (escalationOutcome !== undefined) {
+      const navigator = extractNavigatorFact(entries);
+      return withOptionalGateProjection(
+        {
+          roleOutcome: escalationOutcome,
+          navigator,
+          artifacts: [],
+          runId: admitted.runId,
+        },
+        sessionDirectory,
+      );
+    }
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
     // Resumable seats bound the scan to the current attempt so multi-attempt
@@ -3204,7 +3232,7 @@ function tryAcceptWithValidator(validate: (details: unknown) => unknown): (detai
   };
 }
 
-/** Lawful Notary accepted outcome (pass/bounce). */
+/** Lawful Notary accepted outcome (pass/bounce/escalate). */
 export type LawfulNotaryRoleOutcome = {
   kind: "accepted";
   role: "notary";
@@ -3219,7 +3247,7 @@ async function settleLawfulNotaryTerminalResult(
   return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce",
+    nonUsableDiagnostic: "符宝郎回执无显式 pass/bounce/escalate",
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedNotaryOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedNotaryOutput(sealed.decisiveFacts);
@@ -3362,7 +3390,7 @@ export async function trySettleGleanerLeftTerminalResult(
   return settleLawfulGleanerLeftTerminalResult(admitted, authority);
 }
 
-/** Lawful Inspector accepted outcome (pass/bounce). */
+/** Lawful Inspector accepted outcome (pass/bounce/escalate). */
 export type LawfulInspectorRoleOutcome = {
   kind: "accepted";
   role: "inspector";
@@ -3377,7 +3405,7 @@ async function settleLawfulInspectorTerminalResult(
   return settleLawfulOneShotAcceptedTerminalResult(admitted, authority, {
     role: "inspector",
     toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "察院回执无显式 pass/bounce",
+    nonUsableDiagnostic: "察院回执无显式 pass/bounce/escalate",
     tryAcceptDetails: tryAcceptWithValidator(validateRecordedInspectorOutput),
     projectAccepted: (sealed) => {
       const output = validateRecordedInspectorOutput(sealed.decisiveFacts);
@@ -3416,7 +3444,9 @@ export async function hasLawfulCoderTerminalResult(
 ): Promise<boolean> {
   try {
     const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "coder";
+    if (outcome?.role === "coder") return true;
+    const escalation = await auditEscalationLedgerOutcome(admitted, "coder");
+    return escalation !== undefined;
   } catch {
     return false;
   }
@@ -3441,7 +3471,9 @@ export async function hasLawfulFixerTerminalResult(
 ): Promise<boolean> {
   try {
     const outcome = await sealedLedgerOutcome(admitted);
-    return outcome?.role === "fixer";
+    if (outcome?.role === "fixer") return true;
+    const escalation = await auditEscalationLedgerOutcome(admitted, "fixer");
+    return escalation !== undefined;
   } catch {
     return false;
   }

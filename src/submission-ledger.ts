@@ -3,7 +3,8 @@ import {
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
-import { isAuditEscalationProjection } from "./audit-escalation.ts";
+import { isAuditEscalationProjection, projectAuditEscalation } from "./audit-escalation.ts";
+import { GatekeeperEscalationError } from "./gatekeeper-role.ts";
 
 import {
   acceptedFacts,
@@ -298,7 +299,15 @@ export function createSubmissionLedgerHost(
           try {
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isCorrectableExecuteError(error)) {
+            if (error instanceof GatekeeperEscalationError) {
+              const auditDecision = {
+                status: "escalate" as const,
+                reason: error.gatekeeper.reason,
+                officer: error.gatekeeper.officer,
+                findings: error.gatekeeper.findings,
+              };
+              result = projectAuditEscalation(auditDecision, params);
+            } else if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
                 attemptId,
@@ -307,6 +316,7 @@ export function createSubmissionLedgerHost(
                 code: "typed-bounce",
                 diagnostic: error instanceof Error ? error.message : String(error),
               });
+              throw error;
             } else {
               append({
                 type: "outcome",
@@ -315,8 +325,8 @@ export function createSubmissionLedgerHost(
                 outcome: "infrastructure",
                 diagnostic: error instanceof Error ? error.message : String(error),
               });
+              throw error;
             }
-            throw error;
           }
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];
