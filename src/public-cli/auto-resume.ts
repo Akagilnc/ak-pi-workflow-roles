@@ -435,40 +435,35 @@ export async function runWithAutoResumeLoop<
     // non-lawful return and direct throw. Authority throw fail-closes with
     // preserved cause — never wash into unsealed redispatch. Only the sealed=true
     // projection differs (present returned terminal vs throw-path synthetic).
+    // One fail-closed cause → one synthetic presentation return when authority
+    // throws or sealed stop has no returned terminal.
     if (options.shouldStopAutoResume !== undefined) {
-      let sealedStop: boolean;
+      let failClosedCause: unknown | undefined;
+      let endReason: string | undefined;
+      let sealedStop = false;
       try {
         sealedStop = await options.shouldStopAutoResume();
       } catch (authorityError) {
-        const authorityTerminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: authorityError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "sealed-acceptance authority failed closed",
-          everyAttemptThrew,
-        });
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(authorityTerminal, options.io);
-        return {
-          exitCode: 1,
-          terminal: authorityTerminal,
-        } as T;
+        failClosedCause = authorityError;
+        endReason = "sealed-acceptance authority failed closed";
       }
-      if (sealedStop) {
+      if (failClosedCause === undefined && sealedStop) {
         if (result !== undefined) {
           const terminal = (result as { terminal?: TerminalResult }).terminal;
           if (terminal !== undefined) presentTerminal(terminal, options.io);
           return result;
         }
+        failClosedCause = lastThrownError;
+        endReason = "sealed accepted projection already present";
+      }
+      if (failClosedCause !== undefined) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
-          causeError: lastThrownError,
+          causeError: failClosedCause,
           errorFiles: retainedErrorFiles,
           autoResumeAttempts,
-          endReason: "sealed accepted projection already present",
+          endReason: endReason!,
           everyAttemptThrew,
         });
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
