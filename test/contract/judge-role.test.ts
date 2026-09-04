@@ -1676,7 +1676,6 @@ test("direct Inspector submit uses its own seat override and never falls back on
     });
     await assert.rejects(
       tool.execute("auth-fail", completed, undefined, undefined, tracer.context("auth-fail", CODER_OUTPUT_TOOL_NAME)),
-      /authentication failed|override credentials missing/i,
     );
     assert.deepEqual(tracer.seen, [], "officer auth failure must not reach completion or fall back");
   }

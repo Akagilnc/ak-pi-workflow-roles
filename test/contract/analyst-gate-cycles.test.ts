@@ -294,7 +294,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
       },
     ]);
 
-    // A rejected historical dispatch does not suppress the later accepted direct officer.
+    // Rejected/no-result historical terminals do not form rounds.
     await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({
@@ -303,7 +303,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
     }, { home });
     const rejectedLeg = gateSection(rejected.page).legs.find((leg) => leg.runId === GATE_JUDGE_RUN);
     assert.ok(rejectedLeg);
-    assert.equal(rejectedLeg.roundCount, 2);
+    assert.equal(rejectedLeg.roundCount, 1, "rejected/no-result terminals must not form rounds");
     assert.deepEqual(rejectedLeg.rounds, [
       {
         roundIndex: 1,
@@ -312,21 +312,14 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
         officerWallMs: 10_000,
         findingsCount: 0,
       },
-      {
-        roundIndex: 2,
-        officer: "inspector",
-        status: "bounce",
-        officerWallMs: 10_000,
-        findingsCount: 1,
-      },
     ]);
     assert.deepEqual(gateSection(rejected.page).byOfficer, [
       {
         officer: "inspector",
-        rounds: 2,
-        bounceCount: 1,
+        rounds: 1,
+        bounceCount: 0,
         passCount: 1,
-        bounceRate: 0.5,
+        bounceRate: 0,
         meanOfficerWallMs: 10_000,
       },
     ]);
