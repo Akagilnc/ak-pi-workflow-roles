@@ -52,7 +52,6 @@ async function withTempHome(
 ): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), "ak-seat-self-ticket-"));
   const binDir = join(home, "bin");
-  await installHermesFixture(binDir);
   const priorPath = process.env.PATH;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {

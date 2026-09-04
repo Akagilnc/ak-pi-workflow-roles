@@ -110,7 +110,7 @@ export type RoleTurnActivation =
   | {
       readonly role: "notary";
       readonly sourceRun: string;
-      /** Optional --ticket for court-diary lookup (ADR 0075). */
+      /** Ticket from source-run admitted form rides activation → flag → role read surface (#635). */
       readonly ticketNumber?: number;
     }
   | {

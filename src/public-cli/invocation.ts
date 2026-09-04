@@ -961,7 +961,6 @@ async function freezeAttachments(
   return attachments;
 }
 
-
 /**
  * Read ticketNumber from a retained source run's admitted-request.json,
  * falling back to invocation.json. Same typed integer rules as resume restore.
