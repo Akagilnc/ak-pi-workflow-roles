@@ -3,8 +3,7 @@
  * shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
- * Unbound admission may resolve a ticket via diarist pre-court LLM assertion
- * (#582 / diarist-resolves-ticket-llm-layer) before the diary station runs.
+ * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -15,9 +14,6 @@ import {
   type DiaristIssueFace,
   type DiaristRunResult,
 } from "../diarist.ts";
-import {
-  type DiaristTicketResolution,
-} from "../diarist-ticket-resolution.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -141,7 +137,7 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        await resolveCountersignTicketBinding(admitted, env);
+        await resolveSeatTicketBinding(admitted, env);
         // Re-project activation so Notary gate flag carries the post-admission binding.
         Object.assign(
           turnRequest,
@@ -201,20 +197,6 @@ export async function runPublicCountersignResume(
     adapters: countersignAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
-}
-
-/**
- * Pre-court ticket binding for unbound countersign admissions
- * (decision key `diarist-resolves-ticket-llm-layer`).
- * Explicit admitted ticket ( --ticket / frontmatter) is never re-resolved.
- * LLM true-unbound leaves the run unbound (no diary). Asserted N that fails
- * mechanical verification throws — caller settles controlled failure.
- */
-export async function resolveCountersignTicketBinding(
-  admitted: AdmittedCountersignInvocation,
-  env: Pick<CountersignRunEnv, "packageRoot" | "cwd">,
-): Promise<DiaristTicketResolution | undefined> {
-  return resolveSeatTicketBinding(admitted, env);
 }
 
 /**
