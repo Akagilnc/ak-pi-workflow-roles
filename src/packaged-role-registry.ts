@@ -14,6 +14,7 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 export const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/notary.md",
+  "souls/audit-law.md",
   "souls/gate-output-guide.md",
 ] as const;
 
@@ -21,6 +22,7 @@ export const NOTARY_SESSION_MATERIALS = [
 export const INSPECTOR_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/inspector.md",
+  "souls/audit-law.md",
   "souls/quality-law.md",
   "souls/gate-output-guide.md",
 ] as const;
