@@ -155,11 +155,9 @@ async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Ex
 export async function hasSealedAcceptedProjection(
   admitted: AdmittedRoleInvocation,
 ): Promise<boolean> {
-  try {
-    return (await sealedLedgerOutcome(admitted)) !== undefined;
-  } catch {
-    return false;
-  }
+  // Ledger authority must not wash read failure into "unsealed" (#648).
+  // Callers treat throw as fail-closed: preserve true cause, never redispatch.
+  return (await sealedLedgerOutcome(admitted)) !== undefined;
 }
 
 async function auditEscalationLedgerOutcome(

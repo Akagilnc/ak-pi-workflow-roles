@@ -343,7 +343,7 @@ export async function runWithAutoResumeLoop<
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
   /**
-   * After a non-lawful terminal, stop further auto-resume when a unique sealed
+   * After a non-lawful terminal or dispatch throw, stop further auto-resume when a unique sealed
    * accepted projection is already readable (publication miss must not redispatch
    * and destroy the sealed read — #648 / #599 alignment).
    */
@@ -432,12 +432,32 @@ export async function runWithAutoResumeLoop<
 
       // Unique sealed acceptance already landed — do not treat publication/settle
       // failure as a retryable miss (#648 sealed-acceptance publication retry).
-      if (
-        options.shouldStopAutoResume !== undefined &&
-        (await options.shouldStopAutoResume())
-      ) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+      // Ledger authority failure fail-closes with preserved cause (never wash to unsealed).
+      if (options.shouldStopAutoResume !== undefined) {
+        let sealedStop: boolean;
+        try {
+          sealedStop = await options.shouldStopAutoResume();
+        } catch (authorityError) {
+          const authorityTerminal = dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: authorityError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "sealed-acceptance authority failed closed",
+            everyAttemptThrew,
+          });
+          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+          presentTerminal(authorityTerminal, options.io);
+          return {
+            exitCode: 1,
+            terminal: authorityTerminal,
+          } as T;
+        }
+        if (sealedStop) {
+          if (terminal !== undefined) presentTerminal(terminal, options.io);
+          return result;
+        }
       }
 
       if (autoResumeAttempts >= limit) {
@@ -449,6 +469,47 @@ export async function runWithAutoResumeLoop<
         return result;
       }
     } else {
+      // Exception path: same sealed ledger authority before any redispatch (#648).
+      // Authority throw fail-closes with preserved cause — never wash into unsealed redispatch.
+      if (options.shouldStopAutoResume !== undefined) {
+        let sealedStop: boolean;
+        try {
+          sealedStop = await options.shouldStopAutoResume();
+        } catch (authorityError) {
+          const authorityTerminal = dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: authorityError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "sealed-acceptance authority failed closed",
+            everyAttemptThrew,
+          });
+          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+          presentTerminal(authorityTerminal, options.io);
+          return {
+            exitCode: 1,
+            terminal: authorityTerminal,
+          } as T;
+        }
+        if (sealedStop) {
+          const terminal = dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "sealed accepted projection already present",
+            everyAttemptThrew,
+          });
+          await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+          presentTerminal(terminal, options.io);
+          return {
+            exitCode: 1,
+            terminal,
+          } as T;
+        }
+      }
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
         const terminal = dispatchExceptionFailureTerminal({
