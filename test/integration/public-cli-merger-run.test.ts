@@ -19,8 +19,7 @@ import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
+import { INSPECTOR_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
@@ -787,7 +786,9 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
       await writeInstitutionalSeatTable(work, {
         gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
         inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+        notary: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
       });
+      const officerTool = row.role === "judge" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
       let rejectionObservedByModel = false;
       faux.setResponses([
         fauxAssistantMessage(
@@ -798,11 +799,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           { stopReason: "toolUse" },
         ),
         fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-1" }),
-          { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-1" }),
+          fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-1" }),
           { stopReason: "toolUse" },
         ),
         async (context: any) => {
@@ -813,11 +810,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
           );
         },
         fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-2" }),
-          { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-2" }),
+          fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-2" }),
           { stopReason: "toolUse" },
         ),
       ] as any);

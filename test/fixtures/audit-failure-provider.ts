@@ -22,7 +22,6 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
@@ -107,40 +106,11 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  /** #475 Gate unusable-submission modes via existing fixture (no parallel fixtures). */
+  /** #475 direct-officer unusable-submission mode via existing fixture. */
   const gateMode = process.env.AK_GATE_MODE;
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    // Judge draft province gate runs before auditor; script pass so MALFORMED stays on auditor.
-    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      if (gateMode === "gatekeeper-no-dispatch") {
-        // Unusable non-dispatch/non-pass (#475). Lawful province pass is not this path (#597).
-        return fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "ok-enough" }),
-          { stopReason: "toolUse" },
-        );
-      }
-      if (gateMode === "officer-no-pass" || gateMode === "notary-no-pass") {
-        return fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, {
-            status: "dispatch",
-            officer: gateMode === "notary-no-pass" ? "notary" : "inspector",
-          }),
-          { stopReason: "toolUse" },
-        );
-      }
-      return fauxAssistantMessage(
-        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-        { stopReason: "toolUse" },
-      );
-    }
     if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-      if (gateMode === "officer-no-pass") {
-        return fauxAssistantMessage(
-          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "ok-enough" }),
-          { stopReason: "toolUse" },
-        );
-      }
       return fauxAssistantMessage(
         fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
         { stopReason: "toolUse" },
