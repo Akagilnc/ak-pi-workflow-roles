@@ -8,8 +8,12 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-
-export const GATEKEEPER_OUTPUT_TOOL = "ak_gatekeeper_output";
+import {
+  GATEKEEPER_OUTPUT_TOOL_NAME,
+  gatekeeperDecisionSchema,
+  gatekeeperOutputSchema,
+  projectLawfulGatekeeperOutput,
+} from "./package-contracts/gatekeeper-output.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 const SUBJECT_TOOL = "ak_gatekeeper_subject";
@@ -82,11 +86,23 @@ const officerDecisionSchema = openToolObject(Type.Object({
   findings: Type.Unknown({ description: "string[] findings，随 pass 或 bounce 留存" }),
 }));
 
-const gatekeeperDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "dispatch | pass — 形状指引，非 schema 闸" }),
-  officer: Type.Unknown({ description: "status 为 dispatch 时为 inspector | notary" }),
-  findings: Type.Unknown({ description: "status 为 pass 时可选 string[] findings" }),
-}));
+
+/**
+ * Direct-seat decision tool spec (#639). Lifecycle assembly stays on the
+ * registration envelope — src/role-runtime.ts (ADR 0018). Schema authority is
+ * the shared contract module (with infrastructure-failure declaration).
+ */
+export const GATEKEEPER_TOOL_SPEC = {
+  name: GATEKEEPER_OUTPUT_TOOL_NAME,
+  label: "门下省决议",
+  description: "门下省终局决议，状态为 dispatch 或 pass。",
+  promptSnippet: "门下省决议",
+  parameters: gatekeeperOutputSchema,
+} as const;
+
+export type GatekeeperRuntimeDependencies = {
+  loadSoul(): Promise<string>;
+};
 
 function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
@@ -111,10 +127,10 @@ export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
   };
 }
 
-/** Gatekeeper province decision tool — open transport; projection owns legality. */
+/** Gatekeeper province decision tool — open transport; package-contract projection owns legality. */
 export function createGatekeeperOutputTool(): AuditorDecisionTool {
   return {
-    name: GATEKEEPER_OUTPUT_TOOL,
+    name: GATEKEEPER_OUTPUT_TOOL_NAME,
     description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
     async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
@@ -174,17 +190,16 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function projectProvinceDecision(decision: unknown): GatekeeperResult | { status: "dispatch"; officer: "inspector" | "notary" } {
-  const record = readRecord(decision);
-  if (record === undefined) return noUsableReleaseFailure("gatekeeper", decision);
-  if (record.status === "dispatch" && (record.officer === "inspector" || record.officer === "notary")) {
-    return { status: "dispatch", officer: record.officer };
+  // Lawful dispatch/pass discriminant is owned by package-contracts; province
+  // wraps undefined into transport_failure while retaining the submission.
+  const projected = projectLawfulGatekeeperOutput(decision);
+  if (projected === undefined) return noUsableReleaseFailure("gatekeeper", decision);
+  if (projected.status === "dispatch") {
+    return { status: "dispatch", officer: projected.officer };
   }
   // Lawful non-dispatch release — province may pass without dispatching an officer
   // (ADR 0074 gate-non-mandatory; gate-output-guide pass = 正常放行; #597).
-  if (record.status === "pass") {
-    return { status: "pass", findings: asStringArray(record.findings) };
-  }
-  return noUsableReleaseFailure("gatekeeper", decision);
+  return { status: "pass", findings: projected.findings ?? [] };
 }
 
 function projectOfficerDecision(

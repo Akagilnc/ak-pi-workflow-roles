@@ -16,35 +16,11 @@ export const PUBLIC_CALLABLE_ROLES = PACKAGED_ROLE_REGISTRY.map(
 
 export type PublicCallableRole = (typeof PUBLIC_CALLABLE_ROLES)[number];
 
-/** Automatic attendance seat — configurable, never a caller-selected command. */
-export const AUTOMATIC_NAVIGATOR_SEAT = "navigator" as const;
-
-/** Automatic province seat — configurable model only; never a caller command. */
-export const AUTOMATIC_GATEKEEPER_SEAT = "gatekeeper" as const;
-
-/** Automatic-only configurable seats. Inspector remains automatic-capable via its callable seat. */
-export const AUTOMATIC_CONFIGURABLE_SEATS = [
-  AUTOMATIC_GATEKEEPER_SEAT,
-  AUTOMATIC_NAVIGATOR_SEAT,
-] as const;
-
-export type AutomaticConfigurableSeat =
-  (typeof AUTOMATIC_CONFIGURABLE_SEATS)[number];
-
-export type PublicConfigurableSeat =
-  | PublicCallableRole
-  | AutomaticConfigurableSeat;
+export type PublicConfigurableSeat = PublicCallableRole;
 
 export const PUBLIC_CONFIGURABLE_SEATS = [
   ...PUBLIC_CALLABLE_ROLES,
-  ...AUTOMATIC_CONFIGURABLE_SEATS,
 ] as const satisfies readonly PublicConfigurableSeat[];
-
-export function isAutomaticConfigurableSeat(
-  value: string,
-): value is AutomaticConfigurableSeat {
-  return (AUTOMATIC_CONFIGURABLE_SEATS as readonly string[]).includes(value);
-}
 
 export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "roles",
@@ -127,7 +103,8 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
   ],
   // #620: subordinate officers inherit gatekeeper; no package startup model.
   notary: [],
-  // #453/#620: gatekeeper unset inherits audited session (province path only).
+  // #453/#620/#639: gatekeeper callable but no package startup model — caller
+  // configures it or the institutional resolution applies on the province path.
   gatekeeper: [],
   inspector: [],
   navigator: [
