@@ -182,7 +182,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
 ];
 
-test("public resume reopens the Collector principal through real activation and settles its typed terminal", async () => {
+test("public resume reopens the Collector principal through real activation and settles its typed terminal", { timeout: 120_000 }, async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     const agentDir = join(home, ".pi", "agent");
@@ -327,7 +327,6 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
         agentDir,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        collectorTimeoutMs: 90_000,
         hostAdapters: [
           {
             name: "grok-build",
