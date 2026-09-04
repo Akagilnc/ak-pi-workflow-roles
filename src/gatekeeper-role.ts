@@ -35,8 +35,8 @@ export type GatekeeperResult =
   | {
       readonly status: "escalate";
       readonly officer: "inspector" | "notary";
-      readonly reason?: string;
-      readonly findings: readonly string[];
+      readonly reason?: unknown;
+      readonly findings: unknown;
       readonly submission: unknown;
     }
   | { readonly status: "no_receipt"; readonly stage: "gatekeeper" | "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
@@ -69,7 +69,7 @@ export { GatekeeperDecisionError } from "./submission-errors.ts";
 export class GatekeeperEscalationError extends Error {
   readonly gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>;
   constructor(gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>) {
-    super(gatekeeper.reason ?? `门下省${gateSeatLabel(gatekeeper.officer)}上呈`);
+    super(`门下省${gateSeatLabel(gatekeeper.officer)}上呈`);
     this.name = "GatekeeperEscalationError";
     this.gatekeeper = gatekeeper;
   }
@@ -230,8 +230,8 @@ function projectOfficerDecision(
     return {
       status: "escalate",
       officer,
-      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
-      findings: asStringArray(record.findings),
+      ...(Object.hasOwn(record, "reason") ? { reason: record.reason } : {}),
+      findings: record.findings,
       submission: retainedSubmission(decision),
     };
   }

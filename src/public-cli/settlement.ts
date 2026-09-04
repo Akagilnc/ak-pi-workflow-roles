@@ -173,6 +173,16 @@ async function auditEscalationLedgerOutcome(
   return projection;
 }
 
+async function closedLedgerOutcome(
+  admitted: AdmittedRoleInvocation,
+  role: TerminalRoleName,
+): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+  const sealed = await sealedLedgerOutcome(admitted);
+  return sealed?.role === role
+    ? sealed
+    : auditEscalationLedgerOutcome(admitted, role);
+}
+
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
 function coordinatesFromAdmitted(
   authority: DurablePrincipalAuthority,
@@ -2546,21 +2556,18 @@ async function settleLawfulCoderTerminalResult(
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
-  let roleOutcome: TerminalRoleOutcome;
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder");
+  if (ledgerOutcome === undefined) return undefined;
+  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   let output: CoderOutput | undefined;
-  if (sealed?.role === "coder") {
-    output = validateAcceptedCoderDetails(sealed.decisiveFacts);
+  if (ledgerOutcome.kind === "accepted") {
+    output = validateAcceptedCoderDetails(ledgerOutcome.decisiveFacts);
     roleOutcome = {
       kind: "accepted",
       role: "coder",
-      status: sealed.status,
+      status: ledgerOutcome.status,
       decisiveFacts: coderDecisiveFacts(output),
     };
-  } else {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "coder");
-    if (escalation === undefined) return undefined;
-    roleOutcome = escalation;
   }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
@@ -2737,21 +2744,18 @@ async function settleLawfulFixerTerminalResult(
     readonly methodSkillConfiguredPath: string;
   },
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
-  let roleOutcome: TerminalRoleOutcome;
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer");
+  if (ledgerOutcome === undefined) return undefined;
+  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   let output: FixerOutput | undefined;
-  if (sealed?.role === "fixer") {
-    output = validateFixerOutput(sealed.decisiveFacts);
+  if (ledgerOutcome.kind === "accepted") {
+    output = validateFixerOutput(ledgerOutcome.decisiveFacts);
     roleOutcome = {
       kind: "accepted",
       role: "fixer",
-      status: sealed.status,
+      status: ledgerOutcome.status,
       decisiveFacts: fixerDecisiveFacts(output),
     };
-  } else {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "fixer");
-    if (escalation === undefined) return undefined;
-    roleOutcome = escalation;
   }
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
@@ -3150,21 +3154,20 @@ async function settleLawfulOneShotAcceptedTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
+  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName);
+  if (roleOutcome?.kind === "audit_escalation") {
+    const navigator = extractNavigatorFact(entries);
+    return withOptionalGateProjection(
+      {
+        roleOutcome,
+        navigator,
+        artifacts: [],
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    );
+  }
   if (roleOutcome?.role !== spec.role) {
-    const escalationOutcome = await auditEscalationLedgerOutcome(admitted, spec.role as TerminalRoleName);
-    if (escalationOutcome !== undefined) {
-      const navigator = extractNavigatorFact(entries);
-      return withOptionalGateProjection(
-        {
-          roleOutcome: escalationOutcome,
-          navigator,
-          artifacts: [],
-          runId: admitted.runId,
-        },
-        sessionDirectory,
-      );
-    }
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
     // Resumable seats bound the scan to the current attempt so multi-attempt

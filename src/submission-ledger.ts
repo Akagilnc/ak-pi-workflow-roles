@@ -300,13 +300,19 @@ export function createSubmissionLedgerHost(
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
             if (error instanceof GatekeeperEscalationError) {
+              const original = error.gatekeeper.submission as Record<string, unknown>;
               const auditDecision = {
+                ...original,
                 status: "escalate" as const,
-                reason: error.gatekeeper.reason,
                 officer: error.gatekeeper.officer,
-                findings: error.gatekeeper.findings,
+                reason: Object.hasOwn(original, "reason")
+                  ? original.reason
+                  : `门下省${error.gatekeeper.officer}上呈（原卷未附 reason）`,
               };
-              result = projectAuditEscalation(auditDecision, params);
+              result = projectAuditEscalation(auditDecision, {
+                ...(params as Record<string, unknown>),
+                ...original,
+              });
             } else if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
@@ -337,13 +343,13 @@ export function createSubmissionLedgerHost(
           ) {
             const details = result.details as Record<string, unknown>;
             result = projectAuditEscalation({
+              ...details,
               status: "escalate",
               officer: role,
-              ...(typeof details.reason === "string" ? { reason: details.reason } : {}),
-              ...(Array.isArray(details.findings)
-                ? { findings: details.findings.filter((finding): finding is string => typeof finding === "string") }
-                : {}),
-            });
+              reason: Object.hasOwn(details, "reason")
+                ? details.reason
+                : `门下省${role}上呈（原卷未附 reason）`,
+            }, details);
           }
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];
