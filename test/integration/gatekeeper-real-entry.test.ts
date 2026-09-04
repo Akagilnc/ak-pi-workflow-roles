@@ -6,13 +6,13 @@ import test from "node:test";
 import { fauxAssistantMessage, validateToolArguments } from "@earendil-works/pi-ai";
 import {
   runGatekeeper,
-  GATEKEEPER_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
   MISSING_ARGUMENTS_SUBMISSION,
   createGatekeeperOutputTool,
   createOfficerDecisionTool,
 } from "../../src/gatekeeper-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { INSTITUTIONAL_RESOLUTION_FILE } from "../../src/institutional-resolution.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
 import { packageRoot, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";

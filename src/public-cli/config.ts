@@ -7,10 +7,8 @@ import { dirname, join } from "node:path";
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
-  AUTOMATIC_CONFIGURABLE_SEATS,
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
-  isAutomaticConfigurableSeat,
   isPublicCallableRole,
   isPublicConfigurableSeat,
   seatModelOnly,
@@ -87,8 +85,6 @@ export type HostSource = "invocation" | "persistent" | "default";
 
 export type EffectiveSeat = {
   seat: PublicConfigurableSeat;
-  /** True when the seat is automatic (no caller command) rather than caller-selected. */
-  automatic: boolean;
   source: EffectiveSource;
   selection?: SeatModelConfig;
   /** Selected engine name when configured; undefined = no engine (default path). */
@@ -240,7 +236,7 @@ export function setPersistentSeatHost(
  * First engine still requires an existing seat row (model, or residual axes).
  * Clearing engine from an axis-only residual drops the empty row; clearing
  * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
- * (navigator excluded at the type boundary).
+ * (same as PublicConfigurableSeat; navigator included since #639).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
@@ -308,8 +304,8 @@ export function setAutoResumeLimit(
 /**
  * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
  * engine names need only path-safety syntax (no closed material catalog;
- * #376 / #378 / #391 / ADR 0069). Disk-handwritten automatic-seat axes are
- * rejected. Syntax authority = assertLegalEngineName (no injected duplicate).
+ * #376 / #378 / #391 / ADR 0069). Syntax authority = assertLegalEngineName
+ * (no injected duplicate).
  */
 export function validatePublicCliConfigAxes(
   config: PublicCliConfig,
@@ -317,11 +313,6 @@ export function validatePublicCliConfigAxes(
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if ((row?.engine !== undefined || row?.host !== undefined) && !isPublicCallableRole(seat)) {
-      throw new Error(
-        `config seat ${seat} cannot persist call axes: no independent activation path; storing would be silently ineffective`,
-      );
-    }
     if (row?.engine === undefined) continue;
     try {
       assertLegalEngineName(row.engine);
@@ -622,13 +613,11 @@ function resolveBaseSeat(
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
 ): UnhostedEffectiveSeat {
-  const automatic = isAutomaticConfigurableSeat(seat);
   // #620: subordinate officers consume institutional-resolution authority result.
   if (seat === "notary" || seat === "inspector") {
     const resolved = resolveConfiguredProvinceOfficer(config, seat);
     return {
       seat,
-      automatic,
       source: resolved.source,
       ...(resolved.selection === undefined ? {} : { selection: resolved.selection }),
       engineSource: "unconfigured",
@@ -639,7 +628,6 @@ function resolveBaseSeat(
   if (persistentModel !== undefined) {
     return {
       seat,
-      automatic,
       source: "persistent",
       selection: persistentModel,
       engineSource: "unconfigured",
@@ -649,13 +637,12 @@ function resolveBaseSeat(
   if (startup !== undefined) {
     return {
       seat,
-      automatic,
       source: "startup",
       selection: startup,
       engineSource: "unconfigured",
     };
   }
-  return { seat, automatic, source: "unconfigured", engineSource: "unconfigured" };
+  return { seat, source: "unconfigured", engineSource: "unconfigured" };
 }
 
 export function resolveEffectiveSeat(
@@ -664,7 +651,6 @@ export function resolveEffectiveSeat(
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat {
-  const automatic = isAutomaticConfigurableSeat(seat);
   const hasModelInvocation =
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
@@ -679,7 +665,6 @@ export function resolveEffectiveSeat(
         : `${invocation.model}:${invocation.thinking}`;
     modelSeat = {
       seat,
-      automatic,
       source: "invocation",
       selection: parseModelSpec(spec),
       engineSource: "unconfigured",
@@ -689,14 +674,12 @@ export function resolveEffectiveSeat(
     if (base.selection === undefined || invocation.thinking === undefined) {
       modelSeat = {
         seat,
-        automatic,
         source: "unconfigured",
         engineSource: "unconfigured",
       };
     } else {
       modelSeat = {
         seat,
-        automatic,
         source: "invocation",
         selection: { ...base.selection, thinking: invocation.thinking },
         engineSource: "unconfigured",
@@ -717,20 +700,13 @@ export function effectiveSeatConfigurations(
   );
 }
 
-/** Callable roles first (package order), then automatic configurable seats. */
+/** Callable roles in package order. */
 export function listRolesForDisplay(
   config: PublicCliConfig,
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
 ): EffectiveSeat[] {
-  const all = effectiveSeatConfigurations(config, credentials, invocation);
-  const callable = PUBLIC_CALLABLE_ROLES.map(
-    (role) => all.find((entry) => entry.seat === role)!,
-  );
-  const automatic = AUTOMATIC_CONFIGURABLE_SEATS.map(
-    (seat) => all.find((entry) => entry.seat === seat)!,
-  );
-  return [...callable, ...automatic];
+  return effectiveSeatConfigurations(config, credentials, invocation);
 }
 
 /**
