@@ -496,6 +496,98 @@ async function workerCompletionGatekeeperHarness(options: {
   };
 }
 
+function gateCatalogModel(provider: string, id: string) {
+  return {
+    api: "openai-responses" as const,
+    provider,
+    id,
+    name: id,
+    baseUrl: "",
+    reasoning: false,
+    input: ["text" as const],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1,
+    maxTokens: 1,
+  };
+}
+
+/**
+ * Real submit-tool → requireGatekeeperPass → shared executor child model observation (#453).
+ * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
+ */
+async function realEntryGateModelHarness(options: {
+  officer?: "inspector" | "notary";
+  catalog?: ReadonlyArray<{ provider: string; id: string }>;
+  authFailIds?: ReadonlySet<string>;
+  /** Already-produced resolution page seats the consumer reads (B-lane). */
+  seats?: InstitutionalResolutionPage["seats"];
+}) {
+  const officer = options.officer ?? "inspector";
+  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
+  const parentModel = faux.getModel();
+  const catalog = new Map(
+    (options.catalog ?? []).map((entry) => [
+      `${entry.provider}/${entry.id}`,
+      gateCatalogModel(entry.provider, entry.id),
+    ]),
+  );
+  const authFailIds = options.authFailIds ?? new Set<string>();
+  // The child reaches this faux over the real OpenAI-completions HTTP server (models.json),
+  // so the completion model is observed from the actual child stream request (model.id
+  // round-trips in the OpenAI-completions body) mapped to its provider via the catalog,
+  // plus the faux/parent model for unconfigured seats.
+  const modelIdToProvider = new Map<string, string>();
+  modelIdToProvider.set(parentModel.id, parentModel.provider);
+  for (const [key, entry] of catalog) {
+    const [provider, id] = key.split("/");
+    if (id !== undefined) modelIdToProvider.set(id, provider ?? entry.provider);
+  }
+  const seen: Array<{ provider: string; id: string }> = [];
+  const responses = [
+    fauxAssistantMessage(fauxToolCall(officerTool, { status: "pass", findings: [] })),
+  ];
+  faux.provider.stream = (() => {
+    const next = responses.shift();
+    if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(() => stream.end(next));
+    return stream;
+  }) as any;
+  faux.provider.streamSimple = faux.provider.stream as any;
+  // Register the faux provider plus any catalog overrides (except auth-fail models, whose
+  // seat must fail loudly as provider-is-not-configured). All point at the one faux server.
+  const extraProviders = (options.catalog ?? [])
+    .filter((entry) => !authFailIds.has(entry.id))
+    .map((entry) => entry);
+  await registerInstitutionalProviderFixture(faux, extraProviders, {
+    onModel(modelId) {
+      seen.push({ provider: modelIdToProvider.get(modelId) ?? parentModel.provider, id: modelId });
+    },
+  });
+  return {
+    parentModel,
+    seen,
+    context(id: string, toolName: string) {
+      const runDirectory = installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
+      return Object.assign(toolCallContext([{ id, name: toolName }]), {
+        cwd: process.cwd(),
+        model: parentModel,
+        modelRegistry: {
+          // Override providers share the scripted stream so completion model is observable.
+          getProvider() { return faux.provider; },
+          find(providerName: string, modelId: string) {
+            return catalog.get(`${providerName}/${modelId}`);
+          },
+          async getProviderAuth() { return { auth: { apiKey: "test-key" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-key" }; },
+        },
+        thinkingLevel: "off",
+      });
+    },
+  };
+}
+
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
   // Durable session principal under the machine ledger book (ADR 0048).
   // Default mode stays undefined so failInfrastructure does not stamp process.exitCode unless a test opts in.
@@ -1531,6 +1623,63 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   );
   assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
+});
+
+test("direct Inspector submit uses its own seat override and never falls back on auth failure", async () => {
+  const request = "Apply the approved plan.";
+  const completed = { status: "completed", report: "TDD and verification evidence" };
+  const startCoder = async () => {
+    const harness = extensionHarness(undefined, {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    const runtime = createCoderRoleRuntime(
+      createPiRoleHostAdapter(harness.pi as ExtensionAPI).host,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
+      },
+      testHostActions(),
+    );
+    await runtime.activate();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      { abort() {}, mode: "tui" },
+    );
+    return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
+  };
+
+  const seats = {
+    gatekeeper: { provider: "xai", model: "gate-model" },
+    inspector: { provider: "openai-codex", model: "inspector-model" },
+  };
+  const catalog = [
+    { provider: "xai", id: "gate-model" },
+    { provider: "openai-codex", id: "inspector-model" },
+  ];
+  {
+    const tool = await startCoder();
+    const tracer = await realEntryGateModelHarness({ officer: "inspector", catalog, seats });
+    const accepted = await tool.execute("own-inspector", completed, undefined, undefined, tracer.context("own-inspector", CODER_OUTPUT_TOOL_NAME));
+    assert.equal(accepted.terminate, true);
+    assert.deepEqual(tracer.seen, [{ provider: "openai-codex", id: "inspector-model" }]);
+  }
+  {
+    const tool = await startCoder();
+    const tracer = await realEntryGateModelHarness({
+      officer: "inspector",
+      catalog: [{ provider: "openai-codex", id: "inspector-model" }],
+      authFailIds: new Set(["inspector-model"]),
+      seats,
+    });
+    await assert.rejects(
+      tool.execute("auth-fail", completed, undefined, undefined, tracer.context("auth-fail", CODER_OUTPUT_TOOL_NAME)),
+      /authentication failed|override credentials missing/i,
+    );
+    assert.deepEqual(tracer.seen, [], "officer auth failure must not reach completion or fall back");
+  }
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
