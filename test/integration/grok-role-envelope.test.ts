@@ -136,11 +136,12 @@ test("Grok opening materials inject soul exactly once", async () => {
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
-    // Production soul loader returns the full session-materials bundle; the old
-    // envelope also preloaded that same bundle before before_agent_start, so the
-    // distinctive soul title appeared twice. Bite that double-injection shape.
-    const { loadMainRoleSessionMaterials } = await import("../../src/session-opening-materials.ts");
-    const soul = await loadMainRoleSessionMaterials("judge");
+    // Synthetic marker only — proves once-injection without locking packaged soul prose.
+    // Production bug was: envelope preloaded the same loadSoul bytes, then before_agent_start
+    // appended them again under <judge_soul>. Mirror that shape with a synthetic double-path.
+    const marker = "AK_SOUL_ONCE_MARKER_632";
+    // loadSoul trims; keep the fixture already trimmed so expected body is exact.
+    const soul = `synthetic-judge-soul\n${marker}`;
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "judge" }, methods: [],
@@ -157,11 +158,10 @@ test("Grok opening materials inject soul exactly once", async () => {
     });
     try {
       const body = prepared.systemPrompt.body;
-      const marker = "# Judge Soul（大理寺）";
-      assert.ok(soul.includes(marker), "fixture soul must carry the judge title marker");
       const occurrences = body.split(marker).length - 1;
-      assert.equal(occurrences, 1, `soul title must appear once, saw ${occurrences}`);
-      assert.match(body, /<judge_soul>[\s\S]*# Judge Soul（大理寺）[\s\S]*<\/judge_soul>/);
+      assert.equal(occurrences, 1, `synthetic soul marker must appear once, saw ${occurrences}`);
+      // Empty methods + single before_agent_start inject → exact tagged body (no preloaded bundle).
+      assert.equal(body, `\n\n<judge_soul>\n${soul}\n</judge_soul>`);
     } finally {
       await prepared.dispose?.();
     }
