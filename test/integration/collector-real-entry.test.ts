@@ -375,6 +375,74 @@ test("#641 chain② declaration with an unassemblable receipt keeps the shared h
   }
 });
 
+test("Collector activation restores non-empty session dossier before resumed observe and output", async () => {
+  await withActivationHome({ prefix: "ak-collector-session-replay-" }, async ({ agentDir, home }) => {
+    const manifest = resolve(home, "requests.json");
+    await writeFile(manifest, JSON.stringify({ requests: [{ id: "reviewer", body: "Please review." }] }));
+    const sourceClock = clock();
+    const sourceTransport = createFakeGitHubTransport({
+      user: sampleUser(), pullRequest: samplePull({ headOid: "head-1" }), reviews: [], issueComments: [], reviewComments: [],
+      createComment: async () => { throw new Error("interrupted after dispatch"); },
+    });
+    const sourceFaux = fauxProvider({ api: "collector-session-source", provider: "collector-session-source", tokenSize: { min: 1000, max: 1000 } });
+    sourceFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe-source" }), { stopReason: "toolUse" }),
+      (context: any) => {
+        const observed = providerObserveViews(context.messages).at(-1);
+        assert.ok(observed);
+        return fauxAssistantMessage(fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "reviewer", snapshotId: observed.snapshotId }, { id: "request-interrupted" }), { stopReason: "toolUse" });
+      },
+    ] as any);
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const sessionManager = await withInProcessPi({
+      home, cwd: home, agentDir, faux: sourceFaux, modelsPath: null, activationLedgerSession: true,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => sourceTransport, createCollectorClock: () => sourceClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
+      noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
+      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", "ak-collector-request-manifest": manifest },
+    }, async ({ session, sessionManager: sourceSessionManager }) => {
+      await session.prompt("start");
+      return sourceSessionManager;
+    });
+    process.exitCode = priorExitCode;
+    const requestEntry = [...sessionManager.getEntries()].find((entry: any) => entry.type === "custom" && entry.customType === "ak-collector-request") as any;
+    assert.equal(requestEntry?.data?.attempt?.status, "started");
+    const interruptedBody = requestEntry.data.attempt.body as string;
+    const resumedTransport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-1" }),
+      reviews: [], reviewComments: [],
+      issueComments: [botIssueComment({ id: 91, userLogin: sampleUser().login, userId: 199175422, body: interruptedBody })],
+    });
+    const resumedClock = clock();
+    const faux = fauxProvider({ api: "collector-session-replay", provider: "collector-session-replay", tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "observe-resumed" }), { stopReason: "toolUse" }),
+      outputCall({}, "output-resumed"),
+    ] as any);
+
+    await withInProcessPi({
+      home, cwd: home, agentDir, faux, modelsPath: null, sessionManager,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => resumedTransport, createCollectorClock: () => resumedClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
+      noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
+      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", "ak-collector-request-manifest": manifest },
+    }, async ({ session }) => {
+      await session.prompt("resume");
+    });
+
+    const headerId = sessionManager.getHeader?.()?.id;
+    assert.ok(headerId);
+    const sealed = await readSealedSubmission(home, headerId, home);
+    assert.ok(sealed);
+    const receipt = sealed.decisiveFacts as any;
+    assert.equal(receipt.deadlineTime, "2026-01-01T00:15:00.000Z");
+    assert.equal(receipt.requestAttempts[0].status, "recovered");
+    assert.ok(receipt.snapshots.length >= 2);
+    assert.ok(receipt.evidenceRecords.length > 0);
+    assert.equal(resumedTransport.calls.create, 0);
+  });
+});
+
 test("Collector output candidate blocks a same-turn request before GitHub POST", async () => {
   const result = await runRealCollectorScript({
     requests: [{ id: "reviewer", body: "Please review." }],
