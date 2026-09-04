@@ -3,7 +3,8 @@ import {
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
-import { isAuditEscalationProjection } from "./audit-escalation.ts";
+import { isAuditEscalationProjection, projectAuditEscalation } from "./audit-escalation.ts";
+import { GatekeeperEscalationError } from "./gatekeeper-role.ts";
 
 import {
   acceptedFacts,
@@ -55,8 +56,22 @@ function runIdentity(context: HostContext): string {
   throw new Error("提交账需要已受理的 run 身份");
 }
 
+export function latestUserAttemptId(
+  entries: Iterable<{ readonly id?: unknown; readonly message?: { readonly role?: unknown } }>,
+): string | undefined {
+  const ordered = [...entries];
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const entry = ordered[index];
+    if (entry?.message?.role === "user" && typeof entry.id === "string") return entry.id;
+  }
+  return undefined;
+}
+
 function attemptIdentity(context: HostContext, runId: string): string {
-  return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
+  return latestUserAttemptId(context.sessionManager.getEntries?.() ?? [])
+    ?? context.sessionManager.getHeader?.()?.id
+    ?? context.sessionManager.getLeafId?.()
+    ?? `${runId}:initial`;
 }
 
 function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {
@@ -124,13 +139,18 @@ export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
   home?: string,
+  currentAttemptId?: string,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  const latestAttemptId = currentAttemptId ?? (owned.at(-1)?.subject as { attemptId?: unknown } | undefined)?.attemptId;
+  if (typeof latestAttemptId !== "string") return undefined;
   for (let index = owned.length - 1; index >= 0; index -= 1) {
     const record = owned[index];
+    if ((record?.subject as { attemptId?: unknown } | undefined)?.attemptId !== latestAttemptId) continue;
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
-    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
+    if (payload?.type !== "outcome") continue;
+    if (payload.outcome !== "audit-escalation") return undefined;
     if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
   }
   return undefined;
@@ -289,6 +309,18 @@ export function createSubmissionLedgerHost(
           // correctable-rejection path as execute-thrown rejections below. The
           // candidate is booked first so the bounced attempt stays observable.
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
+          const projectOfficerEscalation = (
+            officer: "inspector" | "notary",
+            original: Record<string, unknown>,
+            deliveredOutput: Record<string, unknown> = original,
+          ): HostToolResult<unknown> => projectAuditEscalation({
+            ...original,
+            status: "escalate",
+            officer,
+            reason: original.reason === undefined
+              ? `门下省${officer}上呈（原卷未附 reason）`
+              : original.reason,
+          }, deliveredOutput);
           let result: HostToolResult<unknown>;
           try {
             failOnInfrastructureFailureDeclaration(
@@ -304,7 +336,14 @@ export function createSubmissionLedgerHost(
             );
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (isCorrectableExecuteError(error)) {
+            if (error instanceof GatekeeperEscalationError) {
+              const decision = error.gatekeeper as unknown as Record<string, unknown>;
+              result = projectOfficerEscalation(
+                error.gatekeeper.officer,
+                decision,
+                params as Record<string, unknown>,
+              );
+            } else if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
                 attemptId,
@@ -313,6 +352,7 @@ export function createSubmissionLedgerHost(
                 code: "typed-bounce",
                 diagnostic: error instanceof Error ? error.message : String(error),
               });
+              throw error;
             } else {
               append({
                 type: "outcome",
@@ -321,8 +361,18 @@ export function createSubmissionLedgerHost(
                 outcome: "infrastructure",
                 diagnostic: error instanceof Error ? error.message : String(error),
               });
+              throw error;
             }
-            throw error;
+          }
+          if (
+            (role === "inspector" || role === "notary") &&
+            typeof result.details === "object" &&
+            result.details !== null &&
+            !Array.isArray(result.details) &&
+            (result.details as Record<string, unknown>).status === "escalate"
+          ) {
+            const details = result.details as Record<string, unknown>;
+            result = projectOfficerEscalation(role, details);
           }
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];

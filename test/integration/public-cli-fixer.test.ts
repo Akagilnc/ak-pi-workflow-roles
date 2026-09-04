@@ -34,7 +34,6 @@ import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
-import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import {
   extractFixerMethodInvocations,
   settleFixerTerminalResult,
@@ -817,7 +816,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
   });
 });
 
-test("public Fixer unfinished/refused/partially_completed/audit_escalation hand off via shared Terminal exit 0", async () => {
+test("public Fixer unfinished/refused/partially_completed hand off via shared Terminal exit 0", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -850,21 +849,12 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       report: "One class repaired; one refused.",
       classResults: [completed("ParserCase", shaA), refused("TransportCase")],
     };
-    const escalation = {
-      kind: AUDIT_ESCALATION_KIND,
-      conflicts: ["soul procedure conflict"],
-      decisionGate: {
-        question: "Which authority controls this Fixer gate?",
-        options: ["owner", "caller"],
-      },
-    };
-
     // settle + runAkRole production path for each lawful status → exit 0.
     const cases: Array<{
       runId: string;
       phase: "plan" | "apply";
       details: unknown;
-      kind: "accepted" | "audit_escalation";
+      kind: "accepted";
       status: string;
       factKey: string;
       factValue: unknown;
@@ -911,13 +901,8 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       const settled = await settleFixerSession(admitted, row.details);
       assert.equal(settled.roleOutcome.kind, row.kind, row.status);
       assert.equal(settled.roleOutcome.role, "fixer", row.status);
-      assert.equal(
-        settled.roleOutcome.kind === "accepted" ||
-          settled.roleOutcome.kind === "audit_escalation"
-          ? settled.roleOutcome.status
-          : undefined,
-        row.status,
-      );
+      if (settled.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
+      assert.equal(settled.roleOutcome.status, row.status);
       assert.deepEqual(
         settled.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,
@@ -961,13 +946,8 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       );
       assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
-      assert.equal(
-        result.terminal!.roleOutcome.kind === "accepted" ||
-          result.terminal!.roleOutcome.kind === "audit_escalation"
-          ? result.terminal!.roleOutcome.status
-          : undefined,
-        row.status,
-      );
+      if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
+      assert.equal(result.terminal!.roleOutcome.status, row.status);
       assert.deepEqual(
         result.terminal!.roleOutcome.decisiveFacts[row.factKey],
         row.factValue,

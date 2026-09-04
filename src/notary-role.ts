@@ -163,7 +163,7 @@ export function createNotaryRoleRuntime(
         pi.registerTool({
           name: NOTARY_OUTPUT_TOOL_NAME,
           label: "符宝郎输出",
-          description: "提交引文保真与票面对齐的 typed pass/bounce 决议。",
+          description: "提交引文保真与票面对齐的 typed pass/bounce/escalate 决议。",
           promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext, ): Promise<HostToolResult<unknown>> {
@@ -171,7 +171,7 @@ export function createNotaryRoleRuntime(
               throw new Error("符宝郎未激活");
             }
             // Unique submission + terminate only. Shape is not an admission gate
-            // (第 0 条 / ADR 0055): lawful pass/bounce projected; else params as-is.
+            // (第 0 条 / ADR 0055): lawful pass/bounce/escalate projected; else params as-is.
             // #541 infra declaration + sole-final barrier are ledger-owned (#575).
             const lawful = projectLawfulNotaryOutput(parameters);
             const details = lawful ?? retainNotarySubmission(parameters);

@@ -96,25 +96,6 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
   });
 });
 
-test("Gatekeeper accepts its typed officer choice instead of machine-rejecting dispatch", async () => {
-  await withParent(async (context, faux) => {
-    faux.setResponses([
-      completion([
-        { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
-      ], []),
-      completion([
-        { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
-      ], []),
-    ]);
-    const result = await runGatekeeper({
-      context,
-      runDirectory: context.runDirectory,
-      subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
-    });
-    assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
-  });
-});
-
 test("scripted officer bounce projects rewrite disposition and loads that officer's session materials", async () => {
   const constitution = await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8");
   const qualityLaw = await readFile(resolve(packageRoot, "souls/quality-law.md"), "utf8");
