@@ -49,7 +49,9 @@ import {
   type AdmittedNotaryInvocation,
   type AdmittedFixerInvocation,
   type AdmittedGleanerLeftInvocation,
+  type AdmittedGatekeeperInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedNavigatorInvocation,
   type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -1224,6 +1226,12 @@ export type LoadedResumableGleanerLeftRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableInstructionSeatRun = {
+  readonly admitted: AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 /**
  * Base admitted projection shared by every seat loader: durable identity +
  * instruction/attachments + principal + restored ticket identity + model (#633).
@@ -1435,6 +1443,24 @@ export async function loadResumableCountersignRun(
  * Load a resumable Gleaner-Left run for resume (#599). Fixed base restores from
  * the admitted request so continuation stays comparison-correct.
  */
+export async function loadResumableInstructionSeatRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableInstructionSeatRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "gatekeeper" && loaded.run.role !== "navigator") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not an instruction seat`,
+    );
+  }
+  const admitted = {
+    role: loaded.run.role,
+    ...resumedBaseAdmitted(loaded),
+  } as AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  return seatLoadedResult(loaded, admitted);
+}
+
 export async function loadResumableGleanerLeftRun(
   home: string,
   runId: string,

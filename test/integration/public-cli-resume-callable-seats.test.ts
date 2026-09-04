@@ -22,8 +22,10 @@ import { writeRoleRunState, readRoleRunState } from "../../src/public-cli/run-li
 import {
   admitCollectorInvocation,
   admitDoctorInvocation,
+  admitGatekeeperInvocation,
   admitInspectorInvocation,
   admitNotaryInvocation,
+  admitNavigatorInvocation,
   type AdmittedRoleInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -37,6 +39,8 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/gatekeeper-output.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -107,6 +111,26 @@ type SeatTracerSpec = {
 };
 
 const SEAT_SPECS: readonly SeatTracerSpec[] = [
+  {
+    role: "gatekeeper",
+    outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
+    admit: async ({ home, project, runId }) => await admitGatekeeperInvocation({
+      home, principalAuthority: piDurablePrincipalAuthority, cwd: project,
+      instruction: "original admitted gatekeeper instruction", attachmentPaths: [], createRunId: () => runId,
+    }),
+    originalInstruction: "original admitted gatekeeper instruction",
+    sealedDetails: () => ({ status: "pass", findings: [] }),
+  },
+  {
+    role: "navigator",
+    outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
+    admit: async ({ home, project, runId }) => await admitNavigatorInvocation({
+      home, principalAuthority: piDurablePrincipalAuthority, cwd: project,
+      instruction: "original admitted navigator instruction", attachmentPaths: [], createRunId: () => runId,
+    }),
+    originalInstruction: "original admitted navigator instruction",
+    sealedDetails: () => ({ status: "advice", candidates: [] }),
+  },
   {
     role: "collector",
     outputTool: COLLECTOR_OUTPUT_TOOL,
