@@ -1031,6 +1031,8 @@ async function loadResumableRunRecord(
         const ci = record.caseIdentity as Record<string, unknown>;
         if (
           typeof ci.issueNumber === "number" &&
+          Number.isSafeInteger(ci.issueNumber) &&
+          ci.issueNumber >= 1 &&
           typeof ci.runsPath === "string" &&
           ci.runsPath.trim() !== ""
         ) {
@@ -1049,8 +1051,11 @@ async function loadResumableRunRecord(
         const sr = record.sourceRun as Record<string, unknown>;
         if (
           typeof sr.runId === "string" &&
+          sr.runId.trim() !== "" &&
           typeof sr.role === "string" &&
-          typeof sr.runDirectory === "string"
+          sr.role.trim() !== "" &&
+          typeof sr.runDirectory === "string" &&
+          sr.runDirectory.trim() !== ""
         ) {
           sourceRun = {
             runId: sr.runId,
@@ -1567,7 +1572,13 @@ export async function loadResumableCollectorRun(
       `role run admitted collector repository identity is missing: ${runId}`,
     );
   }
-  const parsedRepository = parseCollectorRepository(repositoryDisplay);
+  let parsedRepository;
+  try {
+    parsedRepository = parseCollectorRepository(repositoryDisplay);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
   if (parsedRepository.canonical !== repository) {
     throw new CliUsageError(
       `role run admitted collector repository does not match its canonical form: ${runId}`,
