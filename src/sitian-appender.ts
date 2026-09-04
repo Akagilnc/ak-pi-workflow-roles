@@ -24,6 +24,11 @@ import {
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 import {
+  describeErrorIdentity,
+  errorCodeOf,
+  isProcessAlive,
+} from "./error-identity.ts";
+import {
   SitianInfrastructureError,
   type RecordPointer,
   type SitianRecord,
@@ -36,41 +41,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const IDENTITY_CLAIM_WAIT_MS = 10;
 const identityWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
-
-function errorCodeOf(error: unknown): unknown {
-  return (error as { code?: unknown }).code;
-}
-
-/** True error identity — name/code/message as-is, never a guessed label (#629). */
-function describeErrorIdentity(error: unknown): string {
-  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
-  const name =
-    typeof candidate?.name === 'string' && candidate.name !== ''
-      ? candidate.name
-      : typeof error;
-  const code =
-    typeof candidate?.code === 'string' || typeof candidate?.code === 'number'
-      ? ` code=${String(candidate.code)}`
-      : '';
-  const message =
-    typeof candidate?.message === 'string' && candidate.message !== ''
-      ? `: ${candidate.message}`
-      : '';
-  return `${name}${code}${message}`;
-}
-
-/**
- * Signal-0 liveness probe (#629). Only ESRCH proves absence; any other refusal
- * (e.g. EPERM) means the holder process exists.
- */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCodeOf(error) !== 'ESRCH';
-  }
-}
 
 function identityClaimPath(recordFile: string, identity: string): string {
   const digest = createHash('sha256').update(identity, 'utf8').digest('hex');
@@ -196,6 +166,40 @@ function findIdentityPointer(
   return undefined;
 }
 
+function unlinkBestEffort(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if (errorCodeOf(error) !== 'ENOENT') {
+      // Best-effort cleanup after durable publish; leave residue rather than
+      // laundering a cleanup failure into a false success unwind.
+    }
+  }
+}
+
+/**
+ * Remove claim/recovery sidecars only after the canonical row is durably visible.
+ * Crash residue may remain while recovery still needs it.
+ */
+function releaseIdentityArtifactsAfterPublish(
+  recordFile: string,
+  identity: string,
+  kind: string,
+  level: SitianRecord['level'],
+  claimPath: string,
+): RecordPointer {
+  sealTornTail(recordFile);
+  const published = findIdentityPointer(recordFile, identity, kind, level);
+  if (published === undefined) {
+    throw new SitianInfrastructureError(
+      `Sitian identity claim artifacts at ${claimPath} cannot be released: canonical row for identity ${identity} is not durably visible at ${recordFile}`,
+    );
+  }
+  unlinkBestEffort(identityRecoveryPath(claimPath));
+  unlinkBestEffort(claimPath);
+  return published;
+}
+
 function publishIdentityRow(
   recordFile: string,
   identity: string,
@@ -207,13 +211,21 @@ function publishIdentityRow(
   const existing = findIdentityPointer(recordFile, identity, kind, level);
   if (existing !== undefined) return existing;
   appendFileSync(recordFile, row, 'utf8');
-  return { identity, recordFile, kind, level };
+  const published = findIdentityPointer(recordFile, identity, kind, level);
+  if (published === undefined) {
+    throw new SitianInfrastructureError(
+      `Sitian identity row for ${identity} was written but is not durably visible at ${recordFile}`,
+    );
+  }
+  return published;
 }
 
 /**
  * Contended claim: wait only while a live holder may still publish; materialize
  * a dead unpublished claim from the complete row stored in the claim; fail
- * closed when recovery is itself dead residue. No pathname compare-and-unlink.
+ * closed when recovery is itself dead residue. Races that observe claim or
+ * recovery disappearance rescan the canonical row and fail honestly if neither
+ * exists. No pathname compare-and-unlink.
  */
 function resolveContendedIdentityClaim(
   recordFile: string,
@@ -225,12 +237,23 @@ function resolveContendedIdentityClaim(
   for (;;) {
     sealTornTail(recordFile);
     const found = findIdentityPointer(recordFile, identity, kind, level);
-    if (found !== undefined) return found;
+    if (found !== undefined) {
+      return releaseIdentityArtifactsAfterPublish(
+        recordFile,
+        identity,
+        kind,
+        level,
+        claimPath,
+      );
+    }
 
     const claim = readIdentityClaim(claimPath);
     if (claim === undefined) {
+      sealTornTail(recordFile);
+      const raced = findIdentityPointer(recordFile, identity, kind, level);
+      if (raced !== undefined) return raced;
       throw new SitianInfrastructureError(
-        `Sitian identity claim at ${claimPath} has no verifiable holder pid / row (absent or unparseable); holder liveness unverifiable, claim left in place`,
+        `Sitian identity claim at ${claimPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
       );
     }
 
@@ -241,15 +264,46 @@ function resolveContendedIdentityClaim(
 
     const recoveryPath = identityRecoveryPath(claimPath);
     if (publishExclusiveFile(recoveryPath, `${process.pid}\n`)) {
-      return publishIdentityRow(recordFile, identity, kind, level, claim.row);
+      publishIdentityRow(recordFile, identity, kind, level, claim.row);
+      return releaseIdentityArtifactsAfterPublish(
+        recordFile,
+        identity,
+        kind,
+        level,
+        claimPath,
+      );
     }
 
     sealTornTail(recordFile);
     const published = findIdentityPointer(recordFile, identity, kind, level);
-    if (published !== undefined) return published;
+    if (published !== undefined) {
+      return releaseIdentityArtifactsAfterPublish(
+        recordFile,
+        identity,
+        kind,
+        level,
+        claimPath,
+      );
+    }
 
     const recoveryPid = readRecoveryHolderPid(recoveryPath);
-    if (recoveryPid !== undefined && isProcessAlive(recoveryPid)) {
+    if (recoveryPid === undefined) {
+      sealTornTail(recordFile);
+      const raced = findIdentityPointer(recordFile, identity, kind, level);
+      if (raced !== undefined) {
+        return releaseIdentityArtifactsAfterPublish(
+          recordFile,
+          identity,
+          kind,
+          level,
+          claimPath,
+        );
+      }
+      throw new SitianInfrastructureError(
+        `Sitian identity recovery token at ${recoveryPath} disappeared without a published canonical row for identity ${identity}; failing closed`,
+      );
+    }
+    if (isProcessAlive(recoveryPid)) {
       Atomics.wait(identityWaitBuffer, 0, 0, IDENTITY_CLAIM_WAIT_MS);
       continue;
     }
@@ -265,11 +319,13 @@ function resolveContendedIdentityClaim(
  *
  * Exclusive identity claim (linkSync) stores the complete JSONL row and the
  * claim holder's pid — uniqueness commit plus write-ahead data so dead-winner
- * recovery does not depend on lost append bytes. The winner appends that row.
+ * recovery does not depend on lost append bytes. The winner appends that row,
+ * then removes claim/recovery only after the canonical row is durably visible.
  * Contenders wait only while the holder is live; a dead unpublished claim is
  * materialized once via an exclusive recovery token. Contested dead recovery
- * fails closed with a typed error. No indefinite wait; no pathname
- * compare-and-unlink reclaim (#629 fail-closed shape).
+ * fails closed with a typed error. Crash residue may remain only while needed
+ * for recovery. No indefinite wait; no pathname compare-and-unlink reclaim
+ * (#629 fail-closed shape).
  */
 function appendWithIdentityClaim(
   recordFile: string,
@@ -277,10 +333,15 @@ function appendWithIdentityClaim(
   row: string,
 ): RecordPointer {
   sealTornTail(recordFile);
-  const existing = findIdentityPointer(recordFile, record.identity, record.kind, record.level);
-  if (existing !== undefined) return existing;
-
   const claimPath = identityClaimPath(recordFile, record.identity);
+  const existing = findIdentityPointer(recordFile, record.identity, record.kind, record.level);
+  if (existing !== undefined) {
+    // Canonical row already visible — leftover crash sidecars are no longer needed.
+    unlinkBestEffort(identityRecoveryPath(claimPath));
+    unlinkBestEffort(claimPath);
+    return existing;
+  }
+
   const acquired = publishExclusiveFile(claimPath, encodeIdentityClaim(row));
   if (!acquired) {
     return resolveContendedIdentityClaim(
@@ -292,12 +353,19 @@ function appendWithIdentityClaim(
     );
   }
 
-  return publishIdentityRow(
+  publishIdentityRow(
     recordFile,
     record.identity,
     record.kind,
     record.level,
     row,
+  );
+  return releaseIdentityArtifactsAfterPublish(
+    recordFile,
+    record.identity,
+    record.kind,
+    record.level,
+    claimPath,
   );
 }
 
