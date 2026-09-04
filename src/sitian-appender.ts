@@ -6,11 +6,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
-  closeSync,
   existsSync,
-  openSync,
+  linkSync,
   readFileSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -36,195 +34,126 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const SITIAN_VOLUME_LOCK_RETRY_MS = 10;
-const syncSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+const IDENTITY_CLAIM_WAIT_MS = 10;
+const identityWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 function errorCodeOf(error: unknown): unknown {
   return (error as { code?: unknown }).code;
 }
 
-/** True error identity — name/code/message as-is, never a guessed label. */
-function describeErrorIdentity(error: unknown): string {
-  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
-  const name =
-    typeof candidate?.name === "string" && candidate.name !== ""
-      ? candidate.name
-      : typeof error;
-  const code =
-    typeof candidate?.code === "string" || typeof candidate?.code === "number"
-      ? ` code=${String(candidate.code)}`
-      : "";
-  const message =
-    typeof candidate?.message === "string" && candidate.message !== ""
-      ? `: ${candidate.message}`
-      : "";
-  return `${name}${code}${message}`;
+function identityClaimPath(recordFile: string, identity: string): string {
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex");
+  return `${recordFile}.id-${digest}`;
 }
 
 /**
- * Signal-0 liveness probe. Only ESRCH proves absence; any other refusal
- * (e.g. EPERM) means the holder process exists.
+ * Publish `contents` at `path` exactly once across processes.
+ * Temp file + linkSync is the portable exclusive-create primitive: link fails
+ * with EEXIST when the destination already exists (unlike rename, which
+ * replaces an existing destination on POSIX).
  */
-function isProcessAlive(pid: number): boolean {
+function publishExclusiveFile(path: string, contents: string): boolean {
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, contents, "utf8");
   try {
-    process.kill(pid, 0);
+    linkSync(temporary, path);
     return true;
   } catch (error) {
-    return errorCodeOf(error) !== "ESRCH";
-  }
-}
-
-type SitianVolumeLockAutopsy =
-  | { verdict: "absent"; readFailure?: unknown }
-  | { verdict: "dead"; pid: number }
-  | { verdict: "alive"; pid: number };
-
-/**
- * Holder autopsy for an existing volume lock. "absent" covers no file, no
- * parseable pid (live creator mid-acquisition, or crash-window leftover), and
- * unreadable files — absent alone never authorizes reclaim; only "dead" does.
- */
-function autopsySitianVolumeLock(lockFile: string): SitianVolumeLockAutopsy {
-  let content: string;
-  try {
-    content = readFileSync(lockFile, "utf8");
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
-    return { verdict: "absent", readFailure: error };
-  }
-  const normalized = content.trim();
-  if (!/^[1-9]\d*$/.test(normalized)) return { verdict: "absent" };
-  const pid = Number.parseInt(normalized, 10);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return { verdict: "absent" };
-  return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
-}
-
-/**
- * Take ownership of one lock inode via rename, then unlink only that owned
- * path when it is still a verified-dead holder. A contender that removes the
- * dead lock and installs a live replacement at the original pathname cannot
- * be unlinked by this reclaim — the replacement is a different directory
- * entry than the renamed reclaim path (same ownership shape as #629's
- * "never unlink from a stale observation after an intervening mutation",
- * closed here by binding the unlink target to the observed inode).
- */
-function reclaimDeadSitianVolumeLock(lockFile: string): boolean {
-  const reclaimPath = `${lockFile}.${process.pid}.${randomUUID()}.reclaim`;
-  try {
-    renameSync(lockFile, reclaimPath);
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return false;
-    throw error;
-  }
-  const current = autopsySitianVolumeLock(reclaimPath);
-  if (current.verdict !== "dead") {
-    try {
-      renameSync(reclaimPath, lockFile);
-    } catch (restoreError) {
-      if (errorCodeOf(restoreError) !== "EEXIST") throw restoreError;
-      // Replacement already owns the pathname. Only delete the moved inode
-      // when it is not a live holder — never unlink a live lock we renamed.
-      if (current.verdict !== "alive") {
-        try {
-          unlinkSync(reclaimPath);
-        } catch (unlinkError) {
-          if (errorCodeOf(unlinkError) !== "ENOENT") throw unlinkError;
-        }
-      }
-    }
+    if (errorCodeOf(error) !== "EEXIST") throw error;
     return false;
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch (error) {
+      if (errorCodeOf(error) !== "ENOENT") throw error;
+    }
   }
-  try {
-    unlinkSync(reclaimPath);
-    return true;
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return false;
-    throw error;
+}
+
+function sealTornTail(recordFile: string): void {
+  if (!existsSync(recordFile)) return;
+  const buffer = readFileSync(recordFile);
+  if (buffer.length > 0 && buffer[buffer.length - 1] !== 0x0a) {
+    appendFileSync(recordFile, "\n", "utf8");
+  }
+}
+
+function findIdentityPointer(
+  recordFile: string,
+  identity: string,
+  kind: string,
+  level: SitianRecord["level"],
+): RecordPointer | undefined {
+  if (!existsSync(recordFile)) return undefined;
+  const text = readFileSync(recordFile, "utf8");
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (isRecord(parsed) && parsed.identity === identity) {
+        return { identity, recordFile, kind, level };
+      }
+    } catch {
+      // Malformed lines (including substate b preserved bad lines) are ignored during self-check
+    }
+  }
+  return undefined;
+}
+
+function waitForIdentityPointer(
+  recordFile: string,
+  identity: string,
+  kind: string,
+  level: SitianRecord["level"],
+): RecordPointer {
+  for (;;) {
+    sealTornTail(recordFile);
+    const found = findIdentityPointer(recordFile, identity, kind, level);
+    if (found !== undefined) return found;
+    Atomics.wait(identityWaitBuffer, 0, 0, IDENTITY_CLAIM_WAIT_MS);
   }
 }
 
 /**
- * Serialize one volume's recovery + identity check + append across processes.
+ * Same-identity uniqueness without a crash-reclaimable pathname volume lock.
  *
- * Contested lock: live holder → wait (no wall-clock ceiling, no steal);
- * verified-dead holder → reclaim and retry create; absent/unparseable → wait
- * for mid-acquisition to finish (absent alone never authorizes reclaim).
- * Unreadable lock fails with the true read identity — cause is not laundered
- * into a timeout.
+ * Exclusive identity claim (linkSync) is the commit of uniqueness. The claim
+ * winner seals torn tails and appends the JSONL row. Losers wait until that
+ * row is visible. Concurrent same-identity writers therefore converge on one
+ * volume row without ever unlinking a contended lock pathname.
+ *
+ * A crash after claim creation and before append can leave that identity
+ * unpublished in JSONL; that residue is identity-scoped and does not block
+ * other identities. POSIX offers no safe compare-and-unlink reclaim for it
+ * without substantial new machinery — we do not accumulate an unsafe one.
  */
-function withSitianVolumeLock<T>(recordFile: string, action: () => T): T {
-  const lockFile = `${recordFile}.lock`;
-  let descriptor: number;
-  while (true) {
-    try {
-      descriptor = openSync(lockFile, "wx");
-      try {
-        writeFileSync(descriptor, `${process.pid}\n`, "utf8");
-      } catch (error) {
-        try { closeSync(descriptor); } finally { unlinkSync(lockFile); }
-        throw error;
-      }
-      break;
-    } catch (error) {
-      if (errorCodeOf(error) !== "EEXIST") throw error;
-      const autopsy = autopsySitianVolumeLock(lockFile);
-      if (autopsy.verdict === "absent" && autopsy.readFailure !== undefined) {
-        throw new Error(
-          `Sitian volume lock is unreadable at ${lockFile}: ${describeErrorIdentity(autopsy.readFailure)}; holder liveness unverifiable, lock left in place`,
-          { cause: autopsy.readFailure },
-        );
-      }
-      if (autopsy.verdict === "dead") {
-        try {
-          reclaimDeadSitianVolumeLock(lockFile);
-        } catch (reclaimError) {
-          throw new Error(
-            `Sitian volume lock reclaim failed at ${lockFile} (dead pid ${autopsy.pid}): ${describeErrorIdentity(reclaimError)}`,
-            { cause: reclaimError },
-          );
-        }
-        continue;
-      }
-      // live contention, or absent mid-acquisition: wait and retry create.
-      Atomics.wait(syncSleepBuffer, 0, 0, SITIAN_VOLUME_LOCK_RETRY_MS);
-    }
+function appendWithIdentityClaim(
+  recordFile: string,
+  record: SitianRecord,
+  row: string,
+): RecordPointer {
+  sealTornTail(recordFile);
+  const existing = findIdentityPointer(recordFile, record.identity, record.kind, record.level);
+  if (existing !== undefined) return existing;
+
+  const claimPath = identityClaimPath(recordFile, record.identity);
+  const acquired = publishExclusiveFile(claimPath, row);
+  if (!acquired) {
+    return waitForIdentityPointer(recordFile, record.identity, record.kind, record.level);
   }
 
-  let result: T | undefined;
-  let primaryFailure: unknown;
-  try {
-    result = action();
-  } catch (error) {
-    primaryFailure = error;
-  }
-  const cleanupFailures: unknown[] = [];
-  try {
-    closeSync(descriptor!);
-  } catch (error) {
-    cleanupFailures.push(error);
-  }
-  try {
-    unlinkSync(lockFile);
-  } catch (error) {
-    cleanupFailures.push(error);
-  }
-  if (primaryFailure !== undefined && cleanupFailures.length > 0) {
-    throw new AggregateError(
-      [primaryFailure, ...cleanupFailures],
-      "Sitian volume operation and lock cleanup failed",
-      { cause: primaryFailure },
-    );
-  }
-  if (primaryFailure !== undefined) throw primaryFailure;
-  if (cleanupFailures.length === 1) throw cleanupFailures[0];
-  if (cleanupFailures.length > 1) {
-    throw new AggregateError(cleanupFailures, "Sitian volume lock cleanup failed", {
-      cause: cleanupFailures[0],
-    });
-  }
-  return result as T;
+  sealTornTail(recordFile);
+  const raced = findIdentityPointer(recordFile, record.identity, record.kind, record.level);
+  if (raced !== undefined) return raced;
+  appendFileSync(recordFile, row, "utf8");
+  return {
+    identity: record.identity,
+    recordFile,
+    kind: record.kind,
+    level: record.level,
+  };
 }
-
 
 /** Authorized S4 submission ledger kinds that share a common run submission volume. */
 export const S4_SUBMISSION_LEDGER_KINDS = new Set([
@@ -333,48 +262,8 @@ export function appendSitianRecord(input: SitianRecordInput): RecordPointer {
       ...(input.usage === undefined ? {} : { usage: input.usage }),
     };
 
-    return withSitianVolumeLock(recordFile, () => {
-      if (existsSync(recordFile)) {
-        const buffer = readFileSync(recordFile);
-        if (buffer.length > 0) {
-          // Torn-tail check: if last byte is not newline, seal the fragment with \n
-          if (buffer[buffer.length - 1] !== 0x0a) {
-            appendFileSync(recordFile, "\n", "utf8");
-          }
-
-          // Self-check volume by canonical identity while holding the same lock as append.
-          const text = readFileSync(recordFile, "utf8");
-          for (const line of text.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (isRecord(parsed) && parsed.identity === identity) {
-                return {
-                  identity,
-                  recordFile,
-                  kind: record.kind,
-                  level: record.level,
-                };
-              }
-            } catch {
-              // Malformed lines (including substate b preserved bad lines) are ignored during self-check
-            }
-          }
-        }
-      }
-
-      // Not found -> append new canonical row terminating with newline.
-      const row = `${JSON.stringify(record)}\n`;
-      appendFileSync(recordFile, row, "utf8");
-
-      return {
-        identity,
-        recordFile,
-        kind: record.kind,
-        level: record.level,
-      };
-    });
+    const row = `${JSON.stringify(record)}\n`;
+    return appendWithIdentityClaim(recordFile, record, row);
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(
