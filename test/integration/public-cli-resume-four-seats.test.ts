@@ -76,6 +76,42 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   }
 }
 
+/** Close unix servers this tracer opened whose prepare path aborted before dispose returned. */
+async function closeTracerOwnedUnixServers(socketPaths: ReadonlySet<string>): Promise<void> {
+  if (socketPaths.size === 0) return;
+  const getHandles = (
+    process as NodeJS.Process & { _getActiveHandles?: () => readonly unknown[] }
+  )._getActiveHandles;
+  if (typeof getHandles !== "function") return;
+  const closers: Promise<void>[] = [];
+  for (const handle of getHandles.call(process)) {
+    if (
+      handle === null
+      || typeof handle !== "object"
+      || typeof (handle as { close?: unknown }).close !== "function"
+      || (handle as { listening?: unknown }).listening !== true
+    ) {
+      continue;
+    }
+    const address = typeof (handle as { address?: unknown }).address === "function"
+      ? (handle as { address: () => unknown }).address()
+      : undefined;
+    if (typeof address !== "string" || !socketPaths.has(address)) continue;
+    const server = handle as {
+      closeAllConnections?: () => void;
+      close: (callback?: (error?: Error) => void) => void;
+    };
+    server.closeAllConnections?.();
+    closers.push(
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+    );
+  }
+  await Promise.all(closers);
+}
+
+
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
   execFileSync("git", ["config", "user.email", "resume-four-seats@test.local"], {
@@ -182,7 +218,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
 ];
 
-test("public resume reopens the Collector principal through real activation and settles its typed terminal", { timeout: 120_000 }, async () => {
+test("public resume reopens the Collector principal through real activation and settles its typed terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     const agentDir = join(home, ".pi", "agent");
@@ -262,6 +298,7 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
     let preparedTurn: GrokPreparedTurn | undefined;
     let observedResumeContinuation = false;
     let promptCount = 0;
+    const ownedSocketPaths = new Set<string>();
     const grokHost = createGrokRoleTurnHost({
       sessionIdentity,
       recordCapabilities: async () => {},
@@ -273,16 +310,24 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
           "Grok envelope must activate Collector with session_start.reason=resume",
         );
         observedResumeContinuation = true;
-        const prepared = await prepareGrokRoleEnvelope({
-          request,
-          dependencies: roleRuntimeDependencies,
-          sessionFile: sessionIdentity.resolveSessionFile(request.principal),
-          socketPath: join(home, `collector-resume-${randomUUID()}.sock`),
-        });
-        preparedTurn = prepared;
-        // Production closeRound only — no test substitute. Prompt 1 observe+output
-        // triggers real non-sole rejection; prompt 2 sole output seals.
-        return prepared;
+        const socketPath = join(home, `collector-resume-${randomUUID()}.sock`);
+        ownedSocketPaths.add(socketPath);
+        try {
+          const prepared = await prepareGrokRoleEnvelope({
+            request,
+            dependencies: roleRuntimeDependencies,
+            sessionFile: sessionIdentity.resolveSessionFile(request.principal),
+            socketPath,
+          });
+          preparedTurn = prepared;
+          // Production closeRound only — no test substitute. Prompt 1 observe+output
+          // triggers real non-sole rejection; prompt 2 sole output seals.
+          return prepared;
+        } catch (error) {
+          // prepare listens before session_start; activation throw orphans the server.
+          await closeTracerOwnedUnixServers(ownedSocketPaths);
+          throw error;
+        }
       },
       connect: async () => ({
         async request(method) {
@@ -353,6 +398,16 @@ else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/r
       assert.equal(durable?.state, "terminal");
       assert.equal(durable?.sessionFile, coordinates.sessionFile);
     } finally {
+      try {
+        await preparedTurn?.dispose?.();
+      } catch {
+        // Prefer the tracer assertion/activation failure over dispose noise.
+      }
+      try {
+        await closeTracerOwnedUnixServers(ownedSocketPaths);
+      } catch {
+        // Same preference: failure evidence over cleanup secondary errors.
+      }
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
     }
