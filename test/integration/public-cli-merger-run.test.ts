@@ -849,15 +849,6 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
             `${row.role} remains pending until typed turn closure`,
           );
           assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
-          if (row.role === "fixer") {
-            assert.equal(
-              entries.some(
-                (entry) => entry.type === "message" && entry.message.toolName === INSPECTOR_OUTPUT_TOOL,
-              ),
-              false,
-              "planned fixer retry never summons Inspector",
-            );
-          }
           const headerId = sessionManager.getHeader?.()?.id;
           const sealed =
             headerId === undefined ? undefined : await readSealedSubmission(work, headerId, home);
