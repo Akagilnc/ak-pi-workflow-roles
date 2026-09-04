@@ -946,7 +946,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       );
       assert.equal(isLawfulTypedTerminalOutcome(settled.roleOutcome), true);
       assert.equal(exitCodeForTerminalOutcome(settled.roleOutcome), 0);
-      if (row.kind === "audit_escalation") continue;
 
       const { io, stdout } = captureIo();
       const cliArgs =
@@ -966,12 +965,25 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
+          if (row.kind === "audit_escalation") {
+            await recordAuditEscalationSubmission({
+              cwd: project,
+              home,
+              runId: row.runId,
+              runDirectory: join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", `${row.runId}@fixer`),
+              role: "fixer",
+              details: row.details,
+              toolCallId: "f-out",
+            });
+          }
           return {
             code: 0,
             stderr: "",
             timedOut: false,
             args: [...args],
-            sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" },
+            ...(row.kind === "audit_escalation"
+              ? {}
+              : { sealedAcceptance: { role: "fixer" as const, details: row.details, toolCallId: "f-out" } }),
           };
         },
           }),
@@ -984,7 +996,8 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
       assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
       assert.equal(
-        result.terminal!.roleOutcome.kind === "accepted"
+        result.terminal!.roleOutcome.kind === "accepted" ||
+          result.terminal!.roleOutcome.kind === "audit_escalation"
           ? result.terminal!.roleOutcome.status
           : undefined,
         row.status,
