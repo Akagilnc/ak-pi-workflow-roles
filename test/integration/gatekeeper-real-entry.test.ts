@@ -94,14 +94,20 @@ test("scripted Inspector pass projects typed receipt and loads Inspector session
   });
 });
 
-test("Gatekeeper accepts its typed officer choice instead of machine-rejecting dispatch", async () => {
+test("Gatekeeper dispatch preserves the complete scripted officer escalation", async () => {
   await withParent(async (context, faux) => {
+    const submission = {
+      status: "escalate",
+      reason: { source: "third-review-limit" },
+      findings: ["authority conflict", { source: "original-finding" }],
+      officerNote: "retain the complete officer submission",
+    };
     faux.setResponses([
       completion([
         { tool: GATEKEEPER_OUTPUT_TOOL, args: { status: "dispatch", officer: "inspector" } },
       ], []),
       completion([
-        { tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } },
+        { tool: INSPECTOR_OUTPUT_TOOL, args: submission },
       ], []),
     ]);
     const result = await runGatekeeper({
@@ -109,7 +115,12 @@ test("Gatekeeper accepts its typed officer choice instead of machine-rejecting d
       runDirectory: context.runDirectory,
       subject: { kind: "judge_draft", material: "ticket and proposed judgment" },
     });
-    assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
+    assert.equal(result.status, "escalate");
+    if (result.status !== "escalate") throw new Error("expected officer escalation");
+    assert.equal(result.officer, "inspector");
+    assert.deepEqual(result.reason, submission.reason);
+    assert.deepEqual(result.findings, submission.findings);
+    assert.deepEqual(result.submission, submission);
   });
 });
 
