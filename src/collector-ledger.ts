@@ -88,7 +88,6 @@ export type CollectorLedger = {
   readonly config: CollectorConfigState;
   readonly fatal: boolean;
   readonly fatalReason: string | undefined;
-  readonly outputAccepted: boolean;
   readonly activationRecorded: boolean;
   readonly activationTime: Date | undefined;
   readonly deadlineTime: Date | undefined;
@@ -107,9 +106,6 @@ export type CollectorLedger = {
   recordActivation(clock: CollectorClock): void;
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
-  markOutputAccepted(): void;
-  /** Clears a provisional accept after correctable non-sole rejection (pre-seal only). */
-  releaseProvisionalOutputAccepted(): void;
   noteCutoffObserved(): void;
   assertOutputObservationLaw(clock: CollectorClock): void;
 
@@ -173,7 +169,6 @@ export function collectorToolArgumentsValid(
 export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
   let fatal = false;
   let fatalReason: string | undefined;
-  let outputAccepted = false;
   let activationTime: Date | undefined;
   let deadlineTime: Date | undefined;
   let activationMono: number | undefined;
@@ -287,9 +282,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     get fatalReason() {
       return fatalReason;
     },
-    get outputAccepted() {
-      return outputAccepted;
-    },
     get activationRecorded() {
       return activationTime !== undefined;
     },
@@ -341,9 +333,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
-        throw latchFatal("回执已受理，本局不再受理操作");
-      }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {
         return;
@@ -366,17 +355,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       if (activeOperationalCallId === toolCallId) {
         activeOperationalCallId = undefined;
       }
-    },
-
-    markOutputAccepted() {
-      assertNotFatal();
-      if (outputAccepted) throw latchFatal("通进司回执为唯一终局");
-      outputAccepted = true;
-    },
-
-    releaseProvisionalOutputAccepted() {
-      assertNotFatal();
-      outputAccepted = false;
     },
 
     noteCutoffObserved() {
