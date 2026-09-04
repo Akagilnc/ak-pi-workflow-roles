@@ -342,6 +342,12 @@ export async function runWithAutoResumeLoop<
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  /**
+   * After a non-lawful terminal or dispatch throw, stop further auto-resume when a unique sealed
+   * accepted projection is already readable (publication miss must not redispatch
+   * and destroy the sealed read — #648 / #599 alignment).
+   */
+  shouldStopAutoResume?: () => Promise<boolean>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -423,7 +429,57 @@ export async function runWithAutoResumeLoop<
         }
         return result;
       }
+    }
 
+    // One sealed ledger authority before any redispatch (#648): shared for
+    // non-lawful return and direct throw. Authority throw fail-closes with
+    // preserved cause — never wash into unsealed redispatch. Only the sealed=true
+    // projection differs (present returned terminal vs throw-path synthetic).
+    // Fail-closed decision is independent of cause value: `throw undefined` is
+    // legal JS and must not fail open. One cause + endReason → one presentation.
+    if (options.shouldStopAutoResume !== undefined) {
+      let failClosed: { cause: unknown; endReason: string } | undefined;
+      let sealedStop = false;
+      try {
+        sealedStop = await options.shouldStopAutoResume();
+      } catch (authorityError) {
+        failClosed = {
+          cause: authorityError,
+          endReason: "sealed-acceptance authority failed closed",
+        };
+      }
+      if (failClosed === undefined && sealedStop) {
+        if (result !== undefined) {
+          const terminal = (result as { terminal?: TerminalResult }).terminal;
+          if (terminal !== undefined) presentTerminal(terminal, options.io);
+          return result;
+        }
+        failClosed = {
+          cause: lastThrownError,
+          endReason: "sealed accepted projection already present",
+        };
+      }
+      if (failClosed !== undefined) {
+        const terminal = dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: failClosed.cause,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: failClosed.endReason,
+          everyAttemptThrew,
+        });
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal,
+        } as T;
+      }
+    }
+
+    if (result !== undefined) {
+      const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;

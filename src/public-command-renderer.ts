@@ -9,6 +9,7 @@
  */
 import {
   PACKAGED_ROLE_REGISTRY,
+  packagedRoleMetadata,
   type PackagedRole,
 } from "./packaged-role-registry.ts";
 
@@ -23,15 +24,26 @@ const PUBLIC_CALLABLE_ROLES = new Set<string>(
   PACKAGED_ROLE_REGISTRY.map((entry) => entry.role),
 );
 
+export function isPublicCallableRole(role: string): role is PackagedRole {
+  return PUBLIC_CALLABLE_ROLES.has(role);
+}
+
 /**
  * Render one public ak-role invocation from typed next-role facts.
- * Returns undefined when the target is not a public callable role.
+ * Returns undefined when the role is not callable or role/phase cannot supply
+ * all required admission values for a truthful command.
  */
 export function renderPublicAkRoleCommand(
   target: PublicCommandTarget,
 ): string | undefined {
-  if (!PUBLIC_CALLABLE_ROLES.has(target.role)) return undefined;
+  if (!isPublicCallableRole(target.role)) return undefined;
   const role = target.role as PackagedRole;
+  const metadata = packagedRoleMetadata(role);
+  // A role whose admission requires typed values outside role/phase has no
+  // truthful bare command. Navigator may still recommend the typed direction.
+  if (metadata !== undefined && "bareCommand" in metadata && metadata.bareCommand === false) {
+    return undefined;
+  }
   if (target.phase === null || target.phase === undefined) {
     return `ak-role ${role}`;
   }

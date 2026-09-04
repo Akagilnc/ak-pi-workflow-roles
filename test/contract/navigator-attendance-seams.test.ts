@@ -397,7 +397,9 @@ test("advice command derives phase token from registry metadata for every packag
         );
         assert.equal(events[0]?.disposition, "recommendation", entry.role);
         assert.deepEqual(events[0]?.next, { role: entry.role, phase });
-        const expected = phase === null ? `ak-role ${entry.role}` : `ak-role ${entry.role} ${phase}`;
+        const expected = "bareCommand" in entry && entry.bareCommand === false
+          ? undefined
+          : phase === null ? `ak-role ${entry.role}` : `ak-role ${entry.role} ${phase}`;
         assert.equal(events[0]?.command, expected, `${entry.role}/${String(phase)}`);
       }
     }

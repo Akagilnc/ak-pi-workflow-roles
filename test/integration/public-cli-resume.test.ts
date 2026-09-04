@@ -6,11 +6,12 @@
  * lease — never table labels/layout/prose classification.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -36,6 +37,10 @@ import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlemen
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
+import type { RoleTurnHost } from "../../src/host-contracts.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -98,6 +103,57 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.name", "Resume Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
+
+/** Shared plant: seal accepted judge output, then block report.json publication (EISDIR). */
+function sealedPublicationBlockedHost(note: string): {
+  host: RoleTurnHost;
+  dispatches: () => number;
+} {
+  let dispatches = 0;
+  const host = roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: async (args) => {
+      dispatches += 1;
+      const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+      const runDir = join(sessionDir, "..");
+      await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+      await mkdir(sessionDir, { recursive: true });
+      await observeTyped429ViaProductionHandler({
+        runDirectory: runDir,
+        provider: "xai",
+      });
+      await writeFile(
+        join(sessionDir, "session.jsonl"),
+        `${JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: {
+              judgeStatus: "converged",
+              note,
+            },
+          },
+        })}\n`,
+        "utf8",
+      );
+      return {
+        code: 0,
+        stderr: "",
+        timedOut: false,
+        args: [...args],
+        sealedAcceptance: {
+          role: "judge",
+          details: { judgeStatus: "converged", note },
+        },
+      };
+    },
+  });
+  return { host, dispatches: () => dispatches };
+}
+
 
 function writeSessionProviderStop(
   sessionDir: string,
@@ -621,6 +677,9 @@ test("lawful result with publication failure is not resumable even with attempt 
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io, stdout } = captureIo();
+    const { host, dispatches } = sealedPublicationBlockedHost(
+      "lawful despite later publication failure",
+    );
 
     const result = await runAkRole(
       ["judge", "--project", project, "lawful then publish fails under 429"],
@@ -631,46 +690,7 @@ test("lawful result with publication failure is not resumable even with attempt 
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = join(sessionDir, "..");
-          // Block report.json publication after a lawful converged verdict.
-          await mkdir(join(runDir, "artifacts", "report.json"), {
-            recursive: true,
-          });
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: runDir,
-            provider: "xai",
-          });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            `${JSON.stringify({
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolName: JUDGE_OUTPUT_TOOL_NAME,
-                isError: false,
-                details: {
-                  judgeStatus: "converged",
-                  note: "lawful despite later publication failure",
-                },
-              },
-            })}\n`,
-            "utf8",
-          );
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-            sealedAcceptance: { role: "judge", details: { judgeStatus: "converged", note: "lawful despite later publication failure" } },
-          };
-        },
-        }),
+        roleTurnHost: host,
       },
     );
 
@@ -684,6 +704,9 @@ test("lawful result with publication failure is not resumable even with attempt 
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
+    // Sealed-acceptance publication miss must not auto-redispatch (#648).
+    assert.equal(dispatches(), 1);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -695,8 +718,172 @@ test("lawful result with publication failure is not resumable even with attempt 
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
     assert.equal(stdout.join("").includes("ak-role resume"), false);
+    const sealed = await readSealedSubmission(project, runId, home);
+    assert.ok(sealed, "sealed accepted projection must survive publication failure");
+    assert.equal(sealed.role, "judge");
+
+    // Real manual resume entry: sealed + publication miss must not redispatch (#648).
+    let resumeDispatches = 0;
+    const { io: resumeIo } = captureIo();
+    await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch after sealed acceptance\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0);
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must remain readable after manual resume",
+    );
   });
+
+  // Direct throw after seal: settle/present rejects out of dispatch; sealed stop
+  // must still consult ledger before any auto-resume redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-throw-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then dispatch throws after seal",
+    );
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then throw after seal under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            const out = await inner.executeTurn(request);
+            const statePath = join(request.runDirectory, "run-state.json");
+            await rm(statePath, { force: true });
+            await mkdir(statePath);
+            return out;
+          },
+        },
+      },
+    );
+
+    assert.equal(dispatches(), 1);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must survive direct throw after seal",
+    );
+  });
+
+  // Failing ledger authority: read errors must preserve true cause and fail closed —
+  // never wash into "unsealed" and redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-ledger-fail-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches } = sealedPublicationBlockedHost(
+      "lawful then ledger authority fails",
+    );
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then ledger read fails under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            const out = await inner.executeTurn(request);
+            // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
+            const ledgerFile = resolveSitianRecordPathInLedger(
+                {
+                  level: "event",
+                  kind: "candidate",
+                  subject: { runId },
+                  cwd: project,
+                },
+                resolveActivationLedgerHome(home),
+              ).recordFile;
+            await rm(ledgerFile, { force: true });
+            await mkdir(ledgerFile, { recursive: true });
+            await assert.rejects(
+              () => readSealedSubmission(project, runId, home),
+              (error: NodeJS.ErrnoException) => error.code === "EISDIR",
+            );
+            return out;
+          },
+        },
+      },
+    );
+    assert.equal(dispatches(), 1, "ledger authority failure must not redispatch");
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    if (outcome.kind === "failure") {
+      assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
+    }
+
+    let resumeDispatches = 0;
+    const { io: resumeIo } = captureIo();
+    const resumeResult = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumeIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeDispatches += 1;
+          return {
+            code: 1,
+            stderr: "must not redispatch when ledger authority fails\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      }),
+    });
+    assert.equal(resumeDispatches, 0);
+    assert.equal(resumeResult.exitCode, 1);
+    assert.ok(resumeResult.terminal);
+    const resumeOutcome = resumeResult.terminal!.roleOutcome;
+    assert.equal(resumeOutcome.kind, "failure");
+    if (resumeOutcome.kind === "failure") {
+      assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+    }
+  });
+
 });
+
 
 test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
   await withTempHome(async (home) => {
@@ -1365,6 +1552,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       "runs",
       `${runId}@judge`,
     );
+    const lockPath = join(runDirectory, "writer.lock");
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
     try {
@@ -1394,6 +1582,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       assert.equal(stdout.length, 0);
       assert.equal(stderr.length >= 1, true);
       assert.notEqual(blocked.exitCode, 0);
+      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
     } finally {
       await lease.release();
     }
@@ -1405,27 +1594,162 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       (error: unknown) => error instanceof RunWriterLeaseHeldError,
     );
     await first.release();
+
+    for (const unparseable of ["", "123junk"]) {
+      await writeFile(lockPath, unparseable, "utf8");
+      const { io: ioUnparseable } = captureIo();
+      const blocked = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: ioUnparseable,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            dispatches += 1;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+      assert.equal(dispatches, 0);
+      assert.notEqual(blocked.exitCode, 0);
+      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
+      assert.equal(await readFile(lockPath, "utf8"), unparseable);
+    }
+
+    const child = spawn("sleep", ["30"]);
+    const pid = child.pid;
+    assert.ok(typeof pid === "number" && pid > 0);
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    await writeFile(lockPath, `${pid}\n`, "utf8");
+    // #629: a reclaim followed by a live re-lock by another resumer must reject
+    // as held AND still carry the typed reclaim fact on the rejection. The
+    // contender re-locks the pathname the moment reclaim frees it — the sync
+    // write inside the stderr hook deterministically lands before the acquire
+    // loop's next create attempt. No dispatch; the contender's live lock stays.
+    {
+      const contenderPid = process.pid;
+      const ioContended = {
+        stdout: () => {},
+        stderr: (line: string) => {
+          if (!existsSync(lockPath)) {
+            writeFileSync(lockPath, `${contenderPid}\n`, "utf8");
+          }
+        },
+      };
+      const blockedAfterReclaim = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: ioContended,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+          dispatches += 1;
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+        }),
+      });
+      assert.equal(dispatches, 0);
+      assert.notEqual(blockedAfterReclaim.exitCode, 0);
+      assert.equal(blockedAfterReclaim.staleWriterLeaseReclaimed, true);
+      assert.equal(await readFile(lockPath, "utf8"), `${contenderPid}\n`);
+    }
+
+    const deadChild = spawn("sleep", ["30"]);
+    const deadPid = deadChild.pid;
+    assert.ok(typeof deadPid === "number" && deadPid > 0);
+    deadChild.kill("SIGTERM");
+    await new Promise<void>((resolve) => deadChild.once("close", () => resolve()));
+    await writeFile(lockPath, `${deadPid}\n`, "utf8");
+    // #629: the reclaim diagnostic is emitted even when the stderr sink throws —
+    // acquire swallows sink failures, so the typed fact must be recorded before
+    // the fallible sink call. The resume itself still reclaims and dispatches.
+    {
+      const sinkThrowArmed = { value: true };
+      const ioDead = {
+        stdout: () => {},
+        stderr: (line: string) => {
+          if (sinkThrowArmed.value && !existsSync(lockPath)) {
+            sinkThrowArmed.value = false;
+            throw new Error("stderr sink exploded at reclaim");
+          }
+        },
+      };
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: ioDead,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            dispatches += 1;
+            const sessionPath = args[args.indexOf("--session") + 1]!;
+            await writeFile(
+              sessionPath,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: { judgeStatus: "converged", note: "dead lock reclaimed" },
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: {
+                role: "judge",
+                details: { judgeStatus: "converged", note: "dead lock reclaimed" },
+              },
+            };
+          },
+        }),
+      });
+      assert.equal(dispatches, 1);
+      assert.equal(resumed.exitCode, 0);
+      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(resumed.staleWriterLeaseReclaimed, true);
+    }
   });
 });
 
-test("#418 lease release reports the true cleanup-failure cause via the diagnostic seam", async () => {
+test("#418 lease release stays best-effort when cleanup fails: residual lock left, next acquire works", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "runs", "run-lease-cleanup-cause@judge");
     await mkdir(runDirectory, { recursive: true });
-    const diagnostics: string[] = [];
-    const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
+    const lease = await acquireRunWriterLease(runDirectory);
     // Force a truthful non-EACCES unlink failure: replace the lock file with a
     // directory so release's unlink fails (EISDIR on Linux, EPERM on macOS).
-    // The diagnostic must carry the real identity — never a guessed
-    // EACCES/lease-held label.
     const lockPath = join(runDirectory, "writer.lock");
     await unlink(lockPath);
     await mkdir(lockPath);
     await lease.release();
-    assert.equal(diagnostics.length, 1);
-    assert.match(diagnostics[0]!, /writer lease lock cleanup failed/);
-    assert.match(diagnostics[0]!, / code=(EPERM|EISDIR)/);
-    assert.match(diagnostics[0]!, /writer\.lock/);
+    // The failed release must leave the residual lock object on disk.
+    await stat(lockPath);
     await rm(lockPath, { recursive: true });
     // Best-effort continue semantics preserved: next acquire succeeds.
     const next = await acquireRunWriterLease(runDirectory);
@@ -1466,6 +1790,96 @@ test("#418 lease release recovery path emits no false diagnostic", async () => {
       assert.equal(diagnostics.length, 0);
     } finally {
       await chmod(runDirectory, 0o755);
+    }
+  });
+});
+
+test("#629 stale reclaim re-autopsies after the EACCES chmod — a contender live lock is never stolen", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-reclaim-toctou@judge");
+    await mkdir(runDirectory, { recursive: true });
+    const lockPath = join(runDirectory, "writer.lock");
+    // Contender = this test process: a pid that is verifiably alive in the window.
+    const contenderPid = process.pid;
+    // Stale dead-holder lock in a non-writable run directory.
+    const child = spawn("sleep", ["30"]);
+    const stalePid = child.pid;
+    assert.ok(typeof stalePid === "number" && stalePid > 0);
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    await writeFile(lockPath, `${stalePid}\n`, "utf8");
+    await chmod(runDirectory, 0o555);
+    // Deterministic contender injection without production hooks: the spinner
+    // fires at every event-loop check phase and injects exactly when the chmod
+    // recovery has restored directory writability while the stale dead lock
+    // still owns the pathname — the precise window where the old code blindly
+    // unlinked and the fixed code must re-autopsy. Never before (dir unwritable
+    // until the recovery chmod) and never after (content no longer stale).
+    let injectionArmed = true;
+    const spinner = (): void => {
+      if (!injectionArmed) return;
+      try {
+        if (
+          (statSync(runDirectory).mode & 0o200) !== 0 &&
+          existsSync(lockPath) &&
+          readFileSync(lockPath, "utf8").trim() === String(stalePid)
+        ) {
+          writeFileSync(lockPath, `${contenderPid}\n`, "utf8");
+          return;
+        }
+      } catch {
+        // lock vanished mid-spin; keep spinning until acquire settles
+      }
+      setImmediate(spinner);
+    };
+    setImmediate(spinner);
+    try {
+      await assert.rejects(
+        () => acquireRunWriterLease(runDirectory),
+        (error: unknown) => error instanceof RunWriterLeaseHeldError,
+      );
+      // The contender's live lock must still own the pathname: no blind
+      // post-chmod unlink, and the acquire rejected instead of creating a
+      // second writer.
+      assert.equal(await readFile(lockPath, "utf8"), `${contenderPid}\n`);
+    } finally {
+      injectionArmed = false;
+      await chmod(runDirectory, 0o755);
+      await rm(lockPath, { force: true });
+    }
+  });
+});
+
+test("#629 persistent EACCES keeps its identity in the stayed-contested refusal", async () => {
+  // macOS-only construction: a deny-delete ACE on the lock file survives the
+  // reclaim chmod, so every unlink round fails EACCES deterministically. POSIX
+  // mode bits alone cannot build this (the recovery chmod would clear them).
+  if (process.platform !== "darwin") return;
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "run-reclaim-eacces@judge");
+    await mkdir(runDirectory, { recursive: true });
+    const lockPath = join(runDirectory, "writer.lock");
+    const child = spawn("sleep", ["30"]);
+    const stalePid = child.pid;
+    assert.ok(typeof stalePid === "number" && stalePid > 0);
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    await writeFile(lockPath, `${stalePid}\n`, "utf8");
+    execFileSync("chmod", ["+a", "everyone deny delete", lockPath]);
+    try {
+      const failure = await acquireRunWriterLease(runDirectory).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      assert.ok(failure instanceof RunWriterLeaseHeldError);
+      // The refusal must carry the EACCES errno identity, not just the
+      // dead-pid autopsy — otherwise the true cause is laundered away.
+      assert.ok(String(failure.message).includes("EACCES"));
+      // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
+      assert.equal(existsSync(lockPath), true);
+    } finally {
+      execFileSync("chmod", ["-a#", "0", lockPath]);
+      await rm(lockPath, { force: true });
     }
   });
 });
