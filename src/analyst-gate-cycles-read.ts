@@ -162,15 +162,18 @@ function acceptedGateReceiptIds(
 
 /**
  * Last accepted gate terminating toolCall on a nested volume (dispatch or officer).
- * Identity only — typed args are validated after recognition so unusable facts
- * fail loud instead of being skipped as "not a gate volume". Soul-audit and
- * other non-gate tools never qualify.
+ * Preference: keep the last accepted receipt; fall back to a rejected call only
+ * when no accepted receipt exists (so classify can lawfully omit). Identity only
+ * — typed args are validated after recognition so unusable facts fail loud
+ * instead of being skipped as "not a gate volume". Soul-audit and other non-gate
+ * tools never qualify.
  */
 function extractLastGateToolCall(
   rows: readonly LedgerSessionRow[],
 ): GateToolCall | undefined {
   const acceptedIds = acceptedGateReceiptIds(rows);
-  let last: GateToolCall | undefined;
+  let lastAccepted: GateToolCall | undefined;
+  let lastRejected: GateToolCall | undefined;
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
@@ -179,14 +182,20 @@ function extractLastGateToolCall(
       if (typeof part.id !== "string" || part.id.length === 0) continue;
       if (typeof part.name !== "string" || part.name.length === 0) continue;
       if (!isGateTerminatingToolName(part.name)) continue;
-      last = {
+      const call: GateToolCall = {
         toolName: part.name,
         args: isRecord(part.arguments) ? part.arguments : undefined,
         accepted: acceptedIds.has(part.id),
       };
+      if (call.accepted) {
+        lastAccepted = call;
+      } else if (lastAccepted === undefined) {
+        // Only retain rejected while no accepted receipt has appeared yet.
+        lastRejected = call;
+      }
     }
   }
-  return last;
+  return lastAccepted ?? lastRejected;
 }
 
 function requireAcceptedGateStatus(
@@ -252,18 +261,20 @@ async function classifyAuditorVolume(
 ): Promise<ClassifiedVolume | undefined> {
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
   const rows = await readLedgerSessionJsonl(filePath);
-  // Recognize accepted gate tool first. Non-gate volumes stay omitted; once a
-  // gate receipt is present, required typed facts must not silently under-count.
+  // Recognize gate tool first. Non-gate volumes stay omitted; rejected gate
+  // receipts omit before accepted-only span/status validation; once an accepted
+  // receipt is present, required typed facts must not silently under-count.
   const call = extractLastGateToolCall(rows);
   if (call === undefined) return undefined;
 
-  const span = requireAcceptedGateSpan(rows, filePath);
   const attemptEntryId = extractAttemptEntryId(rows);
   if (!call.accepted) {
     // Rejected historical dispatch is not a pairing key — omit it so a later
-    // independent direct officer summons remains its own round.
+    // independent direct officer summons remains its own round. Span is not
+    // validated here: accepted-only contract must not throw on rejected volumes.
     return undefined;
   }
+  const span = requireAcceptedGateSpan(rows, filePath);
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
   const findingsCount = findings.length;

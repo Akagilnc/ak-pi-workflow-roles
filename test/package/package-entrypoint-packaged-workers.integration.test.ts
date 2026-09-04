@@ -72,19 +72,13 @@ import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 /** In-file direct-officer pass scripting. */
 function scriptOfficerPass(names: readonly string[], officer: "notary" | "inspector") {
-  if (names.includes(NOTARY_OUTPUT_TOOL)) {
-    return fauxAssistantMessage(
-      fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
-      { stopReason: "toolUse" },
-    );
-  }
-  if (names.includes(INSPECTOR_OUTPUT_TOOL)) {
-    return fauxAssistantMessage(
-      fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
-      { stopReason: "toolUse" },
-    );
-  }
-  return undefined;
+  const expected =
+    officer === "notary" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
+  if (!names.includes(expected)) return undefined;
+  return fauxAssistantMessage(
+    fauxToolCall(expected, { status: "pass", findings: [] }),
+    { stopReason: "toolUse" },
+  );
 }
 
 

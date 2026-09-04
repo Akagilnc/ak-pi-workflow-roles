@@ -362,6 +362,177 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
   });
 });
 
+test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume keeps accepted", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    // One nested volume: earlier accepted officer receipt, later rejected retry.
+    // extractLastGateToolCall must prefer the accepted call — not let rejected overwrite.
+    const startedAt = iso(1_000);
+    const endedAt = iso(11_000);
+    const rows = [
+      {
+        type: "session",
+        version: 3,
+        id: "off-acc-then-rej",
+        timestamp: startedAt,
+        cwd: "/tmp/gate-tool-session",
+      },
+      {
+        type: "message",
+        id: "off-acc-then-rej-call-ok",
+        parentId: null,
+        timestamp: startedAt,
+        message: {
+          role: "assistant",
+          timestamp: startedAt,
+          content: [
+            {
+              type: "toolCall",
+              id: "call_off-acc-ok",
+              name: "ak_inspector_output",
+              arguments: { status: "pass", findings: ["kept"] },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "off-acc-then-rej-tail-ok",
+        parentId: "off-acc-then-rej-call-ok",
+        timestamp: startedAt,
+        message: {
+          role: "toolResult",
+          toolCallId: "call_off-acc-ok",
+          toolName: "ak_inspector_output",
+          timestamp: startedAt,
+          isError: false,
+          content: [{ type: "text", text: "ok" }],
+        },
+      },
+      {
+        type: "message",
+        id: "off-acc-then-rej-call-rej",
+        parentId: null,
+        timestamp: endedAt,
+        message: {
+          role: "assistant",
+          timestamp: endedAt,
+          content: [
+            {
+              type: "toolCall",
+              id: "call_off-acc-rej",
+              name: "ak_inspector_output",
+              arguments: { status: "bounce", findings: ["noise"] },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "off-acc-then-rej-tail-rej",
+        parentId: "off-acc-then-rej-call-rej",
+        timestamp: endedAt,
+        message: {
+          role: "toolResult",
+          toolCallId: "call_off-acc-rej",
+          toolName: "ak_inspector_output",
+          timestamp: endedAt,
+          isError: true,
+          content: [{ type: "text", text: "rejected" }],
+        },
+      },
+    ];
+    await writeFile(
+      join(auditorDir, "o01_inspector_accepted_then_rejected.jsonl"),
+      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    }, { home });
+    const leg = gateSection(result.page).legs.find((row) => row.runId === GATE_JUDGE_RUN);
+    assert.ok(leg, "accepted-then-rejected volume must remain a readable gate leg");
+    assert.equal(leg.roundCount, 1);
+    assert.deepEqual(leg.rounds, [
+      {
+        roundIndex: 1,
+        officer: "inspector",
+        status: "pass",
+        officerWallMs: 10_000,
+        findingsCount: 1,
+        origin: { kind: "direct" },
+      },
+    ]);
+  });
+});
+
+test("analyst gate-cycles via runAnalyst: rejected volume missing timestamps is omitted", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    // Rejected gate call with no usable session timestamps — must omit, not throw
+    // (requireAcceptedGateSpan runs only after accepted is established).
+    const rows = [
+      {
+        type: "session",
+        version: 3,
+        id: "off-rej-no-span",
+        cwd: "/tmp/gate-tool-session",
+      },
+      {
+        type: "message",
+        id: "off-rej-no-span-call",
+        parentId: null,
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call_off-rej-no-span",
+              name: "ak_inspector_output",
+              arguments: { status: "bounce", findings: ["x"] },
+            },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "off-rej-no-span-tail",
+        parentId: "off-rej-no-span-call",
+        message: {
+          role: "toolResult",
+          toolCallId: "call_off-rej-no-span",
+          toolName: "ak_inspector_output",
+          isError: true,
+          content: [{ type: "text", text: "rejected" }],
+        },
+      },
+    ];
+    await writeFile(
+      join(auditorDir, "o01_inspector_rejected_no_span.jsonl"),
+      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = await runAnalyst({
+      mode: "issue",
+      projectRoot: ISSUE_PROJECT_ROOT,
+    }, { home });
+    assert.equal(
+      result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
+      false,
+      "rejected volume missing timestamps must not mark the leg unreadable",
+    );
+    const leg = gateSection(result.page).legs.find((row) => row.runId === GATE_JUDGE_RUN);
+    assert.ok(leg, "rejected no-span volume must leave a readable zero-round leg");
+    assert.equal(leg.roundCount, 0);
+    assert.deepEqual(leg.rounds, []);
+  });
+});
+
 async function assertAuditorRolesUnreadable(
   reasonPattern: RegExp,
   label: string,
