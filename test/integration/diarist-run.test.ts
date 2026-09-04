@@ -463,7 +463,16 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
             type: "attachment",
             attachment: {
               type: "queued_command",
-              prompt: "可以。就这样做",
+              prompt: "立",
+              origin: { kind: "human" },
+            },
+          },
+          {
+            type: "attachment",
+            attachment: {
+              type: "queued_command",
+              prompt:
+                "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
               origin: { kind: "human" },
             },
           },
@@ -490,16 +499,19 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
         projectsRoot: join(home, ".claude", "projects"),
         cwds: [project],
       });
-      const queuedBlock = ccBlocks.find(
-        (block) => block.sourceRef.entryId === "sess.jsonl:2",
-      );
-      assert.equal(queuedBlock?.isUserTurn, true);
+      for (const entryId of ["sess.jsonl:2", "sess.jsonl:3"]) {
+        const queuedBlock = ccBlocks.find(
+          (block) => block.sourceRef.entryId === entryId,
+        );
+        assert.equal(queuedBlock?.isUserTurn, true);
+        assert.deepEqual(queuedBlock?.sourceRef, { sessionFile, entryId });
+      }
       assert.equal(
-        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:3"),
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:4"),
         false,
       );
       assert.equal(
-        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:4"),
+        ccBlocks.some((block) => block.sourceRef.entryId === "sess.jsonl:5"),
         false,
       );
 
@@ -525,12 +537,13 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       assert.ok(refs.some((r) => r.entryId === 42));
       assert.ok(refs.some((r) => r.path === adrRel));
       assert.ok(refs.some((r) => r.entryId === "u-cc"));
-      const queued = volume.entries.find(
-        (entry) => entry.sourceRef.entryId === "sess.jsonl:2",
-      );
-      assert.equal(queued?.sourceKind, "cc-session");
-      assert.equal(queued?.sourceRef.sessionFile, sessionFile);
-      assert.equal(queued?.transcript, "可以。就这样做");
+      for (const entryId of ["sess.jsonl:2", "sess.jsonl:3"]) {
+        const queued = volume.entries.find(
+          (entry) => entry.sourceRef.entryId === entryId,
+        );
+        assert.equal(queued?.sourceKind, "cc-session");
+        assert.deepEqual(queued?.sourceRef, { sessionFile, entryId });
+      }
     },
     { selectAllCandidates: true },
   );
