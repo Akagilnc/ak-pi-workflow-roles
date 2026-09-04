@@ -100,7 +100,6 @@ function fixerAdapters(
             ),
           }),
     hasLawfulTerminalResult: (admitted, authority) => hasLawfulFixerTerminalResult(admitted, authority),
-    isResumableRole: true,
   };
 }
 

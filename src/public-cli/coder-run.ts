@@ -88,7 +88,6 @@ function coderAdapters(
         ...(methodProvenance === undefined ? {} : { methodProvenance }),
       }),
     hasLawfulTerminalResult: (admitted, authority) => hasLawfulCoderTerminalResult(admitted, authority),
-    isResumableRole: true,
   };
 }
 

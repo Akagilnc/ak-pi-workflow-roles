@@ -106,7 +106,6 @@ function mergerAdapters(
     shouldPresentSettled: (t) =>
       isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
     hasLawfulTerminalResult: (admitted, authority) => hasLawfulMergerTerminalResult(admitted, authority),
-    isResumableRole: true,
   };
 }
 
