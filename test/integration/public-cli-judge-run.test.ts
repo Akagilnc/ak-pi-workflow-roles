@@ -616,6 +616,11 @@ test(
       assert.equal(terminal.roleOutcome.role, "judge");
       assert.equal(terminal.roleOutcome.kind, "accepted");
       assert.equal(terminal.roleOutcome.status, "converged");
+      // #634: real public entry summons direct Notary; no Gatekeeper province seat.
+      assert.ok(terminal.gate);
+      assert.deepEqual(terminal.gate!.actualSeats, ["notary"]);
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+      assert.equal(terminal.gate!.rounds[0]!.dispatch.officer, "notary");
       assert.equal(terminal.navigator.disposition, "recommendation");
       if (terminal.navigator.disposition === "recommendation") {
         assert.equal(terminal.navigator.next.role, "reviewer");
