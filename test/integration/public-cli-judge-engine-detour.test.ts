@@ -22,9 +22,9 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { nextDetourCall } from "../fixtures/engine-detour-provider.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import {
-  GATEKEEPER_OUTPUT_TOOL,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/gatekeeper-role.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {

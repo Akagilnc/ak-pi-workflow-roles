@@ -258,6 +258,10 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       return { ...base, loadGleanerLeftSoul: law };
     case "inspector":
       return { ...base, loadInspectorSoul: law };
+    case "gatekeeper":
+      return { ...base, loadGatekeeperSoul: law };
+    case "navigator":
+      return { ...base, loadNavigatorSoul: law };
     default:
       throw new Error(`unexpected packaged role: ${role}`);
   }
@@ -313,6 +317,8 @@ test("packaged terminating tools expose the provider-open registration inventory
       case "countersign": return ["countersignStatus", "fix", "note", "evidence", "decisionGate", "infrastructureFailure"];
       case "gleaner-left": return ["status", "findings", "infrastructureFailure"];
       case "inspector": return ["status", "findings", "infrastructureFailure"];
+      case "gatekeeper": return ["status", "officer", "findings", "infrastructureFailure"];
+      case "navigator": return ["status", "candidates", "infrastructureFailure"];
       default: throw new Error(`unexpected packaged role ${role}`);
     }
   };
@@ -647,6 +653,8 @@ test("every registered whole-activation rejection terminates nonzero with a name
           loadCountersignSoul: reject,
           loadGleanerLeftSoul: reject,
           loadInspectorSoul: reject,
+          loadGatekeeperSoul: reject,
+          loadNavigatorSoul: reject,
           loadMergerSoul: reject,
           createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
           auditSoulCompliance: async () => ({ status: "pass" }),

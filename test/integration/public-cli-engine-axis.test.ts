@@ -973,6 +973,10 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--project", project, "--base", "main", "engine axis probe"];
     case "inspector":
       return [role, "--project", project, "engine axis probe"];
+    case "gatekeeper":
+      return [role, "--project", project, "engine axis probe"];
+    case "navigator":
+      return [role, "--project", project, "engine axis probe"];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -982,7 +986,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 11);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 13);
     await withTempHome(async (home) => {
       const binDir = join(home, "bin");
       await installHermesFixture(binDir);
@@ -1170,7 +1174,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
 test("#391 E4 negative table: navigator / analyst / support / illegal / model-before-engine / disk navigator",
   async () => {
     await withTempHome(async (home) => {
-      // navigator set-engine refused with independent-activation reason.
+      // #639: navigator is a callable role — set-engine persists (old automatic refusal gone).
       {
         await runAkRole(
           ["config", "set", "navigator", "openai-codex/gpt-5.6-luna:medium"],
@@ -1181,27 +1185,25 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
           ["config", "set-engine", "navigator", "opus"],
           { packageRoot, home, io },
         );
-        assert.notEqual(result.exitCode, 0);
-        assert.match(
-          stderr.join(""),
-          /no independent activation/i,
-          `navigator set-engine stderr must state reason: ${stderr.join("")}`,
-        );
+        assert.equal(result.exitCode, 0, stderr.join(""));
         assert.equal(
           (await loadPublicCliConfig(home)).seats.navigator?.engine,
-          undefined,
+          "opus",
         );
       }
 
-      // navigator unset-engine also refused (same gate).
+      // navigator unset-engine also succeeds (same callable face).
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
           ["config", "unset-engine", "navigator"],
           { packageRoot, home, io },
         );
-        assert.notEqual(result.exitCode, 0);
-        assert.match(stderr.join(""), /no independent activation/i);
+        assert.equal(result.exitCode, 0, stderr.join(""));
+        assert.equal(
+          (await loadPublicCliConfig(home)).seats.navigator?.engine,
+          undefined,
+        );
       }
 
       // navigator model config remains legal (not part of engine refusal).
@@ -1214,7 +1216,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         assert.equal(result.exitCode, 0, stderr.join(""));
       }
 
-      // Disk-handwritten seats.navigator.engine rejected at validate seam.
+      // Disk-handwritten seats.navigator.engine is a legal persisted call axis now.
       {
         await writeFile(
           join(home, ".ak-roles", "public-cli.json"),
@@ -1224,26 +1226,23 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
                 provider: "openai-codex",
                 model: "gpt-5.6-luna",
                 thinking: "medium",
-                engine: "smuggled",
+                engine: "opus",
               },
             },
           }, null, 2)}\n`,
           "utf8",
         );
         const loaded = await loadPublicCliConfig(home);
-        assert.throws(
-          () => validatePublicCliConfigAxes(loaded, packageRoot),
-          /no independent activation/,
-        );
-        // CLI load path surfaces the same refusal.
+        validatePublicCliConfigAxes(loaded, packageRoot);
+        assert.equal(loaded.seats.navigator?.engine, "opus");
+        // CLI load path accepts it.
         const { io, stderr } = captureIo();
         const result = await runAkRole(["config", "get"], {
           packageRoot,
           home,
           io,
         });
-        assert.notEqual(result.exitCode, 0);
-        assert.match(stderr.join(""), /no independent activation/);
+        assert.equal(result.exitCode, 0, stderr.join(""));
       }
 
       // Restore a clean config for subsequent cases.

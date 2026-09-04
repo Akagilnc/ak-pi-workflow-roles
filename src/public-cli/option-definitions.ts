@@ -32,6 +32,8 @@ export type OptionOwner =
   | "notary"
   | "gleaner-left"
   | "inspector"
+  | "gatekeeper"
+  | "navigator"
   | "analyst";
 
 /**
@@ -408,6 +410,16 @@ const GLEANER_LEFT_OPTIONS = [
 const INSPECTOR_OPTIONS = [
   bindOwner("inspector", SHARED_PROJECT_SEMANTICS),
   bindOwner("inspector", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const GATEKEEPER_OPTIONS = [
+  bindOwner("gatekeeper", SHARED_PROJECT_SEMANTICS),
+  bindOwner("gatekeeper", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const NAVIGATOR_OPTIONS = [
+  bindOwner("navigator", SHARED_PROJECT_SEMANTICS),
+  bindOwner("navigator", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const COUNTERSIGN_OPTIONS = [
@@ -798,6 +810,8 @@ export const PUBLIC_OPTION_TABLE = {
   merger: MERGER_OPTIONS,
   notary: NOTARY_OPTIONS,
   inspector: INSPECTOR_OPTIONS,
+  gatekeeper: GATEKEEPER_OPTIONS,
+  navigator: NAVIGATOR_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -816,6 +830,8 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "merger",
   "notary",
   "inspector",
+  "gatekeeper",
+  "navigator",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1089,11 +1105,12 @@ export type PublicCommandHelpFacts = {
 };
 
 /**
- * Top-level public help short note for automatic Navigator attendance.
- * Not a caller command; configure via `ak-role config set navigator …`.
+ * Top-level public help short note for Navigator automatic attendance (#639:
+ * attendance is orthogonal to callability — the direct command face lives on
+ * the role list like every other role).
  */
 export const PUBLIC_NAVIGATOR_HELP_NOTE =
-  "Navigator attends automatically on every run; configure with `ak-role config set navigator <provider/model[:thinking]>` (not a caller command)." as const;
+  "Navigator also attends automatically on every run; that sidecar is unchanged by direct `ak-role navigator` calls." as const;
 
 const TOP_LEVEL_HELP = {
   command: "top",
@@ -1194,6 +1211,22 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role inspector [options] [instruction]"],
     examples: [
       'ak-role inspector --attach ./change.patch "Review this material."',
+    ],
+  },
+  gatekeeper: {
+    command: "gatekeeper",
+    summary: "Direct Gatekeeper (门下省) review: dispatch an officer or pass.",
+    usage: ["ak-role gatekeeper [options] [instruction]"],
+    examples: [
+      'ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"',
+    ],
+  },
+  navigator: {
+    command: "navigator",
+    summary: "Direct Navigator (游奕使) route advice: ordered next-role candidates.",
+    usage: ["ak-role navigator [options] [instruction]"],
+    examples: [
+      'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
     ],
   },
   notary: {
