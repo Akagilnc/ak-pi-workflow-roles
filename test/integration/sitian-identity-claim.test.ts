@@ -1,13 +1,12 @@
 /**
  * #648 — same-identity concurrent writers must not duplicate canonical rows.
- * Deterministic overlap: post-claim hold + fs.watch of the real claim surface,
- * then a second real appendSitianRecord; one real-IO failure path proves the
- * thrower releases its own identity claim.
+ * Cross-platform healthy two-process mainline always runs; optional FIFO
+ * overlap forces deterministic claim contention where mkfifo is available.
+ * A missing post-claim hold path proves claim cleanup on real IO failure.
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
-  chmodSync,
   closeSync,
   constants as fsConstants,
   existsSync,
@@ -16,7 +15,6 @@ import {
   readdirSync,
   unlinkSync,
   watch,
-  writeFileSync,
   writeSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -84,18 +82,39 @@ function claimSidecarNames(sessionDir: string, recordFile: string): string[] {
     .sort();
 }
 
-
-function tryCreateFifo(path: string): boolean {
+/**
+ * Create a FIFO for the optional contention proof.
+ * Skip only Windows or missing mkfifo (spawn ENOENT); other failures throw.
+ */
+function createFifoOrSkip(
+  path: string,
+  t: { skip(reason?: string): void },
+): boolean {
+  if (process.platform === "win32") {
+    t.skip("FIFO unsupported on Windows");
+    return false;
+  }
   try {
     unlinkSync(path);
   } catch {
     // absent is fine
   }
   const result = spawnSync("mkfifo", [path], { encoding: "utf8" });
-  return result.status === 0 && existsSync(path);
+  const spawnError = result.error as NodeJS.ErrnoException | undefined;
+  if (spawnError?.code === "ENOENT") {
+    t.skip("mkfifo binary unavailable (ENOENT)");
+    return false;
+  }
+  if (spawnError !== undefined) throw spawnError;
+  if (result.status !== 0 || !existsSync(path)) {
+    throw new Error(
+      `mkfifo failed creating ${path}: status=${String(result.status)} stderr=${result.stderr ?? ""}`,
+    );
+  }
+  return true;
 }
 
-/** One writer open/write/close cycle so a blocked FIFO reader reaches EOF. */
+/** One writer open/write/close so a blocked FIFO reader reaches EOF. */
 function feedFifoEof(path: string): void {
   const fd = openSync(path, fsConstants.O_RDWR);
   try {
@@ -105,10 +124,7 @@ function feedFifoEof(path: string): void {
   }
 }
 
-/**
- * Resolve when the real identity-claim sidecar appears on the volume surface.
- * Event-driven via fs.watch; races against holder exit rather than polling.
- */
+/** Event-driven claim appearance; races holder exit — no polling. */
 function waitForClaimAppearance(args: {
   readonly sessionDir: string;
   readonly recordFile: string;
@@ -242,7 +258,7 @@ async function readChildResult(child: ChildProcess): Promise<ChildAppendResult> 
   return parseRecognizedChildResult(line);
 }
 
-test("two concurrent single-call attempts preserve uniqueness: one row, no sidecars", async (t) => {
+test("two concurrent single-call attempts preserve uniqueness: one row, no sidecars", async () => {
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
     const identity = "concurrent-same-identity-uniqueness";
     const kind = "identity-claim-concurrent-uniqueness";
@@ -257,11 +273,57 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
     const { sessionDir, recordFile } = resolveSitianRecordPath(input);
     mkdirSync(sessionDir, { recursive: true });
 
+    const children = [
+      spawnAppendChild({ home, cwd, identity, kind, marker: "child-a" }),
+      spawnAppendChild({ home, cwd, identity, kind, marker: "child-b" }),
+    ];
+
+    await withPrimaryAwareCleanup(
+      async () => {
+        const results = await Promise.all(children.map((child) => readChildResult(child)));
+        assert.ok(
+          results.some((result) => result.ok),
+          "at least one concurrent attempt must succeed",
+        );
+        for (const result of results) {
+          if (result.ok) {
+            assert.equal(result.identity, identity);
+          } else {
+            assert.equal(result.name, "SitianInfrastructureError");
+            assert.equal(result.knownCause, "session");
+            assert.equal(result.code, "EEXIST");
+          }
+        }
+        const read = await readSitianRecords(recordFile);
+        assert.equal(read.records.filter((row) => row.identity === identity).length, 1);
+        assert.deepEqual(volumeSurfaceNames(sessionDir, recordFile), [
+          basename(recordFile),
+        ]);
+      },
+      async () => {
+        await Promise.all(children.map((child) => settleSpawnedChild(child)));
+      },
+    );
+  });
+});
+
+test("FIFO post-claim hold forces deterministic same-identity contention overlap", async (t) => {
+  await withHermeticLedgerRoot(async ({ home, cwd }) => {
+    const identity = "fifo-claim-contention-overlap";
+    const kind = "identity-claim-fifo-contention";
+    const input: SitianRecordInput = {
+      level: "event",
+      kind,
+      identity,
+      home,
+      cwd,
+      payload: { marker: "parent-observe" },
+    };
+    const { sessionDir, recordFile } = resolveSitianRecordPath(input);
+    mkdirSync(sessionDir, { recursive: true });
+
     const holdPath = join(home, "identity-claim-hold.fifo");
-    if (!tryCreateFifo(holdPath)) {
-      t.skip("FIFO unsupported on this platform for post-claim hold");
-      return;
-    }
+    if (!createFifoOrSkip(holdPath, t)) return;
 
     const holder = spawnAppendChild({
       home,
@@ -273,7 +335,6 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
     });
     const holderExit = waitChildExit(holder);
     holderExit.catch(() => undefined);
-    // Capture holder stdout before release — unblocking can finish before a late reader attaches.
     const holderResultPromise = readChildResult(holder);
 
     let contender: ChildProcess | undefined;
@@ -317,21 +378,6 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
           assert.equal(holderResult.identity, identity);
         }
 
-        const results = [holderResult, contenderResult];
-        assert.ok(
-          results.some((result) => result.ok),
-          "at least one concurrent attempt must succeed",
-        );
-        for (const result of results) {
-          if (result.ok) {
-            assert.equal(result.identity, identity);
-          } else {
-            assert.equal(result.name, "SitianInfrastructureError");
-            assert.equal(result.knownCause, "session");
-            assert.equal(result.code, "EEXIST");
-          }
-        }
-
         const read = await readSitianRecords(recordFile);
         assert.equal(read.records.filter((row) => row.identity === identity).length, 1);
         assert.deepEqual(volumeSurfaceNames(sessionDir, recordFile), [
@@ -359,12 +405,12 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
   });
 });
 
-test("throwing append cleans its own identity claim via real IO seam", async () => {
+test("missing post-claim hold path cleans identity claim via real IO seam", async () => {
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
-    const identity = "throwing-append-cleans-claim";
+    const identity = "missing-hold-cleans-claim";
     const input: SitianRecordInput = {
       level: "event",
-      kind: "identity-claim-throw-cleanup",
+      kind: "identity-claim-missing-hold-cleanup",
       identity,
       home,
       cwd,
@@ -372,20 +418,28 @@ test("throwing append cleans its own identity claim via real IO seam", async () 
     };
     const { sessionDir, recordFile } = resolveSitianRecordPath(input);
     mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(recordFile, "", "utf8");
-    chmodSync(recordFile, 0o444);
 
+    const holdPath = join(home, "absent-identity-claim-hold");
+    const previousHold = process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD;
+    process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD = holdPath;
     try {
       assert.throws(
         () => appendSitianRecord(input),
         (error: unknown) => {
           assert.ok(error instanceof SitianInfrastructureError);
           assert.equal(error.knownCause, "session");
+          assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+          assert.ok(error.cause instanceof Error);
+          assert.equal((error.cause as NodeJS.ErrnoException).code, "ENOENT");
           return true;
         },
       );
     } finally {
-      chmodSync(recordFile, 0o644);
+      if (previousHold === undefined) {
+        delete process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD;
+      } else {
+        process.env.AK_ROLES_TEST_SITIAN_IDENTITY_CLAIM_HOLD = previousHold;
+      }
     }
 
     const read = await readSitianRecords(recordFile);
