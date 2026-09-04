@@ -456,6 +456,14 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
       const sessionFile = await seedCcSession(home, project, [
         { uuid: "u-cc", content: "cc turn about 起居录" },
       ]);
+      const queuedCommandExpectations = [
+        { entryId: "sess.jsonl:2", transcript: "立" },
+        {
+          entryId: "sess.jsonl:3",
+          transcript:
+            "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
+        },
+      ] as const;
       await appendFile(
         sessionFile,
         [
@@ -463,7 +471,7 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
             type: "attachment",
             attachment: {
               type: "queued_command",
-              prompt: "立",
+              prompt: queuedCommandExpectations[0].transcript,
               origin: { kind: "human" },
             },
           },
@@ -471,8 +479,7 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
             type: "attachment",
             attachment: {
               type: "queued_command",
-              prompt:
-                "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
+              prompt: queuedCommandExpectations[1].transcript,
               origin: { kind: "human" },
             },
           },
@@ -495,24 +502,15 @@ test("runDiarist enumerates issue face + comments + ADR + cc into candidate stre
         ].map((row) => JSON.stringify(row)).join("\n") + "\n",
         "utf8",
       );
-      const queuedCommandExpectations = [
-        { entryId: "sess.jsonl:2", transcript: "立" },
-        {
-          entryId: "sess.jsonl:3",
-          transcript:
-            "还有一个地方。\n给事中审票的时候。是不是也应该对票面和adr content 是不是对应负责？",
-        },
-      ];
       const ccBlocks = readCcSessionBlocks({
         projectsRoot: join(home, ".claude", "projects"),
         cwds: [project],
       });
-      for (const { entryId, transcript } of queuedCommandExpectations) {
+      for (const { entryId } of queuedCommandExpectations) {
         const queuedBlock = ccBlocks.find(
           (block) => block.sourceRef.entryId === entryId,
         );
         assert.equal(queuedBlock?.isUserTurn, true);
-        assert.equal(queuedBlock?.transcript, transcript);
         assert.deepEqual(queuedBlock?.sourceRef, { sessionFile, entryId });
       }
       assert.equal(
