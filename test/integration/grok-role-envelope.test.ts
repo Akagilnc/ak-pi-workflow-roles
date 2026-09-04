@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createServer, Server } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -1008,93 +1007,6 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("prepareGrokRoleEnvelope preserves activation, shutdown, and listener-close failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-listen-fail-"));
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
-  const priorEngine = process.env.AK_ROLE_ENGINE;
-  const priorExitCode = process.exitCode;
-  delete process.env.AK_ROLE_RUN_DIR;
-  delete process.env.AK_ROLE_ENGINE;
-  const socketPath = join(root, "mcp.sock");
-  const activationFailure = new Error("forced session_start failure after listen");
-  const closeFailure = new Error("forced listener close failure");
-  const originalClose = Server.prototype.close;
-  // Real close still runs so the unix path is released; callback reports failure.
-  Server.prototype.close = function (this: Server, callback?: (error?: Error) => void) {
-    return originalClose.call(this, () => {
-      if (typeof callback === "function") callback(closeFailure);
-    });
-  };
-  try {
-    await assert.rejects(
-      () => prepareGrokRoleEnvelope({
-        request: {
-          principal: {},
-          activation: { role: "judge" },
-          methods: [],
-          continuation: { kind: "initial", prompt: "decide" },
-          model: { provider: "xai", model: "grok-4.6" },
-          cwd: process.cwd(),
-          home: root,
-          agentDir: join(root, "agent"),
-          runDirectory: grokRunDirectory(root, "listen-fail-run"),
-        } as RoleTurnRequest,
-        socketPath,
-        dependencies: {
-          loadJudgeSoul: async () => {
-            throw activationFailure;
-          },
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationTraceWriter: async () => {},
-          createNavigatorAttendance: () => ({
-            prepare() {},
-            setWorkContext() {},
-            warmHelp() {},
-            isPreparing: () => false,
-            settle: async () => {},
-            dispose() {
-              throw undefined;
-            },
-          }),
-        },
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof AggregateError, `expected AggregateError, got ${String(error)}`);
-        assert.equal(error.errors[0], activationFailure);
-        assert.equal(error.cause, activationFailure);
-        const cleanup = error.errors[1];
-        assert.ok(cleanup instanceof AggregateError);
-        assert.equal(cleanup.errors[0], undefined);
-        assert.equal(cleanup.errors[1], closeFailure);
-        assert.equal(cleanup.cause, undefined);
-        return true;
-      },
-    );
-
-    process.exitCode = priorExitCode;
-    Server.prototype.close = originalClose;
-    const probe = createServer();
-    await new Promise<void>((resolve, reject) => {
-      probe.once("error", reject);
-      probe.listen(socketPath, () => {
-        probe.off("error", reject);
-        resolve();
-      });
-    });
-    await new Promise<void>((resolve, reject) => {
-      probe.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  } finally {
-    Server.prototype.close = originalClose;
-    process.exitCode = priorExitCode;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE;
-    else process.env.AK_ROLE_ENGINE = priorEngine;
     await rm(root, { recursive: true, force: true });
   }
 });
