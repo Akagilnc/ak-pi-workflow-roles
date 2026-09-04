@@ -57,7 +57,6 @@ function judgeAdapters(): PostAdmissionAdapters<AdmittedJudgeInvocation> {
   return {
     trySettle: (admitted, authority) => trySettleJudgeTerminalResult(admitted, authority),
     hasLawfulTerminalResult: (admitted, authority) => hasLawfulJudgeTerminalResult(admitted, authority),
-    isResumableRole: true,
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
       return (

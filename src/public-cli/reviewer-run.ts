@@ -97,7 +97,6 @@ function reviewerAdapters(
             ),
           }),
     hasLawfulTerminalResult: (admitted, authority) => hasLawfulReviewerTerminalResult(admitted, authority),
-    isResumableRole: true,
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
       return infrastructureFailure === undefined
