@@ -12,7 +12,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
@@ -286,20 +285,24 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
         false,
         "host sentinel absolute path must not exist",
       );
-      // Positive write proof from inside the child, before process-owned HOME rm.
+      // Positive write proof from inside the child (isolated HOME under tmpdir).
       assert.deepEqual(result.records[0]!.homeProbe, {
         sentinel: "fixture-poison-sentinel",
         modelsWritten: true,
       });
-      // #612: runner default HOME is process-owned — gone after exit.
+      // Owner 2026-09-05: process-owned HOME stays under tmpdir for OS cleanup.
       assert.equal(
         existsSync(childHome),
-        false,
-        "run-test-all default test home must be deleted on exit",
+        true,
+        "run-test-all default test home remains under tmpdir after exit",
+      );
+      assert.ok(
+        childHome.startsWith(tmpdir()) || childHome.startsWith("/tmp/"),
+        `child HOME must be under tmpdir, got ${childHome}`,
       );
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -320,7 +323,7 @@ test("bare preload entry: $HOME writes miss host models.json and host sentinel",
         probe,
         `import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -336,22 +339,18 @@ const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK
 const hostModels = join(hostHome, ".pi", "agent", "models.json");
 
 const modelsPath = join(home, ".pi", "agent", "models.json");
-try {
-  mkdirSync(dirname(modelsPath), { recursive: true });
-  writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
-  writeFileSync(join(home, sentinelName), "bare-fixture-poison");
+mkdirSync(dirname(modelsPath), { recursive: true });
+writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
+writeFileSync(join(home, sentinelName), "bare-fixture-poison");
 
-  assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
-  const afterHash = existsSync(hostModels)
-    ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
-    : null;
-  assert.equal(afterHash, beforeHash);
-  assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
-  console.log(JSON.stringify({ ok: true, home, hostHome }));
-} finally {
-  rmSync(join(home, sentinelName), { force: true });
-  rmSync(join(home, ".pi"), { recursive: true, force: true });
-}
+assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
+const afterHash = existsSync(hostModels)
+  ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
+  : null;
+assert.equal(afterHash, beforeHash);
+assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
+console.log(JSON.stringify({ ok: true, home, hostHome }));
+// Owner 2026-09-05: leave redirected home under tmpdir for OS cleanup.
 `,
         "utf8",
       );
@@ -385,7 +384,7 @@ try {
       assert.equal(readHostModelsHash(), beforeHash);
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -452,7 +451,7 @@ test("runner partitions discovered universe into ordinary default-parallel then 
       }
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -504,7 +503,7 @@ test("runner discovers the live package tree as ordinary ⊎ exact heavy manifes
       assert.ok(ordinaryFiles.length > 0, "ordinary tier must be non-empty on the live tree");
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -533,7 +532,7 @@ test("runner fails closed on missing manifest entry and does not spawn children"
       assert.equal(result.records.length, 0, "must not spawn test children");
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -579,7 +578,7 @@ test("runner propagates ordinary and heavy child non-zero exits honestly", async
       }
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });
@@ -611,7 +610,7 @@ test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async
       assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
     },
     async () => {
-      await rm(workspace, { recursive: true, force: true });
+      // Owner 2026-09-05: leave workspace under tmpdir for OS cleanup.
     },
   );
 });

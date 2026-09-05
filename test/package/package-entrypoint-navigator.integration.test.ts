@@ -15,7 +15,7 @@ process.on("unhandledRejection", (reason) => {
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
@@ -531,7 +531,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             await mkdir(issueRoot, { recursive: true });
             await writeFile(resolve(issueRoot, "authority.md"), "owner authority for failure matrix\n", "utf8");
             if (scenario.name === "context") {
-              await rm(resolve(issueRoot, "authority.md"), { recursive: true, force: true });
+              // Replace file with directory (unlink file only — no directory delete).
+              await unlink(resolve(issueRoot, "authority.md"));
               await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
             if (scenario.name === "session") {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, renameSync, rmSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, renameSync } from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import test, { after } from "node:test";
@@ -199,8 +199,12 @@ function restoreReviewerGitTreeAfterInjection(cwd: string): void {
   if (existsSync(poisoned) && !existsSync(gitDir)) {
     renameSync(poisoned, gitDir);
   } else if (existsSync(poisoned)) {
-    // Both present is unexpected; drop the residual marker so later rows stay clean.
-    rmSync(poisoned, { recursive: true, force: true });
+    // Both present is unexpected; abandon residual under tmpdir (no directory delete).
+    try {
+      renameSync(poisoned, `${poisoned}.stale-${process.pid}-${Date.now()}`);
+    } catch {
+      // leave in place
+    }
   }
 }
 
@@ -219,15 +223,21 @@ async function reviewerTargetTemplate(): Promise<string> {
   return reviewerTargetTemplateMemo;
 }
 
-after(async () => {
-  if (reviewerTargetTemplateRoot === undefined) return;
-  await rm(reviewerTargetTemplateRoot, { recursive: true, force: true });
+after(() => {
+  // Owner 2026-09-05: leave template under tmpdir for OS cleanup.
   reviewerTargetTemplateRoot = undefined;
 });
 
 async function materializeReviewerTarget(dest: string): Promise<void> {
   const template = await reviewerTargetTemplate();
-  await rm(dest, { recursive: true, force: true });
+  if (existsSync(dest)) {
+    try {
+      await rename(dest, `${dest}.stale-${process.pid}-${Date.now()}`);
+    } catch {
+      // leave prior dest; cp force into a fresh unique dest is preferred by callers
+    }
+  }
+  await mkdir(dirname(dest), { recursive: true });
   await cp(template, dest, { recursive: true });
 }
 
@@ -473,7 +483,6 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
       closureDetails: Record<string, unknown>;
     };
   };
-  // #675: nested public path may rebind prepare several times (activation/settle/rebind).
   assert.ok(
     evidence.navigatorCalls >= 1 && evidence.navigatorCalls <= 6,
     `navigator calls out of band: ${evidence.navigatorCalls}`,
@@ -500,7 +509,6 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
     "process release",
   );
   timestamp(evidence.role.failedOutputAt, "failed output result");
-  // First preparation complete must precede settlement; later rebinds may post-date settle (#675).
   assert.ok(
     startedAt <= completedAt && preparedAt <= settledAt,
     `Navigator preparation must drain before settlement (start=${startedAt}, complete=${completedAt}, prepared=${preparedAt}, settled=${settledAt})`,

@@ -8,11 +8,12 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { REVIEWER_AMENDMENT_TRACE } from "../fixtures/reviewer-two-axis-provider.ts";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { withColdInstalledPackage, withHermeticHome, packageRoot } from "../helpers/pi-test-harness.ts";
 import { runPiSubprocess } from "../helpers/pi-test-harness.ts";
 
@@ -35,6 +36,11 @@ async function seedReviewerFixture(fixture: string): Promise<void> {
 test("installed npm tarball runs public ak-role Reviewer→Judge chain", async () => {
   process.env.CI = "true";
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
+    const hermesBin = join(home, "bin");
+    await installHermesFixture(hermesBin);
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${hermesBin}${priorPath ? `:${priorPath}` : ""}`;
+    try {
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {
       assert.ok(pack.files.some((file) => file.path === "dist/public-cli/main.js"));
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
@@ -292,6 +298,10 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
       assert.ok(judge.terminal);
       assert.equal(judge.terminal?.roleOutcome.kind, "accepted");
     });
+    } finally {
+      if (priorPath === undefined) delete process.env.PATH;
+      else process.env.PATH = priorPath;
+    }
   });
 });
 

@@ -8,7 +8,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -314,7 +314,7 @@ test(
         result.terminal.roleOutcome.diagnostic,
       );
     } finally {
-      await rm(home, { recursive: true, force: true });
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
   },
 );
@@ -372,7 +372,7 @@ test(
         "run-reviewer-engine-notes-001",
       );
     } finally {
-      await rm(home, { recursive: true, force: true });
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
   },
 );

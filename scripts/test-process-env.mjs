@@ -7,47 +7,25 @@
  * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
  * Explicit options.home wins over that default.
  *
- * #612: the default home is process-owned — created under temp and removed on
- * process exit. Callers that pass options.home own that path themselves.
+ * #612 / owner 2026-09-05: the default home is process-owned under tmpdir and
+ * left for OS cleanup (tests/fixtures must not delete directories). Callers that
+ * pass options.home own that path themselves.
  *
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 /** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
-let defaultTestHomeCleanupRegistered = false;
 /** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
 let sharedHermesBinDir;
-
-function registerDefaultTestHomeCleanup() {
-  if (defaultTestHomeCleanupRegistered) return;
-  defaultTestHomeCleanupRegistered = true;
-  process.on("exit", () => {
-    if (defaultTestHome === undefined) return;
-    try {
-      rmSync(defaultTestHome, { recursive: true, force: true });
-    } catch (error) {
-      // Exit-phase best-effort: still land the real cause on stderr before death.
-      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-      try {
-        process.stderr.write(
-          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
-        );
-      } catch {
-        // stderr may already be closed during process teardown
-      }
-    }
-  });
-}
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
     defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
-    registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;
 }

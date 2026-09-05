@@ -841,6 +841,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
+      // Dispose during post-role grace must ignore late completion entirely (#675).
+      if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
@@ -886,8 +888,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // table. After selection (speculative or rebound), advice is passed
           // through as-is (ADR 0010 / ADR 0061: caller may ignore).
           if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
+            if (disposed) return;
             prepareBoundSettlement = settlement;
             prepared = await prepare();
+            if (disposed) return;
             selected = selectNavigatorCandidate(prepared, settlement);
           }
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
@@ -943,10 +947,20 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure: report.routePlaybookReadFailure }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
-      // Dispose during post-role grace must ignore late completion (ADR 0052 / #106).
+      // Dispose during post-role grace must ignore late completion (ADR 0052 / #106 / #675).
       // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
-      if (!disposed) {
+      if (disposed) return;
+      try {
         await options.onEvent(event, report);
+      } catch (error) {
+        // Session already replaced/disposed under nested public path latency.
+        if (
+          disposed
+          || (error instanceof Error && /stale after session replacement or reload/.test(error.message))
+        ) {
+          return;
+        }
+        throw error;
       }
       preparation = undefined;
       sessionReady = undefined;
