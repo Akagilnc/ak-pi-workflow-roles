@@ -57,7 +57,7 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
-  hasSealedAcceptedProjection,
+  sealedAcceptanceRedispatchDisposition,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -547,8 +547,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    shouldStopAutoResume: async () =>
-      hasSealedAcceptedProjection(admitted),
+    sealedAcceptanceDisposition: () =>
+      sealedAcceptanceRedispatchDisposition(admitted),
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
@@ -614,27 +614,21 @@ export async function runPostAdmissionManualResume<
       };
     }
   } catch (error) {
-    // Sealed accepted + publication/settle throw must fail closed without redispatch
-    // (#648 / #599): do not treat "sealed + publish threw" as "not sealed".
-    // Ledger authority failure also fail-closes with preserved cause (never wash to unsealed).
-    // Fail-closed decision is independent of cause value: `throw undefined` is legal JS
-    // and must not fail open. One cause → one presentation (settle vs authority).
-    let failClosed: { cause: unknown } | undefined;
-    try {
-      if (await hasSealedAcceptedProjection(admitted)) {
-        failClosed = { cause: error };
-      }
-    } catch (authorityError) {
-      failClosed = { cause: authorityError };
-    }
-    if (failClosed !== undefined) {
+    // Settlement-owned sealed disposition (#648 / #599 / #672): sealed accepted +
+    // publication/settle throw fail closed without redispatch; authority failure
+    // preserves true cause. Manual resume only presents — does not rebuild the gate.
+    const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
+    if (disposition.kind === "block") {
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: failClosed.cause,
+          thrown:
+            disposition.reason === "authority-failed"
+              ? disposition.cause
+              : error,
         },
         adapters,
         env.principalAuthority,
