@@ -103,9 +103,20 @@ process.stdin.on("end", () => {
     cwd,
     roots: ROOTS,
   });
-  process.stdout.write(JSON.stringify(
-    violation === undefined ? allow() : deny(violation.reason),
-  ));
+  if (violation === undefined) {
+    process.stdout.write(JSON.stringify(allow()));
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    decision: "deny",
+    reason: violation.reason,
+    code: violation.code,
+    details: {
+      code: violation.code,
+      toolName: violation.toolName,
+      paths: violation.paths,
+    },
+  }));
 });
 `;
 }

@@ -1453,7 +1453,16 @@ export function createRoleRuntimeExtension(
         cwd: ctx.cwd,
       });
       if (violation === undefined) return;
-      return { block: true as const, reason: violation.reason };
+      return {
+        block: true as const,
+        reason: violation.reason,
+        code: violation.code,
+        details: {
+          code: violation.code,
+          toolName: violation.toolName,
+          paths: violation.paths,
+        },
+      };
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.

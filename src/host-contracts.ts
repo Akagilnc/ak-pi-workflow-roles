@@ -258,7 +258,8 @@ type HostEventResultMap = {
    */
   before_agent_start: { systemPrompt?: string; readingMaterial?: unknown };
   input: HostInputResult;
-  tool_call: { block?: boolean; reason?: string; terminate?: boolean };
+  /** block/reason/terminate — host transport; code/details — typed machine facts (#692). */
+  tool_call: { block?: boolean; reason?: string; terminate?: boolean; code?: string; details?: unknown };
   tool_result: { content?: HostToolResult["content"]; details?: unknown; isError?: boolean };
   session_start: void;
   session_shutdown: void;

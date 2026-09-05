@@ -106,7 +106,7 @@ test("edit/write/rm/mv outside deny; read-only bash allows", () => {
   }), undefined);
 });
 
-test("bash fail-closed: sed -i, vars, globs, tilde escape, nested, fused redirect", () => {
+test("bash fail-closed: wrappers, carriers, brace, sed -i, vars, globs", () => {
   const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
   const roots = { workspaceRoot, tempRoot };
   const pFile = join(protectedRoot, "keep.txt");
@@ -116,7 +116,11 @@ test("bash fail-closed: sed -i, vars, globs, tilde escape, nested, fused redirec
   for (const command of [
     `bash -c 'rm -f ${pFile}'`,
     `bash -lc 'rm -f ${pFile}'`,
-    `env bash -c 'rm -f ${pFile}'`,
+    `command rm -f ${JSON.stringify(pFile)}`,
+    `env python3 -c 'open(${JSON.stringify(pFile)},"w").write("ENV")'`,
+    `git config --file ${JSON.stringify(pFile)} x.y z`,
+    `printf ${JSON.stringify(pFile)} | xargs rm -f`,
+    `rm -f {${JSON.stringify(pFile)},${JSON.stringify(pFile)}}`,
     `printf X>${pFile}`,
     `sed -i '' 's/ORIGINAL/HIJACK/' ${JSON.stringify(pFile)}`,
     `P=${JSON.stringify(protectedRoot)}; printf HIJACK > "$P/keep.txt"`,
@@ -125,15 +129,14 @@ test("bash fail-closed: sed -i, vars, globs, tilde escape, nested, fused redirec
     `node -e "require('fs').unlinkSync(${JSON.stringify(pFile)})"`,
     `find ${JSON.stringify(protectedRoot)} -delete`,
   ] as const) {
-    assert.ok(
-      assessRoleToolFsBoundary({
-        toolName: "bash",
-        toolInput: { command },
-        cwd: workspaceRoot,
-        roots,
-      }),
-      `must deny: ${command}`,
-    );
+    const hit = assessRoleToolFsBoundary({
+      toolName: "bash",
+      toolInput: { command },
+      cwd: workspaceRoot,
+      roots,
+    });
+    assert.ok(hit, `must deny: ${command}`);
+    assert.equal(hit.code, ROLE_TOOL_FS_BOUNDARY_CODE, `typed code for: ${command}`);
   }
 
   // Read unrestricted (including outside).
@@ -148,31 +151,42 @@ test("bash fail-closed: sed -i, vars, globs, tilde escape, nested, fused redirec
   );
 });
 
-test("detour argv: rm/bash -c outside deny; opaque engine argv alone allows (sandbox owns IO)", () => {
+test("detour argv: rm/bash -c outside deny; opaque engine platform-aware", () => {
   const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
   const roots = { workspaceRoot, tempRoot };
   const pFile = join(protectedRoot, "keep.txt");
 
-  assert.ok(assessDetourArgvFsBoundary({
-    argv: ["rm", "-rf", pFile],
-    cwd: workspaceRoot,
-    roots,
-  }));
-  assert.ok(assessDetourArgvFsBoundary({
-    argv: ["bash", "-c", `rm -rf ${JSON.stringify(pFile)}`],
-    cwd: workspaceRoot,
-    roots,
-  }));
-  assert.ok(assessDetourArgvFsBoundary({
-    argv: ["python3", "-c", `open(${JSON.stringify(pFile)},'w').write('x')`],
-    cwd: workspaceRoot,
-    roots,
-  }));
-  assert.equal(assessDetourArgvFsBoundary({
+  assert.equal(
+    assessDetourArgvFsBoundary({ argv: ["rm", "-rf", pFile], cwd: workspaceRoot, roots })?.code,
+    ROLE_TOOL_FS_BOUNDARY_CODE,
+  );
+  assert.equal(
+    assessDetourArgvFsBoundary({
+      argv: ["bash", "-c", `rm -rf ${JSON.stringify(pFile)}`],
+      cwd: workspaceRoot,
+      roots,
+    })?.code,
+    ROLE_TOOL_FS_BOUNDARY_CODE,
+  );
+  assert.equal(
+    assessDetourArgvFsBoundary({
+      argv: ["python3", "-c", `open(${JSON.stringify(pFile)},'w').write('x')`],
+      cwd: workspaceRoot,
+      roots,
+    })?.code,
+    ROLE_TOOL_FS_BOUNDARY_CODE,
+  );
+  // Opaque engine: Darwin allows (sandbox-exec confines writes); non-Darwin fail-closed.
+  const opaque = assessDetourArgvFsBoundary({
     argv: ["/usr/bin/true"],
     cwd: workspaceRoot,
     roots,
-  }), undefined);
+  });
+  if (process.platform === "darwin") {
+    assert.equal(opaque, undefined);
+  } else {
+    assert.equal(opaque?.code, ROLE_TOOL_FS_BOUNDARY_CODE);
+  }
 });
 
 test("Darwin detour write sandbox blocks P and allows W (real IO)", async () => {
@@ -225,7 +239,8 @@ test("Grok FS boundary hook runner imports shared assessor and denies outside wr
   assert.equal(result.status, 0, result.stderr);
   const decision = JSON.parse(result.stdout);
   assert.equal(decision.decision, "deny");
-  assert.match(String(decision.reason), new RegExp(ROLE_TOOL_FS_BOUNDARY_CODE));
+  assert.equal(decision.code, ROLE_TOOL_FS_BOUNDARY_CODE);
+  assert.equal(decision.details?.code, ROLE_TOOL_FS_BOUNDARY_CODE);
   // Malformed payload fail-closed
   const bad = spawnSync(parts[0]!, parts.slice(1), {
     input: "not-json",
