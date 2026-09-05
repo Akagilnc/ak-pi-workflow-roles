@@ -1023,17 +1023,6 @@ export async function runPiSubprocess(
   if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
     env.AK_ROLE_RUN_DIR = injectedRunDir;
   }
-  // #675: offline Pi children default gate pass so nested public officer summons
-  // do not require a second real spawn for package/navigator observation tracers.
-  // Skip when AK_GATE_MODE scripts a real gate outcome; callers may override.
-  // Audit pass is NOT defaulted — fatal/no-receipt audit tracers must still fire.
-  if (
-    env.PI_OFFLINE === "1"
-    && env.AK_ROLE_TEST_GATE_PASS === undefined
-    && env.AK_GATE_MODE === undefined
-  ) {
-    env.AK_ROLE_TEST_GATE_PASS = "1";
-  }
   // Pi's package-manager install/update path does not pass --no-audit/--offline into
   // npm. On hosts where registry HTTPS is sinkholed (e.g. 198.18.0.0/15 VPN), a local
   // file: tarball still hangs in npm audit after the package is already cache-resolved.
@@ -1091,6 +1080,12 @@ export interface InProcessPiOptions {
    * Defaults to a fresh InMemoryCredentialStore when omitted.
    */
   credentials?: CredentialStore;
+  /**
+   * #675 offline nested public summons: inject pass at the summonOfficer/summonAuditor
+   * seams (not env short-circuits). "pass" (default) arms typed pass injects for the
+   * session lifetime; "none" leaves hooks untouched so the caller can install its own.
+   */
+  nestedSummonInject?: "pass" | "none";
 }
 
 export interface InProcessPiFixture {
@@ -1354,33 +1349,6 @@ export async function createMockProviderServer(
   };
 }
 
-/** #675 offline defaults for nested public summons inside the same process. */
-function armOfflineNestedSummonDefaults(): () => void {
-  const priorGate = process.env.AK_ROLE_TEST_GATE_PASS;
-  const priorAudit = process.env.AK_ROLE_TEST_AUDIT_PASS;
-  // Gate pass unless a real gate mode is scripted.
-  if (process.env.AK_GATE_MODE === undefined && priorGate === undefined) {
-    process.env.AK_ROLE_TEST_GATE_PASS = "1";
-  }
-  // Audit pass unless a real audit failure mode is scripted.
-  if (
-    priorAudit === undefined
-    && process.env.AK_AUDIT_UNKNOWN_STATUS === undefined
-    && process.env.AK_AUDIT_NON_OBJECT === undefined
-    && process.env.AK_AUDIT_TIMEOUT_FAILURE === undefined
-    && process.env.AK_ROLE_TEST_AUDIT_REAL === undefined
-    && process.env.AK_ROLE_TEST_AUDIT_ESCALATE === undefined
-  ) {
-    process.env.AK_ROLE_TEST_AUDIT_PASS = "1";
-  }
-  return () => {
-    if (priorGate === undefined) delete process.env.AK_ROLE_TEST_GATE_PASS;
-    else process.env.AK_ROLE_TEST_GATE_PASS = priorGate;
-    if (priorAudit === undefined) delete process.env.AK_ROLE_TEST_AUDIT_PASS;
-    else process.env.AK_ROLE_TEST_AUDIT_PASS = priorAudit;
-  };
-}
-
 export async function withInProcessPi<T>(
   options: InProcessPiOptions,
   scenario: (fixture: InProcessPiFixture) => Promise<T>,
@@ -1461,13 +1429,14 @@ export async function withInProcessPi<T>(
     }
     // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
     const bookKey = resolveBookKeyFromGit(options.cwd);
+    // #675: nested public notary source-run requires <runId>@<role> leaf names.
     const parentSessionDir = join(
       machineLedgerHome(hermeticHome),
       "books",
       bookKey,
       "runs",
-      "activation",
-      "inprocess-pi",
+      "01a06ff1-0000-7000-8000-00000000inpr@judge",
+      "session",
     );
     // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
     // materializes the real principal without a synthetic assistant message.
@@ -1475,6 +1444,26 @@ export async function withInProcessPi<T>(
     const runDirectory = dirname(parentSessionDir);
     await mkdir(runDirectory, { recursive: true });
     await mkdir(parentSessionDir, { recursive: true });
+    const sessionFile = sessionManager.getSessionFile?.() ?? join(parentSessionDir, "session.jsonl");
+    // Nested public notary requires retained run-state identity (#675).
+    const runId = "01a06ff1-0000-7000-8000-00000000inpr";
+    await writeFile(
+      join(runDirectory, "run-state.json"),
+      `${JSON.stringify({
+        runId,
+        role: "judge",
+        state: "running",
+        bookKey,
+        projectRoot: options.cwd,
+        sessionDirectory: parentSessionDir,
+        sessionFile,
+        runDirectory,
+        admittedRequestPath: join(runDirectory, "admitted-request.json"),
+        principalWire: { kind: "pi", sessionFile },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(join(runDirectory, "admitted-request.json"), "{}\n", "utf8");
     const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
     await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
     await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
@@ -1493,7 +1482,43 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  const disarmNested = armOfflineNestedSummonDefaults();
+  const restores: Array<() => void> = [];
+  if (options.nestedSummonInject !== "none") {
+    const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
+    const { setTestAuditorSummon } = await import("../../src/compliance-transport.ts");
+    restores.push(
+      setTestGateOfficerSummon(async (officer) => ({
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: officer,
+            status: "pass",
+            decisiveFacts: { status: "pass", findings: [] },
+          },
+          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+          artifacts: [],
+          runId: "inprocess-gate-pass",
+        },
+      })),
+    );
+    restores.push(
+      setTestAuditorSummon(async () => ({
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "auditor",
+            status: "pass",
+            decisiveFacts: { status: "pass" },
+          },
+          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+          artifacts: [],
+          runId: "inprocess-audit-pass",
+        },
+      })),
+    );
+  }
   try {
     for (const [name, value] of Object.entries(options.flags)) {
       session.extensionRunner.setFlagValue(name, value);
@@ -1519,7 +1544,7 @@ export async function withInProcessPi<T>(
       }
     } finally {
       session.dispose();
-      disarmNested();
+      for (const restore of restores.reverse()) restore();
     }
   }
 }

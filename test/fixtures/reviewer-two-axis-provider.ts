@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
+import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "../../src/package-contracts/evidence-child-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
@@ -113,53 +114,62 @@ export default async function reviewerTwoAxisProvider(pi: ExtensionAPI): Promise
     void seeded.close();
   });
   const expectedAxes = expectedAxesFromEnv();
-  const axisSeen = new Set<string>();
-  const childResponse = (context: Context, label: string) => {
+  // #675: evidence-child is a nested public process — dispatch by tools, not a shared
+  // in-process axisSeen queue (parent and children no longer share one faux instance).
+  const respond = (context: Context) => {
+    const names = context.tools?.map((tool) => tool.name) ?? [];
     const prompt = userText(context);
     const axis = axisFromPrompt(prompt);
-    if (axis === undefined) throw new Error(`${label} has no recognized typed axis adapter`);
-    if (!expectedAxes.has(axis)) {
-      throw new Error(`${label} launched unexpected axis ${axis}; expected ${[...expectedAxes].join(",")}`);
-    }
-    assertAuthorityRefsCarrier(axis, prompt);
-    axisSeen.add(axis);
-    return fauxAssistantMessage(
-      axis === "standards"
-        ? "Standards finding count: 0."
-        : "Spec: fixed target satisfies the stated behavior.",
-    );
-  };
-  const responses: Array<(context: Context) => ReturnType<typeof fauxAssistantMessage>> = [];
-  for (let i = 0; i < expectedAxes.size; i += 1) {
-    const label = i === 0 ? "child prompt" : `child prompt #${i + 1}`;
-    responses.push((context) => childResponse(context, label));
-  }
-  const parentOutput = (context: Context) => {
-    for (const axis of expectedAxes) {
-      if (!axisSeen.has(axis)) {
-        throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
+
+    if (axis !== undefined) {
+      if (!expectedAxes.has(axis)) {
+        throw new Error(`launched unexpected axis ${axis}; expected ${[...expectedAxes].join(",")}`);
       }
+      assertAuthorityRefsCarrier(axis, prompt);
+      const report =
+        axis === "standards"
+          ? "Standards finding count: 0."
+          : "Spec: fixed target satisfies the stated behavior.";
+      if (names.includes(EVIDENCE_CHILD_OUTPUT_TOOL_NAME)) {
+        return fauxAssistantMessage(
+          fauxToolCall(
+            EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+            { report },
+            { id: `evidence-child-${axis}` },
+          ),
+          { stopReason: "toolUse" },
+        );
+      }
+      return fauxAssistantMessage(report);
     }
-    if (axisSeen.size !== expectedAxes.size) {
-      throw new Error(`expected axes [${[...expectedAxes].join(",")}] before output; saw ${[...axisSeen].join(",")}`);
+
+    if (names.includes(REVIEWER_OUTPUT_TOOL_NAME)) {
+      const capturePath = process.env.AK_REVIEW_CAPTURE_SYSTEM_PROMPT;
+      if (typeof capturePath === "string" && capturePath.trim() !== "") {
+        writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
+      }
+      return fauxAssistantMessage(
+        fauxToolCall(
+          REVIEWER_OUTPUT_TOOL_NAME,
+          { status: "completed", amendments: REVIEWER_AMENDMENT_TRACE },
+          { id: "output" },
+        ),
+        { stopReason: "toolUse" },
+      );
     }
-    // #443 optional capture: parent session systemPrompt at the real output call.
-    const capturePath = process.env.AK_REVIEW_CAPTURE_SYSTEM_PROMPT;
-    if (typeof capturePath === "string" && capturePath.trim() !== "") {
-      writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
-    }
-    return fauxAssistantMessage(
-      fauxToolCall(
-        REVIEWER_OUTPUT_TOOL_NAME,
-        { status: "completed", amendments: REVIEWER_AMENDMENT_TRACE },
-        { id: "output" },
-      ),
-      { stopReason: "toolUse" },
-    );
+
+    return fauxAssistantMessage("reviewer two-axis fixture idle");
   };
-  // #495 S6: no reviewer-side auditor — single typed accept after legs.
-  responses.push((context) => parentOutput(context));
-  faux.setResponses(responses);
+  faux.setResponses([
+    respond,
+    respond,
+    respond,
+    respond,
+    respond,
+    respond,
+    respond,
+    respond,
+  ]);
   const model = faux.getModel();
   const provider: Provider = {
     ...faux.provider,

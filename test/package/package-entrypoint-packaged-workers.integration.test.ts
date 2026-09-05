@@ -404,9 +404,47 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 
 test("packaged judge escalation emits one typed human decision", async () => {
   const manifest = await loadRawPackageManifest();
-  // #675 offline: typed audit escalate without nested public spawn.
-  process.env.AK_ROLE_TEST_AUDIT_REAL = "1";
-  process.env.AK_ROLE_TEST_AUDIT_ESCALATE = "1";
+  const { setTestAuditorSummon } = await import("../../src/compliance-transport.ts");
+  const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
+  const restoreGate = setTestGateOfficerSummon(async (officer) => ({
+    exitCode: 0,
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: officer,
+        status: "pass",
+        decisiveFacts: { status: "pass", findings: [] },
+      },
+      navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+      artifacts: [],
+      runId: "test-packaged-judge-gate",
+    },
+  }));
+  let auditHits = 0;
+  const restoreAudit = setTestAuditorSummon(async () => {
+    auditHits += 1;
+    return {
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "auditor",
+          status: "escalate",
+          decisiveFacts: {
+            status: "escalate",
+            conflicts: ["Soul authority conflicts with controlling authority"],
+            decisionGate: {
+              question: "Which authority governs this verdict?",
+              options: ["Soul", "Controlling authority"],
+            },
+          },
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-packaged-judge-escalate",
+      },
+    };
+  });
   try {
   await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
@@ -428,6 +466,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
         mode: "print",
         flags: { "ak-role": "judge" },
         noTools: "builtin",
+        // Caller owns auditor escalate inject below.
+        nestedSummonInject: "none",
       }, async ({ session, sessionManager }) => {
         const escalateRespond = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
@@ -460,7 +500,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
           throw new Error("packaged Judge escalation tool result is missing");
         }
         const toolResult = result.message;
-        assert.equal(toolResult.isError, false);
+        assert.equal(auditHits, 1, `auditor inject hits=${auditHits} details=${JSON.stringify(toolResult.details)}`);
+        assert.equal(toolResult.isError, false, JSON.stringify(toolResult.details));
         // #575 sole-final barrier: execute projects a pending-round-closure candidate;
         // audit escalation face + delivered judge verdict arrive on the typed closure (ADR 0055).
         assert.deepEqual(toolResult.details, { submissionDisposition: "pending-round-closure" });
@@ -493,8 +534,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
     },
   );
   } finally {
-    delete process.env.AK_ROLE_TEST_AUDIT_REAL;
-    delete process.env.AK_ROLE_TEST_AUDIT_ESCALATE;
+    restoreAudit();
+    restoreGate();
   }
 });
 
