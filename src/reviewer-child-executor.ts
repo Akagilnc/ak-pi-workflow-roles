@@ -7,12 +7,20 @@ import type { Usage } from "@earendil-works/pi-ai";
 
 export type EvidenceChildSummon = (argv: readonly string[]) => Promise<PublicSummonResult>;
 
-/** Offline-test hook for public evidence-child summons; production leaves this undefined. */
-let testEvidenceChildSummon: EvidenceChildSummon | undefined;
+const TEST_EVIDENCE_CHILD_SUMMON = Symbol.for("ak-roles.test-evidence-child-summon");
 
 /** Install or clear the offline evidence-child summon hook (tests only). */
-export function setTestEvidenceChildSummon(summon: EvidenceChildSummon | undefined): void {
-  testEvidenceChildSummon = summon;
+export function setTestEvidenceChildSummon(summon: EvidenceChildSummon | undefined): () => void {
+  const slot = globalThis as Record<symbol, EvidenceChildSummon | undefined>;
+  const previous = slot[TEST_EVIDENCE_CHILD_SUMMON];
+  slot[TEST_EVIDENCE_CHILD_SUMMON] = summon;
+  return () => {
+    slot[TEST_EVIDENCE_CHILD_SUMMON] = previous;
+  };
+}
+
+function testEvidenceChildSummon(): EvidenceChildSummon | undefined {
+  return (globalThis as Record<symbol, EvidenceChildSummon | undefined>)[TEST_EVIDENCE_CHILD_SUMMON];
 }
 
 export type ReviewerChildExecuteOptions = Readonly<{
@@ -93,13 +101,25 @@ export async function executeReviewerChild(
     const argv = [`${String(leg.prompt)}${pointer}`];
     const summon =
       options.summonEvidenceChild
-      ?? testEvidenceChildSummon
+      ?? testEvidenceChildSummon()
       ?? (async (nextArgv: readonly string[]) => {
         const { summonPublicRole } = await import("./public-role-summons.ts");
+        // Parent run home owns nested public seats; leg workspace cwd is a bare worktree.
+        let home: string | undefined;
+        if (runDirectory !== undefined) {
+          try {
+            const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
+            home = homeFromRunDirectory(runDirectory);
+          } catch {
+            // resolveSummonHome falls back from cwd/package machine home.
+          }
+        }
         return summonPublicRole({
           role: "evidence-child",
           argv: nextArgv,
           cwd: workspace,
+          ...(home === undefined ? {} : { home }),
+          ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
         });
       });
     const summoned = await summon(argv);

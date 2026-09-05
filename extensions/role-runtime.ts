@@ -40,6 +40,10 @@ import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "..
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
+// #675: nested public summons (gate/auditor/evidence-child) resolve root via env under jiti.
+if (process.env.AK_ROLE_PACKAGE_ROOT === undefined || process.env.AK_ROLE_PACKAGE_ROOT.trim() === "") {
+  process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
+}
 
 // Cold `pi -e <extension> --help` must cover installed-package process startup under CI load.
 // This bound is process-startup budget only — not settlement-to-visible presentation latency.

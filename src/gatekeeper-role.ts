@@ -77,12 +77,24 @@ export type GateOfficerSummon = (
   sourceRunDirectory: string,
 ) => Promise<PublicSummonResult>;
 
-/** Offline-test hook for public-role summons; production leaves this undefined. */
-let testGateOfficerSummon: GateOfficerSummon | undefined;
+/** Offline-test hook key — globalThis so extension/test share one inject (no dual-module). */
+const TEST_GATE_OFFICER_SUMMON = Symbol.for("ak-roles.test-gate-officer-summon");
 
-/** Install or clear the offline gate summon hook (tests only). */
-export function setTestGateOfficerSummon(summon: GateOfficerSummon | undefined): void {
-  testGateOfficerSummon = summon;
+/**
+ * Install or clear the offline gate summon hook (tests only).
+ * Returns a restore function that puts back the previous hook.
+ */
+export function setTestGateOfficerSummon(summon: GateOfficerSummon | undefined): () => void {
+  const slot = globalThis as Record<symbol, GateOfficerSummon | undefined>;
+  const previous = slot[TEST_GATE_OFFICER_SUMMON];
+  slot[TEST_GATE_OFFICER_SUMMON] = summon;
+  return () => {
+    slot[TEST_GATE_OFFICER_SUMMON] = previous;
+  };
+}
+
+function testGateOfficerSummon(): GateOfficerSummon | undefined {
+  return (globalThis as Record<symbol, GateOfficerSummon | undefined>)[TEST_GATE_OFFICER_SUMMON];
 }
 
 export type RunGatekeeperOptions = {
@@ -355,16 +367,10 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
   // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
   persistGateSubmissionCandidate(runDirectory, options.context);
-  // Offline subprocess tracers may force a pass without nested public spawn.
-  if (process.env.AK_ROLE_TEST_GATE_PASS === "1" && options.summonOfficer === undefined && testGateOfficerSummon === undefined) {
-    const pass: GatekeeperResult = { status: "pass", officer, findings: [] };
-    await bookDirectOfficerReceipt(options.context, officer, pass);
-    return pass;
-  }
   try {
     const summon =
       options.summonOfficer
-      ?? testGateOfficerSummon
+      ?? testGateOfficerSummon()
       ?? (async (nextOfficer, sourceRunDirectory) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
@@ -375,7 +381,11 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
       });
     const summoned = await summon(officer, runDirectory);
     const projected = projectOfficerTerminal(officer, summoned);
-    await bookDirectOfficerReceipt(options.context, officer, projected);
+    try {
+      await bookDirectOfficerReceipt(options.context, officer, projected);
+    } catch {
+      // Parent-side gate projection is best-effort; never wash a lawful officer result.
+    }
     return projected;
   } catch (error) {
     return { status: "transport_failure", stage: officer, reason: failureReason(error) };

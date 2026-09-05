@@ -867,7 +867,7 @@ export function createAuditorRoleRuntime(
   roleHost: RoleHost,
   dependencies: AuditorRuntimeDependencies,
 ) {
-  return createFiledOfficerRuntime(
+  const base = createFiledOfficerRuntime(
     roleHost,
     {
       role: "auditor",
@@ -877,6 +877,23 @@ export function createAuditorRoleRuntime(
     },
     dependencies,
   );
+  return {
+    async activate() {
+      await base.activate();
+      // Pointer-only summons: register the shared dossier locator when the parent
+      // run directory is published on the nested env (#675 / ADR 0079).
+      const sourceRun = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+      if (typeof sourceRun === "string" && sourceRun.trim() !== "") {
+        const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } = await import(
+          "./auditor-dossier-tool.ts"
+        );
+        const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
+        if (!already) {
+          roleHost.registerTool(createAuditorDossierTool(sourceRun.trim()) as never);
+        }
+      }
+    },
+  };
 }
 
 /** #675: public evidence-child seat on the shared filed-officer envelope. */

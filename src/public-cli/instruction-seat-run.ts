@@ -30,6 +30,7 @@ import {
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
+  readEngineDetourInfrastructureFailure,
   trySettleAuditorTerminalResult,
   trySettleEvidenceChildTerminalResult,
   trySettleGatekeeperTerminalResult,
@@ -93,6 +94,26 @@ function instructionSeatAdapters() {
       }
     },
     shouldPresentSettled: () => true,
+    // #675 / #357 T2: failInfrastructure abort after engine-detour tool failure must not
+    // wash the durable toolResult diagnostic (same seam as reviewer-run / judge-run).
+    resolveRunnerKnownFailure: async ({
+      result,
+      sessionFile,
+    }: {
+      result: { knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure };
+      sessionFile: string;
+    }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return infrastructureFailure === undefined
+        ? result.knownFailure
+        : {
+            cause: infrastructureFailure.cause,
+            diagnostic: infrastructureFailure.diagnostic,
+            ...(infrastructureFailure.identity === undefined
+              ? {}
+              : { identity: infrastructureFailure.identity }),
+          };
+    },
   };
 }
 
