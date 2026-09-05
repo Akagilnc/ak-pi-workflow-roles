@@ -530,8 +530,8 @@ const COLLECTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Positive GitHub pull request number. Optional when task materials and online association uniquely determine the PR (branch/HEAD, issue↔PR links, structured #N/URL refs); ambiguous or unknown targets require an explicit value.",
-      zh: "正整数 GitHub PR 号。任务材料与线上关联能唯一确定 PR 时可省略（分支/HEAD、issue↔PR 链接、结构化 #N/URL）；目标歧义或无法确定时必须显式提供。",
+      en: "Positive GitHub pull request number. Optional when unique branch/HEAD association binds the PR, or when the Collector role can decide the target from task materials via bind-target; multi-candidate git context or a role that cannot decide requires an explicit value.",
+      zh: "正整数 GitHub PR 号。分支/HEAD 唯一关联可绑定时可省略；亦可由通进司从任务材料经 bind-target 判定。git 多候选或角色无法判定时必须显式提供。",
     },
   },
   {

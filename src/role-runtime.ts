@@ -39,13 +39,10 @@ import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_OUTPUT_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_REQUIRED_TOOLS,
   COLLECTOR_TRANSPORT_FLAGS,
-  COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
+  type CollectorActivation,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
@@ -428,7 +425,9 @@ type ActivationRuntime = {
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
-  collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
+  collector: {
+    activate(context: HostContext, event: { reason: string }): Promise<void>;
+  };
   doctor: { activate(): Promise<void> };
   notary: {
     activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
@@ -602,7 +601,6 @@ export type RoleRuntimeDependencies = {
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
-  collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
@@ -1372,7 +1370,11 @@ export function createRoleRuntimeExtension(
         completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
       },
     }, hostActions);
-    const collector = createCollectorRoleRuntime(
+    // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
+    // event gates). Role module supplies business activate/tools/materials only.
+    let activeCollector: CollectorActivation | undefined;
+    let collectorFirstDispatchDone = false;
+    const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
         async loadSoul() {
@@ -1406,14 +1408,80 @@ export function createRoleRuntimeExtension(
         ...(dependencies.createCollectorClock === undefined
           ? {}
           : { createClock: dependencies.createCollectorClock }),
-        ...(dependencies.collectorPackageExtensionPath === undefined
-          ? {}
-          : {
-            packageExtensionPath: dependencies.collectorPackageExtensionPath,
-          }),
       },
       hostActions,
     );
+    collectorBusiness.registerBusinessTools(() => activeCollector);
+    // Envelope-owned material assembly + business bookkeeping hooks (ADR 0018).
+    roleHost.on("before_agent_start", (event) => {
+      if (activeCollector === undefined || selectedRole !== "collector") return;
+      if (!collectorFirstDispatchDone) {
+        collectorFirstDispatchDone = true;
+        activeCollector.ledger.recordActivation(activeCollector.clock);
+      }
+      return {
+        systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
+      };
+    });
+    roleHost.on("tool_call", (event) => {
+      if (activeCollector === undefined || selectedRole !== "collector") return;
+      if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(event.toolName)) {
+        return {
+          block: true,
+          reason: `通进司禁用工具 ${event.toolName}`,
+        };
+      }
+      return collectorBusiness.onToolCall(activeCollector, event);
+    });
+    roleHost.on("tool_result", (event) => {
+      if (activeCollector === undefined || selectedRole !== "collector") return;
+      collectorBusiness.onToolResult(activeCollector, event);
+    });
+    const collector = {
+      async activate(context: HostContext, event: { reason: string }) {
+        activeCollector = undefined;
+        collectorFirstDispatchDone = false;
+        // Envelope-owned mode / fork-reload gates (not role-private lifecycle).
+        if (context.mode !== "print" && context.mode !== "json") {
+          throw new Error(
+            `Collector supports only print or json mode (got ${context.mode})`,
+          );
+        }
+        if (event.reason === "fork" || event.reason === "reload") {
+          throw new Error(
+            `Collector does not support session_start reason ${event.reason}`,
+          );
+        }
+        // Business tools registered once at envelope install; envelope verifies inventory.
+        const allTools = roleHost.getAllTools();
+        for (const required of COLLECTOR_REQUIRED_TOOLS) {
+          const matches = allTools.filter((tool) => tool.name === required);
+          if (matches.length === 0) {
+            throw new Error(`Collector required tool missing: ${required}`);
+          }
+          if (matches.length > 1) {
+            throw new Error(`Collector required tool name collision: ${required}`);
+          }
+        }
+        roleHost.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
+        const active = new Set(roleHost.getActiveTools());
+        for (const required of COLLECTOR_REQUIRED_TOOLS) {
+          if (!active.has(required)) {
+            throw new Error(`Collector failed to activate required tool ${required}`);
+          }
+        }
+        for (const name of active) {
+          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
+            throw new Error(`Collector active tool surface includes unexpected ${name}`);
+          }
+        }
+        const activation = await collectorBusiness.activate(context);
+        if (activation.ledger.activationRecorded) {
+          collectorFirstDispatchDone = true;
+        }
+        activeCollector = activation;
+      },
+    };
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;

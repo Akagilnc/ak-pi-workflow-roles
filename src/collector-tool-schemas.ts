@@ -16,20 +16,61 @@ export const collectorWaitArgsSchema = Type.Object({
 }, { additionalProperties: false });
 
 /**
- * #641 chain① / #676 D6 / ADR 0057: collector LLM does splitting/classification.
+ * #676 A: role-decided target bind. The model judges task materials and submits
+ * the chosen PR and/or issue identity; runtime only performs online association
+ * for the role-chosen ticket — never scrapes task text to lock a target.
+ */
+export const collectorBindTargetArgsSchema = Type.Object({
+  prNumber: Type.Optional(Type.Unknown({
+    description: "角色判定的本仓 PR 号（正整数）。与 issueNumber 二选一或同指唯一目标。形状指引，非 schema 闸。",
+  })),
+  issueNumber: Type.Optional(Type.Unknown({
+    description: "角色判定的本仓 issue 号（正整数）；runtime 经线上关联解析唯一 PR。形状指引，非 schema 闸。",
+  })),
+}, { additionalProperties: true });
+
+/**
+ * #641 chain① / #676 C / ADR 0057: nested finding item declarations for model
+ * guidance. Host must not pure-shape-reject the envelope (第 0 条). Runtime binds
+ * resolvable evidence pointers only; unprojected content stays distinguishable.
+ */
+const collectorFindingItemDeclaration = (() => {
+  // Nested declarations for model guidance only — open required so host cannot
+  // pure-shape-reject missing optional fields (第 0 条 / ADR 0057 / #676 C).
+  const item = Type.Object(
+    {
+      evidenceId: Type.Unknown({
+        description: "observe 返回的材料指针（必填语义）",
+      }),
+      category: Type.Unknown({
+        description: "简短归类标签，不是摘要",
+      }),
+      summary: Type.Unknown({
+        description: "哪个 bot、什么问题的摘要；不誊抄正文",
+      }),
+    },
+    {
+      additionalProperties: true,
+      description:
+        "单条 finding 指针：evidenceId + 可选 category/summary。形状指引，非 schema 闸。",
+    },
+  );
+  (item as unknown as { required: string[] }).required = [];
+  return item;
+})();
+
+/**
  * Field declarations + descriptions are guidance for the model — host must not
- * pure-shape-reject the envelope (第 0 条 / ADR 0057). Runtime binds resolvable
- * evidence pointers only; unprojected content stays distinguishable on the receipt.
- *
- * findings item guidance (not a host gate): evidenceId pointer into observe materials;
- * optional category (short label, not summary); optional summary (finding abstract);
- * open the body via ak_collector_read when the head excerpt is insufficient.
+ * pure-shape-reject the envelope (第 0 条 / ADR 0057).
  */
 export const collectorOutputBaseSchema = openToolObject(
   Type.Object({
-    findings: Type.Unknown({
+    // No root type:array — host must not shape-reject non-array findings (#676 C).
+    // Nested item declarations ride `items` for registration preservation (ADR 0057).
+    findings: Type.Unsafe({
       description:
-        "本次收集到的逐条 findings（指针数组为规范形）。每条：evidenceId（observe 返回的材料指针，必填语义）、可选 category（简短归类标签，不是摘要）、可选 summary（哪个 bot、什么问题的摘要；不誊抄正文）。零 finding 的模板通知不得进入；正常完工无 finding 时省略。形状指引，非 schema 闸。",
+        "本次收集到的逐条 findings（指针数组为规范形）。零 finding 的模板通知不得进入；正常完工无 finding 时省略。形状指引，非 schema 闸。",
+      items: collectorFindingItemDeclaration,
     }),
     unfinishedReasons: Type.Unknown({
       description:
@@ -47,4 +88,5 @@ export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;
 export type CollectorReadArgs = Static<typeof collectorReadArgsSchema>;
 export type CollectorWaitArgs = Static<typeof collectorWaitArgsSchema>;
+export type CollectorBindTargetArgs = Static<typeof collectorBindTargetArgsSchema>;
 export type CollectorOutputArgs = Static<typeof collectorOutputArgsSchema>;

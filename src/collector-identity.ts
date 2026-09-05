@@ -158,6 +158,21 @@ function candidateRecord(candidate: unknown): Record<string, unknown> | undefine
   return candidate as Record<string, unknown>;
 }
 
+/** Canonical top-level keys the collector output projection understands. */
+const COLLECTOR_OUTPUT_CANONICAL_KEYS = new Set([
+  "findings",
+  "unfinishedReasons",
+  "infrastructureFailure",
+]);
+
+/** Non-canonical own keys mean content was present but not under a projectable key. */
+function hasNonCanonicalOwnKeys(record: Record<string, unknown>): boolean {
+  for (const key of Object.keys(record)) {
+    if (!COLLECTOR_OUTPUT_CANONICAL_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
 /**
  * #641 chain① / #676: turn model-submitted finding pointer refs into receipt findings.
  * Binds resolvable evidence references only — no pure shape rejection of the
@@ -187,6 +202,10 @@ export function enrichCollectorFindings(input: {
     return { findingsSource: "absent", findingsProjectedCount: 0, findingsUnprojected: false };
   }
   if (!Object.hasOwn(record, "findings")) {
+    // Non-canonical top-level content is not "absent" — record the projection gap (#676 C).
+    if (hasNonCanonicalOwnKeys(record)) {
+      return { findingsSource: "unreadable", findingsProjectedCount: 0, findingsUnprojected: true };
+    }
     return { findingsSource: "absent", findingsProjectedCount: 0, findingsUnprojected: false };
   }
   const rawFindings = record["findings"];
@@ -275,7 +294,12 @@ export function extractCollectorUnfinishedReasons(candidate: unknown): {
     return { reasons: undefined, source: "unreadable", unprojected: true };
   }
   const record = candidateRecord(candidate);
-  if (record === undefined || !Object.hasOwn(record, "unfinishedReasons")) {
+  if (record === undefined) {
+    return { reasons: undefined, source: "absent", unprojected: false };
+  }
+  if (!Object.hasOwn(record, "unfinishedReasons")) {
+    // unfinishedReasons absent is fine when only findings (or nothing) present.
+    // Non-canonical keys alone are recorded on the findings projection path.
     return { reasons: undefined, source: "absent", unprojected: false };
   }
   const raw = record["unfinishedReasons"];

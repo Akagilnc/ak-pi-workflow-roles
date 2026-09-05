@@ -1,23 +1,19 @@
 /**
- * #676 D1: Collector admission target recognition on the shared execution seam.
- * Explicit PR wins (no association queries). Otherwise gather online candidates from
- * structured upstream head, HEAD commit association, and task materials' structured
- * ticket refs (issue/PR URLs, #N tokens, typed JSON fields, issues/N paths) resolved
- * through existing GitHub association. Deduped unique → bind; 0 or many → require
- * explicit --pr. No prose-digit scrape, no second state machine, no branch-only
- * substitute that skips conflicting evidence. Git/config/transport failures keep true cause.
+ * #676 D1: Collector admission target recognition on structured git context.
+ * Explicit PR wins (no association queries). Otherwise gather online candidates
+ * from structured upstream head and HEAD commit association only. Deduped unique
+ * → bind; many → require explicit --pr; zero → unbound so the role can decide
+ * from task materials via the bind-target business tool. No task-text scrape,
+ * no second state machine. Git/config/transport failures keep true cause.
  */
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 
 import type { CollectorRepository } from "./collector-config.ts";
 import {
   createGhApiRunner,
   listPullRequestNumbersByCommit,
   listPullRequestNumbersByHead,
-  listPullRequestNumbersByTicket,
 } from "./collector-github.ts";
-import { instructionContainsTicketNumber } from "./diarist-ticket-resolution.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import {
   ownerFromGitHubRemoteUrl,
@@ -29,11 +25,11 @@ export type ResolveCollectorTargetInput = {
   readonly repository: CollectorRepository;
   /** Caller-provided PR number when already explicit. */
   readonly explicitPrNumber?: number;
-  /** Real call instruction (available before target bind). */
-  readonly instruction?: string;
-  /** Frozen attachment paths whose structured contents may name issue/PR. */
-  readonly attachmentPaths?: readonly string[];
 };
+
+export type CollectorTargetResolution =
+  | { readonly kind: "bound"; readonly prNumber: number }
+  | { readonly kind: "unbound" };
 
 function ambiguousTarget(detail: string, cause?: unknown): never {
   throw new CliUsageError(
@@ -138,114 +134,23 @@ function readUpstreamHeadBinding(
 }
 
 /**
- * Structured ticket refs only — not bare prose digit scrape (#676 D1):
- * - #N tokens
- * - github.com/owner/repo/(pull|issues)/N URLs
- * - .../issues/N/... path segments
- * - typed JSON keys prNumber|issueNumber|ticketNumber when whole text is JSON
- */
-export function structuredTicketRefsFromMaterials(
-  instruction: string,
-  attachmentTexts: readonly string[],
-): number[] {
-  const found = new Set<number>();
-  const absorb = (text: string): void => {
-    for (const match of text.matchAll(/#([1-9]\d*)\b/g)) {
-      found.add(Number(match[1]));
-    }
-    for (const match of text.matchAll(
-      /github\.com\/[^/\s]+\/[^/\s]+\/(?:pull|issues)\/([1-9]\d*)\b/gi,
-    )) {
-      found.add(Number(match[1]));
-    }
-    for (const match of text.matchAll(/(?:^|\/)issues\/([1-9]\d*)(?:\/|$)/g)) {
-      found.add(Number(match[1]));
-    }
-    const trimmed = text.trim();
-    if (
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    ) {
-      try {
-        collectTypedTicketFields(JSON.parse(trimmed), found);
-      } catch {
-        // Not JSON — structured path/URL/#N refs above still apply.
-      }
-    }
-  };
-  absorb(instruction);
-  for (const text of attachmentTexts) absorb(text);
-  return [...found];
-}
-
-function collectTypedTicketFields(value: unknown, into: Set<number>): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectTypedTicketFields(item, into);
-    return;
-  }
-  if (value === null || typeof value !== "object") return;
-  const record = value as Record<string, unknown>;
-  for (const key of ["prNumber", "issueNumber", "ticketNumber"] as const) {
-    const raw = record[key];
-    if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-      into.add(raw);
-    } else if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) {
-      into.add(Number(raw.trim()));
-    }
-  }
-  for (const nested of Object.values(record)) {
-    if (nested !== null && typeof nested === "object") {
-      collectTypedTicketFields(nested, into);
-    }
-  }
-}
-
-async function readAttachmentTexts(
-  paths: readonly string[],
-): Promise<readonly string[]> {
-  const texts: string[] = [];
-  for (const path of paths) {
-    try {
-      // Cap each attachment read — structured refs live near the head of task materials.
-      const body = await readFile(path, "utf8");
-      texts.push(body.length > 256_000 ? body.slice(0, 256_000) : body);
-      // Path itself may carry issues/N segments.
-      texts.push(path);
-    } catch {
-      // Unreadable attachment still contributes its path string for issues/N segments.
-      texts.push(path);
-    }
-  }
-  return texts;
-}
-
-/**
- * Resolve the Collector PR target without guessing.
+ * Resolve the Collector PR target without guessing from task text.
  * - Explicit `--pr` → that number (no association queries).
- * - Otherwise: full online candidates (upstream head + HEAD commit + task ticket
- *   association), deduped; task confirmation narrows multi-candidate sets when a
- *   candidate's complete number appears in the instruction.
- * - 0 or >1 after that → require explicit `--pr` (CliUsageError).
+ * - Otherwise: full online candidates (upstream head + HEAD commit), deduped.
+ * - Exactly 1 → bound. >1 → require explicit `--pr`. 0 → unbound (role bind tool).
  * - Git/config/transport/HTTP/JSON failures propagate with true cause.
  */
 export async function resolveCollectorTarget(
   input: ResolveCollectorTargetInput,
-): Promise<{ readonly prNumber: number }> {
+): Promise<CollectorTargetResolution> {
   if (input.explicitPrNumber !== undefined) {
-    return { prNumber: input.explicitPrNumber };
+    return { kind: "bound", prNumber: input.explicitPrNumber };
   }
 
   const branch = readCurrentBranch(input.projectRoot);
   const detached = branch.length === 0 || branch === "HEAD";
-  const instruction = input.instruction ?? "";
-  const attachmentTexts = await readAttachmentTexts(input.attachmentPaths ?? []);
-  const materialTickets = structuredTicketRefsFromMaterials(instruction, attachmentTexts);
 
-  // Detached HEAD with no structured material tickets cannot associate online.
-  if (detached && materialTickets.length === 0) {
-    ambiguousTarget("detached HEAD and no --pr");
-  }
-
+  // Detached HEAD cannot associate via branch head; commit association still runs.
   const runner = createGhApiRunner();
   const { owner, repo } = input.repository;
   const numbers: number[] = [];
@@ -273,46 +178,30 @@ export async function resolveCollectorTarget(
         commitSha: headSha,
       })),
     );
-  }
-
-  // Task materials: structured ticket refs → online issue/PR association.
-  for (const ticket of materialTickets) {
+  } else {
+    // Detached: commit association only (no branch head).
+    const headSha = readHeadSha(input.projectRoot);
     numbers.push(
-      ...(await listPullRequestNumbersByTicket(runner, {
+      ...(await listPullRequestNumbersByCommit(runner, {
         owner,
         repo,
-        ticketNumber: ticket,
+        commitSha: headSha,
       })),
     );
   }
 
-  let unique = [...new Set(numbers)];
+  const unique = [...new Set(numbers)];
 
-  // Task confirmation: when multiple online hits, keep those whose complete number
-  // appears in the instruction (verification, not free-text scrape as sole method).
-  if (unique.length > 1 && instruction.trim().length > 0) {
-    const confirmed = unique.filter((n) => instructionContainsTicketNumber(instruction, n));
-    if (confirmed.length === 1) {
-      unique = confirmed;
-    } else if (confirmed.length > 1) {
-      unique = confirmed;
-    }
-  }
-
-  if (unique.length === 0) {
-    ambiguousTarget(
-      detached
-        ? `no PR associated with task materials`
-        : `no PR associated with branch ${branch} or task materials`,
-    );
+  if (unique.length === 1) {
+    return { kind: "bound", prNumber: unique[0]! };
   }
   if (unique.length > 1) {
     ambiguousTarget(
       `multiple PRs associated with context: ${unique.join(", ")}`,
     );
   }
-
-  return { prNumber: unique[0]! };
+  // Zero structured git hits — leave unbound so the role can decide from materials.
+  return { kind: "unbound" };
 }
 
 export { ownerRepoFromGitHubRemoteUrl, ownerFromGitHubRemoteUrl };
