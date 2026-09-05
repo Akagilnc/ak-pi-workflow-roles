@@ -1791,8 +1791,6 @@ export type AdmitCollectorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
-  /** Optional target resolver injection (tests). */
-  resolveTarget?: typeof resolveCollectorTarget;
 };
 
 /**
@@ -1829,8 +1827,7 @@ export async function admitCollectorInvocation(
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
 
-  const resolveTarget = options.resolveTarget ?? resolveCollectorTarget;
-  const target = await resolveTarget({
+  const target = await resolveCollectorTarget({
     projectRoot,
     repository,
     ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),

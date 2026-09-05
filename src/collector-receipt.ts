@@ -4,6 +4,7 @@ import type { CollectorLedger, CollectorRequestAttempt } from "./collector-ledge
 import {
   enrichCollectorFindings,
   extractCollectorEvidenceIdentityGroups,
+  extractCollectorUnfinishedReasons,
   type ExtractedCollectorIdentityGroup,
 } from "./collector-identity.ts";
 import { validateAcceptedCollectorReceipt, type CollectorEvidenceRecord as ReceiptEvidenceRecord } from "./package-contracts/collector-output.ts";
@@ -30,6 +31,8 @@ export type CollectorReceipt = {
   finalSnapshotId: string;
   targetHead: string;
   groups: ExtractedCollectorIdentityGroup[];
+  /** Optional unfinished reasons supplied with the sealed materials (#676 D6). */
+  unfinishedReasons?: string[];
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorReceiptEvidenceRecord[];
@@ -82,7 +85,6 @@ export function buildCollectorReceipt(
     prNumber: ledger.config.prNumber,
   });
   for (const group of groups) {
-    if (group.attendance !== true) fail("Collector group lacks attendance");
     for (const material of group.materials) {
       if (material.evidenceId === undefined || !evidenceIndex.has(material.evidenceId)) fail("Collector material lacks a receipt-local evidence ref");
     }
@@ -90,6 +92,7 @@ export function buildCollectorReceipt(
       if (finding.source.evidenceId === undefined || !evidenceIndex.has(finding.source.evidenceId)) fail("Collector finding lacks a receipt-local evidence ref");
     }
   }
+  const unfinishedReasons = extractCollectorUnfinishedReasons(candidateRaw);
 
   return {
     host: COLLECTOR_HOST,
@@ -103,6 +106,7 @@ export function buildCollectorReceipt(
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead: finalSnapshot.headOid,
     groups,
+    ...(unfinishedReasons === undefined ? {} : { unfinishedReasons }),
     requestAttempts: [...ledger.requestAttempts()],
     snapshots,
     evidenceRecords: evidenceRecords.map(toReceiptEvidenceRecord),

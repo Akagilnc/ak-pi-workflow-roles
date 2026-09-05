@@ -341,12 +341,20 @@ export function formatFailureStderrDiagnostic(failure: ControlledFailure): strin
   return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 
-/** Pre-admission structural rejection: stderr only, no run, no Terminal. */
+/** Pre-admission structural rejection: stderr only, no run, no Terminal. Cause retained when present. */
 export function presentStructuralRejection(
-  error: { message: string },
+  error: { message: string; cause?: unknown },
   io: { stderr: (text: string) => void },
 ): void {
-  io.stderr(formatCliDiagnostic(error.message));
+  let message = error.message;
+  const cause = error instanceof Error ? error.cause : error.cause;
+  if (cause !== undefined) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    if (detail.trim().length > 0) {
+      message = `${message}; cause: ${detail}`;
+    }
+  }
+  io.stderr(formatCliDiagnostic(message));
 }
 
 /** ControlledFailure face without admitted-run Terminal (stdout body + stderr line). */
@@ -1468,6 +1476,11 @@ function collectorDecisiveFacts(
   for (const key of ["repository", "prNumber", "prState", "targetHead", "manifestDigest"] as const) {
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== undefined) facts[key] = value.value;
+  }
+  const unfinished = safelyRead(candidate, "unfinishedReasons");
+  if (unfinished.readable && Array.isArray(unfinished.value)) {
+    const reasons = unfinished.value.filter((item): item is string => typeof item === "string");
+    if (reasons.length > 0) facts.unfinishedReasons = reasons;
   }
   const groups = safelyRead(candidate, "groups");
   if (groups.readable && Array.isArray(groups.value)) {

@@ -302,7 +302,6 @@ export function createCollectorRoleRuntime(
             signal,
           );
           activation.ledger.completeOperational(toolCallId);
-          // #676 D6: non-OPEN is a deliverable target state; observe returns the fact as-is.
           return {
             content: [{
               type: "text" as const,
@@ -386,7 +385,6 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
-          // #676 D6: non-OPEN request bounce is model-correctable; keep materials deliverable.
           if (isCorrectableExecuteError(error)) throw error;
           hostActions.failInfrastructure(error, ctx, toolCallId);
         }

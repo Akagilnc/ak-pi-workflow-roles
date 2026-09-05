@@ -55,6 +55,7 @@ export default function collectorObserveProvider(pi: ExtensionAPI): void {
         .map((record: any) => ({
           evidenceId: record.evidenceId,
           category: "collected",
+          summary: "collected finding",
         }));
       return fauxAssistantMessage(
         fauxToolCall(COLLECTOR_OUTPUT_TOOL, findings.length > 0 ? { findings } : {}, { id: "collector-output" }),
