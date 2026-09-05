@@ -70,6 +70,8 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
 
+    // One nested unknown key on the affected accepted path (#696 sample, not schema).
+    const freeExtra = { nested: { ok: true } } as const;
     for (const [index, row] of [
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
@@ -79,7 +81,9 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       const runId = `inspector-public-${index}`;
       const details = row.status === "malformed"
         ? row.details
-        : { status: row.status, findings: row.findings };
+        : row.status === "pass"
+          ? { status: row.status, findings: row.findings, freeExtra }
+          : { status: row.status, findings: row.findings };
       const result = await runAkRole(
         [
           "inspector",
@@ -128,6 +132,9 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
         assert.equal(outcome.status, row.status);
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+        if (row.status === "pass") {
+          assert.deepEqual(outcome.decisiveFacts.freeExtra, freeExtra);
+        }
       }
     }
   });
