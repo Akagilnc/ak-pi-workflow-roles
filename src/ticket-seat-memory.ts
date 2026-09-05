@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   activationBookDirectory,
+  homeFromRunDirectory,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import { createRecordSession } from "./archivist-record-entry.ts";
@@ -96,6 +97,54 @@ export async function readRunTicketNumber(
     }
   }
   return undefined;
+}
+
+/**
+ * Sole discovery of ticket-seat memory nest directories for a retained run.
+ * Reads ticket + projectRoot from the run pages; home path-derives from the run.
+ * Missing ticket / projectRoot / home → [] (callers keep legacy parent-nest lookup).
+ */
+export async function resolveTicketSeatMemoryNestDirectories(input: {
+  readonly runDirectory: string;
+  readonly seats: readonly TicketSeatMemorySeat[];
+}): Promise<readonly string[]> {
+  if (input.seats.length === 0) return [];
+  const ticketNumber = await readRunTicketNumber(input.runDirectory);
+  if (ticketNumber === undefined) return [];
+
+  let home: string | undefined;
+  try {
+    home = homeFromRunDirectory(input.runDirectory);
+  } catch {
+    return [];
+  }
+
+  let projectRoot: string | undefined;
+  try {
+    const raw = JSON.parse(
+      await readFile(join(input.runDirectory, "admitted-request.json"), "utf8"),
+    ) as unknown;
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      typeof (raw as { projectRoot?: unknown }).projectRoot === "string"
+    ) {
+      projectRoot = (raw as { projectRoot: string }).projectRoot;
+    }
+  } catch {
+    return [];
+  }
+  if (projectRoot === undefined) return [];
+
+  return input.seats.map((seat) =>
+    ticketSeatMemorySessionDirectory({
+      ticketNumber,
+      seat,
+      cwd: projectRoot,
+      home,
+    }),
+  );
 }
 
 /**

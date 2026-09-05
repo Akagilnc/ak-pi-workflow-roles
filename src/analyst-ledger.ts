@@ -17,7 +17,6 @@ import { join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
-  homeFromRunDirectory,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -45,8 +44,7 @@ import {
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
 import {
-  readRunTicketNumber,
-  ticketSeatMemorySessionDirectory,
+  resolveTicketSeatMemoryNestDirectories,
 } from "./ticket-seat-memory.ts";
 
 export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
@@ -404,49 +402,17 @@ async function classifyScopedRun(input: {
   // Nested auditor-roles gate pairs stay inside the sole scan (families must
   // not readdir this tree again). Missing directory → []. Damaged discovered
   // nested JSONL is page-local unreadable — never silently under-count rounds.
-  // #636: ticket-seat memory nests are additional same-reader directories.
+  // #636: ticket-seat memory nests via sole discovery helper.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
-    const directories: string[] = [
+    const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+      runDirectory: input.runDirectory,
+      seats: ["inspector", "notary"],
+    });
+    const directories = [
       join(input.runDirectory, "session", "auditor-roles"),
+      ...memoryNests,
     ];
-    const ticketNumber = await readRunTicketNumber(input.runDirectory);
-    if (ticketNumber !== undefined) {
-      let home: string | undefined;
-      let projectRoot: string | undefined;
-      try {
-        home = homeFromRunDirectory(input.runDirectory);
-      } catch {
-        home = undefined;
-      }
-      try {
-        const raw = JSON.parse(
-          await readFile(join(input.runDirectory, "admitted-request.json"), "utf8"),
-        ) as unknown;
-        if (
-          raw !== null &&
-          typeof raw === "object" &&
-          !Array.isArray(raw) &&
-          typeof (raw as { projectRoot?: unknown }).projectRoot === "string"
-        ) {
-          projectRoot = (raw as { projectRoot: string }).projectRoot;
-        }
-      } catch {
-        projectRoot = undefined;
-      }
-      if (projectRoot !== undefined) {
-        for (const seat of ["inspector", "notary"] as const) {
-          directories.push(
-            ticketSeatMemorySessionDirectory({
-              ticketNumber,
-              seat,
-              cwd: projectRoot,
-              ...(home === undefined ? {} : { home }),
-            }),
-          );
-        }
-      }
-    }
     const parentSessionFile = join(input.runDirectory, "session", "session.jsonl");
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(directories, {
       parentSessionFile,

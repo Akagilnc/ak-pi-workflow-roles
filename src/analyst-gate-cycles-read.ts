@@ -160,44 +160,6 @@ function acceptedGateReceiptIds(
   return accepted;
 }
 
-/**
- * Last accepted gate terminating toolCall on a nested volume (dispatch or officer).
- * Preference: keep the last accepted receipt; fall back to a rejected call only
- * when no accepted receipt exists (so classify can lawfully omit). Identity only
- * — typed args are validated after recognition so unusable facts fail loud
- * instead of being skipped as "not a gate volume". Soul-audit and other non-gate
- * tools never qualify.
- */
-function extractLastGateToolCall(
-  rows: readonly LedgerSessionRow[],
-): GateToolCall | undefined {
-  const acceptedIds = acceptedGateReceiptIds(rows);
-  let lastAccepted: GateToolCall | undefined;
-  let lastRejected: GateToolCall | undefined;
-  for (const row of rows) {
-    const message = isRecord(row.message) ? row.message : undefined;
-    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (!isRecord(part) || part.type !== "toolCall") continue;
-      if (typeof part.id !== "string" || part.id.length === 0) continue;
-      if (typeof part.name !== "string" || part.name.length === 0) continue;
-      if (!isGateTerminatingToolName(part.name)) continue;
-      const call: GateToolCall = {
-        toolName: part.name,
-        args: isRecord(part.arguments) ? part.arguments : undefined,
-        accepted: acceptedIds.has(part.id),
-      };
-      if (call.accepted) {
-        lastAccepted = call;
-      } else if (lastAccepted === undefined) {
-        // Only retain rejected while no accepted receipt has appeared yet.
-        lastRejected = call;
-      }
-    }
-  }
-  return lastAccepted ?? lastRejected;
-}
-
 function requireAcceptedGateStatus(
   args: Record<string, unknown> | undefined,
   filePath: string,
@@ -383,17 +345,8 @@ async function classifyAuditorVolume(
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
   const rows = await readLedgerSessionJsonl(filePath);
   const accepted = extractAllAcceptedGateToolCalls(rows);
-  if (accepted.length === 0) {
-    // Preserve prior omit path for rejected-only / non-gate volumes via last-call probe.
-    const call = extractLastGateToolCall(rows);
-    if (call === undefined || !call.accepted) return [];
-    // Accepted path should have been captured above; keep loud if tables drift.
-    const projected = projectAcceptedGateCall(filePath, rows, {
-      ...call,
-      ...nearestAttemptBindingBefore(rows, rows.length),
-    });
-    return projected === undefined ? [] : [projected];
-  }
+  // Rejected-only / non-gate volumes omit (empty accepted set).
+  if (accepted.length === 0) return [];
   const volumes: ClassifiedVolume[] = [];
   for (const call of accepted) {
     const projected = projectAcceptedGateCall(filePath, rows, call);

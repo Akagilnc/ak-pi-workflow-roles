@@ -13,8 +13,7 @@ import {
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import {
-  readRunTicketNumber,
-  ticketSeatMemorySessionDirectory,
+  resolveTicketSeatMemoryNestDirectories,
 } from "../ticket-seat-memory.ts";
 import {
   latestUserAttemptId,
@@ -904,48 +903,16 @@ async function loadBoundAuditorVolumes(
     latestParentUserIndex = i;
     break;
   }
-  const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // #636: ticket-seat auditor memory nest (subject-keyed) may hold the bound volume.
   const runDirectory = join(dirname(sessionFile), "..");
-  try {
-    const ticketNumber = await readRunTicketNumber(runDirectory);
-    if (ticketNumber !== undefined) {
-      let home: string | undefined;
-      let projectRoot: string | undefined;
-      try {
-        home = homeFromRunDirectory(runDirectory);
-      } catch {
-        home = undefined;
-      }
-      try {
-        const raw = JSON.parse(
-          await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-        ) as unknown;
-        if (
-          raw !== null &&
-          typeof raw === "object" &&
-          !Array.isArray(raw) &&
-          typeof (raw as { projectRoot?: unknown }).projectRoot === "string"
-        ) {
-          projectRoot = (raw as { projectRoot: string }).projectRoot;
-        }
-      } catch {
-        projectRoot = undefined;
-      }
-      if (projectRoot !== undefined) {
-        childDirectories.push(
-          ticketSeatMemorySessionDirectory({
-            ticketNumber,
-            seat: "auditor",
-            cwd: projectRoot,
-            ...(home === undefined ? {} : { home }),
-          }),
-        );
-      }
-    }
-  } catch {
-    // Ticket discovery failure must not block legacy parent-nest lookup.
-  }
+  // #636: ticket-seat auditor memory nest via sole discovery helper.
+  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+    runDirectory,
+    seats: ["auditor"],
+  });
+  const childDirectories = [
+    join(dirname(sessionFile), "auditor-roles"),
+    ...memoryNests,
+  ];
   // Auto-resume seam (owner A): stale check must ignore resume envelope and
   // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
   // first attempt's child after resume advanced latest, losing retentionFailure
@@ -2289,29 +2256,23 @@ export function projectTerminalGateFact(
 export async function extractGateFactFromSessionDirectory(
   sessionDirectory: string,
   options: {
-    readonly ticketNumber?: number;
-    readonly projectRoot?: string;
-    readonly home?: string;
+    readonly runDirectory?: string;
     readonly parentSessionFile?: string;
   } = {},
 ): Promise<TerminalGateFact | undefined> {
-  const directories: string[] = [join(sessionDirectory, "auditor-roles")];
-  if (options.ticketNumber !== undefined && options.projectRoot !== undefined) {
-    for (const seat of ["inspector", "notary"] as const) {
-      directories.push(
-        ticketSeatMemorySessionDirectory({
-          ticketNumber: options.ticketNumber,
-          seat,
-          cwd: options.projectRoot,
-          ...(options.home === undefined ? {} : { home: options.home }),
-        }),
-      );
-    }
-  }
+  const runDirectory = options.runDirectory ?? join(sessionDirectory, "..");
+  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+    runDirectory,
+    seats: ["inspector", "notary"],
+  });
+  const directories = [
+    join(sessionDirectory, "auditor-roles"),
+    ...memoryNests,
+  ];
+  const parentSessionFile =
+    options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
   const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
-    ...(options.parentSessionFile === undefined
-      ? {}
-      : { parentSessionFile: options.parentSessionFile }),
+    parentSessionFile,
   });
   return projectTerminalGateFact(rounds);
 }
@@ -2335,8 +2296,6 @@ async function withOptionalGateProjection<
   sessionDirectory: string,
   gateContext: {
     readonly runDirectory?: string;
-    readonly projectRoot?: string;
-    readonly ticketNumber?: number;
     readonly parentSessionFile?: string;
   } = {},
 ): Promise<T & { gate?: TerminalGateFact }> {
@@ -2356,42 +2315,11 @@ async function withOptionalGateProjection<
     )
   ) return base;
 
-  // Derive run placement from the ordinary public-cli nest when callers omit context.
   const runDirectory = gateContext.runDirectory ?? join(sessionDirectory, "..");
-  let ticketNumber = gateContext.ticketNumber;
-  if (ticketNumber === undefined) {
-    ticketNumber = await readRunTicketNumber(runDirectory);
-  }
-  let projectRoot = gateContext.projectRoot;
-  if (projectRoot === undefined) {
-    try {
-      const raw = JSON.parse(
-        await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-      ) as unknown;
-      if (
-        raw !== null &&
-        typeof raw === "object" &&
-        !Array.isArray(raw) &&
-        typeof (raw as { projectRoot?: unknown }).projectRoot === "string"
-      ) {
-        projectRoot = (raw as { projectRoot: string }).projectRoot;
-      }
-    } catch {
-      projectRoot = undefined;
-    }
-  }
-  let home: string | undefined;
-  try {
-    home = homeFromRunDirectory(runDirectory);
-  } catch {
-    home = undefined;
-  }
   const parentSessionFile =
     gateContext.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
   const gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
-    ...(ticketNumber === undefined ? {} : { ticketNumber }),
-    ...(projectRoot === undefined ? {} : { projectRoot }),
-    ...(home === undefined ? {} : { home }),
+    runDirectory,
     parentSessionFile,
   });
   return gate === undefined ? base : { ...base, gate };
