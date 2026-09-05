@@ -45,6 +45,10 @@ function readHostModelsHash(): string | null {
 /** Exact heavy set — independent expected literals, not runner import (#160; #685 slimmed). */
 const TICKET_HEAVYWEIGHT = [
   "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/doctor-package-lifecycle.test.ts",
+  "test/package/public-cli-install.test.ts",
 ] as const;
 
 type ChildRecord = {
