@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 — engine material is optional notes, not a closed name catalog.
  * Entry-reachable delivery is covered by public-cli-engine-axis tracer.
@@ -6,7 +7,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -66,7 +66,7 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-engine-empty-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-engine-empty-"));
   try {
     assert.deepEqual(listEngineMaterialNames(root), []);
     await mkdir(join(root, "resources", "engines"), { recursive: true });
@@ -92,5 +92,6 @@ test("packaged notes directory is discovery-only; missing notes is not an error"
     assert.deepEqual(bare, { name: "opus" });
     assert.equal(bare && "materialPath" in bare && bare.materialPath !== undefined, false);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { fauxProvider } from "@earendil-works/pi-ai";
 
@@ -16,12 +16,13 @@ const faux = fauxProvider({
 });
 
 async function withAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-model-seed-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-model-seed-"));
   try {
     const agentDir = join(root, "agent");
     await mkdir(agentDir, { recursive: true });
     return await run(agentDir);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 

@@ -1,4 +1,3 @@
-import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -6,6 +5,7 @@ import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
@@ -51,7 +51,7 @@ interface ExtractedPack {
 
 async function extractPackedArtifact(): Promise<ExtractedPack> {
   const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-meta-"));
+  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-meta-"));
   try {
     await execFileAsync("tar", ["-xzf", pack.tarball, "-C", root]);
     const packageJson = JSON.parse(
@@ -70,17 +70,19 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
       paths: pack.files.map((file) => file.path),
     };
   } catch (error) {
+    await rm(root, { recursive: true, force: true });
     throw error;
   }
 }
 
 /**
  * #420 整改：元数据断言全部落在一次解包的只读不可变产物上（解包 8 次 → 1 次，
- * 不触「独立契约塞共享可变状态」禁令）。进程退出时清理唯一 tmpdir。
+ * 不触「独立契约塞共享可变状态」禁令）。进程退出时清理唯一 worktree 自建根。
  */
 const extracted = await extractPackedArtifact();
 process.on("exit", () => {
   try {
+    rmSync(extracted.root, { recursive: true, force: true });
   } catch {
     // Best-effort temp cleanup; never mask test results.
   }

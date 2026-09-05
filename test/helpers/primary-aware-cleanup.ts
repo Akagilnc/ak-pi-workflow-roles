@@ -1,6 +1,6 @@
-import { mkdtemp } from "node:fs/promises";
-import { rmWorktreeDir, testTmpdir } from "./worktree-temp.ts";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { testTmpdir } from "./worktree-temp.ts";
 
 /**
  * Run a test body, then cleanups, without letting teardown erase the primary failure.
@@ -63,7 +63,7 @@ export async function withTempRoot<T>(
   return withPrimaryAwareCleanup(
     () => body(root),
     async () => {
-      await rmWorktreeDir(root);
+      await rm(root, { recursive: true, force: true });
     },
   );
 }

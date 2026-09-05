@@ -1,8 +1,8 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
@@ -35,7 +35,7 @@ let conflictedTemplateRoot: string | undefined;
 let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function conflictedTemplate() {
   conflictedTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
+    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-conflict-template-"));
     conflictedTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
@@ -63,7 +63,7 @@ after(async () => {
 
 async function materializeConflictedRepo() {
   const template = await conflictedTemplate();
-  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
+  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-session-b-"));
   execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], { stdio: "ignore" });
   git(cwd, "config", "user.name", "Merger Test");
   git(cwd, "config", "user.email", "merger@test.local");

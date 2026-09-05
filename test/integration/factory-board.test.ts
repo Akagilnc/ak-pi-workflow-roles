@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * S2 factory board — external behavior at:
  *   1) isolated BoardSnapshot → HTML (no network)
@@ -9,7 +10,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -198,7 +199,7 @@ async function booksWithLedgers(workspace: string): Promise<FactoryBoardBook[]> 
 }
 
 test("board lists title and milestone per ticket; same-number tickets stay in their lanes", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-lanes-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-lanes-"));
   try {
     const books = await booksWithLedgers(workspace);
     const beforeRoles = await treeFingerprint(books[0]!.ledgerDir);
@@ -244,11 +245,12 @@ test("board lists title and milestone per ticket; same-number tickets stay in th
       assert.match(secondChunk, /data-book="roles"/);
     }
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("family parent row aggregates structural counts and expands child trajectories", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-family-"));
   try {
     const books = await booksWithLedgers(workspace);
     const html = await renderFactoryBoardHtml(
@@ -283,11 +285,12 @@ test("family parent row aggregates structural counts and expands child trajector
     assert.equal(planCourt?.["data-has-result"], "true");
     assert.equal(planCourt?.["data-result-status"], "converged");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("zero-run tickets render as pending; blocked badge stacks on non-closed", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-pending-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-pending-"));
   try {
     const books = await booksWithLedgers(workspace);
     const html = await renderFactoryBoardHtml(
@@ -317,11 +320,12 @@ test("zero-run tickets render as pending; blocked badge stacks on non-closed", a
     assert.equal(t130["data-pending"], "false");
     assert.equal(t130["data-blocked-by"] ?? "", "");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("named closed tickets enter the board and remain drillable", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-closed-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-closed-"));
   try {
     const books = await booksWithLedgers(workspace);
     // Add a closed non-family ticket with a run so drill shows trajectory
@@ -376,11 +380,12 @@ test("named closed tickets enter the board and remain drillable", async () => {
       "closed ticket trajectory is drillable",
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("binding or API failure renders loud error — never a silent empty board", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-error-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-error-"));
   try {
     const books = await booksWithLedgers(workspace);
 
@@ -409,6 +414,7 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(apiHtml, "data-lane").length, 0);
     assert.equal(elementsWith(apiHtml, "data-ticket").length, 0);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -544,7 +550,7 @@ test("snapshot adapter fails loudly on missing binding fields and transport erro
 });
 
 test("page write lands outside every ledger and stays read-only on books", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-write-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-write-"));
   try {
     const books = await booksWithLedgers(workspace);
     const before = await Promise.all(books.map((b) => treeFingerprint(b.ledgerDir)));
@@ -572,6 +578,7 @@ test("page write lands outside every ledger and stays read-only on books", async
       /outside|ledger|output/i,
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -602,7 +609,7 @@ test("CLI binding failures write the binding error page and exit nonzero", async
     },
   ] as const;
   for (const row of rows) {
-    const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-binding-"));
+    const workspace = await mkdtemp(join(testTmpdir(), "factory-board-cli-binding-"));
     try {
       const outputPath = join(workspace, "board.html");
       const result = await runFactoryBoardCli(row.args(outputPath));
@@ -616,12 +623,13 @@ test("CLI binding failures write the binding error page and exit nonzero", async
       assert.equal(elementsWith(html, "data-lane").length, 0, row.label);
       assert.equal(elementsWith(html, "data-ticket").length, 0, row.label);
     } finally {
+      await rm(workspace, { recursive: true, force: true });
     }
   }
 });
 
 test("duplicate bookKey bindings fail closed before API and never cross-wire lanes", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-dup-book-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-dup-book-"));
   try {
     const ledgerA = join(workspace, "ledger-a");
     const ledgerB = join(workspace, "ledger-b");
@@ -724,11 +732,12 @@ test("duplicate bookKey bindings fail closed before API and never cross-wire lan
     assert.equal(elementsWith(snapDupHtml, "data-lane").length, 0);
     assert.equal(elementsWith(snapDupHtml, "data-ticket").length, 0);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("nested A→B→C is one rooted whole-family with each ticket rendered once", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-nested-family-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-nested-family-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     for (const n of [10, 11, 12]) {
@@ -786,6 +795,7 @@ test("nested A→B→C is one rooted whole-family with each ticket rendered once
       0,
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -887,7 +897,7 @@ function acceptedCoderFinal(ts: string, costTotal = 0.01, totalTokens = 10): unk
 }
 
 test("S3 four-state is mutually exclusive and decided only by the latest run", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-state-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-state-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1108,11 +1118,12 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
       );
     }
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 last activity projects newest parent/axis content timestamp", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-activity-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-activity-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1168,11 +1179,12 @@ test("S3 last activity projects newest parent/axis content timestamp", async () 
     assert.equal(actLabel["data-last-activity-at"], "2026-08-05T11:30:00.000Z");
     assert.ok(visibleTicketLabel(html, "data-leg-age-label", 40), "visible leg-age label required");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 wallclock: only current latest unaccepted ends at now; historical unaccepted stay capped", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-wall-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-wall-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     // Historical unaccepted: 10:00–10:05 (=300000ms)
@@ -1248,11 +1260,12 @@ test("S3 wallclock: only current latest unaccepted ends at now; historical unacc
     assert.equal(landLabelA["data-landing-cycle-ms"], ticketA["data-landing-cycle-ms"]);
     assert.notEqual(wallLabelA["data-wall-ms"], landLabelA["data-landing-cycle-ms"]);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledger record", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-landing-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-landing-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     // First run 10:00–10:30; second (last ledger) 11:00–11:15.
@@ -1365,11 +1378,12 @@ test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledge
       assert.notEqual(wallL["data-wall-ms"], landL["data-landing-cycle-ms"]);
     }
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 cost/tokens aggregate per station and ticket; axis legs fold into station; sort control present", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-cost-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-cost-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1530,11 +1544,12 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
       [20, 21, 22],
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 board projects no textual conclusion and excludes unlabelled narrative self-report", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-conclusion-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-conclusion-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1620,11 +1635,12 @@ test("S3 board projects no textual conclusion and excludes unlabelled narrative 
     assert.equal(Number(t["data-total-tokens"]), 10);
     assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 production sort: #130 per-ticket burn participates under native #78 family", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-sort-family-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-sort-family-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -1735,11 +1751,12 @@ test("S3 production sort: #130 per-ticket burn participates under native #78 fam
     // Production order above differs because the family key carries #130's nested burn.
     assert.notDeepEqual(desc, [50, 40, 78], "aggregate #130 burn must move family off parent-only order");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-127-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-127-"));
   try {
     const rolesLedger = join(workspace, "ledgers", "roles");
     await cp(fixtureLedger, rolesLedger, { recursive: true });
@@ -1747,6 +1764,10 @@ test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", 
     // Shared S1 fixture keeps later unaccepted review-026 for other contracts; the
     // accepted-after-rejections freeze is the authentic prefix without that later run
     // and without synthetic appends or mutable true-home tail runs.
+    await rm(join(rolesLedger, "issues", "127", "runs", "review-026@ak-roles-127"), {
+      recursive: true,
+      force: true,
+    });
     const now = new Date("2026-08-05T12:00:00.000Z");
     const html = await renderFactoryBoardHtml(
       [{ bookKey: "roles", ledgerDir: rolesLedger }],
@@ -1792,6 +1813,7 @@ test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", 
     const sum = runCosts.reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(Number(t["data-cost-usd"]) - sum) < 1e-9);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -2077,7 +2099,7 @@ test("snapshot adapter carries closedAt and refuses closed issues without it", a
 });
 
 test("production factory-board lifecycle regenerates within refresh boundary and stops", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-refresh-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-refresh-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await writeRunSession(
@@ -2186,6 +2208,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
 
     assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -2282,7 +2305,7 @@ function breadcrumbStepsOf(html: string, issueNumber: number): Array<Record<stri
 }
 
 test("kanban placement totality: every ticket lands in its yamen column or the unknown set", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-place-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-kanban-place-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -2567,11 +2590,12 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       assert.ok(!columnEntryOrder(html, "roles", col).includes("16"), `#16 must not sit in column ${col}`);
     }
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("kanban completed column: family clusters, open-root extraction, closedAt-desc order", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-done-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-kanban-done-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -2666,6 +2690,7 @@ test("kanban completed column: family clusters, open-root extraction, closedAt-d
     // 已完成 column order: closedAt desc (cluster 11:00 → family30 10:00 → single 08:00).
     assert.deepEqual(columnEntryOrder(html, "roles", "done"), ["20", "30", "40"]);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -2819,7 +2844,7 @@ test("fetchBoardSnapshot passes retentionNow through only when supplied", async 
  * (tick by tick) → HTML. Never hand-return a snapshot that already contains closed tickets.
  */
 test("retention tracer: transport→fetch→watch loadView→HTML (window, family clock, drill)", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-retention-tracer-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-retention-tracer-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     // Zero-run issue dirs so the render seam can join every retained ticket.
@@ -2966,11 +2991,12 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
 
     await handle.stop();
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("watch lifecycle faults loadView failures and requires view or loadView", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-watch-fault-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-watch-fault-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
@@ -3000,12 +3026,13 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
       /view or loadView/i,
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown set, read-only", async () => {
   const kanbanFixtureLedger = join(packageRoot, "test/fixtures/factory-board-kanban/ledger");
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-fixture-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-kanban-fixture-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await cp(kanbanFixtureLedger, ledgerDir, { recursive: true });
@@ -3117,6 +3144,7 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
       );
     }
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -3273,7 +3301,7 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
 }
 
 test("kanban page script: per-column sort never moves cards across columns", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-sort-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-kanban-script-sort-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
@@ -3316,11 +3344,12 @@ test("kanban page script: per-column sort never moves cards across columns", asy
     assert.ok(page.columns["pending"]!.children.some((el) => el.getAttribute("data-ticket") === "2"));
     assert.ok(page.columns["court"]!.children.some((el) => el.hasAttribute("data-family")));
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("kanban page script: project and family filters drive lanes, badge count, column counts", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-filter-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-kanban-script-filter-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
@@ -3393,6 +3422,7 @@ test("kanban page script: project and family filters drive lanes, badge count, c
       "1",
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -3409,7 +3439,7 @@ function familySelRebuild(page: KanbanFakePage): void {
 // ---------------------------------------------------------------------------
 
 test("kanban presentation: six resident columns always, empty count 0, other on demand", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-six-cols-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-six-cols-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     // Only a pending ticket — five other resident columns must still appear empty.
@@ -3450,11 +3480,12 @@ test("kanban presentation: six resident columns always, empty count 0, other on 
     }
     assert.ok(!counts.has("other:auditor"), "non-resident column absent when empty");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("kanban presentation: ledger-order breadcrumb collapses, marks return and rejected", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-breadcrumb-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-breadcrumb-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -3548,11 +3579,12 @@ test("kanban presentation: ledger-order breadcrumb collapses, marks return and r
     assert.equal(steps[2]?.["data-return"], "true", "reappearance after another station is a return");
     assert.equal(steps[2]?.["data-rejected"], "false");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("kanban presentation: family options carry mechanical open-child count", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-opt-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-family-opt-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "10"), { recursive: true });
@@ -3584,5 +3616,6 @@ test("kanban presentation: family options carry mechanical open-child count", as
     assert.equal(options[0]?.["data-family-option"], "10");
     assert.equal(options[0]?.["data-child-count"], "2");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });

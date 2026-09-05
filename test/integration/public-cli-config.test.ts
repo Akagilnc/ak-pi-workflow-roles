@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import {
   projectConfigDisplaySeats,
@@ -25,10 +25,11 @@ import {
 } from "../../src/public-cli/config.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-config-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-config-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

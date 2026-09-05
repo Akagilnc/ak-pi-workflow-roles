@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type Context } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -51,7 +51,7 @@ function seedJudgeSubjects(sessionManager: SessionManager): void {
 }
 
 test("judge auditor bare-Pi seam proceeds when subjects are on the books", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-judge-bare-pi-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-judge-bare-pi-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
   let calls = 0;
@@ -82,12 +82,13 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
     assert.equal(decision.status, "pass");
     assert.equal(calls, 1);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a nonexistent path", async () => {
   const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = join(tmpdir(), "ak-missing-run-dir-does-not-exist");
+  process.env.AK_ROLE_RUN_DIR = join(testTmpdir(), "ak-missing-run-dir-does-not-exist");
   let calls = 0;
   try {
     const auditor = createPiJudgeAuditor();
@@ -107,7 +108,7 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
 });
 
 test("judge auditor throws missing-subject when candidate verdict is not on the books", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-judge-missing-subject-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-judge-missing-subject-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
   let calls = 0;
@@ -130,11 +131,12 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
     );
     assert.equal(calls, 0);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("judge auditor spawn carries no projected materials in the user prompt", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-judge-zero-input-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-judge-zero-input-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
   try {
@@ -173,5 +175,6 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
     // user text is the fixed dossier-ready envelope.
     assert.equal(/judge_soul|adjudication_record|proposed_verdict|THE JUDGE LAW|OWNER ASSIGNMENT/.test(userPrompt), false);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

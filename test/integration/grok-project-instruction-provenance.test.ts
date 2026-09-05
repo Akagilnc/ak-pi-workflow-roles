@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * Mid-tier: real git worktree + faux inspect JSON → classify HEAD provenance.
  * Host private-config-active / accept gates stay in unit (existing shortest contracts).
@@ -5,7 +6,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -19,7 +19,7 @@ function git(cwd: string, args: string[]): void {
 }
 
 test("inspectControlledGrok: HEAD match, case-fold, and same-byte symlink leave privateActive empty; dirty, different-byte symlink, untracked stay private", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-head-match-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-match-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);
@@ -84,11 +84,12 @@ process.stdout.write(JSON.stringify({
       `projectInstructions:${localPath}`,
     ].sort());
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("isHeadMatchedProjectInstruction: worktree permission failure stays loud with permission identity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-head-perm-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-perm-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);

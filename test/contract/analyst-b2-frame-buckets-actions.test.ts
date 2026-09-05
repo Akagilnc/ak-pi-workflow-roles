@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #326 analyst-B2 — two-bucket full partition + action board tracer.
  *
@@ -7,7 +8,6 @@
  */
 import assert from "node:assert/strict";
 import { cp, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -161,11 +161,12 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-b2-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-b2-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

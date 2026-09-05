@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #633 abolish one-shot — collector/doctor/notary/inspector resume through the
  * public resume entry: same session principal reopened, each seat settles its
@@ -12,7 +13,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -50,10 +50,11 @@ import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-resume-four-seats-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-resume-four-seats-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

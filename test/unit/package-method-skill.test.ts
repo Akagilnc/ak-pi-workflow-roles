@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #109 package-owned method Skill seam — empty home, no network, exact provenance.
  */
@@ -10,7 +11,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -26,7 +26,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 const originalHome = process.env.HOME;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-empty-home-method-"));
   process.env.HOME = home;
   try {
     // Empty home: no ~/.agents/skills at all.
@@ -94,7 +94,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
 
 test("provenance without immutable upstream commit is rejected", async () => {
   await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-no-commit-"));
+    const tempRoot = await mkdtemp(join(testTmpdir(), "ak-method-no-commit-"));
     try {
       const packageRootTemp = join(tempRoot, "pkg");
       const methodDir = join(packageRootTemp, "resources/methods/tdd");
@@ -112,6 +112,7 @@ test("provenance without immutable upstream commit is rejected", async () => {
         /upstream\.commit/,
       );
     } finally {
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

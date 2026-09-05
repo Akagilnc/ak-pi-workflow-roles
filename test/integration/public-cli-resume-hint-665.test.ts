@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #665 — 429 failure terminal resume hint is seat-uniform.
  * Seam: presentControlledFailure (post-admission). Principal available +
@@ -5,7 +6,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -20,7 +20,7 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 
 test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-665-resume-hint-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-665-resume-hint-"));
   try {
     const runId = "run-665-uniform-429";
     const runDirectory = join(home, "runs", `${runId}@doctor`);
@@ -86,5 +86,6 @@ test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", asyn
       provider: "openai-codex",
     });
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });

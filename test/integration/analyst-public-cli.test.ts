@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
@@ -17,7 +18,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -89,7 +89,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-336-business-"));
+  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-336-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -104,15 +104,17 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
+    await rm(businessRepo, { recursive: true, force: true });
   }
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-336-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-336-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -333,7 +335,7 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
     const before = await snapshotAnalystDir(ledgerHome);
-    const nonGit = await mkdtemp(join(tmpdir(), "analyst-336-nongit-"));
+    const nonGit = await mkdtemp(join(testTmpdir(), "analyst-336-nongit-"));
     const previousCwd = process.cwd();
     process.chdir(nonGit);
     try {

@@ -1,6 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -21,7 +22,6 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -71,10 +71,11 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-judge-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -88,7 +89,7 @@ async function withPhysicalAliasFixture<T>(
     unlinkAlias?: (aliasRoot: string) => Promise<void>;
   },
 ): Promise<T> {
-  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
+  const physicalRoot = await mkdtemp(join(testTmpdir(), "ak-nav-subject-"));
   const aliasRoot = `${physicalRoot}-alias`;
   let aliasCreated = false;
   const mkdirWork =

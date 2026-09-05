@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * Reader face for publisher durable terminal artifacts.
  * T10: parent-directory unique error.<uuid>.json must bind body.runId to the
@@ -5,7 +6,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -14,12 +14,13 @@ import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 async function withTempRunsRoot<T>(
   scenario: (runsRoot: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-run-terminal-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-run-terminal-"));
   try {
     const runsRoot = join(root, "runs");
     await mkdir(runsRoot, { recursive: true });
     return await scenario(runsRoot);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 

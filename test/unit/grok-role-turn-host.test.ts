@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import {
   classifyGrokInspection,
@@ -96,7 +96,7 @@ function canDenyInitializeMeta() {
 }
 
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-accept-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-grok-accept-"));
   try {
     const localRequest = turnRequest({ runDirectory: join(home, "run"), home, agentDir: join(home, "agent") });
     const calls: Array<[string, unknown]> = [];
@@ -132,11 +132,12 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
       _meta: { systemPromptOverride: "law", yoloMode: false },
     }]);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 
 test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-fixer-deny-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-grok-fixer-deny-"));
   try {
     const localRequest = turnRequest({
       runDirectory: join(home, "run"),
@@ -166,11 +167,12 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
     // Presence of the hook file is the external hang signal; do not lock matcher text.
     await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 
 test("grok host records preToolUseDeny false when the host cannot deny", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-grok-nodeny-"));
   try {
     const localRequest = turnRequest({
       runDirectory: join(home, "run"),
@@ -199,6 +201,7 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
     assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
     await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 
@@ -242,7 +245,7 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-non-xai-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-non-xai-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run"), home: join(root, "home"), agentDir: join(root, "agent") });
     const host = createGrokRoleTurnHost({
@@ -269,6 +272,7 @@ test("grok host does not reject a non-xai provider before ACP capabilities", asy
     assert.equal(result.knownFailure, undefined);
     assert.equal(result.code, 0);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -302,7 +306,7 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-serial-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-serial-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     let releaseFirst!: () => void;
@@ -342,11 +346,12 @@ test("grok host serializes concurrent ACP prompts", async () => {
     await Promise.all([first, second]);
     assert.equal(promptCount, 2);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-refusal-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-refusal-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const calls: string[] = [];
@@ -372,11 +377,12 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
     assert.equal(calls.includes("session/close"), false);
     assert.equal(calls.includes("session/cancel"), true);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-retry-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-retry-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const prompts: unknown[] = [];
@@ -404,11 +410,12 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
     assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
     assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-abort-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-abort-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
@@ -461,11 +468,12 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
     // Hang resolver must not be required for loud terminal.
     releasePrompt?.();
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-preabort-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-preabort-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const promptCalls: unknown[] = [];
@@ -502,11 +510,12 @@ test("grok host does not send session/prompt when abortSignal is already aborted
     assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
     assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-drain-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-drain-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const abort = new AbortController();
@@ -553,11 +562,12 @@ test("grok host drains late in-flight prompt rejection after abort wins race", a
     // Rejecting late after abort won race must be safely drained without unhandled rejection
     rejectPrompt?.(new Error("late ACP socket disconnect"));
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-nosub-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-nosub-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
@@ -583,6 +593,7 @@ test("grok host reports typed round closure failure instead of accepting no subm
     assert.deepEqual(await host.executeTurn(local), { code: null, stderr: "", timedOut: false, knownFailure });
     assert.deepEqual(cancels, [["session/cancel", { sessionId: "s1" }]]);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -683,7 +694,7 @@ test("inspect→activation surfaces provenance infrastructure failure without pr
 
 test("grok host enters session/new when inspect akActive is empty but prepared MCP is present", async () => {
   // External packageRoot is injected at prepare, not via Grok-native inspect paths.
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-external-mcp-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-external-mcp-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const methods: string[] = [];
@@ -712,6 +723,7 @@ test("grok host enters session/new when inspect akActive is empty but prepared M
     assert.equal(methods.includes("session/new"), true);
     assert.equal(methods.includes("session/prompt"), true);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -735,7 +747,7 @@ test("grok host rejects ak-config-missing only when prepared MCP servers are abs
 });
 
 test("grok host keeps session/close failure loud after typed round acceptance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-close-boom-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-close-boom-"));
   try {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const connection: GrokAcpConnection = {
@@ -766,5 +778,6 @@ test("grok host keeps session/close failure loud after typed round acceptance", 
         && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

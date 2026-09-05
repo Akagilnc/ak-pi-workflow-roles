@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
  *
@@ -14,7 +15,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -117,10 +117,11 @@ const CASES: readonly InstructionSeatCase[] = [
 ];
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-instruction-seat-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-instruction-seat-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

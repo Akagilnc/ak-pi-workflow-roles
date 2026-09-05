@@ -1,10 +1,10 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #604 acceptance: production CLI home does not follow process.env.HOME.
  * Real entry (runAkRole) + disk observation — mid-size integration seam.
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -17,7 +17,7 @@ const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI_MODULE = new URL("../../src/public-cli/cli.ts", import.meta.url).href;
 
 test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-cli-home-"));
+  const fakeTmpHome = mkdtempSync(join(testTmpdir(), "ak-fake-cli-home-"));
   const previousHome = process.env.HOME;
   try {
     process.env.HOME = fakeTmpHome;

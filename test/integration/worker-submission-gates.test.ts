@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -15,7 +16,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -70,7 +70,7 @@ async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-worker-gate-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-worker-gate-home-"));
   const root = await mkdtemp(join(home, "repo-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
@@ -78,6 +78,7 @@ async function withTempGit<T>(
   try {
     return await fn(root, home);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -167,7 +168,7 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
+    const bare = await mkdtemp(join(testTmpdir(), "ak-worker-gate-bare-"));
     try {
       const gate = bareGate(home);
       gate.arm(root);
@@ -198,6 +199,7 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       }, { seed: false });
     } finally {
+      await rm(bare, { recursive: true, force: true });
     }
   });
 });

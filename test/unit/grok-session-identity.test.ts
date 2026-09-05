@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import type { DurablePrincipalAuthority } from "../../src/host-contracts.ts";
 import { createGrokSessionIdentityAuthority } from "../../src/grok/session-identity.ts";
 
 test("Grok ACP session binding persists through the durable-principal authority", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-session-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-session-"));
   try {
     const principal = {};
     const durable: DurablePrincipalAuthority = {
@@ -24,5 +24,6 @@ test("Grok ACP session binding persists through the durable-principal authority"
     await identity.bind(principal, "acp-s1");
     assert.equal(await identity.load(principal), "acp-s1");
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

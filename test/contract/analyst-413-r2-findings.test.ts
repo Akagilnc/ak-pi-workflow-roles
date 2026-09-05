@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #413 r2 finding contracts (U1 + U3 counter-evidence).
  *
@@ -17,7 +18,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -37,7 +37,7 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 const ABSENT_METRIC = { status: "absent" as const };
 
 function withTempLedgerHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "analyst-413r2-home-"));
+  const home = mkdtempSync(join(testTmpdir(), "analyst-413r2-home-"));
   mkdirSync(join(home, ".ak-roles", "analyst"), { recursive: true });
   return home;
 }
@@ -84,6 +84,7 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
     const page = await readAnalystLibraryIndexPage(join(home, ".ak-roles"));
     assert.deepEqual(page?.rows, []);
   } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -103,14 +104,14 @@ test("U3: isSyntheticAnalystBookKey — root:<absolute path> is synthetic; real 
 const RUN_ID = "019ff000-9001-7000-8000-0000000009a1";
 
 test("U3: real book basename root:foo keeps its book scope through cohort cache-miss recompute", async () => {
-  const home = await mkdtemp(join(tmpdir(), "analyst-413r2-e2e-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-413r2-e2e-"));
   // Owned immediately after allocation so a later repoParent failure still deletes home.
   let repoParent = "";
   await withPrimaryAwareCleanup(
     async () => {
       // Real Git repository whose book key (common-dir host basename) is literally root:foo.
       // Allocated inside the cleanup boundary so failure still deletes home.
-      repoParent = mkdtempSync(join(tmpdir(), "analyst-413r2-repos-"));
+      repoParent = mkdtempSync(join(testTmpdir(), "analyst-413r2-repos-"));
       const ledgerHome = join(home, ".ak-roles");
       const repo = join(repoParent, "root:foo");
       mkdirSync(repo, { recursive: true });

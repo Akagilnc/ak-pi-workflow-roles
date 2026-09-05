@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -17,7 +17,7 @@ async function withRelay(
   handleUpstream: UpstreamHandler,
   run: (child: ReturnType<typeof spawn>, replies: AsyncIterator<string>) => Promise<void>,
 ): Promise<{ exitCode: number | null }> {
-  const dir = await mkdtemp(join(tmpdir(), "ak-mcp-relay-"));
+  const dir = await mkdtemp(join(testTmpdir(), "ak-mcp-relay-"));
   const socketPath = join(dir, "upstream.sock");
   const token = "relay-token";
   const server = createServer((socket) => {

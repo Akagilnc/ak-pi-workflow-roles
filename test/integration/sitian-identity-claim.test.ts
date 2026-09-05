@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #648 — same-identity concurrent writers must not duplicate canonical rows.
  * One platform-neutral two-process mainline: real appendSitianRecord entry →
@@ -7,7 +8,6 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
@@ -41,7 +41,7 @@ async function settleSpawnedChild(child: ChildProcess): Promise<void> {
 async function withHermeticLedgerRoot<T>(
   run: (ctx: { home: string; cwd: string }) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "sitian-identity-claim-"));
+  const root = await mkdtemp(join(testTmpdir(), "sitian-identity-claim-"));
   return withPrimaryAwareCleanup(
     async () => {
       const home = join(root, "home");

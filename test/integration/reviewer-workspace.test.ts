@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { createReviewerWorkspaceOwner } from "../../src/reviewer-workspace.ts";
 
@@ -12,7 +12,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function repositoryFixture() {
-  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-workspace-test-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-reviewer-workspace-test-"));
   git(root, "init");
   git(root, "config", "user.name", "Reviewer Test");
   git(root, "config", "user.email", "reviewer@example.invalid");

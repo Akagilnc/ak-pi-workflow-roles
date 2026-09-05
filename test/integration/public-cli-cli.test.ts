@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -34,10 +34,11 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-cli-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

@@ -58,10 +58,8 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  // Pin under /tmp (not os.tmpdir()): Linux CI tmpdir is /tmp, so a flat bin at
-  // /tmp/<id>/main.js makes naive join(bin,"..","..") === "/" and host-pi link
-  // attempts mkdir('/node_modules/...'). macOS os.tmpdir() is deeper and hides
-  // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
+  // System tmpdir isolation (outside worktree): shallow bin path must not resolve
+  // into the package tree or /. r12 forbids external deletes — create-and-abandon.
   const binDir = await mkdtemp(join(tmpdir(), "analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
   const project = await mkdtemp(join(tmpdir(), "analyst-bundle-cwd-"));
@@ -111,6 +109,7 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
       assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
       assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
     } finally {
+      await rm(project, { recursive: true, force: true });
     }
   });
 });

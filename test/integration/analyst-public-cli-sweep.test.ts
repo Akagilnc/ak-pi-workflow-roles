@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #337 analyst public CLI sweep — caller-invoked attach path (ADR 0052 / ADR 0068).
  *
@@ -17,7 +18,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -78,9 +78,9 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-337-business-"));
-  const home = await mkdtemp(join(tmpdir(), "analyst-337-home-"));
-  const attachDir = await mkdtemp(join(tmpdir(), "analyst-337-attach-"));
+  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-337-business-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-337-home-"));
+  const attachDir = await mkdtemp(join(testTmpdir(), "analyst-337-attach-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -100,6 +100,7 @@ async function withSweepFixture<T>(
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

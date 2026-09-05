@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -19,10 +20,10 @@ import {
   realMachineAgentDir,
   realMachineHome,
 } from "./test-agent-dir-guard.ts";
-import { rmWorktreeDir, rmWorktreeDirSync, testTmpdir } from "./worktree-temp.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { testTmpdir, WORKTREE_TEST_TMP } from "./worktree-temp.ts";
 import { promisify } from "node:util";
 
 import {
@@ -206,7 +207,7 @@ export async function packIsolatedPackage(
       files: entry.files,
     };
   } finally {
-    await rmWorktreeDir(root);
+    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -269,13 +270,41 @@ const FIXTURE_CACHE_ROOT = resolve(
   "ak-pi-workflow-roles-cold-fixtures",
 );
 
+let fixtureCacheCleanupRegistered = false;
+function registerFixtureCacheCleanup(): void {
+  if (fixtureCacheCleanupRegistered) return;
+  fixtureCacheCleanupRegistered = true;
+  process.on("exit", () => {
+    try {
+      rmSync(FIXTURE_CACHE_ROOT, { recursive: true, force: true });
+      try {
+        rmdirSync(WORKTREE_TEST_TMP);
+      } catch {
+        // other fixtures may still live under .test-tmp
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      try {
+        process.stderr.write(
+          `[pi-test-harness] failed to remove pack fixture cache ${FIXTURE_CACHE_ROOT}: ${detail}\n`,
+        );
+      } catch {
+        // stderr may already be closed
+      }
+      if (typeof process.exitCode !== "number" || process.exitCode === 0) {
+        process.exitCode = 1;
+      }
+    }
+  });
+}
+
 async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
   const started = Date.now();
   while (true) {
     try {
       await mkdir(lockDir);
       return async () => {
-        await rmWorktreeDir(lockDir);
+        await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -311,6 +340,7 @@ let sharedPackMemo: Promise<SharedPackFixture> | undefined;
  * Cross-process safe via a fingerprint-keyed cache under worktree .test-tmp (#685).
  */
 export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
+  registerFixtureCacheCleanup();
   sharedPackMemo ??= (async () => {
     const provenance = constructionProvenance();
     const cacheDir = resolve(FIXTURE_CACHE_ROOT, provenance.fingerprint, "pack");
@@ -402,7 +432,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
           cacheDir,
         };
       } finally {
-        await rmWorktreeDir(materialRoot);
+        await rm(materialRoot, { recursive: true, force: true });
       }
     } finally {
       await release();
@@ -493,7 +523,7 @@ export async function withHermeticHome<T>(
       else process.env.PI_OFFLINE = previousOffline;
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      await rmWorktreeDir(home);
+      await rm(home, { recursive: true, force: true });
     }
   });
 }
@@ -562,7 +592,7 @@ export function createTempPackageHomeLedger(input: {
     sessionDirectory,
     sessionFile,
     dispose() {
-      rmWorktreeDirSync(home);
+      rmSync(home, { recursive: true, force: true });
     },
   };
 }
@@ -995,7 +1025,7 @@ export async function withInstitutionalProviderFixture<T>(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rmWorktreeDir(tempAgentDir);
+    await rm(tempAgentDir, { recursive: true, force: true });
   }
 }
 

@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #635 — seat self-ticket from public CLI true entry (no --ticket / no frontmatter).
  * Asserts typed ticketNumber on admitted-request.json + invocation.json only.
@@ -5,7 +6,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -50,7 +50,7 @@ import {
 async function withTempHome(
   run: (home: string) => Promise<void>,
 ): Promise<void> {
-  const home = await mkdtemp(join(tmpdir(), "ak-seat-self-ticket-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-seat-self-ticket-"));
   const binDir = join(home, "bin");
   const priorPath = process.env.PATH;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
