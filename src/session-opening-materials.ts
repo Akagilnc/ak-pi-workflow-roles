@@ -18,11 +18,13 @@ import {
 } from "./packaged-role-registry.ts";
 
 /**
- * Resolve the install package root from this module's location.
+ * Resolve the install package root from a module URL.
  * Works for src/ layout and for bundled artifacts under dist/ (walk up until
  * package.json + souls/ — the shipped material tree).
+ * Sole package-root walk for deferred loaders that lack an injected packageRoot
+ * (#443 materials; #580/#636 runtime-constructed imports).
  */
-function resolvePackageRootDir(moduleUrl: string = import.meta.url): string {
+export function resolvePackageRootDir(moduleUrl: string = import.meta.url): string {
   let dir = dirname(fileURLToPath(moduleUrl));
   for (let i = 0; i < 8; i += 1) {
     if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "souls"))) {

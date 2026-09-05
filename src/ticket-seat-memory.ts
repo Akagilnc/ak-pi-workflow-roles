@@ -9,8 +9,8 @@
  */
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
@@ -19,28 +19,20 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "./host-contracts.ts";
+import { resolvePackageRootDir } from "./session-opening-materials.ts";
 
 type CreateRecordSessionOpen = typeof import("./archivist-record-entry.ts").createRecordSessionOpen;
 
 /**
  * Resolve createRecordSessionOpen without a static graph edge into the public
- * CLI bundle (same deferred-load pattern as load-production-grok-host / #580).
+ * CLI bundle. Reuses sole package-root walk + built/source two-path probe
+ * (load-production-grok-host / #580).
  */
 async function loadCreateRecordSessionOpen(): Promise<CreateRecordSessionOpen> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  // Source/tsx: sibling under src/. Bundled public bin: dist/public-cli/main.js → ../.
-  const candidates = [
-    join(here, "archivist-record-entry.ts"),
-    join(here, "archivist-record-entry.js"),
-    join(here, "..", "archivist-record-entry.js"),
-    join(here, "..", "archivist-record-entry.ts"),
-  ];
-  const target = candidates.find((path) => existsSync(path));
-  if (target === undefined) {
-    throw new Error(
-      `archivist record entry module not found from ${here} (ticket-seat memory open)`,
-    );
-  }
+  const packageRoot = resolvePackageRootDir(import.meta.url);
+  const built = join(packageRoot, "dist/archivist-record-entry.js");
+  const source = join(packageRoot, "src/archivist-record-entry.ts");
+  const target = existsSync(built) ? built : source;
   const mod = (await import(pathToFileURL(target).href)) as {
     createRecordSessionOpen: CreateRecordSessionOpen;
   };
