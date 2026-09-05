@@ -498,15 +498,21 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
   if (leaves.length === 1) {
     return primary;
   }
-  const concurrentFailures = leaves.slice(1).map((leaf) => {
-    const secondary = projectThrownFailureLeaf(leaf);
-    return {
-      cause: secondary.cause,
-      diagnostic: secondary.diagnostic,
-      ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
-      ...(secondary.details === undefined ? {} : { details: secondary.details }),
-    };
-  });
+  const priorConcurrent = Array.isArray(primary.details?.concurrentFailures)
+    ? primary.details.concurrentFailures
+    : [];
+  const concurrentFailures = [
+    ...priorConcurrent,
+    ...leaves.slice(1).map((leaf) => {
+      const secondary = projectThrownFailureLeaf(leaf);
+      return {
+        cause: secondary.cause,
+        diagnostic: secondary.diagnostic,
+        ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
+        ...(secondary.details === undefined ? {} : { details: secondary.details }),
+      };
+    }),
+  ];
   return {
     cause: primary.cause,
     diagnostic: primary.diagnostic,
