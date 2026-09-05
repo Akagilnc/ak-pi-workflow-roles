@@ -34,7 +34,9 @@ async function seedReviewerFixture(fixture: string): Promise<void> {
 }
 
 test("installed npm tarball runs public ak-role Reviewer→Judge chain", async () => {
+  const priorCi = process.env.CI;
   process.env.CI = "true";
+  try {
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
     const hermesBin = join(home, "bin");
     await installHermesFixture(hermesBin);
@@ -303,6 +305,10 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
       else process.env.PATH = priorPath;
     }
   });
+  } finally {
+    if (priorCi === undefined) delete process.env.CI;
+    else process.env.CI = priorCi;
+  }
 });
 
 // 尺②同根收拢（#420 类一）：原「public CLI Spec discovery tracer」三条冷装跑与

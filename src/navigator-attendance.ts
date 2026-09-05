@@ -949,17 +949,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       };
       // Dispose during post-role grace must ignore late completion (ADR 0052 / #106 / #675).
       // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
+      // Only the disposed bit is typed authority to drop — never match free-text Error.message.
       if (disposed) return;
       try {
         await options.onEvent(event, report);
       } catch (error) {
-        // Session already replaced/disposed under nested public path latency.
-        if (
-          disposed
-          || (error instanceof Error && /stale after session replacement or reload/.test(error.message))
-        ) {
-          return;
-        }
+        // Race: dispose landed between the check and onEvent; drop only then.
+        if (disposed) return;
         throw error;
       }
       preparation = undefined;

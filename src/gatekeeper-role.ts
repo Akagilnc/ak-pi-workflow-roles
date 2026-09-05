@@ -383,8 +383,15 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     const projected = projectOfficerTerminal(officer, summoned);
     try {
       await bookDirectOfficerReceipt(options.context, officer, projected);
-    } catch {
-      // Parent-side gate projection is best-effort; never wash a lawful officer result.
+    } catch (error) {
+      // Parent-side nested volume is Terminal/Analyst contract (#478); book failure is
+      // typed transport failure — never wash a durable-evidence miss as officer pass.
+      return {
+        status: "transport_failure",
+        stage: officer,
+        reason: `parent gate receipt book failed: ${failureReason(error)}`,
+        submission: projected,
+      };
     }
     return projected;
   } catch (error) {

@@ -354,16 +354,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
           restoreGate();
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // #675 nested public path may add rebind prepares on the same configured model.
-        // Unsupported config must still never fall back to a different model id.
-        assert.ok(
-          modelRequests.length >= 3 && modelRequests.length <= 8,
-          `model request count out of band: ${modelRequests.length} ${JSON.stringify(modelRequests)}`,
-        );
-        assert.ok(
-          modelRequests.every((id) => id === "openai-codex/gpt-5.6-luna"),
-          `unsupported configuration must not fall back or dispatch another model: ${JSON.stringify(modelRequests)}`,
-        );
+        assert.deepEqual(modelRequests, [
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+        ], "unsupported configuration must not fall back or dispatch another model");
         assert.equal(lifecycle[0]?.event.disposition, "recommendation");
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");

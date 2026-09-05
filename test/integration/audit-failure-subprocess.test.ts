@@ -483,10 +483,7 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
       closureDetails: Record<string, unknown>;
     };
   };
-  assert.ok(
-    evidence.navigatorCalls >= 1 && evidence.navigatorCalls <= 6,
-    `navigator calls out of band: ${evidence.navigatorCalls}`,
-  );
+  assert.equal(evidence.navigatorCalls, 4);
   assert.equal(evidence.navigator.settlementKind, "accepted");
   const timestamp = (value: string, label: string) => {
     const parsed = Date.parse(value);
