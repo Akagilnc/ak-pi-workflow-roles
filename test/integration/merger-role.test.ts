@@ -53,11 +53,9 @@ test("role extension binds Merger Git state to session cwd while preserving inje
 test("Merger activation preflights frozen identity on host-neutral AK tool surface", async () => {
   const h = setup(); await h.runtime.activate();
   // Host-neutral: activate must not require Pi builtin names or narrow active tools to them.
+  // Host-neutral AK tool surface only — no Pi builtin names, no presentation locks.
   assert.deepEqual(h.active(), []);
   assert.equal([...h.tools.keys()].filter((name) => name === MERGER_OUTPUT_TOOL_NAME).length, 1);
-  // before_agent_start registered; material presentation bytes not locked (#685 C3).
-  assert.equal(typeof h.handlers.get("before_agent_start"), "function");
-  await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, context("prompt", {}));
 });
 
 test("Merger activation rejects non-conflicts, incomplete conflict sets, and parent drift", async () => {

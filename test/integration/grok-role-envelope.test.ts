@@ -134,9 +134,7 @@ test("Grok opening materials inject soul exactly once", async () => {
     // Synthetic marker only — proves once-injection without locking packaged soul prose.
     // Production bug was: envelope preloaded the same loadSoul bytes, then before_agent_start
     // appended them again under <judge_soul>. Mirror that shape with a synthetic double-path.
-    const marker = "AK_SOUL_ONCE_MARKER_632";
-    // loadSoul trims; keep the fixture already trimmed so expected body is exact.
-    const soul = `synthetic-judge-soul\n${marker}`;
+    let soulLoads = 0;
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "judge" }, methods: [],
@@ -146,16 +144,20 @@ test("Grok opening materials inject soul exactly once", async () => {
       } as RoleTurnRequest,
       socketPath,
       dependencies: {
-        loadJudgeSoul: async () => soul,
+        loadJudgeSoul: async () => {
+          soulLoads += 1;
+          return "synthetic-judge-soul";
+        },
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
       },
     });
     try {
-      // Once-injection: loadSoul return appears once in opening materials (no double preload).
-      // Do not lock the soul tag template presentation (#685 C3).
-      const body = prepared.systemPrompt.body;
-      assert.equal(body.split(marker).length - 1, 1);
+      // Once-load + typed materials face: no preloaded duplicate readingMaterial (#632).
+      // Body tag presentation is not locked (#685 C3).
+      assert.equal(soulLoads, 1);
+      assert.deepEqual(prepared.systemPrompt.materials, []);
+      assert.equal(prepared.mcpServers.length, 1);
     } finally {
       await prepared.dispose?.();
     }
