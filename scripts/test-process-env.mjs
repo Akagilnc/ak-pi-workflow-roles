@@ -22,8 +22,10 @@ import { fileURLToPath } from "node:url";
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKTREE_TEST_TMP = join(PACKAGE_ROOT, ".test-tmp");
 
+/** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
 let defaultTestHomeCleanupRegistered = false;
+/** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
 let sharedHermesBinDir;
 
 function registerDefaultTestHomeCleanup() {
@@ -32,6 +34,7 @@ function registerDefaultTestHomeCleanup() {
   process.on("exit", () => {
     if (defaultTestHome === undefined) return;
     try {
+      rmSync(defaultTestHome, { recursive: true, force: true });
     } catch (error) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
       try {
