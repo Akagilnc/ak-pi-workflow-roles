@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { COLLECTOR_ELIGIBILITY_MS } from "./collector-evidence.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
@@ -15,31 +16,77 @@ export const collectorWaitArgsSchema = Type.Object({
 }, { additionalProperties: false });
 
 /**
- * #641 chain①: the collector LLM does the splitting/classification (#245:
- * 他自己就是llm为什么不能读不能拆). Findings are submitted as pointer refs into
- * the stored evidence; the runtime enriches each with the machine pointer
- * (repo/PR/comment id/url/author/kind/时间) and validates resolvability.
- * Category is a short LLM classification label, never a body transcription.
+ * #676 A: role-decided target bind. The model judges task materials and submits
+ * the chosen PR and/or issue identity; runtime only performs online association
+ * for the role-chosen ticket — never scrapes task text to lock a target.
  */
-export const collectorFindingArgsSchema = Type.Object({
-  evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
-  category: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "该 finding 的简短归类标签；需要头部之外的正文时先用 ak_collector_read 开卷再判读，不得誊写评论正文" })),
-}, { additionalProperties: false });
-
-export const collectorOutputBaseSchema = Type.Object({
-  findings: Type.Optional(Type.Array(collectorFindingArgsSchema, {
-    description: "本次收集到的逐条 findings；零 finding 的模板通知不得进入。正常完工无 finding 时省略。",
+export const collectorBindTargetArgsSchema = Type.Object({
+  prNumber: Type.Optional(Type.Unknown({
+    description: "角色判定的本仓 PR 号（正整数）。与 issueNumber 二选一或同指唯一目标。形状指引，非 schema 闸。",
   })),
-}, { additionalProperties: true, description: "正常完工提交空对象 {}；仅在基础设施真实失败时才填写 infrastructureFailure，无失败时必须省略该字段。" });
+  issueNumber: Type.Optional(Type.Unknown({
+    description: "角色判定的本仓 issue 号（正整数）；runtime 经线上关联解析唯一 PR。形状指引，非 schema 闸。",
+  })),
+}, { additionalProperties: true });
+
+/**
+ * #641 chain① / #676 C / ADR 0057: nested finding item declarations for model
+ * guidance. Host must not pure-shape-reject the envelope (第 0 条). Runtime binds
+ * resolvable evidence pointers only; unprojected content stays distinguishable.
+ */
+const collectorFindingItemDeclaration = (() => {
+  // Nested declarations for model guidance only — open required so host cannot
+  // pure-shape-reject missing optional fields (第 0 条 / ADR 0057 / #676 C).
+  const item = Type.Object(
+    {
+      evidenceId: Type.Unknown({
+        description: "observe 返回的材料指针（必填语义）",
+      }),
+      category: Type.Unknown({
+        description: "简短归类标签，不是摘要",
+      }),
+      summary: Type.Unknown({
+        description: "哪个 bot、什么问题的摘要；不誊抄正文",
+      }),
+    },
+    {
+      additionalProperties: true,
+      description:
+        "单条 finding 指针：evidenceId + 可选 category/summary。形状指引，非 schema 闸。",
+    },
+  );
+  (item as unknown as { required: string[] }).required = [];
+  return item;
+})();
+
+/**
+ * Field declarations + descriptions are guidance for the model — host must not
+ * pure-shape-reject the envelope (第 0 条 / ADR 0057).
+ */
+export const collectorOutputBaseSchema = openToolObject(
+  Type.Object({
+    // No root type:array — host must not shape-reject non-array findings (#676 C).
+    // Nested item declarations ride `items` for registration preservation (ADR 0057).
+    findings: Type.Unsafe({
+      description:
+        "本次收集到的逐条 findings（指针数组为规范形）。零 finding 的模板通知不得进入；正常完工无 finding 时省略。形状指引，非 schema 闸。",
+      items: collectorFindingItemDeclaration,
+    }),
+    unfinishedReasons: Type.Unknown({
+      description:
+        "未完成原因字符串数组（额度/故障/等待届满等现场依据）；不得把未完成表述为无问题。无可报告时省略。形状指引，非 schema 闸。",
+    }),
+  }),
+);
 
 /** Runtime owns the observed evidence; the model submits findings and signals sole-final submission. */
 export const collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
   collectorOutputBaseSchema,
 );
-(collectorOutputArgsSchema as unknown as { required: string[] }).required = [];
 
 export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;
 export type CollectorReadArgs = Static<typeof collectorReadArgsSchema>;
 export type CollectorWaitArgs = Static<typeof collectorWaitArgsSchema>;
+export type CollectorBindTargetArgs = Static<typeof collectorBindTargetArgsSchema>;
 export type CollectorOutputArgs = Static<typeof collectorOutputArgsSchema>;

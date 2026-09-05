@@ -29,13 +29,14 @@ import {
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
-  COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
   type CollectorRepository,
 } from "../collector-config.ts";
+import { resolveCollectorTarget } from "../collector-target.ts";
+import { ownerRepoFromGitHubRemoteUrl } from "./github-remote.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -174,7 +175,8 @@ export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "collector";
-  readonly prNumber: number;
+  /** Bound at admission when explicit/--pr or unique head/commit; otherwise role binds. */
+  readonly prNumber?: number;
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
   readonly manifestDigest: string;
@@ -665,7 +667,8 @@ export type ParseFixerArgvResult = {
 };
 
 export type ParseCollectorArgvResult = {
-  prNumber: number;
+  /** Explicit --pr when provided; admission resolves from context when absent (#676 D1). */
+  prNumber?: number;
   instruction: string;
   attachmentPaths: string[];
   project?: string;
@@ -1687,10 +1690,11 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
     }
     positional.push(token);
   }
-  // Unconditional required (e.g. --pr) from typed table via shared consumer (#342).
+  // Unconditional required from typed table via shared consumer (#342).
+  // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
   options.assertRequired();
   return {
-    prNumber: prNumber!,
+    ...(prNumber === undefined ? {} : { prNumber }),
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
@@ -1702,6 +1706,7 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
 /**
  * Resolve owner/repo from the project's `origin` remote (github.com only).
  * Supports https and SSH GitHub URL shapes; never scrapes instruction prose.
+ * Missing origin / non-github remote → usage. Git execution failure → true cause (exit 1).
  */
 export function resolveGitHubRemoteRepository(
   projectRoot: string,
@@ -1714,10 +1719,16 @@ export function resolveGitHubRemoteRepository(
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   } catch (error) {
-    throw new CliUsageError(
-      "collector requires a github.com origin remote or an explicit --repo owner/repo",
-      { cause: error },
-    );
+    // git remote get-url exit 2 = no such remote; other failures keep true cause.
+    if (isGitRemoteMissing(error)) {
+      throw new CliUsageError(
+        "collector requires a github.com origin remote or an explicit --repo owner/repo",
+        { cause: error },
+      );
+    }
+    throw new Error("collector git failed: cannot read origin remote URL", {
+      cause: error instanceof Error ? error : new Error(String(error)),
+    });
   }
   if (remoteUrl.length === 0) {
     throw new CliUsageError(
@@ -1739,44 +1750,22 @@ export function resolveGitHubRemoteRepository(
   }
 }
 
-function ownerRepoFromGitHubRemoteUrl(remoteUrl: string): string | undefined {
-  const trimmed = remoteUrl.trim();
-  // git@github.com:owner/repo.git — exact owner/repo identity only.
-  const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
-  if (scp) {
-    return `${scp[1]}/${stripGitSuffix(scp[2]!)}`;
-  }
-  // ssh://git@github.com/owner/repo(.git) — exact owner/repo identity only.
-  const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(
-    trimmed,
-  );
-  if (ssh) {
-    return `${ssh[1]}/${stripGitSuffix(ssh[2]!)}`;
-  }
-  // https://github.com/owner/repo(.git) and git://github.com/... — exact two-segment path.
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return undefined;
-  }
-  if (!/^github\.com$/i.test(parsed.hostname)) return undefined;
-  // Non-identity URL material (query/hash/extra path) is not a repository remote.
-  if (parsed.search !== "" || parsed.hash !== "") return undefined;
-  const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
-  if (parts.length !== 2) return undefined;
-  return `${parts[0]}/${stripGitSuffix(parts[1]!)}`;
-}
-
-function stripGitSuffix(name: string): string {
-  return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
+/**
+ * git remote get-url: exit 2 = no such remote on common git (missing config).
+ * Other statuses keep true cause — do not broaden into usage (#676 B).
+ */
+function isGitRemoteMissing(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return status === 2;
 }
 
 export type AdmitCollectorInvocationOptions = {
   home: string;
   principalAuthority: DurablePrincipalAuthority;
   cwd: string;
-  prNumber: number;
+  /** Explicit PR when provided; resolved from context when absent (#676 D1). */
+  prNumber?: number;
   instruction?: string;
   attachmentPaths?: readonly string[];
   project?: string;
@@ -1791,8 +1780,8 @@ export type AdmitCollectorInvocationOptions = {
 
 /**
  * Admit a Collector Role run: assemble the retained leg manifest from typed
- * declarations, resolve repository identity, and place the session under #78.
- * Does not preflight PR/author existence against GitHub.
+ * declarations, resolve repository + PR target (#676 D1), and place the session under #78.
+ * Explicit PR is not preflighted for existence; context resolution uses online association.
  */
 export async function admitCollectorInvocation(
   options: AdmitCollectorInvocationOptions,
@@ -1800,12 +1789,14 @@ export async function admitCollectorInvocation(
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
-  let prNumber: number;
-  try {
-    prNumber = parseCollectorPrNumber(options.prNumber);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+  let explicitPrNumber: number | undefined;
+  if (options.prNumber !== undefined) {
+    try {
+      explicitPrNumber = parseCollectorPrNumber(options.prNumber);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new CliUsageError(detail, { cause: error });
+    }
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
@@ -1852,16 +1843,25 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
+  // #676 A: freeze task materials BEFORE target resolution so the role receives
+  // real instruction + attachments. Admission binds only explicit --pr or unique
+  // head/commit association — task-text scrape is not a target lock.
   const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
+  const instruction = options.instruction ?? "";
+  const instructionEmpty = instruction.trim() === "";
+
+  const target = await resolveCollectorTarget({
+    projectRoot,
+    repository,
+    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
+  });
+  const prNumber = target.kind === "bound" ? target.prNumber : undefined;
 
   let requestManifestPath: string | undefined;
   if (manifestCanonicalJson !== undefined) {
     requestManifestPath = join(runDirectory, "request-manifest.json");
     await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
   }
-
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
   const admitted = {
     role: "collector" as const,
     runId,
@@ -1871,7 +1871,7 @@ export async function admitCollectorInvocation(
     principal,
     instruction,
     instructionEmpty,
-    prNumber,
+    ...(prNumber === undefined ? {} : { prNumber }),
     repository: repository.canonical,
     repositoryDisplay: repository.display,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
@@ -1902,7 +1902,7 @@ export async function admitCollectorInvocation(
     runDirectory,
     principal,
     admittedRequestPath,
-    prNumber,
+    ...(prNumber === undefined ? {} : { prNumber }),
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
@@ -1910,15 +1910,16 @@ export async function admitCollectorInvocation(
 }
 
 /**
- * Collector always consumes the fixed packaged kickoff (one-shot observation).
- * Optional public instruction is retained only in the admitted request.
+ * #676 A: Collector consumes the real call task + frozen attachments so the role
+ * can identify issue/PR from materials via ak_collector_bind_target. Explicit --pr
+ * still wins at admission; unique head/commit association also binds. No fixed
+ * kickoff rewrite of the caller task; no mechanical task-text target lock.
  */
 export function buildCollectorTransportPrompt(
-  _admitted: AdmittedCollectorInvocation,
+  admitted: AdmittedCollectorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  // Exact historical fixed kickoff bytes (one-shot observation).
-  return appendEngineSessionMaterial([COLLECTOR_FIXED_KICKOFF], engineMaterial).join("\n");
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */

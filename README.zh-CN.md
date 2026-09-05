@@ -84,8 +84,9 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
 ak-role reviewer --base main "Review the branch."
 
-# 通进司——GitHub PR 收证
-ak-role collector --pr 42 --repo owner/repository
+# 通进司——GitHub PR 收证（显式 --pr、分支/HEAD 唯一关联，或角色从材料 bind-target）
+ak-role collector --pr 42 --repo owner/repository "为所指 issue 收证。"
+ak-role collector --repo owner/repository "为 #42 收证。"
 
 # 修内司——缮修所指 findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

@@ -138,6 +138,7 @@ import {
 } from "./registry.ts";
 import {
   formatCliDiagnostic,
+  formatErrorCauseDetail,
   presentStructuralRejection,
 } from "./settlement.ts";
 import type { TerminalResult } from "./terminal.ts";
@@ -1548,11 +1549,19 @@ export async function runAkRole(
       return { exitCode: 2 };
     }
     // Unrecognized outer failure: retain actual name/message identity (no wash).
+    // #676 B: cause (HTTP body/headers, git stderr, nested Error) must reach the
+    // caller via the same formatErrorCauseDetail face as structural rejection.
     if (error instanceof Error) {
-      const label =
+      let label =
         error.name !== "" && error.name !== "Error"
           ? `${error.name}: ${error.message}`
           : error.message;
+      if (error.cause !== undefined) {
+        const detail = formatErrorCauseDetail(error.cause);
+        if (detail.trim().length > 0) {
+          label = `${label || error.name || "unrecognized exception"}; cause: ${detail}`;
+        }
+      }
       io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
       return { exitCode: 1 };
     }

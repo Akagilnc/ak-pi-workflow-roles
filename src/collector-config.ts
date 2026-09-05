@@ -4,7 +4,6 @@ import { readFile } from "node:fs/promises";
 export const COLLECTOR_HOST = "github.com" as const;
 export const COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 export const COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-export const COLLECTOR_FIXED_KICKOFF = "采集目标已受理，本局开始。";
 
 export type CollectorRepository = {
   display: string;

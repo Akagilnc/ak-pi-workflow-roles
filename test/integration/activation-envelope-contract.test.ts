@@ -298,36 +298,22 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
 }
 
 test("packaged terminating tools expose the provider-open registration inventory", async () => {
+  // ADR 0057 / #676 D: prove real registration boundary — unique open terminating tool,
+  // field declarations + semantic descriptions survive host adapter. Do NOT freeze a
+  // hand-copied parallel field roster (exact set assertions wash legitimate new fields).
   assert.deepEqual(
     new Set(PACKAGED_ROLE_REGISTRY.map(({ outputTool }) => outputTool)),
     new Set(TERMINATING_TOOL_NAMES),
     "packaged roles and canonical terminating tools must describe the same inventory",
   );
 
-  const declaredFields = (role: string): readonly string[] => {
-    switch (role) {
-      case "coder": return ["status", "report", "remainingScope", "reason", "infrastructureFailure"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason", "infrastructureFailure"];
-      case "reviewer": return ["status", "diagnostic", "amendments", "infrastructureFailure"];
-      case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate", "infrastructureFailure"];
-      case "collector": return ["findings", "infrastructureFailure"];
-      case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
-      case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
-      case "notary": return ["status", "findings", "reason", "infrastructureFailure"];
-      case "countersign": return ["countersignStatus", "fix", "note", "evidence", "decisionGate", "infrastructureFailure"];
-      case "gleaner-left": return ["status", "findings", "infrastructureFailure"];
-      case "inspector": return ["status", "findings", "reason", "infrastructureFailure"];
-      case "gatekeeper": return ["status", "officer", "findings", "infrastructureFailure"];
-      case "navigator": return ["status", "candidates", "infrastructureFailure"];
-      default: throw new Error(`unexpected packaged role ${role}`);
-    }
-  };
   type Schema = {
     type?: unknown;
     anyOf?: Schema[];
     oneOf?: unknown;
     required?: unknown;
     additionalProperties?: unknown;
+    description?: unknown;
     properties?: Record<string, Schema & { description?: unknown; items?: Schema }>;
     items?: Schema;
   };
@@ -370,21 +356,49 @@ test("packaged terminating tools expose the provider-open registration inventory
         assert.equal(parameters.oneOf, undefined, `${label} has no root oneOf`);
         assert.deepEqual(parameters.required, [], `${label} provider required fields`);
         assert.equal(parameters.additionalProperties, true, `${label} provider-open root`);
-        assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...declaredFields(entry.role)].sort(), `${label} top-level fields`);
-        for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
-          assert.ok(typeof declaration.description === "string" && declaration.description.trim().length > 0, `${label}.${field} semantic description`);
+        const properties = parameters.properties ?? {};
+        // Shared infra declaration must survive registration (schema true source).
+        assert.ok(
+          Object.hasOwn(properties, "infrastructureFailure"),
+          `${label} retains infrastructureFailure declaration`,
+        );
+        // #676 D/C / ADR 0057: nested diagnostic declaration survives the registration boundary.
+        // Compare registered result against the composed schema true source — not a hand roster.
+        const registeredInfra = properties.infrastructureFailure as Schema | undefined;
+        assert.ok(
+          registeredInfra?.properties && Object.hasOwn(registeredInfra.properties, "diagnostic"),
+          `${label}.infrastructureFailure.diagnostic nested declaration retained across registration`,
+        );
+        for (const [field, declaration] of Object.entries(properties)) {
+          assert.ok(
+            typeof declaration.description === "string" && declaration.description.trim().length > 0,
+            `${label}.${field} semantic description retained`,
+          );
         }
 
         if (entry.role === "fixer") {
-          assert.ok(parameters.properties?.blocker?.anyOf, `${label}.blocker retains its legal union`);
-          const classResultsBranches = parameters.properties?.classResults?.anyOf;
+          assert.ok(properties.blocker?.anyOf, `${label}.blocker retains its legal union`);
+          const classResultsBranches = properties.classResults?.anyOf;
           assert.ok(classResultsBranches, `${label}.classResults retains its property-level legal union`);
           assert.ok(
             classResultsBranches.some((branch) => branch.items?.anyOf),
             `${label}.classResults mixed branch items retain their legal union`,
           );
         } else if (entry.role === "doctor") {
-          assert.ok(parameters.properties?.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
+          assert.ok(properties.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
+        } else if (entry.role === "collector") {
+          // #676 D/C: nested findings item declarations (evidenceId/category/summary) survive
+          // registration without locking a parallel field roster or wording.
+          assert.ok(Object.hasOwn(properties, "findings"), `${label}.findings declaration retained`);
+          assert.ok(
+            Object.hasOwn(properties, "unfinishedReasons"),
+            `${label}.unfinishedReasons declaration retained`,
+          );
+          const findingsDecl = properties.findings as Schema | undefined;
+          const itemProps = findingsDecl?.items?.properties;
+          assert.ok(itemProps && Object.hasOwn(itemProps, "evidenceId"), `${label}.findings.items.evidenceId nested declaration`);
+          assert.ok(itemProps && Object.hasOwn(itemProps, "category"), `${label}.findings.items.category nested declaration`);
+          assert.ok(itemProps && Object.hasOwn(itemProps, "summary"), `${label}.findings.items.summary nested declaration`);
         }
       });
     }

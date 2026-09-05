@@ -357,12 +357,36 @@ export function formatFailureStderrDiagnostic(failure: ControlledFailure): strin
   return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 
-/** Pre-admission structural rejection: stderr only, no run, no Terminal. */
+/**
+ * #676 B: one cause face for public stderr — Error.message, else object JSON with
+ * status/body/headers when present, else String. Never wash objects to [object Object].
+ */
+export function formatErrorCauseDetail(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "object" && cause !== null) {
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return String(cause);
+    }
+  }
+  return String(cause);
+}
+
+/** Pre-admission structural rejection: stderr only, no run, no Terminal. Cause retained when present. */
 export function presentStructuralRejection(
-  error: { message: string },
+  error: { message: string; cause?: unknown },
   io: { stderr: (text: string) => void },
 ): void {
-  io.stderr(formatCliDiagnostic(error.message));
+  let message = error.message;
+  const cause = error.cause;
+  if (cause !== undefined) {
+    const detail = formatErrorCauseDetail(cause);
+    if (detail.trim().length > 0) {
+      message = `${message}; cause: ${detail}`;
+    }
+  }
+  io.stderr(formatCliDiagnostic(message));
 }
 
 /** ControlledFailure face without admitted-run Terminal (stdout body + stderr line). */
@@ -1481,9 +1505,20 @@ function collectorDecisiveFacts(
 ): Record<string, unknown> {
   const candidate = receipt as unknown as object;
   const facts: Record<string, unknown> = {};
-  for (const key of ["repository", "prNumber", "targetHead", "manifestDigest"] as const) {
+  for (const key of ["repository", "prNumber", "prState", "targetHead", "manifestDigest"] as const) {
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== undefined) facts[key] = value.value;
+  }
+  const unfinished = safelyRead(candidate, "unfinishedReasons");
+  if (unfinished.readable && Array.isArray(unfinished.value)) {
+    const reasons = unfinished.value.filter((item): item is string => typeof item === "string");
+    if (reasons.length > 0) facts.unfinishedReasons = reasons;
+  }
+  // #676 C: pass through structured projection facts so empty-readable vs unprojected
+  // original content stays distinguishable on the public Terminal face.
+  const projection = safelyRead(candidate, "submissionProjection");
+  if (projection.readable && isRecord(projection.value)) {
+    facts.submissionProjection = projection.value;
   }
   const groups = safelyRead(candidate, "groups");
   if (groups.readable && Array.isArray(groups.value)) {
@@ -1799,7 +1834,9 @@ export function assertCollectorReceiptMatchesAdmitted(
       `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
     );
   }
-  if (receipt.prNumber !== admitted.prNumber) {
+  // #676 A: when admission left the target unbound, receipt.prNumber is the role bind.
+  // When admission bound explicitly/head-commit, receipt must match.
+  if (admitted.prNumber !== undefined && receipt.prNumber !== admitted.prNumber) {
     throw collectorReceiptBindingFailure(
       `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
     );
@@ -2882,7 +2919,7 @@ export async function publishCollectorArtifacts(
       {
         runId: admitted.runId,
         role: "collector",
-        prNumber: admitted.prNumber,
+        ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory: coordinates.sessionDirectory,

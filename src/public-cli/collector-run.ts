@@ -51,7 +51,8 @@ export function buildCollectorTurnRequest(
       activation: {
         role: "collector" as const,
         repo: admitted.repository.display,
-        pr: String(admitted.prNumber),
+        // #676 A: omit pr when unbound — role binds via ak_collector_bind_target.
+        ...(admitted.prNumber === undefined ? {} : { pr: String(admitted.prNumber) }),
         ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
       },
     },
@@ -76,7 +77,7 @@ export async function runPublicCollector(
       home: env.home,
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
-      prNumber: parsed.prNumber,
+      ...(parsed.prNumber === undefined ? {} : { prNumber: parsed.prNumber }),
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),

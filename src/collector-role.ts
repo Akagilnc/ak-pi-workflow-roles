@@ -1,8 +1,14 @@
+/**
+ * Collector business tools, soul/material assembly, and result projection.
+ * Registration flags, activation barrier, resource assembly (no-skills / no-context),
+ * sole-final seal, mode/fork gates, tool surface narrowing, and failInfrastructure
+ * exit live on the shared envelope (ADR 0018 / #676 E). Role keeps materials,
+ * business tools, ledger facts, and projection only.
+ */
 import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import type { Static } from "typebox";
 
 import {
-  COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
   loadCollectorManifest,
   parseCollectorPrNumber,
@@ -14,8 +20,13 @@ import {
   createSystemCollectorClock,
   type CollectorClock,
 } from "./collector-evidence.ts";
-import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
+  createGhApiRunner,
+  listPullRequestNumbersByTicket,
+  type CollectorGitHubTransport,
+} from "./collector-github.ts";
+import {
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
@@ -30,6 +41,7 @@ import {
   type CollectorReceipt,
 } from "./collector-receipt.ts";
 import {
+  collectorBindTargetArgsSchema,
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
   collectorReadArgsSchema,
@@ -54,10 +66,16 @@ export class CollectorNormalCompletionDeclarationError extends CorrectableSubmis
   }
 }
 
+/** #676 A: role-chosen target could not bind uniquely — correctable, not host failure. */
+export class CollectorTargetBindError extends CorrectableSubmissionError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CollectorTargetBindError";
+  }
+}
+
 export {
-  COLLECTOR_FIXED_KICKOFF,
-} from "./collector-config.ts";
-export {
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
@@ -66,6 +84,7 @@ export {
 };
 
 export const COLLECTOR_REQUIRED_TOOLS = [
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -73,15 +92,45 @@ export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
+/** Envelope-owned transport flags (ADR 0018 / #676 E). */
+export const COLLECTOR_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-collector-repo",
+    definition: Object.freeze({
+      description:
+        "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar).",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-collector-pr",
+    definition: Object.freeze({
+      description:
+        "Optional positive safe-integer pull request number for Collector. Omit when the role will bind from task materials.",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-collector-request-manifest",
+    definition: Object.freeze({
+      description:
+        "Path to the Collector v1 request manifest JSON file.",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
 const observeSchema = collectorObserveArgsSchema;
 const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
+const bindSchema = collectorBindTargetArgsSchema;
 const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
 type ReadParams = Static<typeof readSchema>;
 type WaitParams = Static<typeof waitSchema>;
+type BindParams = Static<typeof bindSchema>;
 type OutputParams = Static<typeof outputSchema>;
 
 export type CollectorRoleDependencies = {
@@ -89,165 +138,124 @@ export type CollectorRoleDependencies = {
   createTransport(): CollectorGitHubTransport;
   createClock?(): CollectorClock;
   createLedger(config: CollectorConfigState, clock: CollectorClock, ctx: HostContext): CollectorLedger;
-  packageExtensionPath?: string;
 };
 
 export type CollectorRoleHostActions = {
   failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never;
 };
 
-type CollectorActivation = {
+export type CollectorActivation = {
   soul: string;
   repository: CollectorRepository;
-  prNumber: number;
   manifest: CollectorManifest;
   ledger: CollectorLedger;
   transport: CollectorGitHubTransport;
   clock: CollectorClock;
 };
 
-/** Sole-final at the output execution seam (same shape as other terminating roles). */
-
 function buildMethodContext(activation: CollectorActivation): string {
+  const pr = activation.ledger.config.prNumber;
   return [
     "<collector_method>",
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
-    `prNumber: ${activation.prNumber}`,
+    `prNumber: ${pr === undefined ? "unbound — call ak_collector_bind_target with the role-decided issue/PR before observe" : String(pr)}`,
     `requests: ${JSON.stringify(activation.manifest.requests.map((request) => ({ id: request.id })))}`,
     "</collector_method>",
   ].join("\n");
 }
 
+function parsePositiveTicket(raw: unknown, label: string): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) return raw;
+  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) return Number(raw.trim());
+  throw new CollectorTargetBindError(`ak_collector_bind_target ${label} must be a positive safe integer`);
+}
+
+/**
+ * Shared envelope installs business tools and material callback after lifecycle gates.
+ * Role module does not self-hook events, setActiveTools, or mode/fork checks (ADR 0018 / #676 E).
+ */
 export function createCollectorRoleRuntime(
   pi: RoleHost,
   dependencies: CollectorRoleDependencies,
   hostActions: CollectorRoleHostActions,
 ): {
-  activate(
-    ctx: HostContext,
-    event: { reason: string },
-  ): Promise<void>;
+  /** Business activation only: soul, flags→config, ledger. Envelope owns lifecycle gates. */
+  activate(ctx: HostContext): Promise<CollectorActivation>;
+  /** Business material assembly — envelope hangs this on before_agent_start. */
+  assembleMaterials(activation: CollectorActivation, baseSystemPrompt: string): string;
+  /** Business operational bookkeeping callbacks for shared tool_call / tool_result seams. */
+  onToolCall(
+    activation: CollectorActivation,
+    event: { toolName: string; toolCallId: string },
+  ): { block: true; reason: string } | undefined;
+  onToolResult(activation: CollectorActivation, event: { toolCallId: string }): void;
+  /** Register business tools once. Envelope owns uniqueness + setActiveTools. */
+  registerBusinessTools(getActivation: () => CollectorActivation | undefined): void;
 } {
-  let activation: CollectorActivation | undefined;
-  let inputCount = 0;
-  let lifecycleRegistered = false;
   let toolsRegistered = false;
-  let firstDispatchDone = false;
 
-  pi.registerFlag("ak-collector-repo", {
-    description:
-      "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
-    type: "string",
-  });
-  pi.registerFlag("ak-collector-pr", {
-    description:
-      "Positive safe-integer pull request number for Collector. Supported profile: --no-skills, --no-extensions with only the explicit Collector package extension, no prompt templates/context files, one print/JSON prompt",
-    type: "string",
-  });
-  pi.registerFlag("ak-collector-request-manifest", {
-    description:
-      "Path to the Collector v1 request manifest JSON file. In Pi latest, late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
-    type: "string",
-  });
+  return {
+    async activate(ctx) {
+      const soul = (await dependencies.loadSoul()).trim();
+      if (soul.length === 0) throw new Error("Collector soul is empty");
 
-  const ensureLifecycle = (): void => {
-    if (lifecycleRegistered) return;
-    lifecycleRegistered = true;
+      // Flags registered by the shared envelope (COLLECTOR_TRANSPORT_FLAGS).
+      const repoFlag = pi.getFlag("ak-collector-repo");
+      const prFlag = pi.getFlag("ak-collector-pr");
+      const requestManifestFlag = pi.getFlag("ak-collector-request-manifest");
+      if (typeof repoFlag !== "string" || repoFlag.trim().length === 0) {
+        throw new Error("Collector requires --ak-collector-repo");
+      }
+      const repository = parseCollectorRepository(repoFlag);
+      // #676 A: PR may be unbound — role binds via ak_collector_bind_target from materials.
+      let prNumber: number | undefined;
+      if (typeof prFlag === "string" && prFlag.trim().length > 0) {
+        prNumber = parseCollectorPrNumber(prFlag);
+      } else if (typeof prFlag === "number") {
+        prNumber = parseCollectorPrNumber(prFlag);
+      }
+      const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
+        ? await loadCollectorManifest(requestManifestFlag)
+        : emptyCollectorManifest();
 
-    pi.on("input", (event, ctx) => {
-      if (activation === undefined) {
-        // role not active
-        return { action: "continue" as const };
-      }
-      if (inputCount >= 1) {
-        activation.ledger.latchFatal("通进司已拒绝后续输入");
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-        console.error("Collector rejected later input");
-        return { action: "handled" as const };
-      }
-      inputCount += 1;
-      return {
-        action: "transform" as const,
-        text: COLLECTOR_FIXED_KICKOFF,
-        images: [],
-      };
-    });
-
-    pi.on("before_agent_start", (event, ctx) => {
-      if (activation === undefined) return;
-
-      // Detectable ambient instruction resources on the supported prompt surface.
-      const options = event.systemPromptOptions;
-      if (options.skills && options.skills.length > 0) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到系统提示中的环境 skills",
-          ),
-          ctx,
-        );
-      }
-      if (options.contextFiles && options.contextFiles.length > 0) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到系统提示中的环境 context files",
-          ),
-          ctx,
-        );
-      }
-      if (
-        typeof options.appendSystemPrompt === "string" &&
-        options.appendSystemPrompt.trim().length > 0
-      ) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到 appendSystemPrompt 漂移",
-          ),
-          ctx,
-        );
-      }
-
-      if (event.prompt !== COLLECTOR_FIXED_KICKOFF) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司首条提示不是固定开场令",
-          ),
-          ctx,
-        );
-      }
-
-      if (!firstDispatchDone) {
-        firstDispatchDone = true;
-        activation.ledger.recordActivation(activation.clock);
-      }
+      const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
+      const transport = dependencies.createTransport();
+      const ledger = dependencies.createLedger(
+        { repository, prNumber, manifest },
+        clock,
+        ctx,
+      );
 
       return {
-        systemPrompt: [
-          event.systemPrompt,
-          "",
-          "<collector_soul>",
-          activation.soul,
-          "</collector_soul>",
-          "",
-          buildMethodContext(activation),
-        ].join("\n"),
+        soul,
+        repository,
+        manifest,
+        ledger,
+        transport,
+        clock,
       };
-    });
+    },
 
-    pi.on("tool_call", (event) => {
-      if (activation === undefined) return;
+    assembleMaterials(activation, baseSystemPrompt) {
+      return [
+        baseSystemPrompt,
+        "",
+        "<collector_soul>",
+        activation.soul,
+        "</collector_soul>",
+        "",
+        buildMethodContext(activation),
+      ].join("\n");
+    },
+
+    onToolCall(activation, event) {
+      // Business ledger facts only — allowed-tool / mode gates live on the envelope.
       if (activation.ledger.fatal) {
         return {
           block: true,
           reason: activation.ledger.fatalReason ?? "通进司致命状态",
-        };
-      }
-      if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(event.toolName)) {
-        return {
-          block: true,
-          reason: `通进司禁用工具 ${event.toolName}`,
         };
       }
       if (event.toolName === COLLECTOR_OUTPUT_TOOL) {
@@ -263,346 +271,264 @@ export function createCollectorRoleRuntime(
         };
       }
       return undefined;
-    });
+    },
 
-    pi.on("tool_result", (event) => {
-      if (activation === undefined) return;
+    onToolResult(activation, event) {
       activation.ledger.completeOperational(event.toolCallId);
-    });
+    },
 
-    pi.on("session_shutdown", () => {
-      if (activation === undefined) return;
-      if (activation.ledger.fatal) {
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-      }
-    });
-  };
+    registerBusinessTools(getActivation) {
+      if (toolsRegistered) return;
+      toolsRegistered = true;
 
-  const registerTools = (): void => {
-    if (toolsRegistered) return;
-    toolsRegistered = true;
+      pi.registerTool({
+        name: COLLECTOR_BIND_TARGET_TOOL,
+        label: "通进司认票绑定",
+        description:
+          "角色判定任务材料后绑定本仓唯一 PR 目标。可提交 prNumber 或 issueNumber（线上关联唯一 PR）；显式 --pr 已绑定时无需再调。多义或无法确定时会正确驳回，要求调用方明确 --pr。",
+        promptSnippet: "绑定角色判定的 issue/PR 目标",
+        parameters: bindSchema,
+        async execute(toolCallId: string, params: BindParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_BIND_TARGET_TOOL, toolCallId);
+            const prNumber = parsePositiveTicket(params.prNumber, "prNumber");
+            const issueNumber = parsePositiveTicket(params.issueNumber, "issueNumber");
+            if (prNumber === undefined && issueNumber === undefined) {
+              throw new CollectorTargetBindError(
+                "ak_collector_bind_target requires role-decided prNumber and/or issueNumber",
+              );
+            }
 
-    pi.registerTool({
-      name: COLLECTOR_OBSERVE_TOOL,
-      label: "通进司观察",
-      description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文在上下文中只给头部摘录加指针；需要头部之外的正文时，用 ak_collector_read 按 evidenceId 开卷；findings 的拆分与归类由你在交件时完成。",
-      promptSnippet: "抓取配置目标 PR 证据",
-      parameters: observeSchema,
-      async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
-        if (activation === undefined) {
-          throw new Error("通进司未激活");
-        }
-        try {
-          activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
-          const { snapshot, contextView } = await activation.ledger.observe(
-            activation.transport,
-            activation.clock,
-            signal,
-          );
-          activation.ledger.completeOperational(toolCallId);
-          if (snapshot.prState !== "OPEN") {
-            // Non-OPEN observed as latest complete snapshot is target-state failure at output,
-            // but observe itself may return the fact. If this is a final observation, still return.
+            let bound = prNumber;
+            if (issueNumber !== undefined) {
+              const associated = await listPullRequestNumbersByTicket(createGhApiRunner(), {
+                owner: activation.repository.owner,
+                repo: activation.repository.repo,
+                ticketNumber: issueNumber,
+              });
+              if (associated.length === 0) {
+                throw new CollectorTargetBindError(
+                  `no PR associated with issue #${issueNumber} in ${activation.repository.canonical}; pass an explicit --pr or a different issueNumber`,
+                );
+              }
+              if (associated.length > 1) {
+                throw new CollectorTargetBindError(
+                  `multiple PRs associated with issue #${issueNumber}: ${associated.join(", ")}; pass an explicit prNumber or --pr`,
+                );
+              }
+              const fromIssue = associated[0]!;
+              if (prNumber !== undefined && prNumber !== fromIssue) {
+                throw new CollectorTargetBindError(
+                  `prNumber ${prNumber} conflicts with issue #${issueNumber} association PR ${fromIssue}`,
+                );
+              }
+              bound = fromIssue;
+            }
+
+            activation.ledger.bindTarget(bound!);
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `目标已绑定：${activation.repository.canonical}#${bound}`,
+              }],
+              details: {
+                repository: activation.repository.canonical,
+                prNumber: bound,
+                ...(issueNumber === undefined ? {} : { issueNumber }),
+              },
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
+            hostActions.failInfrastructure(error, ctx, toolCallId);
+          } finally {
+            try {
+              activation.ledger.completeOperational(toolCallId);
+            } catch {
+              // already completed or not begun
+            }
           }
-          return {
-            content: [{
-              type: "text" as const,
-              // #641 chain①: model context carries bounded body heads + pointers only.
-              text: JSON.stringify(contextView),
-            }],
-            // #641 the bounded projection is the only provider-visible face on every host
-            // (Grok/ACP relays tool details as MCP structuredContent); full bodies stay
-            // in the ledger volume and enter context only by explicit ak_collector_read.
-            details: contextView,
-          };
-        } catch (error) {
-          hostActions.failInfrastructure(error, ctx, toolCallId);
-        }
-      },
-    });
+        },
+      });
 
-    pi.registerTool({
-      name: COLLECTOR_READ_TOOL,
-      label: "通进司开卷",
-      description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针；只在观察头部摘录不足以判读时调用。",
-      promptSnippet: "按指针开卷读材料",
-      parameters: readSchema,
-      async execute(toolCallId: string, params: ReadParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
-        if (activation === undefined) {
-          throw new Error("通进司未激活");
-        }
-        try {
-          activation.ledger.beginOperational(COLLECTOR_READ_TOOL, toolCallId);
-          const record = activation.ledger.getEvidence(params.evidenceId);
-          if (
-            record === undefined ||
-            (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment" && record.kind !== "reaction") ||
-            typeof record.body !== "string"
-          ) {
-            throw new CollectorUnknownEvidenceError(params.evidenceId);
-          }
-          const material = projectEvidenceEntryView(record);
-          activation.ledger.completeOperational(toolCallId);
-          return {
-            content: [{
-              type: "text" as const,
-              // #641 chain①: full bodies enter provider context only by explicit pointer.
-              text: JSON.stringify(material),
-            }],
-            details: material,
-          };
-        } catch (error) {
-          if (isCorrectableExecuteError(error)) throw error;
-          // typed toolCallId books the shared infrastructure fact so settlement can
-          // tell a read tool's real host failure from a correctable pointer bounce.
-          hostActions.failInfrastructure(error, ctx, toolCallId);
-        }
-      },
-    });
-
-    pi.registerTool({
-      name: COLLECTOR_REQUEST_TOOL,
-      label: "通进司请求",
-      description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
-      promptSnippet: "按配置发一次请求",
-      parameters: requestSchema,
-      async execute(toolCallId: string, params: RequestParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
-        if (activation === undefined) {
-          throw new Error("通进司未激活");
-        }
-        try {
-          activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
-          const details = await activation.ledger.request(
-            params,
-            activation.transport,
-            activation.clock,
-            signal,
-          );
-          activation.ledger.completeOperational(toolCallId);
-          return {
-            content: [{
-              type: "text" as const,
-              text: `请求尝试已记录：request ${params.requestId}`,
-            }],
-            details,
-          };
-        } catch (error) {
-          hostActions.failInfrastructure(error, ctx, toolCallId);
-        }
-      },
-    });
-
-    pi.registerTool({
-      name: COLLECTOR_WAIT_TOOL,
-      label: "通进司等待",
-      description: "再观察前等待；单次上限五分钟且不超剩余资格。",
-      promptSnippet: "资格截止前等待",
-      parameters: waitSchema,
-      async execute(toolCallId: string, params: WaitParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
-        if (activation === undefined) {
-          throw new Error("通进司未激活");
-        }
-        try {
-          activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
-          const details = await activation.ledger.wait(
-            params,
-            activation.clock,
-            signal,
-          );
-          activation.ledger.completeOperational(toolCallId);
-          return {
-            content: [{
-              type: "text" as const,
-              text: `已等待 ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
-            }],
-            details,
-          };
-        } catch (error) {
-          hostActions.failInfrastructure(error, ctx, toolCallId);
-        }
-      },
-    });
-
-    pi.registerTool({
-      name: COLLECTOR_OUTPUT_TOOL,
-      label: "通进司输出",
-      description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
-      promptSnippet: "提交通进司回执",
-      // #641 chain②: the seat owns the normal-completion decision. The probe
-      // runs the exact receipt assembly (validation only, no accept side
-      // effects); success ⇒ machine-verified normal completion ⇒ bounce.
-      bounceInfrastructureDeclaration(params) {
-        if (activation === undefined) return undefined;
-        try {
-          buildCollectorReceipt(activation.ledger, params, activation.clock);
-        } catch {
-          return undefined;
-        }
-        return new CollectorNormalCompletionDeclarationError();
-      },
-      parameters: outputSchema,
-      async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
-        if (activation === undefined) {
-          throw new Error("通进司未激活");
-        }
-        try {
-          activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
-          const receipt: CollectorReceipt = buildCollectorReceipt(
-            activation.ledger,
-            params,
-            activation.clock,
-          );
-          activation.ledger.recordOutputCandidate();
-          const acceptedDetails = receipt;
-          return {
-            content: [{
-              type: "text" as const,
-              text: COLLECTOR_ACCEPTED_TEXT,
-            }],
-            details: acceptedDetails,
-            terminate: true as const,
-          };
-        } catch (error) {
-          // Output validation errors are model-visible rejections when non-fatal.
-          if (
-            error instanceof Error &&
-            (error as { collectorFatal?: boolean }).collectorFatal === true
-          ) {
+      pi.registerTool({
+        name: COLLECTOR_OBSERVE_TOOL,
+        label: "通进司观察",
+        description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文在上下文中只给头部摘录加指针；需要头部之外的正文时，用 ak_collector_read 按 evidenceId 开卷；findings 的拆分与归类由你在交件时完成。目标未绑定前须先 ak_collector_bind_target。",
+        promptSnippet: "抓取配置目标 PR 证据",
+        parameters: observeSchema,
+        async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
+            const { snapshot, contextView } = await activation.ledger.observe(
+              activation.transport,
+              activation.clock,
+              signal,
+            );
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify(contextView),
+              }],
+              details: contextView,
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
             hostActions.failInfrastructure(error, ctx, toolCallId);
           }
-          throw error;
-        } finally {
-          activation.ledger.completeOperational(toolCallId);
-        }
-      },
-    });
-  };
+        },
+      });
 
-  return {
-    async activate(ctx, event) {
-      activation = undefined;
-      ensureLifecycle();
-
-      if (ctx.mode !== "print" && ctx.mode !== "json") {
-          throw new Error(
-            `Collector supports only print or json mode (got ${ctx.mode})`,
-          );
-        }
-        if (
-          event.reason === "fork" ||
-          event.reason === "reload"
-        ) {
-          throw new Error(
-            `Collector does not support session_start reason ${event.reason}`,
-          );
-        }
-
-        const soul = (await dependencies.loadSoul()).trim();
-        if (soul.length === 0) throw new Error("Collector soul is empty");
-
-        const repoFlag = pi.getFlag("ak-collector-repo");
-        const prFlag = pi.getFlag("ak-collector-pr");
-        const requestManifestFlag = pi.getFlag("ak-collector-request-manifest");
-        if (typeof repoFlag !== "string" || repoFlag.trim().length === 0) {
-          throw new Error("Collector requires --ak-collector-repo");
-        }
-        if (typeof prFlag !== "string" && typeof prFlag !== "number") {
-          throw new Error("Collector requires --ak-collector-pr");
-        }
-        const repository = parseCollectorRepository(repoFlag);
-        const prNumber = parseCollectorPrNumber(prFlag);
-        const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
-          ? await loadCollectorManifest(requestManifestFlag)
-          : emptyCollectorManifest();
-
-        // Detectable ambient command surface (skills/templates) when exposed.
-        const commands = pi.getCommands?.() ?? [];
-        const ambientCommands = commands.filter((command) => {
-          const name = command.name.toLowerCase();
-          return (
-            name.includes("skill") ||
-            name.includes("prompt") ||
-            name.startsWith("template")
-          );
-        });
-        if (ambientCommands.length > 0) {
-          throw new Error(
-            `Collector detected ambient instruction commands: ${
-              ambientCommands.map((c) => c.name).join(", ")
-            }`,
-          );
-        }
-
-        // Fail closed if a required name is already occupied before Collector registers.
-        const preExisting = pi.getAllTools();
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          const prior = preExisting.filter((tool) => tool.name === required);
-          if (prior.length > 0) {
-            throw new Error(`Collector required tool name collision: ${required}`);
+      pi.registerTool({
+        name: COLLECTOR_READ_TOOL,
+        label: "通进司开卷",
+        description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针；只在观察头部摘录不足以判读时调用。",
+        promptSnippet: "按指针开卷读材料",
+        parameters: readSchema,
+        async execute(toolCallId: string, params: ReadParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_READ_TOOL, toolCallId);
+            const record = activation.ledger.getEvidence(params.evidenceId);
+            if (
+              record === undefined ||
+              (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment" && record.kind !== "reaction") ||
+              typeof record.body !== "string"
+            ) {
+              throw new CollectorUnknownEvidenceError(params.evidenceId);
+            }
+            const material = projectEvidenceEntryView(record);
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify(material),
+              }],
+              details: material,
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
+            hostActions.failInfrastructure(error, ctx, toolCallId);
           }
-        }
+        },
+      });
 
-        registerTools();
-
-        const allTools = pi.getAllTools();
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          const matches = allTools.filter((tool) => tool.name === required);
-          if (matches.length === 0) {
-            throw new Error(`Collector required tool missing: ${required}`);
-          }
-          if (matches.length > 1) {
-            throw new Error(`Collector required tool name collision: ${required}`);
-          }
-          const tool = matches[0]!;
-          if (
-            dependencies.packageExtensionPath !== undefined &&
-            tool.sourceInfo?.path !== undefined &&
-            tool.sourceInfo.path !== dependencies.packageExtensionPath &&
-            !tool.sourceInfo.path.includes("role-runtime")
-          ) {
-            throw new Error(
-              `Collector required tool ${required} is overridden by ${tool.sourceInfo.path}`,
+      pi.registerTool({
+        name: COLLECTOR_REQUEST_TOOL,
+        label: "通进司请求",
+        description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
+        promptSnippet: "按配置发一次请求",
+        parameters: requestSchema,
+        async execute(toolCallId: string, params: RequestParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
+            const details = await activation.ledger.request(
+              params,
+              activation.transport,
+              activation.clock,
+              signal,
             );
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `请求尝试已记录：request ${params.requestId}`,
+              }],
+              details,
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
+            hostActions.failInfrastructure(error, ctx, toolCallId);
           }
-        }
+        },
+      });
 
-        pi.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
-        const active = new Set(pi.getActiveTools());
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          if (!active.has(required)) {
-            throw new Error(`Collector failed to activate required tool ${required}`);
+      pi.registerTool({
+        name: COLLECTOR_WAIT_TOOL,
+        label: "通进司等待",
+        description: "再观察前等待；单次上限五分钟且不超剩余资格。",
+        promptSnippet: "资格截止前等待",
+        parameters: waitSchema,
+        async execute(toolCallId: string, params: WaitParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
+            const details = await activation.ledger.wait(
+              params,
+              activation.clock,
+              signal,
+            );
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `已等待 ${String((details as { effectiveMs: number }).effectiveMs)}ms`,
+              }],
+              details,
+            };
+          } catch (error) {
+            hostActions.failInfrastructure(error, ctx, toolCallId);
           }
-        }
-        for (const name of active) {
-          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
-            throw new Error(`Collector active tool surface includes unexpected ${name}`);
+        },
+      });
+
+      pi.registerTool({
+        name: COLLECTOR_OUTPUT_TOOL,
+        label: "通进司输出",
+        description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
+        promptSnippet: "提交通进司回执",
+        bounceInfrastructureDeclaration(params) {
+          const activation = getActivation();
+          if (activation === undefined) return undefined;
+          try {
+            buildCollectorReceipt(activation.ledger, params, activation.clock);
+          } catch {
+            return undefined;
           }
-        }
-
-        const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
-        const transport = dependencies.createTransport();
-
-        const ledger = dependencies.createLedger(
-          { repository, prNumber, manifest },
-          clock,
-          ctx,
-        );
-
-        if (ledger.activationRecorded) {
-          firstDispatchDone = true;
-        }
-
-      activation = {
-        soul,
-        repository,
-        prNumber,
-        manifest,
-        ledger,
-        transport,
-        clock,
-      };
+          return new CollectorNormalCompletionDeclarationError();
+        },
+        parameters: outputSchema,
+        async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
+            const receipt: CollectorReceipt = buildCollectorReceipt(
+              activation.ledger,
+              params,
+              activation.clock,
+            );
+            activation.ledger.recordOutputCandidate();
+            return {
+              content: [{
+                type: "text" as const,
+                text: COLLECTOR_ACCEPTED_TEXT,
+              }],
+              details: receipt,
+              terminate: true as const,
+            };
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              (error as { collectorFatal?: boolean }).collectorFatal === true
+            ) {
+              hostActions.failInfrastructure(error, ctx, toolCallId);
+            }
+            throw error;
+          } finally {
+            activation.ledger.completeOperational(toolCallId);
+          }
+        },
+      });
     },
   };
 }

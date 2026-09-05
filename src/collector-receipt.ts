@@ -4,11 +4,18 @@ import type { CollectorLedger, CollectorRequestAttempt } from "./collector-ledge
 import {
   enrichCollectorFindings,
   extractCollectorEvidenceIdentityGroups,
+  extractCollectorUnfinishedReasons,
   type ExtractedCollectorIdentityGroup,
 } from "./collector-identity.ts";
-import { validateAcceptedCollectorReceipt, type CollectorEvidenceRecord as ReceiptEvidenceRecord } from "./package-contracts/collector-output.ts";
+import {
+  validateAcceptedCollectorReceipt,
+  type CollectorEvidenceRecord as ReceiptEvidenceRecord,
+  type CollectorReceipt as PackageCollectorReceipt,
+  type CollectorSubmissionProjection,
+} from "./package-contracts/collector-output.ts";
 
 export { validateAcceptedCollectorReceipt };
+export type { CollectorSubmissionProjection };
 
 /**
  * #641 chain① receipt-local evidence projection: machine identity, integrity
@@ -17,17 +24,15 @@ export { validateAcceptedCollectorReceipt };
  */
 export type CollectorReceiptEvidenceRecord = ReceiptEvidenceRecord;
 
-export type CollectorReceipt = {
-  host: "github.com";
-  repository: string;
-  prNumber: number;
-  manifestDigest: string;
-  activationTime: string;
-  deadlineTime: string;
-  finalObservationTime: string;
-  finalSnapshotId: string;
-  targetHead: string;
+/**
+ * #676 C: single authority for receipt shape is package-contracts/collector-output.
+ * Production builder always emits the full projection object and concrete prState;
+ * package leaf keeps those optional so old volumes stay readable.
+ */
+export type CollectorReceipt = PackageCollectorReceipt & {
+  prState: string;
   groups: ExtractedCollectorIdentityGroup[];
+  submissionProjection: CollectorSubmissionProjection;
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorReceiptEvidenceRecord[];
@@ -45,6 +50,9 @@ export function buildCollectorReceipt(
   if (ledger.unresolvedTransportFailure) fail("Collector cannot output while a transport failure is unrecovered");
   if (ledger.latestCompleteSnapshotId === undefined) fail("Collector output requires a complete final snapshot");
   if (ledger.activationTime === undefined || ledger.deadlineTime === undefined) fail("Collector output requires activation timeline");
+  if (ledger.config.prNumber === undefined) {
+    fail("Collector output requires a bound PR target; call ak_collector_bind_target first or pass --pr");
+  }
 
   if (clock !== undefined) ledger.assertOutputObservationLaw(clock);
   else if (ledger.observedGeneration !== ledger.mutationGeneration ||
@@ -54,7 +62,7 @@ export function buildCollectorReceipt(
 
   const finalSnapshot = ledger.getSnapshot(ledger.latestCompleteSnapshotId);
   if (finalSnapshot === undefined || !finalSnapshot.complete) fail("Collector final snapshot is incomplete");
-  if (finalSnapshot.prState !== "OPEN") fail("Collector final snapshot PR state is not OPEN");
+  // #676 D6: closed/merged still deliver collected materials; status is a fact on the receipt.
 
   const evidenceRecords: CollectorEvidenceRecord[] = [...ledger.allEvidence()];
   const snapshots = [...ledger.allSnapshots()];
@@ -71,7 +79,7 @@ export function buildCollectorReceipt(
   const groups = extractCollectorEvidenceIdentityGroups(evidenceRecords, finalSnapshot.headOid);
   // #641 chain①: the collector LLM submits findings as pointer refs; the runtime
   // enriches each with the machine locator from the same stored record.
-  enrichCollectorFindings({
+  const findingsProjection = enrichCollectorFindings({
     candidate: candidateRaw,
     records: evidenceRecords,
     groups,
@@ -80,7 +88,6 @@ export function buildCollectorReceipt(
     prNumber: ledger.config.prNumber,
   });
   for (const group of groups) {
-    if (group.attendance !== true) fail("Collector group lacks attendance");
     for (const material of group.materials) {
       if (material.evidenceId === undefined || !evidenceIndex.has(material.evidenceId)) fail("Collector material lacks a receipt-local evidence ref");
     }
@@ -88,11 +95,21 @@ export function buildCollectorReceipt(
       if (finding.source.evidenceId === undefined || !evidenceIndex.has(finding.source.evidenceId)) fail("Collector finding lacks a receipt-local evidence ref");
     }
   }
+  const unfinished = extractCollectorUnfinishedReasons(candidateRaw);
+  const submissionProjection: CollectorSubmissionProjection = {
+    findingsSource: findingsProjection.findingsSource,
+    findingsProjectedCount: findingsProjection.findingsProjectedCount,
+    findingsUnprojected: findingsProjection.findingsUnprojected,
+    unfinishedReasonsSource: unfinished.source,
+    unfinishedReasonsProjectedCount: unfinished.reasons?.length ?? 0,
+    unfinishedReasonsUnprojected: unfinished.unprojected,
+  };
 
   return {
     host: COLLECTOR_HOST,
     repository: ledger.config.repository.canonical,
     prNumber: ledger.config.prNumber,
+    prState: finalSnapshot.prState,
     manifestDigest: ledger.config.manifest.digest,
     activationTime: ledger.activationTime.toISOString(),
     deadlineTime: ledger.deadlineTime.toISOString(),
@@ -100,6 +117,8 @@ export function buildCollectorReceipt(
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead: finalSnapshot.headOid,
     groups,
+    ...(unfinished.reasons === undefined ? {} : { unfinishedReasons: unfinished.reasons }),
+    submissionProjection,
     requestAttempts: [...ledger.requestAttempts()],
     snapshots,
     evidenceRecords: evidenceRecords.map(toReceiptEvidenceRecord),
