@@ -91,16 +91,12 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
         isolatedTestProcessEnv({ home: profileHome }),
         profileHome,
       );
-      const result = execFileSync(
-        process.execPath,
-        [binPath, "analyst"],
-        {
-          cwd: project,
-          encoding: "utf8",
-          env,
-        },
-      );
-      assert.match(result, /analyst-issue-metrics|"mode"\s*:\s*"issue"/);
+      // Real bin execution; stdout is free presentation — contract is the typed page (ADR 0052).
+      execFileSync(process.execPath, [binPath, "analyst"], {
+        cwd: project,
+        encoding: "utf8",
+        env,
+      });
       const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
       const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
       assert.ok(page.legWallClock, "B1 must be reachable from public bundle");

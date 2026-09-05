@@ -538,6 +538,7 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
     });
   });
 });
+
 test("bound auditor ENOTDIR evidence outranks credential in shared settlement", async () => {
   await withTempHome(async (home) => {
     const pathComponent = join(home, "not-a-directory");

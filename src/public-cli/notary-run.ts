@@ -5,6 +5,7 @@
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -92,7 +93,26 @@ export async function runPublicNotary(
     throw error;
   }
 
+  // #636: ticket from source-run → continue ticket+seat memory principal across runs.
+  // Rebind before admitted mark so run-state session paths name the memory principal.
+  // Existing nest → continuation.kind=resume so real hosts reopen native volume (Grok
+  // session/load; Pi/Grok hostTransition path handoff). Same-ticket rebind alone is not resume.
+  const memory = await rebindAdmittedToTicketSeatMemory({
+    admitted,
+    seat: "notary",
+    principalAuthority: env.principalAuthority,
+  });
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
+  const continuation = {
+    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
+    prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+  };
 
   const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
@@ -104,10 +124,7 @@ export async function runPublicNotary(
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildNotaryTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
-    },
+    continuation,
   });
 
   return await runPostAdmissionOneShot({
