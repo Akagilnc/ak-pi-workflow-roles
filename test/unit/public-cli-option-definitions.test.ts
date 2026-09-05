@@ -125,14 +125,17 @@ test("unconditional required: table required:true is the sole missing-option gat
     }
   }
   assert.deepEqual(requiredRows.sort(), [
-    "collector/pr",
     "doctor/issue",
     "gleaner-left/base",
     "notary/source-run",
     "reviewer/base",
   ]);
   assert.throws(() => parseReviewerArgv(["task"]), isUsage);
-  assert.throws(() => parseCollectorArgv(["task"]), isUsage);
+  // #676 D1: collector --pr is optional at parse; ambiguity rejects at admission.
+  assert.deepEqual(parseCollectorArgv(["task"]), {
+    instruction: "task",
+    attachmentPaths: [],
+  });
   assert.throws(() => parseDoctorArgv(["task"]), isUsage);
 
   // Flip required on the shared seam → behavior flips (table is the gate).

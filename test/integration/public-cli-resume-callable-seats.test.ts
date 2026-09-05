@@ -150,6 +150,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
         host: "github.com",
         repository: admitted.repository as string,
         prNumber: admitted.prNumber as number,
+        prState: "OPEN",
         manifestDigest: admitted.manifestDigest as string,
         activationTime: "2026-09-03T00:00:00.000Z",
         deadlineTime: "2026-09-03T00:05:00.000Z",

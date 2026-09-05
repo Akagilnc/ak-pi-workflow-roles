@@ -36,6 +36,7 @@ import {
   parseCollectorRepository,
   type CollectorRepository,
 } from "../collector-config.ts";
+import { resolveCollectorTarget } from "../collector-target.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -665,7 +666,8 @@ export type ParseFixerArgvResult = {
 };
 
 export type ParseCollectorArgvResult = {
-  prNumber: number;
+  /** Explicit --pr when provided; admission resolves from context when absent (#676 D1). */
+  prNumber?: number;
   instruction: string;
   attachmentPaths: string[];
   project?: string;
@@ -1687,10 +1689,11 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
     }
     positional.push(token);
   }
-  // Unconditional required (e.g. --pr) from typed table via shared consumer (#342).
+  // Unconditional required from typed table via shared consumer (#342).
+  // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
   options.assertRequired();
   return {
-    prNumber: prNumber!,
+    ...(prNumber === undefined ? {} : { prNumber }),
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
@@ -1776,7 +1779,8 @@ export type AdmitCollectorInvocationOptions = {
   home: string;
   principalAuthority: DurablePrincipalAuthority;
   cwd: string;
-  prNumber: number;
+  /** Explicit PR when provided; resolved from context when absent (#676 D1). */
+  prNumber?: number;
   instruction?: string;
   attachmentPaths?: readonly string[];
   project?: string;
@@ -1787,12 +1791,14 @@ export type AdmitCollectorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Optional target resolver injection (tests). */
+  resolveTarget?: typeof resolveCollectorTarget;
 };
 
 /**
  * Admit a Collector Role run: assemble the retained leg manifest from typed
- * declarations, resolve repository identity, and place the session under #78.
- * Does not preflight PR/author existence against GitHub.
+ * declarations, resolve repository + PR target (#676 D1), and place the session under #78.
+ * Explicit PR is not preflighted for existence; context resolution uses online association.
  */
 export async function admitCollectorInvocation(
   options: AdmitCollectorInvocationOptions,
@@ -1800,12 +1806,14 @@ export async function admitCollectorInvocation(
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
-  let prNumber: number;
-  try {
-    prNumber = parseCollectorPrNumber(options.prNumber);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
+  let explicitPrNumber: number | undefined;
+  if (options.prNumber !== undefined) {
+    try {
+      explicitPrNumber = parseCollectorPrNumber(options.prNumber);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new CliUsageError(detail, { cause: error });
+    }
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
@@ -1820,6 +1828,14 @@ export async function admitCollectorInvocation(
   } else {
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
+
+  const resolveTarget = options.resolveTarget ?? resolveCollectorTarget;
+  const target = await resolveTarget({
+    projectRoot,
+    repository,
+    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
+  });
+  const prNumber = target.prNumber;
 
   // Validate optional request-manifest before freezing request materials.
   let manifest = emptyCollectorManifest();

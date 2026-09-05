@@ -525,12 +525,13 @@ const COLLECTOR_OPTIONS = [
     canonical: "--pr",
     aliases: [],
     valueMetavar: "number",
-    required: true,
+    // #676 D1: optional when context uniquely determines the PR; ambiguous → require explicit.
+    required: false,
     repeatable: false,
     form: "option",
     description: {
-      en: "Required positive GitHub pull request number.",
-      zh: "必填；正整数 GitHub PR 号。",
+      en: "Positive GitHub pull request number. Optional when the current branch uniquely associates to one PR; ambiguous targets require an explicit value.",
+      zh: "正整数 GitHub PR 号。当前分支唯一关联到一个 PR 时可省略；目标歧义时必须显式提供。",
     },
   },
   {

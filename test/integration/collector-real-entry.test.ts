@@ -79,6 +79,7 @@ async function runRealCollectorScript(options: {
   reviews?: any[];
   issueComments?: any[];
   reviewComments?: any[];
+  pullRequest?: ReturnType<typeof samplePull>;
   requests?: Array<{ id: string; body: string }>;
   responses: Array<CollectorScriptResponse | ((context: any) => CollectorScriptResponse)>;
 }) {
@@ -89,7 +90,7 @@ async function runRealCollectorScript(options: {
     }
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
-      pullRequest: samplePull({ headOid: "head-1" }),
+      pullRequest: options.pullRequest ?? samplePull({ headOid: "head-1" }),
       reviews: options.reviews ?? [],
       issueComments: options.issueComments ?? [],
       reviewComments: options.reviewComments ?? [],
@@ -494,4 +495,108 @@ test("#641 P2 read tool real failure writes the typed host fact settlement class
   } finally {
     process.exitCode = priorExitCode;
   }
+});
+
+function botReview(overrides: {
+  id: number;
+  userLogin: string;
+  userId: number;
+  body: string;
+  commitId: string;
+}) {
+  return {
+    id: overrides.id,
+    userLogin: overrides.userLogin,
+    machineIdentity: { userType: "Bot", userId: overrides.userId },
+    state: "COMMENTED",
+    body: overrides.body,
+    commitId: overrides.commitId,
+    submittedAt: "2026-01-01T00:01:00Z",
+    htmlUrl: `https://github.com/acme/widgets/pull/1#pullrequestreview-${overrides.id}`,
+    raw: { id: overrides.id },
+  };
+}
+
+test("#676 D6 closed PR still seals existing findings with prState and prior+current materials", async () => {
+  const result = await runRealCollectorScript({
+    pullRequest: samplePull({ headOid: "head-new", state: "CLOSED" }),
+    reviews: [
+      botReview({
+        id: 701,
+        userLogin: "coderabbitai[bot]",
+        userId: 136622811,
+        body: "old finding on prior head",
+        commitId: "head-old",
+      }),
+      botReview({
+        id: 702,
+        userLogin: "chatgpt-codex-connector[bot]",
+        userId: 199175422,
+        body: "new finding on current head",
+        commitId: "head-new",
+      }),
+    ],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const evidence = views[views.length - 1].evidence.filter((record: any) => record.kind === "review");
+        assert.equal(evidence.length, 2);
+        return outputCall({
+          findings: evidence.map((record: any) => ({
+            evidenceId: record.evidenceId,
+            category: record.commitOid === "head-old" ? "prior-finding" : "current-finding",
+          })),
+        }, "output-closed");
+      },
+    ],
+  });
+  assert.ok(result.receipt, "closed PR must still seal collected materials");
+  assert.equal(result.receipt.prState, "CLOSED");
+  assert.equal(result.receipt.targetHead, "head-new");
+  assert.equal(result.transport.calls.create, 0, "closed PR must not trigger new review requests");
+  const findings = result.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 2, "old and new findings both return without validity filtering");
+  const relations = new Set(
+    result.receipt.groups.flatMap((group: any) => group.materials.map((material: any) => material.headRelation)),
+  );
+  assert.equal(relations.has("prior"), true);
+  assert.equal(relations.has("current"), true);
+  assert.ok(findings.every((finding: any) => typeof finding.source.evidenceId === "string"));
+  assert.ok(findings.every((finding: any) => finding.pointer?.commentId !== undefined));
+});
+
+test("#676 D6 non-OPEN request bounces without latching fatal so materials can still seal", async () => {
+  const result = await runRealCollectorScript({
+    pullRequest: samplePull({ headOid: "head-1", state: "MERGED" }),
+    issueComments: [botIssueComment({ id: 8101, userLogin: "coderabbitai[bot]", userId: 136622811, body: "still collect me" })],
+    requests: [{ id: "codex", body: "Please review." }],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const observed = [...context.messages].reverse().find((message: any) => message.role === "toolResult");
+        return fauxAssistantMessage(
+          fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "codex", snapshotId: observed.details.snapshotId }, { id: "request-closed" }),
+          { stopReason: "toolUse" },
+        );
+      },
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return outputCall({ findings: [{ evidenceId: target.evidenceId, category: "kept" }] }, "output-after-bounce");
+      },
+    ],
+  });
+  const bounced = result.entries.filter((entry: any) =>
+    entry.type === "message" &&
+    entry.message.role === "toolResult" &&
+    entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
+    entry.message.isError === true
+  );
+  assert.equal(bounced.length, 1, "non-OPEN request must bounce visibly");
+  assert.equal(result.transport.calls.create, 0, "non-OPEN must not POST a new review request");
+  assert.ok(result.receipt, "after bounce, existing materials still seal");
+  assert.equal(result.receipt.prState, "MERGED");
+  assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 1);
+  assert.deepEqual(result.receipt.requestAttempts, []);
 });

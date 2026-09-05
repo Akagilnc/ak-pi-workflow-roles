@@ -1465,7 +1465,7 @@ function collectorDecisiveFacts(
 ): Record<string, unknown> {
   const candidate = receipt as unknown as object;
   const facts: Record<string, unknown> = {};
-  for (const key of ["repository", "prNumber", "targetHead", "manifestDigest"] as const) {
+  for (const key of ["repository", "prNumber", "prState", "targetHead", "manifestDigest"] as const) {
     const value = safelyRead(candidate, key);
     if (value.readable && value.value !== undefined) facts[key] = value.value;
   }

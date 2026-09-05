@@ -25,6 +25,7 @@ import {
   type GitHubPageDiagnostics,
   type GitHubPullRequest,
 } from "./collector-github.ts";
+import { CollectorNonOpenRequestError } from "./collector-identity.ts";
 import {
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
@@ -896,7 +897,8 @@ export function createCollectorLedger(
         throw new Error("通进司请求要求最新完整快照");
       }
       if (snapshot.prState !== "OPEN") {
-        throw latchFatal("通进司请求要求 OPEN 状态的 PR 快照");
+        // #676 D6: non-OPEN keeps materials; bounce request without latching fatal.
+        throw new CollectorNonOpenRequestError(snapshot.prState);
       }
 
       const { body, marker } = buildCollectorRequestBody({

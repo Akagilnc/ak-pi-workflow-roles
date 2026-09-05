@@ -21,6 +21,8 @@ export type CollectorReceipt = {
   host: "github.com";
   repository: string;
   prNumber: number;
+  /** Final observed PR state (OPEN/CLOSED/MERGED/…); non-OPEN still delivers materials. */
+  prState: string;
   manifestDigest: string;
   activationTime: string;
   deadlineTime: string;
@@ -54,7 +56,7 @@ export function buildCollectorReceipt(
 
   const finalSnapshot = ledger.getSnapshot(ledger.latestCompleteSnapshotId);
   if (finalSnapshot === undefined || !finalSnapshot.complete) fail("Collector final snapshot is incomplete");
-  if (finalSnapshot.prState !== "OPEN") fail("Collector final snapshot PR state is not OPEN");
+  // #676 D6: closed/merged still deliver collected materials; status is a fact on the receipt.
 
   const evidenceRecords: CollectorEvidenceRecord[] = [...ledger.allEvidence()];
   const snapshots = [...ledger.allSnapshots()];
@@ -93,6 +95,7 @@ export function buildCollectorReceipt(
     host: COLLECTOR_HOST,
     repository: ledger.config.repository.canonical,
     prNumber: ledger.config.prNumber,
+    prState: finalSnapshot.prState,
     manifestDigest: ledger.config.manifest.digest,
     activationTime: ledger.activationTime.toISOString(),
     deadlineTime: ledger.deadlineTime.toISOString(),
