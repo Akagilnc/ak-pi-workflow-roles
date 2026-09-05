@@ -7,9 +7,9 @@
  * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
  * Explicit options.home wins over that default.
  *
- * #612 / owner 2026-09-05: the default home is process-owned under tmpdir and
- * left for OS cleanup (tests/fixtures must not delete directories). Callers that
- * pass options.home own that path themselves.
+ * Default home is process-owned under tmpdir. Callers that pass options.home
+ * own that path themselves. Tests may clean up only the temp trees they create;
+ * never touch the real machine home or another workspace.
  *
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}

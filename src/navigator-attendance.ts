@@ -78,10 +78,8 @@ export function resolveNavigatorAuthorityMaterial(
   return undefined;
 }
 
-/** Workflow-route seats only — nested summon seats stay public but are not route targets. */
-const NAVIGATOR_ROUTE_EXCLUSIONS = new Set(["auditor", "evidence-child"]);
+/** Every public role is a lawful navigator route target (#675 — no nested-only seats). */
 export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY
-  .filter(({ role }) => !NAVIGATOR_ROUTE_EXCLUSIONS.has(role))
   .map(({ role, phases }) => ({ role, phases }));
 
 export type NavigatorTargetRole = PackagedRole;

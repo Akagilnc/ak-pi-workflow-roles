@@ -880,18 +880,22 @@ export function createAuditorRoleRuntime(
   return {
     async activate() {
       await base.activate();
-      // Pointer-only summons: register the shared dossier locator when the parent
-      // run directory is published on the nested env (#675 / ADR 0079).
-      const sourceRun = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-      if (typeof sourceRun === "string" && sourceRun.trim() !== "") {
-        const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } = await import(
-          "./auditor-dossier-tool.ts"
-        );
-        const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
-        if (!already) {
-          roleHost.registerTool(createAuditorDossierTool(sourceRun.trim()) as never);
-        }
-      }
+      // Same tools whether nested or direct (#675): dossier tool always registered.
+      // Source run: parent pointer env, else this run's AK_ROLE_RUN_DIR; else unbound.
+      const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
+        await import("./auditor-dossier-tool.ts");
+      const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
+      if (already) return;
+      const sourceRun =
+        (typeof process.env.AK_ROLE_AUDITOR_SOURCE_RUN === "string"
+          && process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim() !== ""
+          ? process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim()
+          : undefined)
+        ?? (typeof process.env.AK_ROLE_RUN_DIR === "string"
+          && process.env.AK_ROLE_RUN_DIR.trim() !== ""
+          ? process.env.AK_ROLE_RUN_DIR.trim()
+          : undefined);
+      roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
     },
   };
 }

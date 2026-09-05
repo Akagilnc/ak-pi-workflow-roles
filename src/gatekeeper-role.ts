@@ -77,24 +77,15 @@ export type GateOfficerSummon = (
   sourceRunDirectory: string,
 ) => Promise<PublicSummonResult>;
 
-/** Offline-test hook key — globalThis so extension/test share one inject (no dual-module). */
-const TEST_GATE_OFFICER_SUMMON = Symbol.for("ak-roles.test-gate-officer-summon");
+/** Offline options-bag mirror for deep activation paths that cannot thread summonOfficer. */
+let offlineGateOfficerSummon: GateOfficerSummon | undefined;
 
-/**
- * Install or clear the offline gate summon hook (tests only).
- * Returns a restore function that puts back the previous hook.
- */
 export function setTestGateOfficerSummon(summon: GateOfficerSummon | undefined): () => void {
-  const slot = globalThis as Record<symbol, GateOfficerSummon | undefined>;
-  const previous = slot[TEST_GATE_OFFICER_SUMMON];
-  slot[TEST_GATE_OFFICER_SUMMON] = summon;
+  const previous = offlineGateOfficerSummon;
+  offlineGateOfficerSummon = summon;
   return () => {
-    slot[TEST_GATE_OFFICER_SUMMON] = previous;
+    offlineGateOfficerSummon = previous;
   };
-}
-
-function testGateOfficerSummon(): GateOfficerSummon | undefined {
-  return (globalThis as Record<symbol, GateOfficerSummon | undefined>)[TEST_GATE_OFFICER_SUMMON];
 }
 
 export type RunGatekeeperOptions = {
@@ -114,6 +105,8 @@ export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
   bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
+  /** Same seam as runGatekeeper options — offline tracers only. */
+  summonOfficer?: GateOfficerSummon;
 };
 
 /**
@@ -279,76 +272,57 @@ function projectOfficerTerminal(
   };
 }
 
+/** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
+export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as const;
+
+export type DirectOfficerRunPointer = {
+  readonly version: 1;
+  readonly kind: typeof DIRECT_OFFICER_RUN_POINTER_KIND;
+  readonly officer: "inspector" | "notary";
+  /** Absolute path to the officer session.jsonl 正本. */
+  readonly sessionFile: string;
+  /** Officer run directory when known. */
+  readonly runDirectory?: string;
+};
+
 /**
- * Book a direct-officer receipt under parent session/auditor-roles so Terminal
- * gate projection and Analyst gate-cycles keep one nested-volume reader (#478).
- * Public officer runs remain independent; this is the parent-side pointer face.
+ * Book a typed pointer under parent session/auditor-roles to the independent
+ * officer run 正本. Never fabricates user/assistant/toolResult rows (#675).
+ * Offline mocks without a real session leave no nested volume (lawful zero).
  */
-async function bookDirectOfficerReceipt(
+async function bookDirectOfficerPointer(
   context: ExtensionContext | HostContext,
   officer: "inspector" | "notary",
   result: GatekeeperResult,
+  summoned: PublicSummonResult,
 ): Promise<void> {
   if (result.status !== "pass" && result.status !== "bounce" && result.status !== "escalate") {
     return;
   }
   const parentFile = context.sessionManager?.getSessionFile?.();
   if (typeof parentFile !== "string" || parentFile.trim() === "") return;
+  const { sessionFileFromPublicSummon } = await import("./session-assistant-usage.ts");
+  const sessionFile = sessionFileFromPublicSummon(summoned);
+  if (sessionFile === undefined) {
+    // No independent 正本 to point at — do not synthesize a parallel session.
+    return;
+  }
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { dirname, join } = await import("node:path");
-  const toolName = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
-  const details =
-    result.status === "pass"
-      ? { status: "pass", findings: [...result.findings] }
-      : result.status === "bounce"
-        ? { status: "bounce", findings: [...result.findings] }
-        : {
-            status: "escalate",
-            findings: result.findings,
-            ...(Object.hasOwn(result, "reason") ? { reason: result.reason } : {}),
-          };
   const nest = join(dirname(parentFile), "auditor-roles");
   await mkdir(nest, { recursive: true });
-  const callId = `gate-direct-${officer}`;
-  const now = new Date().toISOString();
-  const rows = [
-    {
-      type: "message",
-      id: "gate-user",
-      parentId: null,
-      timestamp: now,
-      message: { role: "user", content: "gate summons", timestamp: Date.now() },
-    },
-    {
-      type: "message",
-      id: "gate-assistant",
-      parentId: "gate-user",
-      timestamp: now,
-      message: {
-        role: "assistant",
-        content: [{ type: "toolCall", id: callId, name: toolName, arguments: details }],
-        timestamp: Date.now(),
-      },
-    },
-    {
-      type: "message",
-      id: "gate-result",
-      parentId: "gate-assistant",
-      timestamp: now,
-      message: {
-        role: "toolResult",
-        toolCallId: callId,
-        toolName,
-        isError: false,
-        content: [{ type: "text", text: "gate officer accepted" }],
-        details,
-        timestamp: Date.now(),
-      },
-    },
-  ];
+  const pointer: DirectOfficerRunPointer = {
+    version: 1,
+    kind: DIRECT_OFFICER_RUN_POINTER_KIND,
+    officer,
+    sessionFile,
+    ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
+      ? { runDirectory: summoned.runDirectory }
+      : {}),
+  };
   await writeFile(
-    join(nest, `${officer}-${Date.now().toString(36)}.jsonl`),
-    `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    join(nest, `${officer}-${Date.now().toString(36)}.pointer.json`),
+    `${JSON.stringify(pointer)}\n`,
     "utf8",
   );
 }
@@ -370,7 +344,7 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   try {
     const summon =
       options.summonOfficer
-      ?? testGateOfficerSummon()
+      ?? offlineGateOfficerSummon
       ?? (async (nextOfficer, sourceRunDirectory) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
@@ -382,9 +356,9 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     const summoned = await summon(officer, runDirectory);
     const projected = projectOfficerTerminal(officer, summoned);
     try {
-      await bookDirectOfficerReceipt(options.context, officer, projected);
+      await bookDirectOfficerPointer(options.context, officer, projected, summoned);
     } catch (error) {
-      // Parent-side nested volume is Terminal/Analyst contract (#478); book failure is
+      // Parent-side pointer book is Terminal/Analyst contract (#478); book failure is
       // typed transport failure — never wash a durable-evidence miss as officer pass.
       return {
         status: "transport_failure",
@@ -406,11 +380,15 @@ export async function requireGatekeeperPass(options: {
   readonly signal?: AbortSignal;
   readonly hostActions: GatekeeperPassHostActions;
   readonly toolCallId: string;
+  /** Same seam as runGatekeeper options — offline tracers only. */
+  readonly summonOfficer?: GateOfficerSummon;
 }): Promise<void> {
+  const summonOfficer = options.summonOfficer ?? options.hostActions.summonOfficer;
   const gatekeeper = await runGatekeeper({
     context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(summonOfficer === undefined ? {} : { summonOfficer }),
   });
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {

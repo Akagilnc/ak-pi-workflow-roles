@@ -1128,9 +1128,9 @@ export interface InProcessPiOptions {
   credentials?: CredentialStore;
   /**
    * #675 offline nested public summons: arm real nested pi children with the shared
-   * officer-pass faux provider via AK_ROLE_NESTED_EXTRA_PI_ARGS (summonPublicRole stays
-   * on the public path — no setTest* short-circuit). "provider" (default) arms it;
-   * "none" leaves env untouched so the caller owns nested provider / hooks.
+   * officer-pass faux provider via PublicSummonRequest.extraPiArgs (same face as
+   * public CLI seat extraPiArgs — no process.env test protocol). "provider" (default)
+   * arms it; "none" leaves summon unwrapped so the caller owns nested provider / hooks.
    */
   nestedSummonInject?: "provider" | "none";
 }
@@ -1527,21 +1527,47 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  // #675: nested public summons use the real activation path. Default arms a nested
-  // faux provider via env so officer/auditor LLM I/O is scripted without short-circuiting
-  // summonPublicRole / summonGateOfficer.
-  const priorNestedExtra = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
-  let nestedEnvArmed = false;
-  if (
-    options.nestedSummonInject !== "none"
-    && (priorNestedExtra === undefined || priorNestedExtra.trim() === "")
-  ) {
+  // #675: nested public summons use the real activation path. Default arms nested
+  // faux provider via home-local fixture (dual-module safe; production never writes it)
+  // and seeds nested seats from the parent faux model (no parent-env model fallback).
+  let nestedFixturePath: string | undefined;
+  const nestedHome =
+    options.home
+    ?? (typeof process.env.HOME === "string" && process.env.HOME.trim() !== ""
+      ? process.env.HOME
+      : undefined);
+  if (options.nestedSummonInject !== "none" && nestedHome !== undefined) {
     const nestedProvider = resolve(
       packageRoot,
       "test/fixtures/nested-public-officer-pass-provider.ts",
     );
-    process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify(["-e", nestedProvider]);
-    nestedEnvArmed = true;
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join: pathJoin } = await import("node:path");
+    nestedFixturePath = pathJoin(nestedHome, ".ak-roles", ".summon-extra-pi-args.json");
+    mkdirSync(pathJoin(nestedHome, ".ak-roles"), { recursive: true });
+    writeFileSync(nestedFixturePath, JSON.stringify(["-e", nestedProvider]), "utf8");
+    try {
+      const { savePublicCliConfig, loadPublicCliConfig } = await import("../../src/public-cli/config.ts");
+      const existing = await loadPublicCliConfig(nestedHome).catch(() => ({ seats: {} as Record<string, unknown> }));
+      // nested-public-officer-pass-provider registers this provider id.
+      const seat = {
+        provider: "ak-nested-officer-pass",
+        model: "faux-1",
+      };
+      await savePublicCliConfig({
+        ...existing,
+        seats: {
+          ...existing.seats,
+          auditor: seat,
+          notary: seat,
+          inspector: seat,
+          "evidence-child": seat,
+          gatekeeper: seat,
+        },
+      }, nestedHome);
+    } catch {
+      // seat seed best-effort — caller may own config
+    }
   }
   try {
     for (const [name, value] of Object.entries(options.flags)) {
@@ -1573,9 +1599,13 @@ export async function withInProcessPi<T>(
         // best-effort shutdown before dispose
       }
       session.dispose();
-      if (nestedEnvArmed) {
-        if (priorNestedExtra === undefined) delete process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
-        else process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = priorNestedExtra;
+      if (nestedFixturePath !== undefined) {
+        try {
+          const { rmSync } = await import("node:fs");
+          rmSync(nestedFixturePath, { force: true });
+        } catch {
+          // best-effort
+        }
       }
     }
   }

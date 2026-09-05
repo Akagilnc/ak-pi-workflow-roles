@@ -245,24 +245,27 @@ export async function resolveNavigatorSeatSelection(
     const config = await loadPublicCliConfig(home);
     const modelOnly = seatModelOnly(config.seats.navigator);
     if (modelOnly !== undefined) {
+      // Host params passthrough only — no map/validate/default (#675 owner).
       const thinkingRaw = modelOnly.thinking;
-      const thinkingLevel = thinkingRaw === "max" ? "max" as const : "off" as const;
       const configuredLabel =
-        thinkingRaw === undefined || thinkingRaw === "off"
+        thinkingRaw === undefined
           ? `${modelOnly.provider}/${modelOnly.model}`
           : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
+      const thinkingLevel: "off" | "max" =
+        thinkingRaw === "max" ? "max" : "off";
       return {
         selection: {
           provider: modelOnly.provider,
           model: modelOnly.model,
-          thinking: thinkingLevel,
+          ...(thinkingRaw === undefined ? {} : { thinking: thinkingRaw }),
         },
         configuredLabel,
         thinkingLevel,
       };
     }
-  } catch {
-    // Fall through to file-based setting when seat table is unreadable.
+  } catch (error) {
+    // Seat table unreadable is a real failure — do not swallow into legacy file path.
+    throw navigatorUnavailableError("model", error);
   }
   let configured: string;
   try {

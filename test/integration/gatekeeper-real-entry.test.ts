@@ -122,7 +122,13 @@ test("worker completion directly summons Inspector via public path", async () =>
 
 test("parent gate receipt book failure is typed transport_failure after lawful officer pass", async () => {
   await withParent(async (context) => {
-    // Force bookDirectOfficerReceipt mkdir to ENOTDIR: session file path under /dev/null.
+    // Force pointer book mkdir to ENOTDIR: parent session under /dev/null.
+    // Officer 正本 must exist so booking is attempted (no 正本 → no-op, not failure).
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const officerRun = join(context.runDirectory, "officer-run");
+    await mkdir(join(officerRun, "session"), { recursive: true });
+    await writeFile(join(officerRun, "session", "session.jsonl"), "{\"type\":\"session\"}\n", "utf8");
     const poisoned = {
       ...context,
       sessionManager: {
@@ -134,7 +140,10 @@ test("parent gate receipt book failure is typed transport_failure after lawful o
       runDirectory: context.runDirectory,
       subject: { kind: "judge_draft" },
       async summonOfficer() {
-        return acceptedTerminal("notary", "pass", { findings: [] });
+        return {
+          ...acceptedTerminal("notary", "pass", { findings: [] }),
+          runDirectory: officerRun,
+        };
       },
     });
     assert.equal(result.status, "transport_failure");
