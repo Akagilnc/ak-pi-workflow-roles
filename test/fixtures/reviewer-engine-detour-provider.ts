@@ -76,13 +76,12 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
   pi.on("session_shutdown", async () => {
     await seeded.close();
   });
-  const axisSeen = new Set<string>();
   const response = (context: Context) => {
     const names = toolNames(context);
     const prompt = userText(context);
     const axis = axisFromPrompt(prompt);
 
-    // Evidence-child labor path: detour when registered, then axis report text.
+    // Evidence-child labor path (own public process under #675): detour then report.
     if (axis !== undefined) {
       if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !detourAlreadyCalled(context)) {
         return fauxAssistantMessage(
@@ -94,14 +93,23 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
           { stopReason: "toolUse" },
         );
       }
-      axisSeen.add(axis);
       const labor = lastDetourStdout(context) ?? "";
-      if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !labor.includes(CANNED_LABOR)) {
+      // Failure-path engines omit canned labor; still emit a report so the parent
+      // receives the engine-process cause through the detour failure channel.
+      if (
+        names.includes(ENGINE_DETOUR_TOOL_NAME)
+        && labor.includes(CANNED_LABOR) === false
+        && labor.trim() !== ""
+      ) {
         throw new Error(
           `evidence child ${axis} missing canned engine labor in detour stdout: ${labor}`,
         );
       }
-      // #675: evidence-child is a public role with terminating output tool.
+      if (names.includes(ENGINE_DETOUR_TOOL_NAME) && !labor.includes(CANNED_LABOR) && labor.trim() === "") {
+        // Detour tool should have failed closed before a second model turn; if we
+        // reach here with empty labor, keep the axis honest rather than inventing success.
+        throw new Error(`evidence child ${axis} detour produced empty labor`);
+      }
       const report =
         axis === "standards"
           ? `Standards finding count: 0. engine-labor=${labor.trim() || "none"}`
@@ -120,12 +128,9 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
     }
 
     if (names.includes(REVIEWER_OUTPUT_TOOL_NAME)) {
-      // #378: both fixed axes must complete engine labor before typed parent output.
-      if (!axisSeen.has("standards") || !axisSeen.has("spec")) {
-        throw new Error(
-          `parent output before both evidence-child axes; seen=${[...axisSeen].join(",") || "none"}`,
-        );
-      }
+      // #675: axes run in nested public evidence-child processes; parent fixture
+      // cannot observe their in-memory turns. Detour labor is asserted from child
+      // session files by the acceptance test.
       return fauxAssistantMessage(
         fauxToolCall(
           REVIEWER_OUTPUT_TOOL_NAME,

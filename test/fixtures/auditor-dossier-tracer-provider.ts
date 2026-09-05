@@ -10,7 +10,10 @@ import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOSSIER = "ak_get_run_dossier";
 const JUDGE = "ak_judge_output";
-const AUDIT = "ak_soul_audit_decision";
+/** Legacy institutional audit tool name retained for historical traces. */
+const AUDIT_LEGACY = "ak_soul_audit_decision";
+/** #675 public auditor terminating tool. */
+const AUDIT_PUBLIC = "ak_auditor_output";
 const NAVIGATOR = "ak_navigator_prepare";
 
 function toolResults(context: Context): Array<any> {
@@ -45,7 +48,12 @@ export default async function auditorDossierTracerProvider(pi: ExtensionAPI): Pr
     if (names.includes(NAVIGATOR)) {
       return fauxAssistantMessage(fauxToolCall(NAVIGATOR, { candidates: [{ next: { role: "reviewer", phase: null }, reason: "tracer route" }] }), { stopReason: "toolUse" });
     }
-    if (names.includes(AUDIT)) {
+    const auditTool = names.includes(AUDIT_PUBLIC)
+      ? AUDIT_PUBLIC
+      : names.includes(AUDIT_LEGACY)
+        ? AUDIT_LEGACY
+        : undefined;
+    if (auditTool !== undefined) {
       const results = toolResults(context);
       const located = [...results].reverse().find((message) => message.toolName === DOSSIER);
       if (!located) {
@@ -86,7 +94,7 @@ export default async function auditorDossierTracerProvider(pi: ExtensionAPI): Pr
       }
       const observed = resultText(context);
       if (!observed.includes(marker)) throw new Error(`auditor did not read its marker ${marker}`);
-      return fauxAssistantMessage(fauxToolCall(AUDIT, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+      return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
     }
     if (names.includes(JUDGE)) {
       return fauxAssistantMessage(fauxToolCall(JUDGE, { judgeStatus: "converged" }), { stopReason: "toolUse" });

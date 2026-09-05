@@ -188,6 +188,25 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
         "--ak-role", "judge", "--provider", "ak-audit-failure", "--model", "faux-1", "--mode", "json", "Judge.",
       ];
       const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
+      // #675: nested public notary/auditor need retained run identity + nested faux provider.
+      const runDirectory = dirname(sessionDirectory);
+      await writeFile(
+        join(runDirectory, "run-state.json"),
+        `${JSON.stringify({
+          runId: "01a06ff1-0000-7000-8000-000000000001",
+          role: "judge",
+          state: "running",
+          bookKey: basename(home),
+          projectRoot: issueRoot,
+          sessionDirectory,
+          sessionFile: join(sessionDirectory, "session.jsonl"),
+          runDirectory,
+          admittedRequestPath: join(runDirectory, "admitted-request.json"),
+          principalWire: { kind: "pi", sessionFile: join(sessionDirectory, "session.jsonl") },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(join(runDirectory, "admitted-request.json"), "{}\n", "utf8");
       const result = await runPiSubprocess(args, {
         cwd: issueRoot,
         env: {
@@ -196,10 +215,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
           PI_CODING_AGENT_DIR: agentDir,
           AK_NAVIGATOR_OBSERVATION: "1",
           PI_OFFLINE: "1",
-          // #675: offline navigator observation scripts the gate pass without nested spawn.
-          AK_ROLE_TEST_GATE_PASS: "1",
-          AK_ROLE_TEST_AUDIT_PASS: "1",
-          // Nested public officer/auditor summons inherit the offline faux provider when used.
+          // Nested public summons reuse the offline faux provider extension.
           AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
         },
       });

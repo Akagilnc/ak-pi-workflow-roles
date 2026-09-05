@@ -76,6 +76,8 @@ async function runPackagedTracer(marker: string): Promise<{
           PI_OFFLINE: "1",
           AK_DOSSIER_TRACER_MARKER: marker,
           AK_DOSSIER_TRACER_TRACE: tracePath,
+          // #675: nested public auditor summons reuse the same faux tracer provider.
+          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", provider]),
         },
       });
       assert.equal(result.localTimeout, false, result.stderr);
@@ -125,8 +127,7 @@ async function runPackagedTracer(marker: string): Promise<{
 // Single-tracer case deleted: each half of the dual isolation case already runs
 // the full packaged .bin → dossier read helper (Batch 1 R4 / court missedDeletion).
 
-// #675: nested public auditor summons change the offline dossier-trace shape.
-test.skip("two independent packaged Pi processes cannot cross auditor dossiers", { timeout: 180_000 }, async () => {
+test("two independent packaged Pi processes cannot cross auditor dossiers", { timeout: 180_000 }, async () => {
   const [a, b] = await Promise.all([runPackagedTracer("parallel-a"), runPackagedTracer("parallel-b")]);
   assert.equal(JSON.stringify(a.trace).includes(b.runDirectory), false);
   assert.equal(JSON.stringify(b.trace).includes(a.runDirectory), false);

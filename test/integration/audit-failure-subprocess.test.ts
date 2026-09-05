@@ -405,8 +405,7 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-// #675: nested public auditor summons change offline no-receipt subprocess shape.
-test.skip("no-receipt Judge audit drains one healthy packaged Navigator for the accepted parent", async () => {
+test("no-receipt Judge audit drains one healthy packaged Navigator for the accepted parent", async () => {
   // Process boundary required: process-release evidence is emitted on process exit.
   const result = await runHealthyNavigatorAuditFailureCli("json");
   assert.equal(result.localTimeout, false, "subprocess did not time out");

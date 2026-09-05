@@ -180,11 +180,13 @@ async function assertDetourLaborOnCase(
   project: string,
   runId: string,
 ): Promise<void> {
-  const bookKey = resolveBookKeyFromGit(project);
-  // #675: evidence-child is its own public run; detour toolResults live under
-  // the child run directories, not only the parent reviewer run.
-  const runRoot = join(home, ".ak-roles", "books", bookKey, "runs");
+  // #675: evidence-child public runs book under the leg worktree's book key
+  // (resolveBookKeyFromGit of the prepared workspace), not the parent project key.
+  // Scan the whole hermetic home books tree for detour toolResults.
+  const runRoot = join(home, ".ak-roles", "books");
   const rows = await collectJsonlRows(runRoot);
+  void project;
+  void runId;
   const detourResults = rows.filter(
     (row) =>
       row.type === "message" &&
@@ -230,31 +232,37 @@ async function assertDetourLaborOnCase(
     `detour stdout missing canned labor: ${detourText}`,
   );
   // Labor must rejoin the axis reports (detour-rejoins-main-road).
-  const axisReports = rows
-    .filter(
-      (row) =>
-        row.type === "message" &&
-        row.message?.role === "assistant" &&
-        typeof row.message?.stopReason === "string" &&
-        row.message.stopReason !== "toolUse",
-    )
-    .map((row) => {
-      const content = row.message?.content;
-      if (typeof content === "string") return content;
-      if (!Array.isArray(content)) return String(content ?? "");
-      return content
-        .map((part: any) => (part.type === "text" ? part.text : ""))
-        .join("");
-    })
-    .join("\n");
+  // #675: evidence-child terminates via ak_evidence_child_output toolCall — report
+  // bytes live in toolCall arguments / submission-closure details, not plain assistant text.
+  const axisReportChunks: string[] = [];
+  for (const row of rows) {
+    if (row.type === "custom" && row.customType === "ak-role-submission-closure") {
+      const report = row.data?.details?.report;
+      if (typeof report === "string") axisReportChunks.push(report);
+      continue;
+    }
+    if (row.type !== "message" || row.message?.role !== "assistant") continue;
+    const content = row.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part?.type !== "toolCall") continue;
+      const report = part.arguments?.report;
+      if (typeof report === "string") axisReportChunks.push(report);
+    }
+  }
+  const axisReports = axisReportChunks.join("\n");
   assert.equal(
     axisReports.includes(CANNED_LABOR),
     true,
     `axis reports missing rejoined engine labor: ${axisReports}`,
   );
 
+  const bookKey = resolveBookKeyFromGit(project);
   const invocation = JSON.parse(
-    await readFile(join(runRoot, "invocation.json"), "utf8"),
+    await readFile(
+      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@reviewer`, "invocation.json"),
+      "utf8",
+    ),
   ) as Record<string, unknown>;
   assert.equal(typeof invocation.engine, "string");
   assert.notEqual(String(invocation.engine).trim(), "");
@@ -267,10 +275,7 @@ async function assertDetourLaborOnCase(
   // （自由名 → childEnv + invocation.engine）承接，删此留彼。
 
 
-// #675: nested public evidence-child is a full ak-role spawn. Offline faux nesting
-// under reviewer is covered by true-run acceptance (set-engine + leg detour); keep
-// these two as skip until nested offline spawn has a stable fixture seam.
-test.skip(
+test(
   "engine failure in evidence legs terminates the public Reviewer run with its cause",
   { timeout: 180_000 },
   async () => {
@@ -282,6 +287,11 @@ test.skip(
       await mkdir(project, { recursive: true });
       await mkdir(binDir, { recursive: true });
       const base = seedGitProject(project);
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s\\n' '${engineCause}' >&2\nexit 23\n`,
+      );
+
       const result = await runReviewerWithEngine({
         home,
         project,
@@ -305,7 +315,7 @@ test.skip(
   },
 );
 
-test.skip(
+test(
   "AC with-notes: cursor engine → leg detour → typed reviewer receipt",
   { timeout: 180_000 },
   async () => {
@@ -316,6 +326,13 @@ test.skip(
       await mkdir(project, { recursive: true });
       await mkdir(binDir, { recursive: true });
       const base = seedGitProject(project);
+      // cursor notes exist as packaged material; fake executable still named kimi
+      // because the scripted LLM builds argv from the fixture, not from notes body.
+      await writeExecutable(
+        join(binDir, "kimi"),
+        `#!/bin/sh\nprintf '%s' '${CANNED_LABOR}\\n'\n`,
+      );
+
       const result = await runReviewerWithEngine({
         home,
         project,

@@ -12,6 +12,8 @@ import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+/** #675 public auditor terminating tool. */
+const AUDITOR_OUTPUT_TOOL_NAME = "ak_auditor_output";
 
 export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Promise<void> {
   const runsPath = process.env.AK_DOCTOR_FRESH_CASE_PATH;
@@ -28,8 +30,10 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
   });
   const seeded = await seedAgentDirModelsJsonFromFaux(faux, process.env.PI_CODING_AGENT_DIR);
   let captured = false;
-  const capture = (context: Context) => {
+  const capture = (context: Context, names: readonly string[]) => {
     if (captured || typeof capturePath !== "string" || capturePath.trim() === "") return;
+    // #675: nested public auditor reuses this fixture — only capture the doctor seat prompt.
+    if (!names.includes(DOCTOR_OUTPUT_TOOL_NAME)) return;
     captured = true;
     writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
   };
@@ -38,12 +42,17 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
   const respond = (context: Context) => {
     const navigator = navigatorChildOrUndefined(context, { role: "doctor", phase: null });
     if (navigator !== undefined) return navigator;
-    capture(context);
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    if (names.includes(DOCTOR_AUDIT_TOOL_NAME)) {
+    capture(context, names);
+    const auditTool = names.includes(AUDITOR_OUTPUT_TOOL_NAME)
+      ? AUDITOR_OUTPUT_TOOL_NAME
+      : names.includes(DOCTOR_AUDIT_TOOL_NAME)
+        ? DOCTOR_AUDIT_TOOL_NAME
+        : undefined;
+    if (auditTool !== undefined) {
       return fauxAssistantMessage(
         fauxToolCall(
-          DOCTOR_AUDIT_TOOL_NAME,
+          auditTool,
           { status: "pass", violations: [], conflicts: [], decisionGate: null },
           { id: "doctor-audit" },
         ),

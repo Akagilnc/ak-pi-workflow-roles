@@ -101,9 +101,6 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
           agentDir: piAgentDir,
           env: {
             PI_OFFLINE: "1",
-            // #675: activation-failure identity only — skip nested public summons.
-            AK_ROLE_TEST_GATE_PASS: "1",
-            AK_ROLE_TEST_AUDIT_PASS: "1",
           },
         },
       );
