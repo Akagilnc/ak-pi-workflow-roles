@@ -318,6 +318,8 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
 
     // Rejected/no-result historical terminals do not form rounds.
+    // Clear prior volume so the rejected fixture is the sole auditor state.
+    await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({
       mode: "issue",
@@ -589,10 +591,12 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/malformed JSONL record/, "malformed JSONL", home);
 
     // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
+    await rm(auditorDir, { recursive: true, force: true });
     await writeFile(auditorDir, "not-a-directory\n", "utf8");
     await assertAuditorRolesUnreadable(/ENOTDIR/, "ENOTDIR topology", home);
 
     // Accepted gate receipt with inverted span must not silently omit the volume.
+    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_inverted_span.jsonl"),
@@ -608,6 +612,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/unusable timestamp span/, "inverted span", home);
 
     // Accepted gate receipt with blank status — shape refusal wash is forbidden.
+    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_blank_status.jsonl"),
@@ -623,6 +628,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/missing usable status/, "blank status", home);
 
     // Accepted dispatch with unknown officer arg.
+    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_unknown_officer.jsonl"),
@@ -639,6 +645,7 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
 
     // Lawful province non-dispatch release (pass) must be readable — zero rounds,
     // never unreadable (#597). Unknown non-contract statuses stay loud above.
+    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),

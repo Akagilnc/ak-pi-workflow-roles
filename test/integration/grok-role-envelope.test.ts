@@ -125,36 +125,34 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   }
 });
 
-test("Grok opening materials inject soul exactly once", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-soul-once-"));
+test("Grok envelope loads soul once and keeps typed materials empty for judge", async () => {
+  const root = await mkdtemp(worktreeTempPrefix("ak-grok-soul-load-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
     const socketPath = join(root, "mcp.sock");
-    // Synthetic marker only — proves once-injection without locking packaged soul prose.
-    // Production bug was: envelope preloaded the same loadSoul bytes, then before_agent_start
-    // appended them again under <judge_soul>. Mirror that shape with a synthetic double-path.
+    // Observable contract: loadJudgeSoul is invoked once; materials stay empty
+    // (no preloaded duplicate readingMaterial — #632). Free-text body injection
+    // count is not asserted (#685 C3: no generated-content locks).
     let soulLoads = 0;
     const prepared = await prepareGrokRoleEnvelope({
       request: {
         principal: {}, activation: { role: "judge" }, methods: [],
         continuation: { kind: "initial", prompt: "decide" },
         model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
-        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "soul-once"),
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "soul-load"),
       } as RoleTurnRequest,
       socketPath,
       dependencies: {
         loadJudgeSoul: async () => {
           soulLoads += 1;
-          return "synthetic-judge-soul";
+          return "judge-soul-fixture";
         },
         auditSoulCompliance: async () => ({ status: "pass" }),
         activationTraceWriter: async () => {},
       },
     });
     try {
-      // Once-load + typed materials face: no preloaded duplicate readingMaterial (#632).
-      // Body tag presentation is not locked (#685 C3).
       assert.equal(soulLoads, 1);
       assert.deepEqual(prepared.systemPrompt.materials, []);
       assert.equal(prepared.mcpServers.length, 1);

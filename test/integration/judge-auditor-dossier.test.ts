@@ -50,22 +50,24 @@ function seedJudgeSubjects(sessionManager: SessionManager): void {
   });
 }
 
-test("judge auditor bare-Pi seam proceeds when subjects are on the books", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-judge-bare-pi-"));
-  const runDirectory = join(root, "run");
-  await mkdir(runDirectory);
-  let calls = 0;
-  try {
-    const sessionManager = SessionManager.inMemory();
-    (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
-    seedJudgeSubjects(sessionManager);
-    await writeInstitutionalSeatTable(runDirectory, {
-      auditor: seatSelection("test", "test"),
-    });
-    const faux = fauxProvider({ provider: "test" });
+/**
+ * Shared child-provider observation for healthy + negative auditor paths.
+ * Counts real mock HTTP hits through withInstitutionalProviderFixture so a
+ * materials-gate failure that still opened the child would red on call count.
+ */
+async function withAuditorChildObservation<T>(
+  run: (ctx: {
+    faux: ReturnType<typeof fauxProvider>;
+    childCalls: () => number;
+    armPassResponse: () => void;
+  }) => Promise<T>,
+): Promise<T> {
+  let childCalls = 0;
+  const faux = fauxProvider({ provider: "test" });
+  const armPassResponse = () => {
     faux.setResponses([
       () => {
-        calls += 1;
+        childCalls += 1;
         return fauxAssistantMessage(
           fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
             status: "pass",
@@ -77,12 +79,34 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
         );
       },
     ]);
+  };
+  // Arm a tripwire even when the body expects zero calls — any unexpected
+  // child open increments the same counter the healthy path uses.
+  armPassResponse();
+  return withInstitutionalProviderFixture(faux, () =>
+    run({ faux, childCalls: () => childCalls, armPassResponse }),
+  );
+}
+
+test("judge auditor bare-Pi seam proceeds when subjects are on the books", async () => {
+  const root = await mkdtemp(worktreeTempPrefix("ak-judge-bare-pi-"));
+  const runDirectory = join(root, "run");
+  await mkdir(runDirectory);
+  try {
+    const sessionManager = SessionManager.inMemory();
+    (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
+    seedJudgeSubjects(sessionManager);
+    await writeInstitutionalSeatTable(runDirectory, {
+      auditor: seatSelection("test", "test"),
+    });
     const auditor = createPiJudgeAuditor();
-    const decision = await withInstitutionalProviderFixture(faux, () =>
-      auditor({ context: auditContext(sessionManager, faux) }),
-    );
+    const { decision, childCalls } = await withAuditorChildObservation(async ({ faux, childCalls }) => {
+      const decision = await auditor({ context: auditContext(sessionManager, faux) });
+      return { decision, childCalls: childCalls() };
+    });
     assert.equal(decision.status, "pass");
-    assert.equal(calls, 1);
+    // Same observation the negative paths assert stays at zero.
+    assert.equal(childCalls, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -94,15 +118,18 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
   process.env.AK_ROLE_RUN_DIR = worktreeTempPrefix("ak-missing-run-dir-does-not-exist");
   try {
     const auditor = createPiJudgeAuditor();
-    await assert.rejects(
-      () => auditor({ context: auditContext(SessionManager.inMemory()) }),
-      (error: unknown) => {
-        // Typed materials gate fires before child session / provider open.
-        assert.ok(error instanceof AuditMaterialsUnavailableError);
-        assert.deepEqual(error.observation, { kind: "missing-dossier" });
-        return true;
-      },
-    );
+    await withAuditorChildObservation(async ({ childCalls }) => {
+      await assert.rejects(
+        () => auditor({ context: auditContext(SessionManager.inMemory()) }),
+        (error: unknown) => {
+          // Typed materials gate fires before child session / provider open.
+          assert.ok(error instanceof AuditMaterialsUnavailableError);
+          assert.deepEqual(error.observation, { kind: "missing-dossier" });
+          return true;
+        },
+      );
+      assert.equal(childCalls(), 0, "missing-dossier must not open child provider");
+    });
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;
@@ -122,14 +149,17 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
       timestamp: Date.now(),
     });
     const auditor = createPiJudgeAuditor();
-    await assert.rejects(
-      () => auditor({ context: auditContext(sessionManager) }),
-      (error: unknown) => {
-        assert.ok(error instanceof AuditMaterialsUnavailableError);
-        assert.deepEqual(error.observation, { kind: "missing-subject", subject: "candidate-verdict" });
-        return true;
-      },
-    );
+    await withAuditorChildObservation(async ({ faux, childCalls }) => {
+      await assert.rejects(
+        () => auditor({ context: auditContext(sessionManager, faux) }),
+        (error: unknown) => {
+          assert.ok(error instanceof AuditMaterialsUnavailableError);
+          assert.deepEqual(error.observation, { kind: "missing-subject", subject: "candidate-verdict" });
+          return true;
+        },
+      );
+      assert.equal(childCalls(), 0, "missing-subject must not open child provider");
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -320,8 +320,9 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
 
     // Non-git cwd must loudly reject even when GIT_DIR points at another repository.
-    const nonGit = join(root, "not-a-repo");
-    mkdirSync(nonGit);
+    // Isolation root must sit outside this worktree's upward Git discovery; /tmp
+    // named root is not deleted (owner 2026-09-06 directory boundary).
+    const nonGit = mkdtempSync(join("/tmp", "ak-book-topo-nongit-"));
     const previousGitDir = process.env.GIT_DIR;
     const previousGitCommon = process.env.GIT_COMMON_DIR;
     const previousGitWorkTree = process.env.GIT_WORK_TREE;
@@ -353,6 +354,8 @@ test("book key follows git common-dir host basename across worktrees, rename, an
 
 test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
   const root = mkdtempSync(worktreeTempPrefix("ak-book-infra-"));
+  // Non-git control cwd must sit outside this worktree; /tmp named root is not deleted.
+  const nonGitCwd = mkdtempSync(join("/tmp", "ak-book-infra-nongit-"));
   try {
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
@@ -382,7 +385,7 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
 
     // Control: a real git child that exits nonzero remains the typed non-git error.
     assert.throws(
-      () => resolveBookKeyFromGit(cwd),
+      () => resolveBookKeyFromGit(nonGitCwd),
       (error: unknown) => {
         assert.ok(error instanceof ActivationGitRepositoryRequiredError);
         assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
