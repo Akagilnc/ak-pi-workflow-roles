@@ -186,6 +186,8 @@ test("canonical binding fails closed for unavailable and empty Skills", async ()
       /Canonical tdd Skill is unavailable.*SKILL\.md/i,
     );
 
+    // State transition inside self-owned home: directory SKILL.md → file body.
+    await rm(missing, { recursive: true, force: true });
     await writeConfiguredSkill(
       home,
       "tdd",

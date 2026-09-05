@@ -270,6 +270,8 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
         "runs",
         `${C1_ALPHA_RUN}@coder`,
       );
+      // Drop prior artifacts so live run-state is not classified via leftover receipts.
+      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
       await writeFile(
         join(runDir, "run-state.json"),
         `${JSON.stringify({
@@ -326,6 +328,8 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
         "runs",
         `${C1_ALPHA_RUN}@coder`,
       );
+      // Drop prior artifacts so durable error.settlement is the sole terminal face.
+      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
       await writeFile(
         join(runDir, "error.settlement.json"),
         `${JSON.stringify({

@@ -492,6 +492,7 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
     for (const row of ACCEPTED_ROWS) {
       // Fresh project state per row when merger mutates the worktree.
       if (row.role === "merger") {
+        await rm(project, { recursive: true, force: true });
         await mkdir(project);
         seedGitProject(project);
       }

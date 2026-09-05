@@ -36,7 +36,9 @@ export async function withPrimaryAwareCleanup<T>(
       failures.length === 1
         ? failures[0]
         : new AggregateError(failures, "Test cleanup failed", { cause: failures[0] });
-    if (primaryFailure !== undefined) {
+    // Use the succeeded fact-bit, not primaryFailure !== undefined: a lawful
+    // body throw of `undefined` is still a primary failure and must not be lost.
+    if (!succeeded) {
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
         "Test failed and cleanup failed",

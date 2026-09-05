@@ -169,39 +169,37 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    const bare = await mkdtemp(worktreeTempPrefix("ak-worker-gate-bare-"));
-    try {
-      const gate = bareGate(home);
-      gate.arm(root);
-      for (const status of ["planned", "refused"] as const) {
-        assert.doesNotThrow(() => gate.assertAcceptable(status), status);
-      }
-      assert.doesNotThrow(() =>
-        gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
-      );
-      assert.throws(
-        () => gate.assertAcceptable("completed"),
-        (error: unknown) =>
-          error instanceof WorkerCommitReminderError &&
-          error.code === "worker_commit_reminder",
-      );
-      assert.doesNotThrow(() => gate.assertAcceptable("completed"));
-      const g2 = bareGate(home);
-      g2.arm(root);
-      assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
-      git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
-      assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
-
-      assert.throws(() => bareGate(home).arm(bare), /not a git repository/);
-
-      await withTempGit(async (unborn, unbornHome) => {
-        const g = bareGate(unbornHome);
-        g.arm(unborn);
-        assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
-      }, { seed: false });
-    } finally {
-      await rm(bare, { recursive: true, force: true });
+    // bare non-git arm target must sit outside this worktree's upward Git discovery;
+    // /tmp named root is not deleted (owner 2026-09-06 directory boundary).
+    const bare = await mkdtemp(join("/tmp", "ak-worker-gate-bare-"));
+    const gate = bareGate(home);
+    gate.arm(root);
+    for (const status of ["planned", "refused"] as const) {
+      assert.doesNotThrow(() => gate.assertAcceptable(status), status);
     }
+    assert.doesNotThrow(() =>
+      gate.assertAcceptable("unfinished", { reason: "unconstitutional: task contradicts ADR 0055" }),
+    );
+    assert.throws(
+      () => gate.assertAcceptable("completed"),
+      (error: unknown) =>
+        error instanceof WorkerCommitReminderError &&
+        error.code === "worker_commit_reminder",
+    );
+    assert.doesNotThrow(() => gate.assertAcceptable("completed"));
+    const g2 = bareGate(home);
+    g2.arm(root);
+    assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
+    git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
+    assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
+
+    assert.throws(() => bareGate(home).arm(bare), /not a git repository/);
+
+    await withTempGit(async (unborn, unbornHome) => {
+      const g = bareGate(unbornHome);
+      g.arm(unborn);
+      assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
+    }, { seed: false });
   });
 });
 
