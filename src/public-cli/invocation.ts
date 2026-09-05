@@ -24,7 +24,6 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { resolveTicketNumberFromAttachmentBodies } from "../ticket-frontmatter.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -110,10 +109,17 @@ export type AdmittedRoleInvocationBase = {
    */
   readonly correlationId?: string;
   /**
-   * Typed ticket face from frozen attachment frontmatter (`ticketNumber`).
-   * Absent when no attachment carries a valid contract field (unbound).
+   * Typed ticketNumber after seat LLM bind or notary source-run inheritance (#635).
+   * Admission does not bind from CLI flag or attachment frontmatter.
    */
   readonly ticketNumber?: number;
+  /**
+   * Seat LLM ticket resolution settled as true-unbound (#635).
+   * Distinct from unbound-not-yet-resolved (field absent). Mutually exclusive
+   * with ticketNumber; both are durable one-shot conclusions so auto-resume
+   * and manual resume never re-enter hermes resolution.
+   */
+  readonly ticketResolution?: "true-unbound";
   /** Effective model from invocation identity; restored on resume when no CLI model is given. */
   readonly model?: InvocationEffectiveModel;
 };
@@ -442,8 +448,8 @@ async function mergeInvocationIdentityPage(
 /**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
  * object and both durable pages (invocation.json + admitted-request.json).
- * Used by countersign diarist pre-court resolution when admission was unbound
- * (#582 / diarist-resolves-ticket-llm-layer). Never clears an existing binding.
+ * Used by seat LLM ticket binding when admission was unbound
+ * (#635 / #582 diarist-resolves-ticket-llm-layer). Never clears an existing binding.
  */
 export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
@@ -451,6 +457,11 @@ export async function bindAdmittedTicketNumber(
 ): Promise<void> {
   if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
     throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
+  }
+  if (admitted.ticketResolution === "true-unbound") {
+    throw new Error(
+      "bindAdmittedTicketNumber refuses to replace durable true-unbound ticket resolution",
+    );
   }
   if (admitted.ticketNumber !== undefined) {
     if (admitted.ticketNumber === ticketNumber) return;
@@ -468,6 +479,36 @@ export async function bindAdmittedTicketNumber(
   await writeFile(
     admittedPath,
     `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/**
+ * Persist seat LLM true-unbound conclusion onto in-memory admitted + both durable
+ * pages so later auto-resume attempts and manual resume never re-enter hermes (#635).
+ */
+export async function recordTrueUnboundTicketResolution(
+  admitted: AdmittedRoleInvocation,
+): Promise<void> {
+  if (admitted.ticketNumber !== undefined) {
+    throw new Error(
+      `recordTrueUnboundTicketResolution refuses to overwrite ticket #${admitted.ticketNumber}`,
+    );
+  }
+  if (admitted.ticketResolution === "true-unbound") return;
+  (admitted as { ticketResolution?: "true-unbound" }).ticketResolution =
+    "true-unbound";
+  await mergeInvocationIdentityPage(admitted.runDirectory, {
+    ticketResolution: "true-unbound",
+  });
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, ticketResolution: "true-unbound" }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -537,8 +578,6 @@ export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
-  /** Explicit --ticket (countersign only). */
-  ticket?: number;
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
@@ -548,7 +587,7 @@ export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
 export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
 
-/** Positive ticket number shared by countersign/notary/analyst faces. */
+/** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
   raw: string,
   flag: string,
@@ -571,7 +610,6 @@ function parseInstructionArgv(
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
-  let ticket: number | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -593,16 +631,6 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
-      if (taken.def.id === "ticket") {
-        if (owner !== "countersign") {
-          throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
-        }
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("countersign --ticket requires a positive integer");
-        }
-        ticket = parsePositiveTicketNumber(taken.value, "countersign --ticket");
-        continue;
-      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -617,7 +645,6 @@ function parseInstructionArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
-    ...(ticket === undefined ? {} : { ticket }),
   };
 }
 
@@ -959,16 +986,12 @@ async function freezeRegularFileAttachment(
   };
 }
 
-/** Freeze attachments and resolve typed ticketNumber from frozen bodies (bind-if-present). */
-async function freezeAttachmentsWithTicketNumber(
+/** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
+async function freezeAttachments(
   attachmentPaths: readonly string[],
   attachmentsDirectory: string,
-): Promise<{
-  readonly attachments: FrozenAttachment[];
-  readonly ticketNumber?: number;
-}> {
+): Promise<readonly FrozenAttachment[]> {
   const attachments: FrozenAttachment[] = [];
-  const bodies: Buffer[] = [];
   for (let i = 0; i < attachmentPaths.length; i += 1) {
     const frozen = await freezeRegularFileAttachment(
       attachmentPaths[i]!,
@@ -976,13 +999,36 @@ async function freezeAttachmentsWithTicketNumber(
       i,
     );
     attachments.push(frozen.attachment);
-    bodies.push(frozen.body);
   }
-  const ticketNumber = resolveTicketNumberFromAttachmentBodies(bodies);
-  return {
-    attachments,
-    ...(ticketNumber === undefined ? {} : { ticketNumber }),
-  };
+  return attachments;
+}
+
+/**
+ * Read ticketNumber from a retained source run's admitted-request.json,
+ * falling back to invocation.json. Same typed integer rules as resume restore.
+ */
+export async function readTicketNumberFromSourceRun(
+  runDirectory: string,
+): Promise<number | undefined> {
+  for (const page of ["admitted-request.json", "invocation.json"] as const) {
+    try {
+      const raw = JSON.parse(
+        await readFile(join(runDirectory, page), "utf8"),
+      ) as unknown;
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const ticketNumber = (raw as Record<string, unknown>).ticketNumber;
+      if (
+        typeof ticketNumber === "number" &&
+        Number.isSafeInteger(ticketNumber) &&
+        ticketNumber >= 1
+      ) {
+        return ticketNumber;
+      }
+    } catch {
+      // Missing or unreadable page → try next; unbound if none yield a ticket.
+    }
+  }
+  return undefined;
 }
 
 function ticketAdmissionFields(
@@ -1013,9 +1059,9 @@ export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
 
 /**
  * Shared instruction-seat admission for Judge and Inspector: project check,
- * principal/placement issue, attachment freeze, ticket extract, admitted-request
- * and invocation ledger write. CorrelationId is projected only when supplied
- * (Inspector). Countersign keeps its own path for ticket-override specialty.
+ * principal/placement issue, attachment freeze, admitted-request and invocation
+ * ledger write. CorrelationId is projected only when supplied (Inspector).
+ * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
   R extends "judge" | "inspector" | "gatekeeper" | "navigator",
@@ -1046,11 +1092,7 @@ async function admitStandardMaterialInvocation<
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   const correlationFields =
     options.correlationId === undefined
       ? {}
@@ -1065,7 +1107,6 @@ async function admitStandardMaterialInvocation<
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     ...correlationFields,
     instruction,
     instructionEmpty,
@@ -1099,7 +1140,6 @@ async function admitStandardMaterialInvocation<
     runDirectory,
     principal,
     admittedRequestPath,
-    ...ticketFields,
     ...correlationFields,
   };
 }
@@ -1182,8 +1222,6 @@ export type AdmitCountersignInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   project?: string;
-  /** Explicit --ticket; wins over attachment frontmatter when both present. */
-  ticket?: number;
   /** Injectable clock/id for tests. */
   createRunId?: () => string;
   principalAuthority: DurablePrincipalAuthority;
@@ -1223,15 +1261,8 @@ export async function admitCountersignInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber: frontmatterTicket } =
-    await freezeAttachmentsWithTicketNumber(
-      options.attachmentPaths,
-      attachmentsDirectory,
-    );
-  // Explicit --ticket wins over attachment frontmatter (ADR 0075).
-  const ticketFields = ticketAdmissionFields(
-    options.ticket ?? frontmatterTicket,
-  );
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+  // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -1243,7 +1274,6 @@ export async function admitCountersignInvocation(
     runDirectory,
     principal,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments: attachments.map((a) => ({
@@ -1273,7 +1303,6 @@ export async function admitCountersignInvocation(
     principal,
     admittedRequestPath,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-    ...ticketFields,
   };
 }
 
@@ -1372,11 +1401,7 @@ export async function admitCoderInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
   const taskPath = join(runDirectory, "task.md");
   await writeFile(taskPath, instruction, "utf8");
@@ -1389,7 +1414,6 @@ export async function admitCoderInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -1421,7 +1445,6 @@ export async function admitCoderInvocation(
     principal,
     admittedRequestPath,
     taskPath,
-    ...ticketFields,
   };
 }
 
@@ -1525,11 +1548,7 @@ export async function admitFixerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
   let prerequisitesPath: string | undefined;
   if (prerequisitesSource !== undefined) {
@@ -1552,7 +1571,6 @@ export async function admitFixerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -1591,7 +1609,6 @@ export async function admitFixerInvocation(
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
-    ...ticketFields,
   };
 }
 
@@ -1835,11 +1852,7 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths ?? [],
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
 
   let requestManifestPath: string | undefined;
   if (manifestCanonicalJson !== undefined) {
@@ -1856,7 +1869,6 @@ export async function admitCollectorInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty,
     prNumber,
@@ -1894,7 +1906,6 @@ export async function admitCollectorInvocation(
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
-    ...ticketFields,
   };
 }
 
@@ -2169,11 +2180,7 @@ export async function admitDoctorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths ?? [],
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
 
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -2184,7 +2191,6 @@ export async function admitDoctorInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -2219,7 +2225,6 @@ export async function admitDoctorInvocation(
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity,
-    ...ticketFields,
   };
 }
 
@@ -2242,8 +2247,6 @@ export function buildDoctorTransportPrompt(
 export type ParseNotaryArgvResult = {
   readonly sourceRun: string;
   readonly project?: string;
-  /** Optional --ticket for diary lookup (ADR 0075). */
-  readonly ticket?: number;
 };
 
 /**
@@ -2253,7 +2256,6 @@ export type ParseNotaryArgvResult = {
 export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
   let project: string | undefined;
   let sourceRun: string | undefined;
-  let ticket: number | undefined;
   const tokens = [...args];
   const definitions = roleOptions("notary");
   const options = createTypedOptionConsumer(definitions);
@@ -2281,13 +2283,6 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
         sourceRun = taken.value;
         continue;
       }
-      if (taken.def.id === "ticket") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("notary --ticket requires a positive integer");
-        }
-        ticket = parsePositiveTicketNumber(taken.value, "notary --ticket");
-        continue;
-      }
       throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -2306,7 +2301,6 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
   return {
     sourceRun,
     ...(project === undefined ? {} : { project }),
-    ...(ticket === undefined ? {} : { ticket }),
   };
 }
 
@@ -2316,7 +2310,6 @@ export async function admitNotaryInvocation(options: {
   readonly cwd: string;
   readonly sourceRun: string;
   readonly project?: string;
-  readonly ticket?: number;
   readonly runs?: string;
   readonly createRunId?: () => string;
   readonly model?: InvocationEffectiveModel;
@@ -2355,7 +2348,9 @@ export async function admitNotaryInvocation(options: {
     home: options.home,
   });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  const ticketFields = ticketAdmissionFields(options.ticket);
+  const ticketFields = ticketAdmissionFields(
+    await readTicketNumberFromSourceRun(sourceRun.runDirectory),
+  );
 
   const admitted = {
     role: "notary" as const,
@@ -2674,11 +2669,7 @@ export async function admitReviewerInvocation(
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // Public parse already rejects attachments; keep freeze loop for structural symmetry.
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -2689,7 +2680,6 @@ export async function admitReviewerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -2722,7 +2712,6 @@ export async function admitReviewerInvocation(
     admittedRequestPath,
     baseRevision: options.baseRevision,
     authorityRefs,
-    ...ticketFields,
   };
 }
 
@@ -2902,11 +2891,7 @@ export async function admitMergerInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  const { attachments, ticketNumber } = await freezeAttachmentsWithTicketNumber(
-    options.attachmentPaths,
-    attachmentsDirectory,
-  );
-  const ticketFields = ticketAdmissionFields(ticketNumber);
+  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
   // Intent materials seed primary-source investigation; the method owns the work.
   const targetIntent = mergerMaterialFromUtf8(
@@ -2950,7 +2935,6 @@ export async function admitMergerInvocation(
     projectRoot,
     runDirectory,
     principal,
-    ...ticketFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -2989,7 +2973,6 @@ export async function admitMergerInvocation(
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
-    ...ticketFields,
   };
 }
 

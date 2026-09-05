@@ -3,8 +3,7 @@
  * shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
- * Unbound admission may resolve a ticket via diarist pre-court LLM assertion
- * (#582 / diarist-resolves-ticket-llm-layer) before the diary station runs.
+ * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -15,22 +14,16 @@ import {
   type DiaristIssueFace,
   type DiaristRunResult,
 } from "../diarist.ts";
-import {
-  createGhTicketExistenceChecker,
-  createHermesDiaristTicketResolver,
-  resolveDiaristTicketFromInstruction,
-  type DiaristTicketResolution,
-} from "../diarist-ticket-resolution.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
-  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
+import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
   runPostAdmissionOneShot,
@@ -99,7 +92,6 @@ export async function runPublicCountersign(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(parsed.ticket === undefined ? {} : { ticket: parsed.ticket }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
@@ -145,7 +137,7 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        await resolveCountersignTicketBinding(admitted, env);
+        await resolveSeatTicketBinding(admitted, env);
         // Re-project activation so Notary gate flag carries the post-admission binding.
         Object.assign(
           turnRequest,
@@ -205,37 +197,6 @@ export async function runPublicCountersignResume(
     adapters: countersignAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
-}
-
-/**
- * Pre-court ticket binding for unbound countersign admissions
- * (decision key `diarist-resolves-ticket-llm-layer`).
- * Explicit admitted ticket ( --ticket / frontmatter) is never re-resolved.
- * LLM true-unbound leaves the run unbound (no diary). Asserted N that fails
- * mechanical verification throws — caller settles controlled failure.
- */
-export async function resolveCountersignTicketBinding(
-  admitted: AdmittedCountersignInvocation,
-  env: Pick<CountersignRunEnv, "packageRoot" | "cwd">,
-): Promise<DiaristTicketResolution | undefined> {
-  if (admitted.ticketNumber !== undefined) return undefined;
-
-  const resolver = createHermesDiaristTicketResolver({
-    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
-    cwd: admitted.projectRoot,
-  });
-  const checkExistence = createGhTicketExistenceChecker();
-  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
-  const resolution = await resolveDiaristTicketFromInstruction({
-    instruction: admitted.instruction,
-    origin,
-    resolver,
-    checkExistence,
-  });
-  if (resolution.kind === "ticket") {
-    await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
-  }
-  return resolution;
 }
 
 /**

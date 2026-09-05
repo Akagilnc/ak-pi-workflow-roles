@@ -525,7 +525,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
   }
 });
 
-test("public Notary --ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
+test("public Notary source-run ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
@@ -570,21 +570,23 @@ test("public Notary --ticket: admit→activation→ACP systemPromptOverride fold
     });
     const sourceRunPath = await realpath(sourceCoords.runDirectory);
 
-    // Public argv → admit (typed --ticket) → turn request → envelope agent-start.
+    // Public argv → admit (ticket from source-run admitted form) → turn request → envelope agent-start.
+    await writeFile(
+      join(sourceRunPath, "admitted-request.json"),
+      `${JSON.stringify({ role: "judge", ticketNumber: 582 })}\n`,
+      "utf8",
+    );
     const parsed = parseNotaryArgv([
       "--source-run",
       sourceRunPath,
-      "--ticket",
-      "582",
     ]);
-    assert.equal(parsed.ticket, 582);
+    assert.equal("ticket" in parsed, false);
     const notaryRunId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
     const admitted = await admitNotaryInvocation({
       home: root,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
       sourceRun: parsed.sourceRun,
-      ticket: parsed.ticket,
       createRunId: () => notaryRunId,
     });
     assert.equal(admitted.ticketNumber, 582);

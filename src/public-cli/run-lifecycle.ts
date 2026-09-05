@@ -845,6 +845,8 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** Durable seat LLM true-unbound conclusion (#635); restored on resume. */
+  readonly ticketResolution?: "true-unbound";
   /** Collector — admitted repository/PR identity restored on resume (#633). */
   readonly prNumber?: number;
   readonly repository?: string;
@@ -862,33 +864,44 @@ type LoadedAdmittedRequestFields = {
   readonly model?: InvocationEffectiveModel;
 };
 
-/** Restore optional correlation + typed ticketNumber from a durable admitted page. */
+/** Restore optional correlation + typed ticket identity from a durable admitted page. */
 function parsePersistedTicketIdentity(
   record: Record<string, unknown>,
-): { correlationId?: string; ticketNumber?: number } {
+): {
+  correlationId?: string;
+  ticketNumber?: number;
+  ticketResolution?: "true-unbound";
+} {
   const correlationId =
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
       ? record.correlationId
       : undefined;
   const ticketNumber =
     typeof record.ticketNumber === "number" &&
-    Number.isInteger(record.ticketNumber) &&
+    Number.isSafeInteger(record.ticketNumber) &&
     record.ticketNumber >= 1
       ? record.ticketNumber
       : undefined;
+  const ticketResolution =
+    record.ticketResolution === "true-unbound" ? "true-unbound" : undefined;
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
+    ...(ticketResolution === undefined ? {} : { ticketResolution }),
   };
 }
 
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
+  ticketResolution?: "true-unbound";
 } {
   return {
     ...(fields.correlationId === undefined ? {} : { correlationId: fields.correlationId }),
     ...(fields.ticketNumber === undefined ? {} : { ticketNumber: fields.ticketNumber }),
+    ...(fields.ticketResolution === undefined
+      ? {}
+      : { ticketResolution: fields.ticketResolution }),
   };
 }
 
@@ -938,6 +951,7 @@ async function loadResumableRunRecord(
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
+  let ticketResolution: "true-unbound" | undefined;
   let prNumber: number | undefined;
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
@@ -1097,6 +1111,7 @@ async function loadResumableRunRecord(
       const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
+      ticketResolution = fromAdmitted.ticketResolution;
     }
   } catch (error) {
     // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
@@ -1127,10 +1142,17 @@ async function loadResumableRunRecord(
             : {}),
         };
       }
-      if (correlationId === undefined || ticketNumber === undefined) {
+      if (
+        correlationId === undefined ||
+        ticketNumber === undefined ||
+        ticketResolution === undefined
+      ) {
         const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
+        if (ticketResolution === undefined) {
+          ticketResolution = fromInvocation.ticketResolution;
+        }
       }
     }
   } catch (error) {
@@ -1166,6 +1188,7 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(ticketResolution === undefined ? {} : { ticketResolution }),
       ...(prNumber === undefined ? {} : { prNumber }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
