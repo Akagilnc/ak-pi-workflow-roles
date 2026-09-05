@@ -3,15 +3,6 @@
  * Navigator packaged attendance / continuity / failure matrix
  * All split files remain on the heavy serial manifest (庭定『先拆且全留 heavy』).
  */
-// #675: nested public summons + navigator post-role grace may reject after the
-// scenario returns; swallow only the known stale-ctx race so the file does not
-// fail on asynchronous activity after pass.
-process.on("unhandledRejection", (reason) => {
-  if (reason instanceof Error && /stale after session replacement or reload/.test(reason.message)) {
-    return;
-  }
-  throw reason;
-});
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -249,7 +240,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
               : { role: "reviewer", phase: null });
           })
           );
-          assert.ok(navigatorCalls >= 1 && navigatorCalls <= 6, `navigator calls out of band: ${navigatorCalls}`);
+          assert.equal(navigatorCalls, 3, "nested public path locks warm+settle+rebind prepare count");
           void preparedAt;
           // #443: first presentation sample is enough to lock pack default wiring bytes.
           if (sample === 0) {
@@ -285,7 +276,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
           })
         );
-        assert.ok(navigatorCalls >= 1 && navigatorCalls <= 6, `navigator calls out of band: ${navigatorCalls}`);
+        assert.equal(navigatorCalls, 3, "revised-route session locks warm+settle+rebind prepare count");
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
@@ -405,7 +396,12 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
             // #675: activation may warm one prepare; settlement drains one more. Bound the total.
-            assert.ok(navigatorCalls >= 1 && navigatorCalls <= 6, `navigator calls out of band: ${navigatorCalls}`);
+            // infrastructure settles without rebind (no next.role selection); others warm+settle+rebind.
+            assert.equal(
+              navigatorCalls,
+              outcome === "infrastructure" ? 2 : 3,
+              `drain path prepare count must be exact for outcome=${outcome}`,
+            );
             if (outcome === "human_decision") {
               assert.equal(
                 sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request"),
@@ -492,7 +488,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(attendance.length, 1);
         assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
-        assert.ok(navigatorCalls >= 1 && navigatorCalls <= 6, `mid-turn prepare calls out of band: ${navigatorCalls}`);
+        assert.equal(navigatorCalls, 3, "mid-turn path locks warm+settle+rebind prepare count");
         const persisted = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries;
         const settlements = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
         const invocations = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");

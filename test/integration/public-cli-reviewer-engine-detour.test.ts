@@ -56,37 +56,6 @@ async function writeExecutable(path: string, body: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
-async function collectJsonlRows(root: string): Promise<any[]> {
-  const rows: any[] = [];
-  async function walk(dir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-      const text = await readFile(full, "utf8");
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          rows.push(JSON.parse(line));
-        } catch {
-          // ignore non-JSON noise
-        }
-      }
-    }
-  }
-  await walk(root);
-  return rows;
-}
-
 async function runReviewerWithEngine(input: {
   home: string;
   project: string;
@@ -179,87 +148,91 @@ async function runReviewerWithEngine(input: {
   };
 }
 
+async function listEvidenceChildRunDirs(home: string): Promise<string[]> {
+  const booksRoot = join(home, ".ak-roles", "books");
+  const found: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.endsWith("@evidence-child")) {
+          found.push(full);
+          continue;
+        }
+        await walk(full);
+      }
+    }
+  }
+  await walk(booksRoot);
+  return found.sort();
+}
+
 async function assertDetourLaborOnCase(
   home: string,
   project: string,
   runId: string,
 ): Promise<void> {
-  // #675: evidence-child public runs book under the leg worktree's book key
-  // (resolveBookKeyFromGit of the prepared workspace), not the parent project key.
-  // Scan the whole hermetic home books tree for detour toolResults.
-  const runRoot = join(home, ".ak-roles", "books");
-  const rows = await collectJsonlRows(runRoot);
-  void project;
-  void runId;
-  const detourResults = rows.filter(
-    (row) =>
-      row.type === "message" &&
-      row.message?.role === "toolResult" &&
-      row.message?.toolName === ENGINE_DETOUR_TOOL_NAME &&
-      row.message?.isError !== true,
+  // #675: nested public evidence-child runs are independent public seats; bind
+  // assertions to those run directories (role suffix), not the whole books tree.
+  const childRuns = await listEvidenceChildRunDirs(home);
+  assert.equal(
+    childRuns.length,
+    2,
+    `expected exactly two evidence-child runs under hermetic home, got ${childRuns.length}: ${childRuns.join(",")}`,
   );
-  // Both launched legs must each complete one successful engine detour (#378).
-  assert.ok(
-    detourResults.length >= 2,
-    `expected standards+spec engine detour toolResults under ${runRoot}, got ${detourResults.length}`,
-  );
-  const detourByAxis = new Set<string>();
-  for (const row of rows) {
-    if (row.type !== "message" || row.message?.role !== "assistant") continue;
-    const content = row.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (part?.type !== "toolCall" || part.name !== ENGINE_DETOUR_TOOL_NAME) continue;
-      const id = typeof part.id === "string" ? part.id : "";
-      if (id === "engine-detour-standards") detourByAxis.add("standards");
-      if (id === "engine-detour-spec") detourByAxis.add("spec");
-    }
-  }
-  assert.deepEqual(
-    [...detourByAxis].sort(),
-    ["spec", "standards"],
-    `expected per-axis engine detour calls, got ${[...detourByAxis].join(",") || "none"}`,
-  );
-  const detourText = detourResults
-    .map((row) => {
+  const axes = new Set<string>();
+  for (const runDir of childRuns) {
+    const invocation = JSON.parse(
+      await readFile(join(runDir, "invocation.json"), "utf8"),
+    ) as { role?: string; engine?: string };
+    assert.equal(invocation.role, "evidence-child");
+    assert.equal(invocation.engine, "cursor");
+    const sessionFile = join(runDir, "session", "session.jsonl");
+    const rows = (await readFile(sessionFile, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as any);
+    const detourCalls = rows.flatMap((row) => {
+      if (row.type !== "message" || row.message?.role !== "assistant") return [];
       const content = row.message?.content;
-      if (typeof content === "string") return content;
-      if (!Array.isArray(content)) return String(content ?? "");
+      if (!Array.isArray(content)) return [];
+      return content.filter(
+        (part: any) => part?.type === "toolCall" && part.name === ENGINE_DETOUR_TOOL_NAME,
+      );
+    });
+    assert.equal(detourCalls.length, 1, `expected one detour toolCall in ${runDir}`);
+    const argv = detourCalls[0]?.arguments?.argv;
+    assert.ok(Array.isArray(argv), `detour argv must be structured array in ${runDir}`);
+    const axis = typeof argv[2] === "string" ? argv[2] : "";
+    assert.ok(axis === "standards" || axis === "spec", `unexpected detour axis ${axis} in ${runDir}`);
+    axes.add(axis);
+    const detourResults = rows.filter(
+      (row) =>
+        row.type === "message" &&
+        row.message?.role === "toolResult" &&
+        row.message?.toolName === ENGINE_DETOUR_TOOL_NAME,
+    );
+    assert.equal(detourResults.length, 1, `expected one detour toolResult in ${runDir}`);
+    assert.equal(detourResults[0]?.message?.isError, false, `detour must succeed in ${runDir}`);
+    // Rejoin is structured on evidence-child output toolCall arguments.report.
+    const reports = rows.flatMap((row) => {
+      if (row.type !== "message" || row.message?.role !== "assistant") return [];
+      const content = row.message?.content;
+      if (!Array.isArray(content)) return [];
       return content
-        .map((part: any) => (part.type === "text" ? part.text : ""))
-        .join("");
-    })
-    .join("\n");
-  assert.equal(
-    detourText.includes(CANNED_LABOR),
-    true,
-    `detour stdout missing canned labor: ${detourText}`,
-  );
-  // Labor must rejoin the axis reports (detour-rejoins-main-road).
-  // #675: evidence-child terminates via ak_evidence_child_output toolCall — report
-  // bytes live in toolCall arguments / submission-closure details, not plain assistant text.
-  const axisReportChunks: string[] = [];
-  for (const row of rows) {
-    if (row.type === "custom" && row.customType === "ak-role-submission-closure") {
-      const report = row.data?.details?.report;
-      if (typeof report === "string") axisReportChunks.push(report);
-      continue;
-    }
-    if (row.type !== "message" || row.message?.role !== "assistant") continue;
-    const content = row.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (part?.type !== "toolCall") continue;
-      const report = part.arguments?.report;
-      if (typeof report === "string") axisReportChunks.push(report);
-    }
+        .filter((part: any) => part?.type === "toolCall" && typeof part.arguments?.report === "string")
+        .map((part: any) => part.arguments.report as string);
+    });
+    assert.equal(reports.length, 1, `expected one evidence-child report toolCall in ${runDir}`);
+    assert.ok(reports[0]!.length > 0, `evidence-child report must be non-empty in ${runDir}`);
   }
-  const axisReports = axisReportChunks.join("\n");
-  assert.equal(
-    axisReports.includes(CANNED_LABOR),
-    true,
-    `axis reports missing rejoined engine labor: ${axisReports}`,
-  );
+  assert.deepEqual([...axes].sort(), ["spec", "standards"]);
 
   const bookKey = resolveBookKeyFromGit(project);
   const invocation = JSON.parse(

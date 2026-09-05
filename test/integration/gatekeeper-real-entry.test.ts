@@ -120,6 +120,39 @@ test("worker completion directly summons Inspector via public path", async () =>
   });
 });
 
+test("parent gate receipt book failure is typed transport_failure after lawful officer pass", async () => {
+  await withParent(async (context) => {
+    // Force bookDirectOfficerReceipt mkdir to ENOTDIR: session file path under /dev/null.
+    const poisoned = {
+      ...context,
+      sessionManager: {
+        getSessionFile: () => "/dev/null/session.jsonl",
+      },
+    };
+    const result = await runGatekeeper({
+      context: poisoned,
+      runDirectory: context.runDirectory,
+      subject: { kind: "judge_draft" },
+      async summonOfficer() {
+        return acceptedTerminal("notary", "pass", { findings: [] });
+      },
+    });
+    assert.equal(result.status, "transport_failure");
+    if (result.status !== "transport_failure") assert.fail("expected transport_failure");
+    assert.equal(result.stage, "notary");
+    assert.equal(
+      result.reason.startsWith("parent gate receipt book failed:"),
+      true,
+      result.reason,
+    );
+    assert.deepEqual(result.submission, {
+      status: "pass",
+      officer: "notary",
+      findings: [],
+    });
+  });
+});
+
 test("judge draft directly summons Notary and preserves bounce", async () => {
   await withParent(async (context) => {
     const submission = { status: "bounce", findings: ["quote has no source"] };
