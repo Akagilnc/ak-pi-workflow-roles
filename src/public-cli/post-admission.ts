@@ -116,7 +116,6 @@ export type PostAdmissionAdapters<
   trySettle: (admitted: A, authority: DurablePrincipalAuthority) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
-  trySettleSecondary?: (admitted: A, authority: DurablePrincipalAuthority) => Promise<TerminalResult | undefined>;
   resolveRunnerKnownFailure?: (input: {
     result: RoleTurnResult;
     sessionFile: string;
@@ -234,14 +233,6 @@ export async function presentControlledFailure<
   };
 }
 
-function presentSecondaryTerminal(terminal: TerminalResult, io: CliIo): void {
-  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-    presentFailureTerminal(terminal, io);
-  } else {
-    io.stdout(formatTerminalResult(terminal));
-  }
-}
-
 /** Serialize one failure leaf for details.concurrentFailures (sole leaf owner = settlement). */
 function concurrentFailureLeafRecord(leaf: ControlledFailure): {
   readonly cause: ControlledFailureCause;
@@ -257,9 +248,16 @@ function concurrentFailureLeafRecord(leaf: ControlledFailure): {
   };
 }
 
+function existingConcurrentFailureLeaves(
+  details: Readonly<Record<string, unknown>> | undefined,
+): unknown[] {
+  const value = details?.concurrentFailures;
+  return Array.isArray(value) ? [...value] : [];
+}
+
 /**
  * Attach last-host write failure as concurrent secondary evidence on an existing
- * returned-path ControlledFailureInput — no forged host throw identity.
+ * returned-path ControlledFailureInput — append, never replace prior leaves.
  */
 function withLastHostWriteConcurrentFailure(
   input: ControlledFailureInput,
@@ -278,7 +276,10 @@ function withLastHostWriteConcurrentFailure(
           : { diagnostic: failure.diagnostic }),
         details: {
           ...(failure.details ?? {}),
-          concurrentFailures: [writeLeaf],
+          concurrentFailures: [
+            ...existingConcurrentFailureLeaves(failure.details),
+            writeLeaf,
+          ],
         },
       },
     };
@@ -287,9 +288,22 @@ function withLastHostWriteConcurrentFailure(
     ...input,
     knownDetails: {
       ...(input.knownDetails ?? {}),
-      concurrentFailures: [writeLeaf],
+      concurrentFailures: [
+        ...existingConcurrentFailureLeaves(input.knownDetails),
+        writeLeaf,
+      ],
     },
   };
+}
+
+/** Keep primary throw identity; attach last-host write as a real AggregateError leaf. */
+function withOptionalLastHostWriteThrow(
+  primary: unknown,
+  writeError: unknown | undefined,
+  message: string,
+): unknown {
+  if (writeError === undefined) return primary;
+  return new AggregateError([primary, writeError], message, { cause: primary });
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -458,6 +472,10 @@ export async function dispatchPostAdmissionTurn<
     // Mock hosts that return without opening still record via the returned path.
     // Pre-open throws: neither → no claim. Post-open throws: open fact → retain.
     // Spans returned failure / same-run retry / return-to-Grok / post-open body+cleanup throws.
+    // last-host write failure is pending secondary evidence only — never forks settlement.
+    // Thrown dual: AggregateError leaves. Returned dual: same shared settle/resolve chain,
+    // write leaf attached at the single present boundary (ADR 0080 single-settlement-disposition).
+    let lastHostWriteError: unknown | undefined;
     const hostEngaged =
       turnOutcome.kind === "returned" || openedNativeHomeRunDirectory !== undefined;
     if (
@@ -477,135 +495,24 @@ export async function dispatchPostAdmissionTurn<
             : previousRunDirectory,
         );
       } catch (error) {
-        // Dual failure: host already failed AND last-host write failed — keep both.
-        // Thrown host: real AggregateError leaves (incl. throw undefined).
-        // Returned host: same evidence-priority chain as the normal failure path
-        // (resolveRunnerKnownFailure / credential / audited resolution), then attach
-        // the write leaf under details.concurrentFailures — no forged throw identity.
-        // Lawful settled success + write fail: write error alone.
-        if (turnOutcome.kind === "thrown") {
-          return (await presentControlledFailure(
-            admitted,
-            {
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: new AggregateError(
-                [turnOutcome.error, error],
-                "host turn and ticket-seat last-host write failed",
-                { cause: turnOutcome.error },
-              ),
-            },
-            adapters,
-            env.principalAuthority,
-            io,
-          )) as { exitCode: number; admitted: A; terminal: T };
-        }
-        const result = turnOutcome.result;
-        try {
-          await writeFile(
-            join(admitted.runDirectory, "stderr.log"),
-            result.stderr,
-            "utf8",
-          );
-        } catch {
-          // continue to dual-failure settlement
-        }
-        let settledOnWriteFail: T | undefined;
-        try {
-          settledOnWriteFail = await adapters.trySettle(
-            admitted,
-            env.principalAuthority,
-          );
-        } catch {
-          // Settle throw is not the host turn outcome; fall through to host
-          // failure projection + write concurrent (host facts remain primary).
-          settledOnWriteFail = undefined;
-        }
-        if (
-          settledOnWriteFail !== undefined &&
-          shouldPresent(settledOnWriteFail)
-        ) {
-          // Host produced a lawful terminal — last-host write is the sole failure.
-          return (await presentControlledFailure(
-            admitted,
-            {
-              timedOut: result.timedOut,
-              code: result.code,
-              stderr: result.stderr,
-              thrown: error,
-            },
-            adapters,
-            env.principalAuthority,
-            io,
-          )) as { exitCode: number; admitted: A; terminal: T };
-        }
-        if (adapters.trySettleSecondary !== undefined) {
-          const secondary = await adapters.trySettleSecondary(
-            admitted,
-            env.principalAuthority,
-          );
-          if (secondary !== undefined) {
-            // Lawful secondary terminal — write is still the sole public failure.
-            return (await presentControlledFailure(
-              admitted,
-              {
-                timedOut: result.timedOut,
-                code: result.code,
-                stderr: result.stderr,
-                thrown: error,
-              },
-              adapters,
-              env.principalAuthority,
-              io,
-            )) as { exitCode: number; admitted: A; terminal: T };
-          }
-        }
-        const sessionFile =
-          admitted.principal !== undefined
-            ? env.principalAuthority.decode(admitted.principal).sessionFile
-            : "";
-        const runnerKnownFailure =
-          adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
-            ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
-            : result.knownFailure;
-        const credentialFailure = postRunMissingCredentialFailure(
-          result,
-          env.model,
-          env.credentials,
-        );
-        const resolution = await resolveAuditedRunnerFailureResolution({
-          runner: runnerKnownFailure,
-          sessionFile,
-          credential: credentialFailure,
-          runDirectory: admitted.runDirectory,
-        });
-        const hostFailureInput: ControlledFailureInput = {
-          timedOut: result.timedOut,
-          code: result.code,
-          stderr: result.stderr,
-          ...controlledFailureInputFromResolution(resolution),
-        };
-        return (await presentControlledFailure(
-          admitted,
-          withLastHostWriteConcurrentFailure(hostFailureInput, error),
-          adapters,
-          env.principalAuthority,
-          io,
-        )) as { exitCode: number; admitted: A; terminal: T };
+        lastHostWriteError = error;
       }
     }
 
     if (turnOutcome.kind === "thrown") {
       // Preserve original throw/cause (pre-open or post-open). last-host already
-      // retained open fact above when bind had succeeded.
+      // retained open fact above when bind had succeeded; write fail stays concurrent.
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: turnOutcome.error,
+          thrown: withOptionalLastHostWriteThrow(
+            turnOutcome.error,
+            lastHostWriteError,
+            "host turn and ticket-seat last-host write failed",
+          ),
         },
         adapters,
         env.principalAuthority,
@@ -629,13 +536,18 @@ export async function dispatchPostAdmissionTurn<
     try {
       settled = await adapters.trySettle(admitted, env.principalAuthority);
     } catch (error) {
+      // Settle throw is a real failure fact — never swallow into undefined.
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
-          thrown: error,
+          thrown: withOptionalLastHostWriteThrow(
+            error,
+            lastHostWriteError,
+            "settlement and ticket-seat last-host write failed",
+          ),
         },
         adapters,
         env.principalAuthority,
@@ -643,6 +555,21 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
+      if (lastHostWriteError !== undefined) {
+        // Lawful host terminal — last-host write is the sole public failure.
+        return (await presentControlledFailure(
+          admitted,
+          {
+            timedOut: result.timedOut,
+            code: result.code,
+            stderr: result.stderr,
+            thrown: lastHostWriteError,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+        )) as { exitCode: number; admitted: A; terminal: T };
+      }
       // last-host recorded after host returned a turn result (shared failure/retry/return fact).
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
@@ -651,19 +578,6 @@ export async function dispatchPostAdmissionTurn<
         admitted,
         terminal: settled,
       };
-    }
-
-    if (adapters.trySettleSecondary !== undefined) {
-      const secondary = await adapters.trySettleSecondary(admitted, env.principalAuthority);
-      if (secondary !== undefined) {
-        await markRunTerminal(admitted.runDirectory);
-        presentSecondaryTerminal(secondary, io);
-        return {
-          exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
-          admitted,
-          terminal: secondary as unknown as T,
-        };
-      }
     }
 
     const sessionFile =
@@ -685,14 +599,17 @@ export async function dispatchPostAdmissionTurn<
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
+    const hostFailureInput: ControlledFailureInput = {
+      timedOut: result.timedOut,
+      code: result.code,
+      stderr: result.stderr,
+      ...controlledFailureInputFromResolution(resolution),
+    };
     return (await presentControlledFailure(
       admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      },
+      lastHostWriteError === undefined
+        ? hostFailureInput
+        : withLastHostWriteConcurrentFailure(hostFailureInput, lastHostWriteError),
       adapters,
       env.principalAuthority,
       io,
