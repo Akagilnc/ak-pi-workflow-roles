@@ -88,25 +88,8 @@ async function buildEvidenceChildSystemPrompt(
 
 // ── shared constants / types ──────────────────────────────────────────────
 
-export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 
-export type AuditorLastResponseFacts = {
-  readonly stopReason: AssistantMessage["stopReason"];
-  readonly toolNames: readonly string[];
-};
-export class AuditorTurnLimitError extends Error {
-  constructor(
-    readonly limit: number,
-    readonly observedTurns?: number,
-    readonly lastResponse?: AuditorLastResponseFacts,
-  ) {
-    super(observedTurns === undefined
-      ? `Auditor exceeded ${limit} turns`
-      : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
-    this.name = "AuditorTurnLimitError";
-  }
-}
 export type AuditorDecisionTool = {
   name: string;
   description: string;
@@ -640,7 +623,6 @@ export async function executeAuditorChild(
       });
     } catch {}
 
-    let turns = 0;
     const sessionUsage = emptyUsage();
     let boundaryResponse: AssistantMessage | undefined;
     let retentionFailure: unknown;
@@ -682,8 +664,8 @@ export async function executeAuditorChild(
         // A native unknown-tool receipt ("Tool <name> not found") is not an
         // evidence-tool failure: the child session has no such tool registered,
         // so its errored toolResult must not short-circuit the auditor (it keeps
-        // prompting to the turn limit, mirroring the pre-migration
-        // registeredToolNames exclusion in findToolFailure).
+        // prompting, mirroring the pre-migration registeredToolNames exclusion
+        // in findToolFailure).
         if (detailText !== undefined && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
         const failure = detailText === undefined
           ? new Error(event.toolName ?? "evidence tool failed")
@@ -696,7 +678,6 @@ export async function executeAuditorChild(
         evidenceToolFailures.set(event.toolCallId, failure);
       }
       if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
-        turns += 1;
         if (event.usage) addUsage(sessionUsage, event.usage);
         const msg = event.message as AssistantMessage | undefined;
         retainedResponse = msg;
@@ -730,7 +711,7 @@ export async function executeAuditorChild(
               }
             }
           }
-          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
+          if (msg.stopReason === "error") boundaryResponse = msg;
         }
       }
       if (event.type === "turn_end") {
@@ -860,14 +841,6 @@ export async function executeAuditorChild(
         ? assistants[0]
         : assistants.find((message) =>
           message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
-
-      if (boundaryResponse !== undefined && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === undefined) {
-        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
-        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
-          stopReason: boundaryResponse.stopReason,
-          toolNames,
-        });
-      }
 
       if (response !== undefined) {
         try {
