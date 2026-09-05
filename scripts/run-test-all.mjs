@@ -14,10 +14,13 @@ import { join, relative } from "node:path";
 import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
-  // #685: packaged Navigator withInProcessPi multi-case file — ordinary
-  // file-parallelism surfaces stale extension ctx / async activity failures;
-  // concurrency=2 isolation. Real Pi/cross-process legs already culled.
+  // #685 retained shortest real-host/packaged tracers (no named true-run handoff yet).
+  // concurrency=2: ordinary file-parallelism flakes / contends these.
   "test/package/package-entrypoint-navigator.integration.test.ts",
+  "test/package/package-entrypoint-cold-help.integration.test.ts",
+  "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/doctor-package-lifecycle.test.ts",
+  "test/package/public-cli-install.test.ts",
 ]);
 
 const TIERS = Object.freeze([

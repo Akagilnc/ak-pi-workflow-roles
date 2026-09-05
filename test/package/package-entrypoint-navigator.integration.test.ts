@@ -1,10 +1,9 @@
 /**
  * #319 Batch 4 (R1): thematic split from package-entrypoint.integration.test.ts.
  * Navigator packaged attendance / continuity / failure matrix (#685).
- * Heavy: multi-second withInProcessPi packaged sessions flake under ordinary
- * file-parallelism (stale extension ctx); concurrency=2 isolation required.
- * Real Pi / cross-process legs culled — contract/navigator-* + in-process
- * cross-role continuity own those contracts.
+ * Heavy concurrency=2: real Pi attendance, withInProcessPi multi-second sessions,
+ * and fresh-process cross-process route memory — ordinary file-parallelism flakes
+ * (stale extension ctx). Kept as shortest packaged tracers; no true-run handoff yet.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -55,15 +54,19 @@ import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
+  getSharedIsolatedPack,
   loadRawPackageManifest,
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
+  runNodeSubprocess,
+  runPiSubprocess,
   machineLedgerHome,
   withActivationHome,
   withHermeticHome,
   withAgentDirProviderFixture,
   withInProcessPi,
+  withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
 
@@ -71,6 +74,7 @@ import {
   packageEntrypoint,
   expectedNavigatorSessionDirectory,
   uniqueObservedNavigatorSession,
+  runOrdinaryNavigatorObservation,
 } from "../helpers/package-entrypoint-fixtures.ts";
 
 /** In-file judge direct-notary scripting (not a shared auto-pass). */
@@ -83,6 +87,42 @@ function scriptJudgeDirectNotaryPass(names: readonly string[]) {
   }
   return undefined;
 }
+
+test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
+  const manifest = await loadRawPackageManifest();
+  const current = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest));
+  assert.equal(current.result.localTimeout, false, "ordinary invocation must finish");
+  assert.equal(current.result.code, 0, `ordinary invocation must succeed: ${current.result.stderr}`);
+  const accepted = current.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+  assert.equal(accepted.length, 1, "must persist the accepted Judge output result");
+  assert.deepEqual(accepted[0]?.message?.details, { submissionDisposition: "pending-round-closure" });
+  const closureRows = current.roleEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
+  assert.equal(closureRows.length, 1, "must persist the sealed Judge submission closure");
+  assert.deepEqual(closureRows[0]?.data?.details, { judgeStatus: "converged" });
+
+  const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
+  const currentSettlement = current.navigatorEntries.find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
+  const currentVisible = current.roleEntries.find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+  // #575 sole-final barrier: the accepted settlement is the sealed closure,
+  // not the pending-round-closure execute toolResult.
+  const currentAccepted = closureRows[0];
+  assert.ok(currentPreparation?.timestamp, "current invocation must persist Navigator preparation completion");
+  assert.ok(currentSettlement?.timestamp, "current invocation must persist Navigator settlement");
+  assert.ok(currentVisible?.timestamp, "current invocation must persist the visible custom message");
+  assert.ok(currentAccepted?.timestamp, "current invocation must persist the sealed accepted role output settlement");
+  const preparationAt = Date.parse(currentPreparation.timestamp!);
+  const settlementAt = Date.parse(currentSettlement.timestamp!);
+  const visibleAt = Date.parse(currentVisible.timestamp!);
+  const acceptedAt = Date.parse(currentAccepted.timestamp!);
+  assert.ok(Number.isFinite(preparationAt) && Number.isFinite(settlementAt) && Number.isFinite(visibleAt) && Number.isFinite(acceptedAt));
+  assert.ok(acceptedAt <= settlementAt, "sealed accepted settlement must precede Navigator settlement");
+  assert.ok(preparationAt <= settlementAt, "Navigator preparation must drain before settlement");
+  assert.ok(visibleAt >= settlementAt, "persisted visible custom-message must follow Navigator settlement");
+  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the sealed accepted settlement");
+  assert.ok(visibleAt - acceptedAt <= 1000, `persisted visible custom-message must follow accepted settlement within 1s (actual ${visibleAt - acceptedAt}ms)`);
+  const currentEvents = current.result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
+  assert.equal(currentEvents.some((event) => event.type === "message_end" && event.message?.role === "custom" && event.message.customType === "ak-navigator-attendance"), true, "current ordinary invocation must display the typed attendance event");
+});
 
 test("normal packaged Navigator presents independently in print and JSON and reuses one subject session", async () => {
   const manifest = await loadRawPackageManifest();
@@ -798,6 +838,105 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
+    },
+  );
+});
+
+test("fresh packaged processes resume cross-role Navigator route memory and isolate subjects", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withActivationHome(
+    { prefix: "ak-navigator-fresh-process-integration-" },
+    async ({ home, agentDir }) => {
+      const root = resolve(home, "workspace/fresh-ad-hoc");
+      await mkdir(root, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "Navigator Boundary Test"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "navigator-boundary@test.local"], { cwd: root });
+      await mkdir(resolve(root, "runs/coder"), { recursive: true });
+      await mkdir(resolve(root, "runs/fixer"), { recursive: true });
+      await writeFile(resolve(root, "authority.md"), "fresh-process owner authority\n", "utf8");
+      const coderTask = resolve(root, "runs/coder/task.md");
+      const fixerPacket = resolve(root, "runs/fixer/fix-packet.json");
+      await writeFile(coderTask, "Fresh-process concrete task.\n", "utf8");
+      await writeFile(fixerPacket, "Fresh-process fixer packet.\n", "utf8");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "fixture inputs"], { cwd: root });
+      await writeFile(resolve(root, "consumer-local-state.txt"), "pre-existing consumer bytes\n", "utf8");
+      const porcelainBefore = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root });
+      assert.ok(porcelainBefore.byteLength > 0, "fixture must prove non-empty initial consumer state");
+      const child = String.raw`
+        import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+        import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
+        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
+        import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi, withAgentDirProviderFixture } from "./test/helpers/pi-test-harness.ts";
+        const role = process.env.AK_ROLE;
+        const root = process.env.AK_ROOT;
+        const input = process.env.AK_INPUT;
+        const agentDir = process.env.AK_AGENT;
+        const faux = fauxProvider({ api: "ak-navigator-fresh-process", provider: "ak-navigator-fresh-process", tokenSize: { min: 1000, max: 1000 } });
+        const model = faux.getModel();
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        await writeNavigatorModelSetting(model.provider + "/" + model.id, agentDir + "/navigator-model.json");
+        const response = (context) => {
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          if (names.includes(NOTARY_OUTPUT_TOOL)) {
+            return fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }), { stopReason: "toolUse" });
+          }
+          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            const fixer = role === "fixer";
+            const route = fixer ? [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }] : [{ role: "coder", phase: "plan" }, { role: "fixer", phase: "plan" }];
+            const next = fixer ? { role: "reviewer", phase: null } : { role: "fixer", phase: "plan" };
+            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: fixer ? "fresh-fixer" : "fresh-coder", matches: { role, phase: role === "fixer" ? "plan" : "plan", kind: "accepted" }, route, next, reason: "fresh-process route", command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help" }] }), { stopReason: "toolUse" });
+          }
+          if (names.includes(FIXER_OUTPUT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh fixer plan" }), { stopReason: "toolUse" });
+          return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh coder plan" }), { stopReason: "toolUse" });
+        };
+        const manifest = await loadRawPackageManifest();
+        faux.setResponses(Array.from({ length: 10 }, () => response));
+        let result;
+        await withAgentDirProviderFixture(faux, agentDir, () =>
+          withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+          await session.prompt("fresh process role invocation");
+          const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+          result = messages[0]?.type === "custom_message" ? messages[0].details : undefined;
+        })
+        );
+        process.stdout.write(JSON.stringify(result));
+      `;
+      const run = async (role: "coder" | "fixer", cwd: string, input: string) => {
+        const result = await runNodeSubprocess(["--import", "tsx", "--input-type=module", "-e", child], {
+          cwd: packageRoot,
+          env: { ...process.env, AK_ROLE: role, AK_ROOT: cwd, AK_INPUT: input, AK_AGENT: agentDir },
+          timeoutMs: 60_000,
+        });
+        assert.equal(result.code, 0, result.stderr);
+        return JSON.parse(result.stdout.trim()) as { disposition: string; subjectKey: string; next?: unknown };
+      };
+      // Two process-boundary legs prove resumption; subject isolation stays in-process at the neighbour test.
+      const first = await run("coder", root, coderTask);
+      const second = await run("fixer", root, fixerPacket);
+      assert.equal(first.disposition, "recommendation");
+      assert.equal(second.disposition, "recommendation");
+      assert.equal(first.subjectKey, second.subjectKey);
+      assert.deepEqual(first.next, { role: "fixer", phase: "plan" });
+      assert.deepEqual(second.next, { role: "reviewer", phase: null });
+      const porcelainAfter = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root });
+      assert.deepEqual(
+        porcelainAfter,
+        porcelainBefore,
+        "role/Navigator session transport must preserve consumer porcelain bytes exactly",
+      );
+      const observed = await uniqueObservedNavigatorSession(home, first.subjectKey, root);
+      assert.equal(
+        observed.directory,
+        expectedNavigatorSessionDirectory(home, first.subjectKey, root),
+        "fresh packaged Navigator must land at exact <book>/navigator/<sha256(subjectKey)[0:32]>",
+      );
+      const persisted = observed.entries as Array<{ type?: string; customType?: string; data?: { role?: string; phase?: string | null } }>;
+      assert.deepEqual(persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation").slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase })), [
+        { role: "coder", phase: "plan" },
+        { role: "fixer", phase: "plan" },
+      ]);
     },
   );
 });
