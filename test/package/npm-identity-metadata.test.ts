@@ -246,9 +246,9 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
  * the manifest load fields. Absorbs the packed-tarball existence assertions
  * from the former packaged-workers structure test (Doctor/Merger/Navigator
  * sources, compiled dist modules, packets, and the closed fixer-repair.json
- * negative); internal flag/schema shapes stay deleted (behavior lives in the
- * public-cli-install / public-cli-cold-matrix argv tracers, schema passthrough in
- * contract/fixer-prerequisite-contract).
+ * negative); internal flag/schema shapes stay deleted (schema passthrough in
+ * contract/fixer-prerequisite-contract). Install/cold-matrix argv tracers
+ * culled under #685 — host install face → production dossiers.
  */
 test("packed artifact ships the release inventory: souls, methods, runtime entrypoints, packets", async () => {
   for (const soul of RELEASE_SOUL_INVENTORY) {

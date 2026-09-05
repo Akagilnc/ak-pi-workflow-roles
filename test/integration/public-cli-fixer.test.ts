@@ -44,7 +44,6 @@ import {
 } from "../../src/public-cli/terminal.ts";
 import {
   packageRoot,
-  runPiSubprocess,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
