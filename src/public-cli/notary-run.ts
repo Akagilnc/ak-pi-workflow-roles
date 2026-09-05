@@ -108,16 +108,11 @@ export async function runPublicNotary(
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     packageRoot: env.packageRoot,
   });
-  const continuation =
-    memory?.resumed === true
-      ? {
-          kind: "resume" as const,
-          prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
-        }
-      : {
-          kind: "initial" as const,
-          prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
-        };
+  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
+  const continuation = {
+    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
+    prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+  };
 
   const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,

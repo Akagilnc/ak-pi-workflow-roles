@@ -267,7 +267,8 @@ export async function dispatchPostAdmissionTurn<
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
     // #636 ticket-seat memory: one last-host page owns both last host and Grok native-home run.
-    // That ownership spans success, failure, same-run retry, and return-to-Grok — not success-only.
+    // Ownership is recorded after the host returns a turn result (returned failure / retry /
+    // return-to-Grok). Pre-open throws must not claim host or native-home facts.
     // Side effects are gated by explicit ticket+seat binding — never by directory-outside-run guessing.
     let previousHost: string | undefined;
     let previousRunDirectory: string | undefined;
@@ -328,21 +329,6 @@ export async function dispatchPostAdmissionTurn<
       if (nativeHomeRunDirectory !== undefined) {
         turnRequest = { ...turnRequest, nativeHomeRunDirectory };
       }
-      // Record ownership before dispatch so failure / retry / host return share one fact.
-      // Grok: isolation run actually used. Non-Grok: preserve established Grok native home.
-      if (
-        liveHost !== undefined &&
-        principalCoordinates !== undefined &&
-        ticketSeatMemoryBound
-      ) {
-        await writeTicketSeatMemoryLastHost(
-          principalCoordinates.sessionDirectory,
-          liveHost,
-          liveHost === "grok-build"
-            ? (nativeHomeRunDirectory ?? admitted.runDirectory)
-            : previousRunDirectory,
-        );
-      }
     } catch (error) {
       // last-host / prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return (await presentControlledFailure(
@@ -386,6 +372,8 @@ export async function dispatchPostAdmissionTurn<
     try {
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
+      // Host threw without a turn result (e.g. Grok pre-native-open). last-host is
+      // owned only after the host has the turn — do not claim host/native-home yet.
       return (await presentControlledFailure(
         admitted,
         {
@@ -398,6 +386,38 @@ export async function dispatchPostAdmissionTurn<
         env.principalAuthority,
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
+    }
+
+    // last-host authority: host returned a turn result (lawful or controlled failure).
+    // Grok: isolation run actually used. Non-Grok: preserve established Grok native home.
+    // Spans returned failure / same-run retry / return-to-Grok — not pre-open throws.
+    if (
+      liveHost !== undefined &&
+      principalCoordinates !== undefined &&
+      ticketSeatMemoryBound
+    ) {
+      try {
+        await writeTicketSeatMemoryLastHost(
+          principalCoordinates.sessionDirectory,
+          liveHost,
+          liveHost === "grok-build"
+            ? (nativeHomeRunDirectory ?? admitted.runDirectory)
+            : previousRunDirectory,
+        );
+      } catch (error) {
+        return (await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: result.code,
+            stderr: result.stderr,
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+        )) as { exitCode: number; admitted: A; terminal: T };
+      }
     }
 
     try {
@@ -428,7 +448,7 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
-      // last-host already recorded pre-dispatch (failure/retry/return-to-Grok share that fact).
+      // last-host recorded after host returned a turn result (shared failure/retry/return fact).
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
