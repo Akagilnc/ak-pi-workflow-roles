@@ -21,6 +21,7 @@ import {
   realMachineAgentDir,
   realMachineHome,
 } from "./test-agent-dir-guard.ts";
+import { testTmpdir } from "./worktree-temp.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -185,7 +186,7 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
+  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-mat-"));
   try {
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
@@ -207,6 +208,7 @@ export async function packIsolatedPackage(
       files: entry.files,
     };
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -264,7 +266,10 @@ export interface SharedPackFixture extends IsolatedPackResult {
   cacheDir: string;
 }
 
-const FIXTURE_CACHE_ROOT = resolve(tmpdir(), "ak-pi-workflow-roles-cold-fixtures");
+const FIXTURE_CACHE_ROOT = resolve(
+  tmpdir(),
+  "ak-pi-workflow-roles-cold-fixtures",
+);
 
 async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
   const started = Date.now();
@@ -272,6 +277,7 @@ async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() 
     try {
       await mkdir(lockDir);
       return async () => {
+        await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -398,6 +404,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
           cacheDir,
         };
       } finally {
+        await rm(materialRoot, { recursive: true, force: true });
       }
     } finally {
       await release();
@@ -462,7 +469,7 @@ export async function withHermeticHome<T>(
   return await withProcessGlobalLock(async () => {
     // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
     const home = await mkdtemp(
-      resolve(tmpdir(), options.prefix ?? "ak-pi-test-"),
+      resolve(testTmpdir(), options.prefix ?? "ak-pi-test-"),
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
@@ -488,6 +495,7 @@ export async function withHermeticHome<T>(
       else process.env.PI_OFFLINE = previousOffline;
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+      await rm(home, { recursive: true, force: true });
     }
   });
 }
@@ -535,7 +543,7 @@ export function createTempPackageHomeLedger(input: {
   sessionFile: string;
   dispose(): void;
 } {
-  const home = mkdtempSync(join(tmpdir(), input.prefix));
+  const home = mkdtempSync(join(testTmpdir(), input.prefix));
   const bookKey = basename(home);
   const ledgerHome = machineLedgerHome(home);
   const runDirectory = join(
@@ -556,6 +564,7 @@ export function createTempPackageHomeLedger(input: {
     sessionDirectory,
     sessionFile,
     dispose() {
+      rmSync(home, { recursive: true, force: true });
     },
   };
 }
@@ -949,7 +958,7 @@ export async function withInstitutionalProviderFixture<T>(
 ): Promise<T> {
   const mock = await createMockProviderServer(faux);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
+  const tempAgentDir = await mkdtemp(join(testTmpdir(), "ak-institutional-agent-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");
@@ -988,6 +997,7 @@ export async function withInstitutionalProviderFixture<T>(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(tempAgentDir, { recursive: true, force: true });
   }
 }
 
