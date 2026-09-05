@@ -297,6 +297,50 @@ function withLastHostWriteConcurrentFailure(
 }
 
 /**
+ * True when settled already owns a failure terminal (output/candidate/…).
+ * Distinct from shouldPresentSettled: presentability is not "no existing failure".
+ * Sole shared predicate for last-host sole-vs-concurrent branching.
+ */
+function hasExistingFailureTerminal(terminal: TerminalResult): boolean {
+  return terminal.roleOutcome.kind === "failure";
+}
+
+/**
+ * Rebuild the settled failure as knownFailure so concurrent last-host write can
+ * append without replacing cause/identity/diagnostic/details.
+ */
+function knownFailureFromSettledFailureTerminal(
+  terminal: TerminalResult,
+): RoleTurnKnownFailure {
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new TypeError("knownFailureFromSettledFailureTerminal requires failure terminal");
+  }
+  const facts = terminal.roleOutcome.decisiveFacts;
+  const secondary = facts.secondaryEvidence;
+  const details =
+    secondary !== undefined &&
+    typeof secondary === "object" &&
+    secondary !== null &&
+    !Array.isArray(secondary)
+      ? (secondary as Readonly<Record<string, unknown>>)
+      : undefined;
+  const identity: { name?: string; code?: string | number } = {};
+  if (typeof facts.errorName === "string") identity.name = facts.errorName;
+  if (
+    typeof facts.errorCode === "string" ||
+    typeof facts.errorCode === "number"
+  ) {
+    identity.code = facts.errorCode;
+  }
+  return {
+    cause: terminal.roleOutcome.cause,
+    diagnostic: terminal.roleOutcome.diagnostic,
+    ...(Object.keys(identity).length > 0 ? { identity } : {}),
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
+/**
  * Presence envelope for a caught last-host write failure.
  * Own-key presence is distinct from the caught value: `throw undefined` must stay a
  * real failure fact (same rule as settlement thrown own-key), never a missing-write sentinel.
@@ -566,7 +610,26 @@ export async function dispatchPostAdmissionTurn<
     }
     if (settled !== undefined && shouldPresent(settled)) {
       if (lastHostWriteFailure !== undefined) {
-        // Lawful host terminal — last-host write is the sole public failure.
+        if (hasExistingFailureTerminal(settled)) {
+          // Existing failure terminal stays primary; last-host write is concurrent only.
+          // shouldPresentSettled must not be read as "no existing failure".
+          return (await presentControlledFailure(
+            admitted,
+            withLastHostWriteConcurrentFailure(
+              {
+                timedOut: result.timedOut,
+                code: result.code,
+                stderr: result.stderr,
+                knownFailure: knownFailureFromSettledFailureTerminal(settled),
+              },
+              lastHostWriteFailure.error,
+            ),
+            adapters,
+            env.principalAuthority,
+            io,
+          )) as { exitCode: number; admitted: A; terminal: T };
+        }
+        // No existing failure terminal — last-host write is the sole public failure.
         // thrown key is always set so `throw undefined` stays own-key present.
         return (await presentControlledFailure(
           admitted,
