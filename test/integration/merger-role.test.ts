@@ -56,7 +56,11 @@ test("Merger activation preflights frozen identity on host-neutral AK tool surfa
   assert.deepEqual(h.active(), []);
   assert.equal([...h.tools.keys()].filter((name) => name === MERGER_OUTPUT_TOOL_NAME).length, 1);
   const prompt = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, context("prompt", {}));
-  assert.match(prompt.systemPrompt, /MERGER LAW/); assert.match(prompt.systemPrompt, /target intent/); assert.match(prompt.systemPrompt, /npm/); assert.doesNotMatch(prompt.systemPrompt, /\/input\.json/);
+  // Materials project as call-input facts; the input path itself is not echoed.
+  assert.notEqual(prompt.systemPrompt, "BASE");
+  assert.equal(prompt.systemPrompt.includes("/input.json"), false);
+  assert.equal(prompt.systemPrompt.includes("target intent"), true);
+  assert.equal(prompt.systemPrompt.includes("npm"), true);
 });
 
 test("Merger activation rejects non-conflicts, incomplete conflict sets, and parent drift", async () => {
