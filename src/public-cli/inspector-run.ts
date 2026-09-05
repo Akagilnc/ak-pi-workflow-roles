@@ -101,21 +101,15 @@ export async function runPublicInspector(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   // Same ticket nest already present → native host resume (not a fresh initial).
-  // Prompt stays the officer transport; only continuation kind flips (#636 / ADR 0079).
+  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
   const engineMaterial = engineSessionMaterialFromOptions({
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     packageRoot: env.packageRoot,
   });
-  const continuation =
-    memory?.resumed === true
-      ? {
-          kind: "resume" as const,
-          prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
-        }
-      : {
-          kind: "initial" as const,
-          prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
-        };
+  const continuation = {
+    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
+    prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+  };
 
   const turnRequest = buildInspectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
