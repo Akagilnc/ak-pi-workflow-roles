@@ -12,7 +12,6 @@ import {
   dirname,
   isAbsolute,
   join,
-  resolve as lexicalResolve,
   sep,
 } from "node:path";
 
@@ -49,16 +48,26 @@ const READ_ONLY_COMMANDS = new Set([
   "find", "grep", "egrep", "fgrep", "rg", "ag", "ack",
   "wc", "stat", "file", "diff", "cmp", "md5", "md5sum", "sha256sum",
   "echo", "printf", "true", "false", "test", "[",
-  "pwd", "which", "type", "command", "env", "printenv", "export",
+  "pwd", "which", "type", "printenv",
   "date", "whoami", "id", "uname", "hostname", "basename", "dirname",
   "realpath", "readlink", "git", "jq", "yq", "sort", "uniq", "cut",
   "tr", "awk", "sed", // sed without -i is read-only; -i caught below
-  "sleep", "seq", "yes", "cal", "df", "du", "free", "ps", "top",
+  "sleep", "seq", "cal", "df", "du", "free", "ps",
 ]);
 
-/** Shell expansion / glob / tilde / subshell — cannot prove concrete targets. */
+/** Prefix wrappers: peel and reassess the remaining command (never "read-only" alone). */
+const COMMAND_WRAPPERS = new Set([
+  "command", "env", "nice", "nohup", "time", "timeout", "ionice", "stdbuf",
+]);
+
+/** Always-unprovable carriers (stdin/argv fan-out). */
+const UNPROVABLE_CARRIERS = new Set([
+  "xargs", "parallel", "watch", "su", "sudo", "script", "expect",
+]);
+
+/** Shell expansion / glob / brace / tilde / subshell — cannot prove concrete targets. */
 function hasUnprovableShellExpansion(command: string): boolean {
-  return /\$|`|\*\?|\*|\?|~|\$\(|\$\{/.test(command);
+  return /\$|`|\*|\?|~|\$\(|\$\{|\{[^}\s]*,[^}]*\}/.test(command);
 }
 
 export function defaultRoleToolFsBoundaryRoots(cwd: string): RoleToolFsBoundaryRoots {
@@ -182,6 +191,12 @@ function assessBashCommand(
   roots: RoleToolFsBoundaryRoots,
   toolName: string,
 ): RoleToolFsBoundaryViolation | undefined {
+  // Peel outer wrappers (command/env/...) and reassess the inner command.
+  const peeled = peelCommandWrappers(command);
+  if (peeled !== command) {
+    return assessBashCommand(peeled, cwd, roots, toolName);
+  }
+
   // Always assess nested shell -c bodies first (bash -c 'rm P', etc.).
   for (const body of extractNestedShellBodies(command)) {
     const hit = assessBashCommand(body, cwd, roots, toolName);
@@ -196,22 +211,103 @@ function assessBashCommand(
     }
   }
 
+  // Carriers that fan out stdin/argv cannot be proven from surface tokens.
+  if (commandHasVerb(command, UNPROVABLE_CARRIERS)) return denyUnprovable(toolName);
+
+  // Interpreters with -c/-e: body is not shell-path-provable.
+  if (hasInterpreterEvalInvocation(command)) return denyUnprovable(toolName);
+
   // Proven read-only (no redirect, only allowlisted verbs) → allow.
   if (isProvenReadOnlyBash(command)) return undefined;
 
   // eval/source/exec and interpreter-eval sentinels are never concrete-path-provable.
   if (/\b(?:eval|source|exec)\b/.test(command)) return denyUnprovable(toolName);
 
-  // Not proven read-only: fail closed on any shell expansion / glob / tilde / subshell.
+  // Not proven read-only: fail closed on expansion / glob / brace / tilde / subshell.
   if (hasUnprovableShellExpansion(command)) return denyUnprovable(toolName);
 
-  // Concrete mutation targets only — no path means unprovable mutation (e.g. sed -i).
+  // Concrete mutation targets only — no path means unprovable mutation.
   const targets = extractBashMutationTargetPaths(command);
-  // Also collect path-like operands from non-allowlisted verbs (sed -i path, etc.).
   targets.push(...extractPathOperandsFromNonReadOnly(command));
   const unique = [...new Set(targets)];
   if (unique.length === 0) return denyUnprovable(toolName);
   return denyIfOutside(toolName, unique, cwd, roots);
+}
+
+/** Strip leading command/env/nice/... wrappers (and their flags) once. */
+function peelCommandWrappers(command: string): string {
+  for (const simple of splitSimpleCommands(command)) {
+    // Only peel when the whole command is a single simple command starting with a wrapper.
+    if (splitSimpleCommands(command).length !== 1) return command;
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) {
+      // env VAR=val keeps assignments; they stay with the wrapper peel of env.
+      idx += 1;
+    }
+    if (idx >= tokens.length) return command;
+    const verb = basename(tokens[idx]!);
+    if (!COMMAND_WRAPPERS.has(verb)) return command;
+    idx += 1;
+    // Skip wrapper flags (-u, -i, -- for env/command, duration for timeout, etc.).
+    while (idx < tokens.length) {
+      const tok = tokens[idx]!;
+      if (tok === "--") {
+        idx += 1;
+        break;
+      }
+      if (tok.startsWith("-") && tok !== "-") {
+        // env -u NAME / timeout 5s — skip one value arg when flag requires it
+        if (
+          (verb === "env" && (tok === "-u" || tok === "--unset")) ||
+          (verb === "timeout" && !tok.startsWith("--")) ||
+          tok === "-s" || tok === "--signal"
+        ) {
+          idx += 2;
+          continue;
+        }
+        idx += 1;
+        continue;
+      }
+      break;
+    }
+    if (idx >= tokens.length) return command;
+    // Rejoin remaining tokens as the inner command (preserve simple quoting loss).
+    return tokens.slice(idx).map(shellQuoteIfNeeded).join(" ");
+  }
+  return command;
+}
+
+function shellQuoteIfNeeded(token: string): string {
+  if (/^[\w./@%+=:,-]+$/.test(token)) return token;
+  return `'${token.replace(/'/g, `'"'"'`)}'`;
+}
+
+function commandHasVerb(command: string, verbs: ReadonlySet<string>): boolean {
+  for (const simple of splitSimpleCommands(command)) {
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+    if (idx >= tokens.length) continue;
+    if (verbs.has(basename(tokens[idx]!))) return true;
+  }
+  return false;
+}
+
+function hasInterpreterEvalInvocation(command: string): boolean {
+  for (const simple of splitSimpleCommands(command)) {
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+    if (idx >= tokens.length) continue;
+    const verb = basename(tokens[idx]!);
+    if (!INTERPRETER_EXES.has(verb) && verb !== "node" && verb !== "nodejs") continue;
+    for (let i = idx + 1; i < tokens.length; i += 1) {
+      const tok = tokens[i]!;
+      if (NODE_EVAL_FLAGS.has(tok) || INTERPRETER_C_FLAGS.has(tok)) return true;
+    }
+  }
+  return false;
 }
 
 function denyUnprovable(toolName: string): RoleToolFsBoundaryViolation {
@@ -243,10 +339,21 @@ function isProvenReadOnlyBash(command: string): boolean {
 function isReadOnlyGit(args: readonly string[]): boolean {
   const sub = args.find((a) => !a.startsWith("-"));
   if (sub === undefined) return true;
+  // config with --file/-f writes an alternate file; never treat as read-only.
+  if (sub === "config") {
+    if (args.some((a) => a === "--file" || a === "-f" || a.startsWith("--file="))) {
+      return false;
+    }
+    // --list / --get are reads; bare config that sets values writes repo config — fail closed.
+    if (args.some((a) => a === "--list" || a === "--get" || a === "-l" || a === "--get-regexp")) {
+      return true;
+    }
+    return false;
+  }
   return [
     "status", "log", "diff", "show", "rev-parse", "rev-list",
     "branch", "tag", "remote", "ls-files", "ls-tree", "cat-file",
-    "describe", "blame", "shortlog", "config", "help", "version",
+    "describe", "blame", "shortlog", "help", "version",
   ].includes(sub);
 }
 
@@ -306,17 +413,6 @@ export function extractBashMutationTargetPaths(command: string): string[] {
     collectMutationTargetsFromSimpleCommand(simple, targets);
   }
   return targets;
-}
-
-function commandHasMutationVerb(command: string): boolean {
-  for (const simple of splitSimpleCommands(command)) {
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-    if (idx >= tokens.length) continue;
-    if (MUTATION_COMMANDS.has(basename(tokens[idx]!))) return true;
-  }
-  return false;
 }
 
 function extractNestedShellBodies(command: string): string[] {
@@ -604,7 +700,3 @@ function tokenizeShell(command: string): string[] {
   return tokens;
 }
 
-/** @internal test aid — lexicalResolve kept available for contrast cases. */
-export function lexicalResolveForTest(raw: string, cwd: string): string {
-  return lexicalResolve(cwd, raw);
-}
