@@ -6,7 +6,9 @@
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
@@ -89,6 +91,14 @@ export async function runPublicInspector(
     throw error;
   }
 
+  // #635 seat self-ticket then #636 ticket+seat memory principal (before admitted mark).
+  await resolveSeatTicketBinding(admitted, env);
+  await rebindAdmittedToTicketSeatMemory({
+    admitted,
+    seat: "inspector",
+    principalAuthority: env.principalAuthority,
+    home: env.home,
+  });
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildInspectorTurnRequest(admitted, {

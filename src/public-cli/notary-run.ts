@@ -5,6 +5,7 @@
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -92,6 +93,14 @@ export async function runPublicNotary(
     throw error;
   }
 
+  // #636: ticket from source-run → continue ticket+seat memory principal across runs.
+  // Rebind before admitted mark so run-state session paths name the memory principal.
+  await rebindAdmittedToTicketSeatMemory({
+    admitted,
+    seat: "notary",
+    principalAuthority: env.principalAuthority,
+    home: env.home,
+  });
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildNotaryTurnRequest(admitted, {
