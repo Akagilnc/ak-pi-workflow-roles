@@ -76,7 +76,7 @@ export async function runPublicCollector(
       home: env.home,
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
-      prNumber: parsed.prNumber,
+      ...(parsed.prNumber === undefined ? {} : { prNumber: parsed.prNumber }),
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),

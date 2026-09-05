@@ -302,10 +302,7 @@ export function createCollectorRoleRuntime(
             signal,
           );
           activation.ledger.completeOperational(toolCallId);
-          if (snapshot.prState !== "OPEN") {
-            // Non-OPEN observed as latest complete snapshot is target-state failure at output,
-            // but observe itself may return the fact. If this is a final observation, still return.
-          }
+          // #676 D6: non-OPEN is a deliverable target state; observe returns the fact as-is.
           return {
             content: [{
               type: "text" as const,
@@ -389,6 +386,8 @@ export function createCollectorRoleRuntime(
             details,
           };
         } catch (error) {
+          // #676 D6: non-OPEN request bounce is model-correctable; keep materials deliverable.
+          if (isCorrectableExecuteError(error)) throw error;
           hostActions.failInfrastructure(error, ctx, toolCallId);
         }
       },

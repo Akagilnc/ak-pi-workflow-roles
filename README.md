@@ -92,7 +92,7 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
 ak-role reviewer --base main "Review the branch."
 
-# collector — GitHub PR review evidence
+# collector — GitHub PR review evidence (explicit --pr, or unique current-branch PR)
 ak-role collector --pr 42 --repo owner/repository
 
 # fixer — repair the assigned findings

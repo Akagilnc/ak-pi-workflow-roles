@@ -137,3 +137,169 @@ if (path.endsWith('/user')) reply(200, {login:'fixture'}); else if (path.include
     assert.match(await readFile(errorArtifact.path, "utf8"), /HTTP 404/);
   });
 });
+
+test("#676 D6 public Collector returns closed-PR findings without new requests", { timeout: 120_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-closed-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project);
+
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||''; const method=args[args.indexOf('-X')+1];
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('/pulls/9')&&!path.includes('/reviews')&&!path.includes('/comments')&&!path.includes('?')) ok({number:9,state:'closed',merged:true,head:{sha:'cafebabe'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/9'});
+else if(path.includes('/reviews')) ok([{id:91,user:{login:'coderabbitai[bot]',type:'Bot',id:136622811},state:'COMMENTED',body:'closed-pr finding',commit_id:'cafebabe',submitted_at:'2026-01-01T00:01:00Z',html_url:'https://github.com/acme/widgets/pull/9#pullrequestreview-91'}]);
+else if(path.includes('/comments')||path.includes('/reactions')) ok([]);
+else if(method==='POST') process.exit(3);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets", "--pr", "9",
+        "Collect closed PR materials.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-closed",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "CLOSED");
+      const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
+      assert.ok(reportPath);
+      const report = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: any };
+      assert.equal(report.receipt.prState, "CLOSED");
+      assert.equal(report.receipt.requestAttempts.length, 0);
+      assert.ok(report.receipt.groups.some((group: any) => group.findings.length >= 1));
+      assert.ok(
+        report.receipt.groups.some((group: any) =>
+          group.findings.some((finding: any) => finding.pointer?.commentId === 91),
+        ),
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});
+
+test("#676 D1 public Collector rejects ambiguous target without triggering reviews", { timeout: 30_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-ambiguous-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project);
+    execFileSync("git", ["checkout", "-b", "feature/no-unique-pr"], { cwd: project });
+
+    let postCount = 0;
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||''; const method=args[args.indexOf('-X')+1];
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(method==='POST'){ process.stderr.write('unexpected-post'); process.exit(3); }
+if(path.includes('/pulls?')||path.includes('pulls?head=')) ok([]);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    const stderr: string[] = [];
+    try {
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets",
+        "Ambiguous target must not guess.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-ambiguous",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 30_000,
+        io: { stdout() {}, stderr: (text) => stderr.push(text) },
+      });
+      assert.equal(result.exitCode, 2, stderr.join(""));
+      assert.match(stderr.join(""), /ambiguous|explicit --pr/i);
+      assert.equal(result.terminal, undefined);
+      assert.equal(postCount, 0);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});
+
+test("#676 D1 public Collector resolves unique branch-head PR and returns materials", { timeout: 120_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-branch-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project);
+    execFileSync("git", ["checkout", "-b", "codex/issue-676"], { cwd: project });
+
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('pulls?head=')|| (path.includes('/pulls?') && path.includes('head='))) ok([{number:6761,head:{ref:'codex/issue-676'}}]);
+else if(path.includes('/pulls/6761')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:6761,state:'open',head:{sha:'branchhead'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/6761'});
+else if(path.includes('/reviews')) ok([{id:61,user:{login:'chatgpt-codex-connector[bot]',type:'Bot',id:199175422},state:'COMMENTED',body:'branch-resolved finding',commit_id:'branchhead',submitted_at:'2026-01-01T00:01:00Z',html_url:'https://github.com/acme/widgets/pull/6761#pullrequestreview-61'}]);
+else if(path.includes('/comments')||path.includes('/reactions')) ok([]);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets",
+        "Resolve branch target and collect.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-branch",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prNumber, 6761);
+      const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
+      assert.ok(reportPath);
+      const report = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: any };
+      assert.equal(report.receipt.prNumber, 6761);
+      assert.equal(report.receipt.prState, "OPEN");
+      assert.ok(
+        report.receipt.groups.some((group: any) =>
+          group.findings.some((finding: any) => finding.pointer?.commentId === 61),
+        ),
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});

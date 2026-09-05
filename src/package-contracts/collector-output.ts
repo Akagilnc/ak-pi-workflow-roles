@@ -63,6 +63,8 @@ export type CollectorReceipt = {
   host: "github.com";
   repository: string;
   prNumber: number;
+  /** Final observed PR state; non-OPEN still delivers materials (#676 D6). */
+  prState: string;
   manifestDigest: string;
   activationTime: string;
   deadlineTime: string;
@@ -101,6 +103,7 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     host: safeGet(value, "host") as "github.com",
     repository: safeGet(value, "repository") as string,
     prNumber: safeGet(value, "prNumber") as number,
+    prState: safeGet(value, "prState") as string,
     manifestDigest: safeGet(value, "manifestDigest") as string,
     activationTime: safeGet(value, "activationTime") as string,
     deadlineTime: safeGet(value, "deadlineTime") as string,

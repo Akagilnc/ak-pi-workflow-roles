@@ -133,6 +133,17 @@ export class CollectorFindingsValidationError extends CorrectableSubmissionError
 }
 
 /**
+ * #676 D6: non-OPEN targets keep collected materials and must not fire new review
+ * requests. Bounce the request as correctable so the seat can still seal output.
+ */
+export class CollectorNonOpenRequestError extends CorrectableSubmissionError {
+  constructor(prState: string) {
+    super(`通进司请求要求 OPEN 状态的 PR 快照；当前为 ${prState}，不再触发新评审，请直接交回已有材料`);
+    this.name = "CollectorNonOpenRequestError";
+  }
+}
+
+/**
  * #641 chain①: turn model-submitted finding pointer refs into receipt findings.
  * Each pointer must resolve to a stored text-bearing evidence record; the
  * machine locator is enriched from the same record so receipt and volume agree
