@@ -264,12 +264,22 @@ export function extractSessionToolIntervals(
  * from the nearest preceding binding at-or-before `anchorIndex` through the
  * row before the next binding (or EOF). Gate/settlement/analyst share this
  * slice — do not fork a second interval scan.
+ *
+ * `closed` is true iff a later binding ended the interval before EOF of the
+ * provided rows. On a damaged prefix parse, closed intervals are fully owned
+ * by their run; open intervals (through prefix EOF) may have lost rows to the
+ * bad line and stay honest-missing for full span/tools.
  */
+export type BindingInterval = {
+  readonly rows: readonly LedgerSessionRow[];
+  readonly closed: boolean;
+};
+
 export function intervalRowsAroundAnchor(
   rows: readonly LedgerSessionRow[],
   anchorIndex: number,
   isBindingRow: (row: LedgerSessionRow) => boolean,
-): readonly LedgerSessionRow[] {
+): BindingInterval {
   let start = 0;
   for (let i = anchorIndex; i >= 0; i -= 1) {
     if (isBindingRow(rows[i]!)) {
@@ -284,7 +294,7 @@ export function intervalRowsAroundAnchor(
       break;
     }
   }
-  return rows.slice(start, end);
+  return { rows: rows.slice(start, end), closed: end < rows.length };
 }
 
 /**
@@ -296,7 +306,7 @@ export function intervalRowsForMatchingBinding(
   rows: readonly LedgerSessionRow[],
   isBindingRow: (row: LedgerSessionRow) => boolean,
   matches: (row: LedgerSessionRow) => boolean,
-): readonly LedgerSessionRow[] | undefined {
+): BindingInterval | undefined {
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]!;
     if (!isBindingRow(row) || !matches(row)) continue;
