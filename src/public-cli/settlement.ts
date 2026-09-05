@@ -12,8 +12,15 @@ import {
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
+import { pathContainedIn } from "../activation-ledger-topology.ts";
 import {
+  intervalRowsForMatchingBinding,
+  type LedgerSessionRow,
+} from "../ledger-session-read.ts";
+import {
+  isTicketSeatRunBindingRow,
   resolveTicketSeatMemoryNestDirectories,
+  ticketSeatRunBindingRunId,
 } from "../ticket-seat-memory.ts";
 import {
   readAuditEscalationSubmission,
@@ -2515,15 +2522,44 @@ export function extractNavigatorFact(
 }
 
 /**
+ * Slice shared ticket-seat volume entries to the intervals owned by this run's
+ * binding markers. Private per-run volumes keep the whole file. Shared volumes
+ * without a binding for this run yield an empty slice — never borrow a prior
+ * run's user/terminal/attendance (#637 class 4).
+ */
+function sessionEntriesOwnedByAdmittedRun(
+  entries: readonly SessionEntry[],
+  admitted: { readonly runId: string; readonly runDirectory: string },
+  sessionFile: string,
+): SessionEntry[] {
+  if (pathContainedIn(admitted.runDirectory, sessionFile)) {
+    return [...entries];
+  }
+  const interval = intervalRowsForMatchingBinding(
+    entries as LedgerSessionRow[],
+    (row) => isTicketSeatRunBindingRow(row),
+    (row) => ticketSeatRunBindingRunId(row) === admitted.runId,
+  );
+  if (interval === undefined) return [];
+  return interval.rows as SessionEntry[];
+}
+
+/**
  * Exact-session Navigator fact for failure Terminal settlement.
  * Never infers no-advice from omission; session read failures stay typed unavailable
  * so the controlled-failure Terminal itself still settles.
+ * Shared ticket-seat volumes are sliced to this run's binding intervals.
  */
 async function extractNavigatorFactFromAdmittedSession(
   sessionFile: string,
+  admitted: { readonly runId: string; readonly runDirectory: string },
 ): Promise<TerminalNavigatorFact> {
   try {
-    const entries = await readBoundSessionEntries(sessionFile);
+    const entries = sessionEntriesOwnedByAdmittedRun(
+      await readBoundSessionEntries(sessionFile),
+      admitted,
+      sessionFile,
+    );
     return extractNavigatorFact(entries);
   } catch (error) {
     if (isMissingPathError(error)) {
@@ -3387,7 +3423,12 @@ async function settleLawfulSeatAcceptedTerminalResult(
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  // Shared ticket-seat volumes: residual/navigator only see this run's binding intervals.
+  const entries = sessionEntriesOwnedByAdmittedRun(
+    (await readLawfulSettlementEntries(sessionFile)) ?? [],
+    admitted,
+    sessionFile,
+  );
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
@@ -3405,7 +3446,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     // No usable release → existing non-zero failure channel with candidate (#475 / ADR 0055).
     // One reverse pass: prefer errored residual; else latest accepted-once non-usable details.
     // Bounded to the current attempt so multi-attempt resume timeout/no-output
-    // is not masked by a prior residual (#599 / #633).
+    // is not masked by a prior residual (#599 / #633). On shared nests the entries
+    // are already run-binding-sliced, so "latest user" cannot fall into a prior run.
     const scanStart = currentAttemptStartIndex(entries);
     let acceptedNonUsable: unknown | undefined;
     for (let index = entries.length - 1; index >= scanStart; index -= 1) {
@@ -4494,8 +4536,9 @@ export async function settleFailureTerminalResult(
   // current-attempt fact. Transcript reconstruction must not turn arbitrary output
   // failures (or bytes retained from a prior resume attempt) into exit zero.
   if (failure.cause === "output") {
-    const entries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
-    if (entries !== undefined) {
+    const rawEntries = await readBoundSessionEntries(sessionFile).catch(() => undefined);
+    if (rawEntries !== undefined) {
+      const entries = sessionEntriesOwnedByAdmittedRun(rawEntries, admitted, sessionFile);
       let attemptStart = 0;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         if (entries[index]?.type === "message" && entries[index]?.message?.role === "user") { attemptStart = index; break; }
@@ -4512,7 +4555,7 @@ export async function settleFailureTerminalResult(
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
+                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile, admitted),
                 artifacts: [],
                 runId: admitted.runId,
               },
@@ -4524,7 +4567,8 @@ export async function settleFailureTerminalResult(
     }
   }
   // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
+  // Shared nests are binding-sliced so a pre-turn failure cannot inherit prior-run attendance.
+  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile, admitted);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts: Record<string, unknown> = {

@@ -298,19 +298,28 @@ export function intervalRowsAroundAnchor(
 }
 
 /**
- * Interval owned by the first binding row that satisfies `matches`.
- * `undefined` when the volume carries no matching binding — callers must not
- * silently treat the whole continuous volume as that owner.
+ * All intervals owned by binding rows that satisfy `matches`, in volume order.
+ * A→B→resume A yields both of A's intervals (not only the first). `closed` is
+ * taken from the last matched interval: true iff a later binding ended ownership
+ * before EOF. `undefined` when the volume carries no matching binding — callers
+ * must not silently treat the whole continuous volume as that owner.
  */
 export function intervalRowsForMatchingBinding(
   rows: readonly LedgerSessionRow[],
   isBindingRow: (row: LedgerSessionRow) => boolean,
   matches: (row: LedgerSessionRow) => boolean,
 ): BindingInterval | undefined {
+  const collected: LedgerSessionRow[] = [];
+  let matched = false;
+  let lastClosed = false;
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]!;
     if (!isBindingRow(row) || !matches(row)) continue;
-    return intervalRowsAroundAnchor(rows, i, isBindingRow);
+    const interval = intervalRowsAroundAnchor(rows, i, isBindingRow);
+    matched = true;
+    collected.push(...interval.rows);
+    lastClosed = interval.closed;
   }
-  return undefined;
+  if (!matched) return undefined;
+  return { rows: collected, closed: lastClosed };
 }

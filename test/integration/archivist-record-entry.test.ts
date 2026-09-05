@@ -88,10 +88,24 @@ test("createRecordSession nests by parent file and continues subject-keyed navig
     assert.equal(continued.getSessionFile(), firstFile);
     continued.appendCustomEntry("principal", { run: 2 });
 
+    // Missing current-session after nest exists is a first-publisher window (not corrupt):
+    // claim a fresh principal rather than fail the open (concurrent first-create recovery).
     await rm(join(dirA, "current-session.json"));
-    assert.throws(
-      () => createRecordSession({ cwd: project, kind: "navigator", subject: "/work/subject-a", parent }),
-      (error: unknown) => error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    const reclaimed = createRecordSession({
+      cwd: project,
+      kind: "navigator",
+      subject: "/work/subject-a",
+      parent,
+    });
+    const reclaimedFile = reclaimed.getSessionFile()!;
+    assert.notEqual(
+      reclaimedFile,
+      firstFile,
+      "missing claim mints a fresh principal under the same nest",
+    );
+    assert.equal(
+      JSON.parse(await readFile(join(dirA, "current-session.json"), "utf8")).sessionFile,
+      reclaimedFile,
     );
     await writeFile(join(dirA, "current-session.json"), "not-json");
     assert.throws(

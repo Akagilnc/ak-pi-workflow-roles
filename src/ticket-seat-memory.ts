@@ -12,7 +12,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
+import {
+  homeFromRunDirectory,
+  pathContainedIn,
+} from "./activation-ledger-topology.ts";
 import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 import type {
   DurablePrincipal,
@@ -84,7 +87,9 @@ export function isTicketSeatMemorySeat(value: string): value is TicketSeatMemory
 }
 
 /**
- * Explicit ticket+seat binding fact for memory side effects (#636).
+ * Seat eligibility for ticket+seat memory side effects (#636 / #637).
+ * Role+ticket alone is not proof the durable principal already sits on the nest —
+ * old per-run principals remain eligible on paper after seat expansion.
  * Directory-outside-run guessing is not a business identity.
  */
 export function isTicketSeatMemoryBound(input: {
@@ -96,6 +101,23 @@ export function isTicketSeatMemoryBound(input: {
     typeof input.ticketNumber === "number" &&
     Number.isSafeInteger(input.ticketNumber) &&
     input.ticketNumber >= 1
+  );
+}
+
+/**
+ * Actual memory-binding fact: the sealed principal already points at the shared
+ * ticket-seat nest (session outside the run directory), not a still-private
+ * per-run volume. Host-transition / last-host authority and nest write-back use
+ * this — never seat eligibility alone (#637 class 1).
+ */
+export function isPrincipalOnTicketSeatNest(input: {
+  readonly runDirectory: string;
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+}): boolean {
+  return (
+    !pathContainedIn(input.runDirectory, input.sessionDirectory) &&
+    !pathContainedIn(input.runDirectory, input.sessionFile)
   );
 }
 
