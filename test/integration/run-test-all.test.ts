@@ -268,13 +268,19 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
     "host sentinel absolute path must not exist",
   );
   // #612: runner default HOME is worktree-internal and process-owned — gone after exit.
-  assert.ok(childHome.startsWith(tmpdir()) || childHome.startsWith("/tmp"), `child HOME under tmpdir: ${childHome}`);
+  assert.equal(
+    existsSync(childHome),
+    false,
+    "run-test-all default test home must be deleted on exit",
+  );
 });
 
 /**
  * AC4 (#549): bare preload entry write proof via process.env.HOME (not run-test-all).
  * Independent of AC3; package.json wiring locked above as exact strings.
- * Preload process-owned HOME exit cleanup is #612 runner/preload contract.
+ * Workspace and probe live under os.tmpdir() and are left in place (#685: tests
+ * must not delete directories). Preload process-owned HOME exit cleanup is #612
+ * runner/preload contract, not this test deleting paths.
  */
 test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-549-bare-preload-"));
@@ -287,7 +293,7 @@ test("bare preload entry: $HOME writes miss host models.json and host sentinel",
     `import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 const hostHome = userInfo().homedir;

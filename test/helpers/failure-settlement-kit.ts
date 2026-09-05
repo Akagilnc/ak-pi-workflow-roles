@@ -3,9 +3,9 @@
  * Extracted verbatim from public-cli-failure-settlement.test.ts — no behavior change.
  */
 import assert from "node:assert/strict";
+import { testTmpdir } from "./worktree-temp.ts";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -19,9 +19,18 @@ import type {
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 
-export async function withTempHome<T>(scenario: (home: string) => Promise<T>, options: { prefix?: string } = {}): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"));
-  return await scenario(home);
+export async function withTempHome<T>(
+  scenario: (home: string) => Promise<T>,
+  options: { prefix?: string } = {},
+): Promise<T> {
+  const home = await mkdtemp(
+    join(testTmpdir(), options.prefix ?? "ak-public-cli-fail-"),
+  );
+  try {
+    return await scenario(home);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 export function captureIo() {

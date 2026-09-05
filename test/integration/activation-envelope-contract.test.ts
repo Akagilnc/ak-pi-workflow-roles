@@ -1,4 +1,3 @@
-// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -348,6 +347,7 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       else process.env.GIT_WORK_TREE = previousGitWorkTree;
     }
   } finally {
+    /* outside worktree: leave for OS */
   }
 });
 
@@ -394,6 +394,7 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
       },
     );
   } finally {
+    /* outside worktree: leave for OS */
   }
 });
 
@@ -545,6 +546,7 @@ test("ledger append rejects every symlink escape vector without writing outside"
     const decoyDir = join(home, "decoy-runs", "activation", "default");
     mkdirSync(dirname(decoyDir), { recursive: true });
     // Move real tree aside then link.
+    rmSync(runsDir, { recursive: true, force: true });
     mkdirSync(decoyDir, { recursive: true });
     const decoyFile = join(decoyDir, "session.jsonl");
     writeFileSync(decoyFile, `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`);

@@ -2,6 +2,7 @@
  * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
  * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
  */
+import { rmWorktreeDir } from "./worktree-temp.ts";
 import { resolve } from "node:path";
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 
@@ -31,8 +32,13 @@ export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
   };
 }
 
-export async function cleanupTempDir(_root: string, primaryFailure?: unknown): Promise<void> {
-  if (primaryFailure !== undefined) throw primaryFailure;
+export async function cleanupTempDir(root: string, primaryFailure?: unknown): Promise<void> {
+  try {
+    await rmWorktreeDir(root);
+  } catch (cleanupFailure) {
+    if (primaryFailure === undefined) throw cleanupFailure;
+    throw new AggregateError([primaryFailure, cleanupFailure], "Test failed and cleanup failed", { cause: primaryFailure });
+  }
 }
 
 export function sessionHarness() {
