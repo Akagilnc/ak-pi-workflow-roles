@@ -66,7 +66,6 @@ import {
   withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
-import { writeInstitutionalSeatTable, parentInheritedSeats } from "../helpers/institutional-seat-table.ts";
 
 import {
   textOf,
@@ -95,10 +94,6 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
     const sessionDirectory = resolve(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
     // #518 S3: direct-Pi judge activation reads seat selection from the run page.
-    await writeInstitutionalSeatTable(
-      runDirectory,
-      parentInheritedSeats({ provider: "ak-tool-observation-bash", model: "faux-1", thinking: "off" }),
-    );
     // #675: nested public notary needs retained run identity + leaf name.
     await writeFile(
       resolve(runDirectory, "run-state.json"),

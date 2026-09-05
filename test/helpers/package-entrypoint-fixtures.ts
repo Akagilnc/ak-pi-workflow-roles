@@ -36,10 +36,6 @@ export const RELEASE_SOUL_INVENTORY = [
 ] as const;
 
 import {
-  writeInstitutionalSeatTable,
-  parentInheritedSeats,
-} from "./institutional-seat-table.ts";
-import {
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
@@ -174,10 +170,6 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
       // #518 A→B judge ruling: test 1's failure is a missing institutional seat
       // page (fixture-only), unrelated to parent seeding. Write the inherited
       // seats page at the run directory (dirname of the role session dir).
-      await writeInstitutionalSeatTable(
-        dirname(sessionDirectory),
-        parentInheritedSeats({ provider: "ak-audit-failure", model: "faux-1" }),
-      );
       await writeFile(resolve(issueRoot, "authority.md"), "owner authority for ordinary Navigator observation\n", "utf8");
       await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
       const args = [

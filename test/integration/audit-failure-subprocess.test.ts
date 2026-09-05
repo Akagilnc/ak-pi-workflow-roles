@@ -15,7 +15,6 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
-import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
 async function runCli(mode: "print" | "json") {
   return withHermeticHome(
@@ -29,11 +28,6 @@ async function runCli(mode: "print" | "json") {
       );
       const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
-      await writeInstitutionalSeatTable(runDir, {
-        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
-        notary: seatSelection("ak-audit-failure", "faux-1"),
-        auditor: seatSelection("ak-audit-failure", "faux-1"),
-      });
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -85,11 +79,6 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
       );
       const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
-      await writeInstitutionalSeatTable(runDir, {
-        gatekeeper: seatSelection("ak-audit-failure", "faux-1"),
-        notary: seatSelection("ak-audit-failure", "faux-1"),
-        auditor: seatSelection("ak-audit-failure", "faux-1"),
-      });
       // #675: nested public notary/auditor need retained run identity.
       await writeFile(
         resolve(runDir, "run-state.json"),

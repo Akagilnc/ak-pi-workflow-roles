@@ -120,10 +120,13 @@ export function createNativeNavigatorSessionFactory(
       }
     };
 
-    const { openPiInstitutionalSession } = await import("./pi/in-process-session.ts");
-    let opened: Awaited<ReturnType<typeof openPiInstitutionalSession>>;
+    // Shared in-process open seam (same session host public roles use for Pi).
+    // Navigator prepare is attendance tooling on the parent run — not a second
+    // institutional role path; seat model comes from resolveNavigatorSeatSelection.
+    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
+    let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
     try {
-      opened = await openPiInstitutionalSession({
+      opened = await openPiInProcessSession({
         cwd: context.cwd,
         selection,
         systemPrompt: "",

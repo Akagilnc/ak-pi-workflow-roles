@@ -220,15 +220,50 @@ export function parseNavigatorModelSetting(value: string): {
 }
 
 /**
- * Navigator model selection from the navigator-model setting file.
- * Live seat-table resolution for public `ak-role navigator` is owned by the
- * public CLI path (#675 deleted the institutional seat page).
+ * Navigator model selection: public seat table first (#675 / #617 DK-3), then
+ * the legacy navigator-model.json file for local overrides.
  */
 export async function resolveNavigatorSeatSelection(
-  _context: HostContext,
+  context: HostContext,
   modelSettingPath: string | undefined,
   defaultModelSettingPath: string,
 ): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
+  try {
+    const { loadPublicCliConfig } = await import("./public-cli/config.ts");
+    const { seatModelOnly } = await import("./public-cli/registry.ts");
+    const { packageMachineHome } = await import("./activation-ledger-topology.ts");
+    const homeCandidate = (context as unknown as { home?: unknown }).home;
+    const envHome = process.env.HOME;
+    // Prefer explicit context home, then process HOME (hermetic tests), never
+    // jump straight to the real machine home when a temp HOME is armed.
+    const home =
+      typeof homeCandidate === "string"
+        ? homeCandidate
+        : typeof envHome === "string" && envHome.trim() !== ""
+          ? envHome
+          : packageMachineHome();
+    const config = await loadPublicCliConfig(home);
+    const modelOnly = seatModelOnly(config.seats.navigator);
+    if (modelOnly !== undefined) {
+      const thinkingRaw = modelOnly.thinking;
+      const thinkingLevel = thinkingRaw === "max" ? "max" as const : "off" as const;
+      const configuredLabel =
+        thinkingRaw === undefined || thinkingRaw === "off"
+          ? `${modelOnly.provider}/${modelOnly.model}`
+          : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
+      return {
+        selection: {
+          provider: modelOnly.provider,
+          model: modelOnly.model,
+          thinking: thinkingLevel,
+        },
+        configuredLabel,
+        thinkingLevel,
+      };
+    }
+  } catch {
+    // Fall through to file-based setting when seat table is unreadable.
+  }
   let configured: string;
   try {
     configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
