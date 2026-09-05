@@ -51,7 +51,6 @@ import {
   packageRoot,
   persistActivationSessionFile,
   readAcceptedActivationFacts,
-  runNodeSubprocess,
   withActivationHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -809,134 +808,10 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
   }
 });
 
-test("mixed concurrent O_APPEND producers keep intact records with exact cardinality", async () => {
-  // Shared-ledger contract: package append and a foreign O_APPEND producer must not
-  // overwrite one another. No private lock / positional rewrite / truncate ownership.
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mixed-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const bookKey = "mixed-book";
-    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    const packageWorker = join(root, "package-worker.mjs");
-    const foreignWorker = join(root, "foreign-worker.mjs");
-    writeFileSync(packageWorker, `
-import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
-const index = Number(process.argv[2]);
-const ledgerPath = process.argv[3];
-const ledgerHome = process.argv[4];
-appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-  role: "judge",
-  observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
-  bookKey: "mixed-book",
-  session: { kind: "session-file", path: "/s/pkg-" + index + ".jsonl" },
-  correlation: { kind: "caller", id: "pkg-" + index },
-}), { ledgerHome });
-`);
-    writeFileSync(foreignWorker, `
-import { constants, closeSync, openSync, writeSync } from "node:fs";
-const index = Number(process.argv[2]);
-const ledgerPath = process.argv[3];
-const line = Buffer.from(JSON.stringify({ producer: "foreign", id: "foreign-" + index }) + "\\n", "utf8");
-const fd = openSync(ledgerPath, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY, 0o644);
-try {
-  const written = writeSync(fd, line, 0, line.length, null);
-  if (written !== line.length) throw new Error("foreign short write " + written + "/" + line.length);
-} finally {
-  closeSync(fd);
-}
-`);
-    // Ensure parent tree exists so foreign O_APPEND open does not race mkdir.
-    mkdirSync(dirname(ledgerPath), { recursive: true });
-    const packageCount = 8;
-    const foreignCount = 8;
-    const children = await Promise.all([
-      ...Array.from({ length: packageCount }, (_, index) =>
-        runNodeSubprocess(
-          ["--import", "tsx", packageWorker, String(index), ledgerPath, ledgerHome],
-          { cwd: packageRoot, timeoutMs: 15_000 },
-        )),
-      ...Array.from({ length: foreignCount }, (_, index) =>
-        runNodeSubprocess(
-          ["--import", "tsx", foreignWorker, String(index), ledgerPath],
-          { cwd: packageRoot, timeoutMs: 15_000 },
-        )),
-    ]);
-    for (const child of children) {
-      assert.equal(child.code, 0, child.stderr);
-    }
-    const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
-    assert.equal(lines.length, packageCount + foreignCount);
-    const packageIds: string[] = [];
-    const foreignIds: string[] = [];
-    for (const line of lines) {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (row.event === ACCEPTED_ACTIVATION_EVENT) {
-        const fact = row as unknown as AcceptedActivationFact;
-        assert.equal(fact.bookKey, bookKey);
-        assert.equal(fact.correlation.kind, "caller");
-        if (fact.correlation.kind === "caller") packageIds.push(fact.correlation.id);
-        continue;
-      }
-      assert.equal(row.producer, "foreign");
-      assert.equal(typeof row.id, "string");
-      foreignIds.push(row.id as string);
-    }
-    assert.deepEqual(packageIds.sort(), Array.from({ length: packageCount }, (_, i) => `pkg-${i}`).sort());
-    assert.deepEqual(foreignIds.sort(), Array.from({ length: foreignCount }, (_, i) => `foreign-${i}`).sort());
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("concurrent first-time ledger directory creation across books stays race-safe", async () => {
-  // Fresh home: workers race on creating shared ledgerHome/books components plus distinct books.
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mkdir-race-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const worker = join(root, "mkdir-race-worker.mjs");
-    writeFileSync(worker, `
-import { appendAcceptedActivationToBook, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
-const index = Number(process.argv[2]);
-const ledgerHome = process.argv[3];
-const bookKey = "book-" + index;
-appendAcceptedActivationToBook({
-  ledgerHome,
-  fact: buildAcceptedActivationFact({
-    role: "judge",
-    observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
-    bookKey,
-    session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
-    correlation: { kind: "caller", id: "mkdir-" + index },
-  }),
-});
-`);
-    const workerCount = 16;
-    // Native type stripping keeps this filesystem race under the child deadline even
-    // when the full suite is concurrently compiling elsewhere; one tsx service per
-    // worker made loader contention, rather than ledger creation, decide the result.
-    const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
-      runNodeSubprocess(
-        ["--experimental-strip-types", worker, String(index), ledgerHome],
-        { cwd: packageRoot, timeoutMs: 15_000 },
-      )));
-    for (const child of children) {
-      assert.equal(child.code, 0, child.stderr);
-    }
-    for (let index = 0; index < workerCount; index += 1) {
-      const bookKey = `book-${index}`;
-      const lines = readFileSync(activationWaitingLedgerPath(ledgerHome, bookKey), "utf8")
-        .split("\n")
-        .filter(Boolean);
-      assert.equal(lines.length, 1, `${bookKey} must keep exactly one accepted fact`);
-      const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
-      assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
-      assert.equal(row.bookKey, bookKey);
-      assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+// #685: two real multi-process ledger race cases culled (8+8 O_APPEND mixed producers;
+// 16-worker first-time mkdir race). Host/concurrency surface → production ledger
+// append under ~/.ak-roles/books (C3 handoff). Symlink escape matrix below stays
+// as deterministic call-input negative without multi-worker spawn.
 
 // Symlink escape matrix (#420 整改并一)：四条同根同形「ledger append 拒绝符号链接
 // 逃逸且不写出界」——root home 链、跨簿 waiting.jsonl、跨簿目录、books 组件——

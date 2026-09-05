@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { join } from "node:path";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, validateToolArguments } from "@earendil-works/pi-ai";
 import {
-  createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
   decorateSettlementWithNavigation,
@@ -40,8 +38,6 @@ import {
   resolveNavigatorAuthorityMaterial,
 } from "../../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
-import { hostContextFor } from "../helpers/navigator-host-context.ts";
 import {
   context,
   candidate,
@@ -422,164 +418,7 @@ test("model settings are exact and typed settlement projection ignores prose and
   // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
-test("host-neutral native factory opens without parent modelRegistry and reports thinking from setting", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-model-"));
-  try {
-    seedGitRepository(root);
-    const faux = fauxProvider({ provider: "nav-host-model", api: "openai-completions" });
-    const model = faux.getModel();
-    // Pi only keeps thinking "max" when the model declares reasoning and maps max.
-    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
-    // Explicit path: withInstitutionalProviderFixture owns PI_CODING_AGENT_DIR.
-    const setting = join(root, "navigator-model.json");
-    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
-    await withInstitutionalProviderFixture(faux, async () => {
-      const factory = createNativeNavigatorSessionFactory();
-      const tool = createNavigatorPrepareTool(() => {});
-      const session = await factory({
-        context: hostContextFor(root),
-        subject: join(root, "session"),
-        modelSettingPath: setting,
-        tool,
-      });
-      try {
-        assert.equal(session.getThinkingLevel?.(), "max");
-        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
-        assert.equal(session.getThinkingLevel?.(), "max");
-        await assert.rejects(
-          async () => {
-            await session.setModel?.(`${model.provider}/other-model`, "off");
-          },
-          (error: unknown) => error instanceof NavigatorUnavailableError
-            && error.unavailableSource === "model"
-            && error.unavailableCause === "model",
-        );
-      } finally {
-        await session.dispose();
-      }
-    });
-    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-    await withInstitutionalProviderFixture(faux, async () => {
-      const session = await createNativeNavigatorSessionFactory()({
-        context: hostContextFor(root),
-        subject: join(root, "session-off"),
-        modelSettingPath: setting,
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      try {
-        assert.equal(session.getThinkingLevel?.(), "off");
-      } finally {
-        await session.dispose();
-      }
-    });
-    await writeFile(setting, JSON.stringify({ model: "missing/provider-absent" }));
-    await assert.rejects(
-      () => createNativeNavigatorSessionFactory()({
-        context: hostContextFor(root),
-        subject: join(root, "session-missing"),
-        modelSettingPath: setting,
-        tool: createNavigatorPrepareTool(() => {}),
-      }),
-      // Unknown provider is typed unavailable/model (pre-#590 Navigator contract);
-      // auth runs only after the selection resolves to a known provider surface.
-      (error: unknown) => error instanceof NavigatorUnavailableError
-        && error.unavailableSource === "model"
-        && error.unavailableCause === "model",
-    );
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
-});
 
-test("host-neutral native factory classifies auth/quota/transport from institutional HTTP status", async () => {
-  // fetch side-channel records Response.status (structured); no errorMessage parse.
-  const root = await mkdtemp(join(tmpdir(), "navigator-host-neutral-stream-"));
-  try {
-    seedGitRepository(root);
-    const setting = join(root, "navigator-model.json");
-    const cases = [
-      { name: "auth", source: "auth" as const, status: 401 },
-      { name: "quota", source: "quota" as const, status: 429 },
-      { name: "transport", source: "transport" as const, status: 503 },
-    ] as const;
-    for (const scenario of cases) {
-      const faux = fauxProvider({ provider: `nav-stream-${scenario.name}`, api: "openai-completions" });
-      const model = faux.getModel();
-      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      faux.setResponses([
-        Object.assign(fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque" }), {
-          statusCode: scenario.status,
-          status: scenario.status,
-        }),
-      ]);
-      await withInstitutionalProviderFixture(faux, async () => {
-        const session = await createNativeNavigatorSessionFactory()({
-          context: hostContextFor(root),
-          subject: join(root, `session-${scenario.name}`),
-          modelSettingPath: setting,
-          tool: createNavigatorPrepareTool(() => {}),
-        });
-        try {
-          await session.setModel?.(`${model.provider}/${model.id}`, "off");
-          await assert.rejects(
-            () => session.prompt("prepare routes"),
-            (error: unknown) => error instanceof NavigatorUnavailableError
-              && error.unavailableSource === scenario.source
-              && error.unavailableCause === scenario.source,
-          );
-          assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source });
-        } finally {
-          await session.dispose();
-        }
-      });
-    }
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
-});
-
-test("host-neutral native factory prefers institutional-resolution navigator seat over model file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-institutional-seat-"));
-  try {
-    seedGitRepository(root);
-    const bookKey = basename(root);
-    const runDirectory = join(root, ".ak-roles", "books", bookKey, "runs", "page-seat");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    const faux = fauxProvider({ provider: "nav-page-seat", api: "openai-completions" });
-    const model = faux.getModel();
-    // Page seat requests thinking max — model must declare the level map.
-    Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
-    await writeFile(
-      join(runDirectory, "institutional-resolution.json"),
-      `${JSON.stringify({
-        version: 1,
-        seats: {
-          navigator: { provider: model.provider, model: model.id, thinking: "max" },
-        },
-      }, null, 2)}\n`,
-    );
-    // File would open a different provider; page must win.
-    await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: "file-provider/file-model" }));
-    await withInstitutionalProviderFixture(faux, async () => {
-      const session = await createNativeNavigatorSessionFactory()({
-        context: hostContextFor(root, join(runDirectory, "session", "session.jsonl")),
-        subject: join(runDirectory, "session"),
-        tool: createNavigatorPrepareTool(() => {}),
-      });
-      try {
-        assert.equal(session.getThinkingLevel?.(), "max");
-        await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
-      } finally {
-        await session.dispose();
-      }
-    });
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
-});
+// #685: host-neutral native createAgentSession factory cases culled (opens/
+// HTTP classify/institutional seat). Same class as routes native prompt legs —
+// host surface → production navigator seat runs. Call-input cases above remain.

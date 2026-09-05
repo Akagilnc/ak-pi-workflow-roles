@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -25,12 +25,6 @@ import {
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-
-import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
-import {
-  runTestSubprocess,
-  type TestSubprocessResult,
-} from "./test-subprocess.ts";
 
 import {
   type CredentialStore,
@@ -90,7 +84,6 @@ export async function waitForEventLoopCondition(
 export const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );
-export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
 
 /**
  * Git-visible package inputs eligible for private materialization.
@@ -273,11 +266,6 @@ export interface SharedPackFixture extends IsolatedPackResult {
   cacheDir: string;
 }
 
-export interface SharedColdInstallFixture extends ColdInstalledPackage {
-  provenance: ConstructionProvenance;
-  cacheDir: string;
-}
-
 const FIXTURE_CACHE_ROOT = resolve(
   tmpdir(),
   "ak-pi-workflow-roles-cold-fixtures",
@@ -319,7 +307,6 @@ async function waitForReady(
 }
 
 let sharedPackMemo: Promise<SharedPackFixture> | undefined;
-let sharedColdInstallMemo: Promise<SharedColdInstallFixture> | undefined;
 
 /**
  * Build or reuse one isolated pack for the current construction HEAD.
@@ -426,218 +413,6 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
   return sharedPackMemo;
 }
 
-/** file:/registry peers the cold consumer must resolve when importing installed sources. */
-const COLD_INSTALL_FILE_PEERS = [
-  "@earendil-works/pi-ai",
-  "@earendil-works/pi-coding-agent",
-] as const;
-
-function coldInstallPeerFileSpec(name: string): string {
-  // realpath so pnpm store targets are absolute and not dead checkout-relative links.
-  return `file:${realpathSync(resolve(packageRoot, "node_modules", name))}`;
-}
-
-function coldInstallDependencySpec(tarball: string): Record<string, string> {
-  return {
-    "@akagilnc/pi-workflow-roles": `file:${tarball}`,
-    "@earendil-works/pi-ai": coldInstallPeerFileSpec("@earendil-works/pi-ai"),
-    "@earendil-works/pi-coding-agent": coldInstallPeerFileSpec(
-      "@earendil-works/pi-coding-agent",
-    ),
-    // Exercise the optional peer exactly as an isolated consumer would: npm
-    // materializes its own copy instead of preserving a link into this checkout.
-    typebox: "1.3.8",
-  };
-}
-
-function coldInstallPeerPathResolvable(peerPath: string): boolean {
-  if (!existsSync(peerPath)) return false;
-  try {
-    realpathSync(peerPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function coldInstallPeersResolvable(fixtureRoot: string): boolean {
-  if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules/typebox"))) {
-    return false;
-  }
-  for (const rel of COLD_INSTALL_FILE_PEERS) {
-    if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules", rel))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Build or reuse one cold-installed consumer tree for the current HEAD.
- * Cross-process safe; tests should clone via withColdInstalledPackage / cloneSharedColdInstall.
- */
-export async function getSharedColdInstalledPackage(): Promise<SharedColdInstallFixture> {
-  sharedColdInstallMemo ??= (async () => {
-    const pack = await getSharedIsolatedPack();
-    const cacheDir = resolve(
-      FIXTURE_CACHE_ROOT,
-      pack.provenance.fingerprint,
-      // v3: materialize optional peers on clone; reject caches with broken peer links.
-      "cold-install-v3",
-    );
-    const readyPath = resolve(cacheDir, "ready.json");
-    const lockDir = resolve(cacheDir, ".lock");
-    const fixture = resolve(cacheDir, "consumer");
-    const installedRoot = resolve(
-      fixture,
-      "node_modules/@akagilnc/pi-workflow-roles",
-    );
-
-    await mkdir(cacheDir, { recursive: true });
-
-    const loadReady = async (): Promise<SharedColdInstallFixture | undefined> => {
-      if (!existsSync(readyPath) || !existsSync(installedRoot)) return undefined;
-      // Stale cross-worktree caches may retain npm file: peer symlinks to dead paths.
-      if (!coldInstallPeersResolvable(fixture)) return undefined;
-      const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
-        provenance: ConstructionProvenance;
-      };
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-      return {
-        fixture,
-        pack,
-        installedRoot,
-        installed,
-        provenance: ready.provenance,
-        cacheDir,
-      };
-    };
-
-    const existing = await loadReady();
-    if (existing) return existing;
-
-    if (await waitForReady(readyPath, lockDir)) {
-      const ready = await loadReady();
-      if (ready) return ready;
-    }
-
-    const release = await acquireDirLock(lockDir);
-    try {
-      const raced = await loadReady();
-      if (raced) return raced;
-
-      await rm(fixture, { recursive: true, force: true });
-      await mkdir(fixture, { recursive: true });
-      await writeFile(
-        resolve(fixture, "package.json"),
-        JSON.stringify({
-          private: true,
-          type: "module",
-          dependencies: coldInstallDependencySpec(pack.tarball),
-        }),
-      );
-      await execFileAsync(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-      );
-
-      const builtProvenance = pack.provenance;
-      await writeFile(
-        readyPath,
-        JSON.stringify(
-          {
-            head: builtProvenance.head,
-            fingerprint: builtProvenance.fingerprint,
-            builtAt: new Date().toISOString(),
-            provenance: builtProvenance,
-            tarball: pack.tarball,
-          },
-          null,
-          2,
-        ),
-      );
-
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-      return {
-        fixture,
-        pack,
-        installedRoot,
-        installed,
-        provenance: builtProvenance,
-        cacheDir,
-      };
-    } finally {
-      await release();
-    }
-  })();
-  return sharedColdInstallMemo;
-}
-
-/**
- * Clone the shared cold-install tree into dest so each test owns a private
- * consumer workspace (and a writable installed package copy).
- */
-export async function cloneSharedColdInstall(
-  dest: string,
-): Promise<ColdInstalledPackage> {
-  const shared = await getSharedColdInstalledPackage();
-  await rm(dest, { recursive: true, force: true });
-  await mkdir(dirname(dest), { recursive: true });
-  await cp(shared.fixture, dest, { recursive: true, force: true });
-  // typebox is registry-installed in the shared fixture; copy bytes rather than
-  // relocating npm's checkout-bound symlink.
-  const typeboxPath = resolve(dest, "node_modules/typebox");
-  await rm(typeboxPath, { recursive: true, force: true });
-  await cp(resolve(shared.fixture, "node_modules/typebox"), typeboxPath, {
-    recursive: true,
-    force: true,
-    dereference: true,
-  });
-  // file: peers live in the pnpm virtual store with sibling deps (chalk, …).
-  // Do not byte-copy the package alone — that drops the sibling graph. Retarget
-  // clone links to this checkout's realpath so resolution stays inside the store.
-  for (const rel of COLD_INSTALL_FILE_PEERS) {
-    const destPath = resolve(dest, "node_modules", rel);
-    await rm(destPath, { recursive: true, force: true });
-    await mkdir(dirname(destPath), { recursive: true });
-    await symlink(
-      await realpath(resolve(packageRoot, "node_modules", rel)),
-      destPath,
-    );
-  }
-  const installedRoot = resolve(dest, "node_modules/@akagilnc/pi-workflow-roles");
-  const installed = (relativePath: string) =>
-    import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-  return {
-    fixture: dest,
-    pack: shared.pack,
-    installedRoot,
-    installed,
-  };
-}
-
-export interface ColdInstalledPackage {
-  fixture: string;
-  pack: IsolatedPackResult;
-  installedRoot: string;
-  installed(relativePath: string): Promise<any>;
-}
-
-/**
- * Pack and install the current package into a private consumer directory.
- * Uses the shared HEAD-keyed cold-install fixture and clones it under home.
- */
-export async function withColdInstalledPackage<T>(
-  home: string,
-  scenario: (fixture: ColdInstalledPackage) => Promise<T>,
-): Promise<T> {
-  const fixture = await cloneSharedColdInstall(resolve(home, "consumer"));
-  return await scenario(fixture);
-}
-
 export interface RawPackageManifest {
   files?: string[];
   bin?: Record<string, string>;
@@ -660,72 +435,6 @@ export async function loadRawPackageManifest(): Promise<RawPackageManifest> {
  */
 export function resolvePackageEntrypoint(_manifest?: RawPackageManifest): string {
   return resolve(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-
-/** Pi-managed private npm root under an isolated agent dir (user scope). */
-export function piPrivateNpmRoot(agentDir: string): string {
-  return resolve(agentDir, "npm");
-}
-
-/** Pi private npm bin directory — where package bins surface after install. */
-export function piPrivateNpmBinDir(agentDir: string): string {
-  return resolve(piPrivateNpmRoot(agentDir), "node_modules", ".bin");
-}
-
-export interface PiManagedInstall {
-  agentDir: string;
-  npmRoot: string;
-  binDir: string;
-  installedRoot: string;
-  akRoleBin: string;
-  pack: IsolatedPackResult;
-}
-
-/**
- * Install one packed artifact through Pi's user install owner (`pi install` →
- * PackageManager) so `ak-role` is discovered via Pi's private npm bin (ADR 0052).
- */
-export async function installPackedArtifactIntoPiNpm(
-  agentDir: string,
-  home: string,
-): Promise<PiManagedInstall> {
-  const pack = await getSharedIsolatedPack();
-  const source = `npm:@akagilnc/pi-workflow-roles@file:${pack.tarball}`;
-  const result = await runPiSubprocess(["install", source], {
-    cwd: home,
-    timeoutMs: 120_000,
-    env: {
-      ...process.env,
-      HOME: home,
-      PI_CODING_AGENT_DIR: agentDir,
-      PI_OFFLINE: "1",
-    },
-  });
-  if (result.localTimeout) {
-    throw new Error(`pi install timed out for ${source}`);
-  }
-  if (result.code !== 0) {
-    throw new Error(
-      `pi install failed (code ${String(result.code)}): ${result.stderr || result.stdout}`,
-    );
-  }
-  const npmRoot = piPrivateNpmRoot(agentDir);
-  const installedRoot = resolve(
-    npmRoot,
-    "node_modules",
-    "@akagilnc",
-    "pi-workflow-roles",
-  );
-  const binDir = piPrivateNpmBinDir(agentDir);
-  const akRoleBin = resolve(binDir, "ak-role");
-  return {
-    agentDir,
-    npmRoot,
-    binDir,
-    installedRoot,
-    akRoleBin,
-    pack,
-  };
 }
 
 /**
@@ -982,61 +691,6 @@ export async function withProcessCwd<T>(
     } finally {
       process.chdir(previous);
     }
-  });
-}
-
-export type PiSubprocessResult = TestSubprocessResult;
-
-export async function runNodeSubprocess(
-  args: string[],
-  options: {
-    cwd: string;
-    env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
-  },
-): Promise<PiSubprocessResult> {
-  return runTestSubprocess(process.execPath, args, {
-    cwd: options.cwd,
-    ...(options.env === undefined ? {} : { env: options.env }),
-    timeoutMs: options.timeoutMs ?? 30_000,
-    owner: "runNodeSubprocess",
-  });
-}
-
-export async function runPiSubprocess(
-  args: string[],
-  options: {
-    cwd: string;
-    env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
-  },
-): Promise<PiSubprocessResult> {
-  const env = isolatedTestProcessEnv({
-    ...(options.env === undefined ? {} : { env: options.env }),
-    home: options.env?.HOME ?? options.cwd,
-    agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
-  });
-  // Isolation masks ambient machine AK_ROLE_RUN_DIR. Public CLI children receive an
-  // explicit run binding in options.env — restore it so typed child→parent pages
-  // (provider HTTP / knownFailure) match production defaultExplicitInternalPiRunner.
-  const injectedRunDir = options.env?.AK_ROLE_RUN_DIR;
-  if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
-    env.AK_ROLE_RUN_DIR = injectedRunDir;
-  }
-  // Pi's package-manager install/update path does not pass --no-audit/--offline into
-  // npm. On hosts where registry HTTPS is sinkholed (e.g. 198.18.0.0/15 VPN), a local
-  // file: tarball still hangs in npm audit after the package is already cache-resolved.
-  // Hermetic harness installs/updates never need audit/fund network; silence those
-  // side-channels without widening the 120s deadline.
-  if (args[0] === "install" || args[0] === "update") {
-    env.npm_config_audit ??= "false";
-    env.npm_config_fund ??= "false";
-  }
-  return runTestSubprocess(piCli, args, {
-    cwd: options.cwd,
-    env,
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    owner: "runPiSubprocess",
   });
 }
 

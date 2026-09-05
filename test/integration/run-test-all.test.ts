@@ -25,6 +25,7 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
+const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
 const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
 const HOST_HOME = userInfo().homedir;
 
@@ -256,11 +257,101 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
         typeof child.home === "string" && child.home.length > 0,
         "child HOME must be set by runner isolation",
       );
-      assert.notEqual(child.home, HOST_HOME, "child HOME must not be the host home");
+      const childHome = child.home!;
+      assert.notEqual(childHome, HOST_HOME, "child HOME must not be the host home");
       assert.equal(
         readHostModelsHash(),
         beforeHash,
         "host models.json hash must be unchanged after test:all",
+      );
+      assert.equal(
+        existsSync(hostSentinel),
+        false,
+        "host sentinel absolute path must not exist",
+      );
+      // #612: runner default HOME is process-owned — gone after exit.
+      // Observe only; this test does not delete childHome.
+      assert.equal(
+        existsSync(childHome),
+        false,
+        "run-test-all default test home must be deleted on exit",
+      );
+    },
+    async () => {
+      await rm(workspace, { recursive: true, force: true });
+    },
+  );
+});
+
+/**
+ * AC4 (#549): bare preload entry write proof via process.env.HOME (not run-test-all).
+ * Independent of AC3; package.json wiring locked above as exact strings.
+ * Probe leaves residue under preload-owned temp HOME (process exit cleans #612);
+ * probe body does not rm directories.
+ */
+test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-549-bare-preload-"));
+  await withPrimaryAwareCleanup(
+    async () => {
+      const beforeHash = readHostModelsHash();
+      const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
+      const hostSentinel = join(HOST_HOME, sentinelName);
+      const probe = join(workspace, "home-redirect-probe.mjs");
+      await writeFile(
+        probe,
+        `import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { dirname, join } from "node:path";
+
+const hostHome = userInfo().homedir;
+const home = process.env.HOME;
+assert.ok(home && home !== hostHome, "HOME must be redirected by preload");
+assert.equal(process.env.XDG_CONFIG_HOME, join(home, ".config"));
+assert.equal(process.env.PI_CODING_AGENT_DIR, undefined);
+
+const sentinelName = process.env.AK_549_SENTINEL_NAME;
+const hostSentinel = join(hostHome, sentinelName);
+const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK_549_BEFORE_HASH;
+const hostModels = join(hostHome, ".pi", "agent", "models.json");
+
+const modelsPath = join(home, ".pi", "agent", "models.json");
+mkdirSync(dirname(modelsPath), { recursive: true });
+writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
+writeFileSync(join(home, sentinelName), "bare-fixture-poison");
+
+assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
+const afterHash = existsSync(hostModels)
+  ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
+  : null;
+assert.equal(afterHash, beforeHash);
+assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
+console.log(JSON.stringify({ ok: true, home, hostHome }));
+`,
+        "utf8",
+      );
+
+      const result = await runTestSubprocess(
+        process.execPath,
+        ["--import", PRELOAD, probe],
+        {
+          cwd: packageRoot,
+          env: {
+            ...process.env,
+            // Start from host HOME so the preload must do the redirect.
+            HOME: HOST_HOME,
+            AK_549_SENTINEL_NAME: sentinelName,
+            AK_549_BEFORE_HASH: beforeHash ?? "",
+          },
+          owner: "bare-preload-home-redirect",
+          timeoutMs: 15_000,
+        },
+      );
+      assert.equal(
+        result.code,
+        0,
+        `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
       );
       assert.equal(
         existsSync(hostSentinel),

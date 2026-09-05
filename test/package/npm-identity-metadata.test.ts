@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
   getSharedIsolatedPack,
@@ -324,39 +323,12 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
   assert.deepEqual(extracted.packageJson.pi?.extensions ?? ["missing"], []);
 });
 
-test("ordinary npm install of the packed artifact leaves Pi host peers unmaterialized", async () => {
+// #685: private npm install of packed artifact culled — host install surface.
+// Peer optional/* declarations stay as pack-metadata call-input asserts.
+// Live install non-materialization → production pack/install runs (C3 handoff).
+test("packed artifact declares Pi host peers as optional star peers", () => {
   for (const name of HOST_PEERS) {
     assert.equal(extracted.packageJson.peerDependencies?.[name], "*");
     assert.equal(extracted.packageJson.peerDependenciesMeta?.[name]?.optional, true);
   }
-
-  const consumer = await mkdtemp(resolve(tmpdir(), "ak-host-peer-install-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      await writeFile(
-        resolve(consumer, "package.json"),
-        JSON.stringify({
-          private: true,
-          dependencies: {
-            "@akagilnc/pi-workflow-roles": `file:${(await getSharedIsolatedPack()).tarball}`,
-          },
-        }),
-      );
-      await execFileAsync(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: consumer, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-      );
-      for (const name of HOST_PEERS) {
-        await assert.rejects(
-          () => access(resolve(consumer, "node_modules", ...name.split("/"))),
-          (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-          `${name} must remain supplied by the Pi host`,
-        );
-      }
-    },
-    async () => {
-      await rm(consumer, { recursive: true, force: true });
-    },
-  );
 });
