@@ -167,18 +167,25 @@ export async function bindProductionGrokIsolation(
  * while preserving the session dossier under runDirectory/grok-home. Success,
  * typed-result, and throw paths all clean up; cleanup failure and primary+cleanup
  * both surface.
+ *
+ * `noteOpened` fires only after bind succeeds — the actual open event, distinct
+ * from turn return/throw — so last-host ownership can retain the opened run
+ * even when the body or cleanup later throws (#636).
  */
 export async function withProductionGrokIsolation<T>(
   runDirectory: string,
   operatorHome: string,
   packageRoot: string,
   run: (binding: ProductionGrokIsolationBinding) => Promise<T>,
+  noteOpened?: (runDirectory: string) => void,
 ): Promise<T> {
   let binding: ProductionGrokIsolationBinding | undefined;
   let primaryFailure: ProductionGrokPrimaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value!: T;
   try {
     binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
+    // Open fact: bind succeeded under runDirectory. Not deferred to turn outcome.
+    noteOpened?.(runDirectory);
     value = await run(binding);
   } catch (error) {
     primaryFailure = { present: true, value: error };
@@ -340,15 +347,21 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
       // Fresh runs and cross-host arrivals keep isolating under request.runDirectory.
       const isolationRunDirectory = resolveProductionGrokIsolationRunDirectory(request);
       const execution = serial.then(() =>
-        withProductionGrokIsolation(isolationRunDirectory, request.home, packageRoot, async (binding) => {
-          turn = binding;
-          try {
-            // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
-            return await inner.executeTurn({ ...request, home: binding.controlledHome });
-          } finally {
-            turn = undefined;
-          }
-        }),
+        withProductionGrokIsolation(
+          isolationRunDirectory,
+          request.home,
+          packageRoot,
+          async (binding) => {
+            turn = binding;
+            try {
+              // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
+              return await inner.executeTurn({ ...request, home: binding.controlledHome });
+            } finally {
+              turn = undefined;
+            }
+          },
+          request.noteNativeHomeOpened,
+        ),
       );
       serial = execution.then(
         () => undefined,
