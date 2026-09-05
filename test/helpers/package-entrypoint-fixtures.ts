@@ -215,8 +215,12 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
           PI_CODING_AGENT_DIR: agentDir,
           AK_NAVIGATOR_OBSERVATION: "1",
           PI_OFFLINE: "1",
-          // Nested public summons reuse the offline faux provider extension.
-          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
+          // #675: nested public notary/auditor use the dedicated officer-pass fixture
+          // (do not share the parent response queue — that starves navigator prepare).
+          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
+            "-e",
+            resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
+          ]),
         },
       });
       const roleEntries = await readLatestSession(sessionDirectory);

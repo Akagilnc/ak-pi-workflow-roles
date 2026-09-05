@@ -56,6 +56,10 @@ const TICKET_HEAVYWEIGHT = [
   "test/package/public-cli-install.test.ts",
   "test/package/public-cli-cold-matrix.test.ts",
   "test/integration/activation-envelope-contract.test.ts",
+  // #675: nested public evidence-child / cold dual-process cases.
+  "test/integration/public-cli-reviewer-engine-detour.test.ts",
+  "test/package/judge-auditor-fixture-tracer.test.ts",
+  "test/package/reviewer-package-lifecycle.test.ts",
 ] as const;
 
 type ChildRecord = {

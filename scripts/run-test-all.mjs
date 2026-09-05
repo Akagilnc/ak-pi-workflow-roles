@@ -38,6 +38,11 @@ const HEAVYWEIGHT_MANIFEST = Object.freeze([
   // file-parallelism full-suite localTimeout at 15s (duration_ms ~23s). Schedule
   // on heavy concurrency=2; do not widen the hang detector.
   "test/integration/activation-envelope-contract.test.ts",
+  // #675: nested public evidence-child / cold-install dual-process cases — real
+  // nested pi summons (73s/28s, 90s, 66s); ordinary parallelism misclass.
+  "test/integration/public-cli-reviewer-engine-detour.test.ts",
+  "test/package/judge-auditor-fixture-tracer.test.ts",
+  "test/package/reviewer-package-lifecycle.test.ts",
 ]);
 
 const TIERS = Object.freeze([

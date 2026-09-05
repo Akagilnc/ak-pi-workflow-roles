@@ -1001,6 +1001,9 @@ export function createRoleRuntimeExtension(
           return;
         }
         const settlePromise = attendance.settle(settlement);
+        // Attach catch immediately so a late rejection after grace timeout cannot
+        // surface as unhandledRejection / stale-ctx after session dispose (#675).
+        void settlePromise.catch(() => undefined);
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
@@ -1027,7 +1030,6 @@ export function createRoleRuntimeExtension(
           pendingNavigatorPresentation = { event, report };
         }
         await attendance.dispose();
-        void settlePromise.catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
       await pending;

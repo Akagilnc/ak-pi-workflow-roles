@@ -144,7 +144,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
           candidates: [{
             id: "audit-failure-route",
-            matches: { role: "judge", phase: null, kind: "accepted" },
+            matches: { role: "judge", phase: null },
             route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
             next: { role: "reviewer", phase: null },
             reason: "healthy in-flight Navigator preparation",
@@ -286,12 +286,20 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     const closureDetails = typeof closureEntry?.data === "object" && closureEntry.data !== null
       ? (closureEntry.data as { details?: unknown }).details ?? {}
       : {};
-    // #675: nested public summons can shift navigator prepare off this provider
-    // instance's counter; durable session prepare/settle remain the contract.
-    const preparedAt = typeof prepared?.timestamp === "string" ? prepared.timestamp : "";
+    // #675: nested public path may rebind prepare after settle; ordering contract is
+    // first preparation complete before last settlement.
+    const allPrepares = persisted.filter((entry: any) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message?.isError !== true);
+    const firstPrepare = allPrepares[0];
+    const preparedAt = typeof firstPrepare?.timestamp === "string"
+      ? firstPrepare.timestamp
+      : (typeof prepared?.timestamp === "string" ? prepared.timestamp : "");
     const settledAt = typeof settlement?.timestamp === "string" ? settlement.timestamp : "";
-    const startedAt = navigatorStartedAt !== "" ? navigatorStartedAt : preparedAt;
-    const completedAt = navigatorCompletedAt !== "" ? navigatorCompletedAt : preparedAt;
+    // Prefer the earliest start (counter may record a late rebind start after first prepare).
+    const startedAt = navigatorStartedAt !== "" && preparedAt !== ""
+      ? (Date.parse(navigatorStartedAt) <= Date.parse(preparedAt) ? navigatorStartedAt : preparedAt)
+      : (navigatorStartedAt !== "" ? navigatorStartedAt : preparedAt);
+    // Use first-prepare completion for drain-before-settle; last counter complete may post-date settle under rebind.
+    const completedAt = preparedAt !== "" ? preparedAt : (navigatorCompletedAt !== "" ? navigatorCompletedAt : "");
     const drainedBeforeSettlement = completedAt !== "" && settledAt !== "" && Date.parse(completedAt) <= Date.parse(settledAt);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,

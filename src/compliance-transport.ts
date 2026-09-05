@@ -133,16 +133,81 @@ export type RunComplianceAuditOptions = {
   summonAuditor?: AuditorSummon;
 };
 
-function projectAuditorTerminal(summoned: PublicSummonResult): ComplianceDecision {
+/** Sum nested public auditor session usage onto the parent no-receipt face (#675). */
+async function usageFromSummonedAuditorSession(
+  summoned: PublicSummonResult,
+): Promise<Usage | undefined> {
+  const runId = summoned.terminal?.runId;
+  if (typeof runId !== "string" || runId.trim() === "") return undefined;
+  const artifact = summoned.terminal?.artifacts?.find((item) => item.kind === "evidence" || item.kind === "error");
+  // Prefer session beside any artifact path; else scan decisive runPointer facts.
+  let sessionFile: string | undefined;
+  for (const item of summoned.terminal?.artifacts ?? []) {
+    if (typeof item.path === "string" && item.path.includes(`${runId}@`)) {
+      const { join, dirname } = await import("node:path");
+      sessionFile = join(dirname(dirname(item.path)), "session", "session.jsonl");
+      break;
+    }
+  }
+  if (sessionFile === undefined) {
+    const pointer = (summoned.terminal?.roleOutcome as { runPointer?: unknown } | undefined)?.runPointer;
+    if (typeof pointer === "string" && pointer.trim() !== "") {
+      const { join } = await import("node:path");
+      sessionFile = join(pointer, "session", "session.jsonl");
+    }
+  }
+  if (sessionFile === undefined) return undefined;
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const rows = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: { role?: string; usage?: Usage };
+      });
+    let total = 0;
+    let input = 0;
+    let output = 0;
+    let cacheRead = 0;
+    let cacheWrite = 0;
+    for (const row of rows) {
+      if (row.type !== "message" || row.message?.role !== "assistant") continue;
+      const usage = row.message.usage;
+      if (usage === undefined) continue;
+      total += usage.totalTokens ?? 0;
+      input += usage.input ?? 0;
+      output += usage.output ?? 0;
+      cacheRead += usage.cacheRead ?? 0;
+      cacheWrite += usage.cacheWrite ?? 0;
+    }
+    if (total <= 0 && input <= 0 && output <= 0) return undefined;
+    return {
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) {
     throw new Error(`Auditor public summon produced no terminal (exit ${summoned.exitCode})`);
   }
   if (outcome.kind === "no_receipt") {
     const { status: _ignored, kind: _kind, role: _role, decisiveFacts: _facts, ...facts } = outcome;
+    const usage = await usageFromSummonedAuditorSession(summoned);
     return {
       status: "no-receipt",
       ...facts,
+      ...(usage === undefined ? {} : { usage }),
     };
   }
   if (outcome.kind === "failure") {
@@ -186,5 +251,5 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       });
     });
   const summoned = await summon(runDirectory);
-  return projectAuditorTerminal(summoned);
+  return await projectAuditorTerminal(summoned);
 }

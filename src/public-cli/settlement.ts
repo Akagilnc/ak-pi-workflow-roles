@@ -115,6 +115,7 @@ import {
 import {
   AUDITOR_OUTPUT_TOOL_NAME,
   auditorDecisiveFacts,
+  projectLawfulAuditorOutput,
   validateRecordedAuditorOutput,
 } from "../package-contracts/auditor-output.ts";
 import {
@@ -3577,14 +3578,31 @@ async function settleLawfulAuditorTerminalResult(
     role: "auditor",
     toolName: AUDITOR_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "审刑院回执无显式 pass/revise/escalate",
-    tryAcceptDetails: tryAcceptWithValidator(validateRecordedAuditorOutput),
+    // Retain any object status (including unreadable mystery) so the parent
+    // compliance transport can throw ComplianceCandidateUnreadableError with
+    // observation+candidate (#475 / #675 public auditor path).
+    tryAcceptDetails: (details) =>
+      typeof details === "object"
+      && details !== null
+      && !Array.isArray(details)
+      && Object.hasOwn(details as object, "status"),
     projectAccepted: (sealed) => {
-      const output = validateRecordedAuditorOutput(sealed.decisiveFacts);
+      const lawful = projectLawfulAuditorOutput(sealed.decisiveFacts);
+      if (lawful !== undefined) {
+        const accepted: LawfulAuditorRoleOutcome = {
+          kind: "accepted",
+          role: "auditor",
+          status: lawful.status,
+          decisiveFacts: auditorDecisiveFacts(lawful),
+        };
+        return accepted;
+      }
+      const raw = sealed.decisiveFacts as Record<string, unknown>;
       const accepted: LawfulAuditorRoleOutcome = {
         kind: "accepted",
         role: "auditor",
-        status: output.status,
-        decisiveFacts: auditorDecisiveFacts(output),
+        status: typeof raw.status === "string" ? raw.status : "unknown",
+        decisiveFacts: { ...raw },
       };
       return accepted;
     },
