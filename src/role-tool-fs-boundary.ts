@@ -81,9 +81,11 @@ export function roleToolFsBoundaryDenyReason(
  */
 export function resolveMutationPath(raw: string, cwd: string): string {
   const expanded = expandUserHome(raw);
+  // Never lexically collapse `..` before symlink follow. Relative inputs are
+  // appended as literal components under real cwd (closes link/../escape).
   const absolute = isAbsolute(expanded)
     ? expandAbsoluteLexical(expanded)
-    : joinComponents(physicalPathIdentity(cwd), expanded);
+    : appendRelativePreservingDots(physicalPathIdentity(cwd), expanded);
   return followComponents(absolute);
 }
 
@@ -139,9 +141,15 @@ export function assessDetourArgvFsBoundary(input: {
 
   const bodies = scriptBodiesFromArgv(exe, rest);
   if (bodies.length === 0) {
-    // Opaque engine binary: no script body to prove. Detour spawn must confine
-    // writes via OS sandbox (see engine-detour); argv-only allow.
-    return undefined;
+    // Opaque engine: only safe when OS write sandbox confines the child (Darwin).
+    // Without a real-IO sandbox, fail closed — no host-native sandbox in-tree.
+    if (process.platform === "darwin") return undefined;
+    return {
+      code: ROLE_TOOL_FS_BOUNDARY_CODE,
+      toolName: "ak_engine_detour",
+      paths: [],
+      reason: roleToolFsBoundaryDenyReason("ak_engine_detour", []),
+    };
   }
   for (const body of bodies) {
     const hit = assessBashCommand(body, input.cwd, roots, "ak_engine_detour");
@@ -172,9 +180,24 @@ function assessBashCommand(
     };
   }
 
+  // Nested shell without extractable -c body (or env bash …) → fail closed.
+  if (/\b(?:bash|sh|zsh|dash|ksh)\b/.test(command) && extractNestedShellBodies(command).length === 0) {
+    // Allow the shell binary only when the whole command is that shell alone (no args) — still no mutation.
+    // Any shell invocation used as a carrier is unprovable if body wasn't extracted above.
+    const trimmed = command.trim();
+    if (!/^(?:\S*\/)?(?:bash|sh|zsh|dash|ksh)\s*$/.test(trimmed)) {
+      return {
+        code: ROLE_TOOL_FS_BOUNDARY_CODE,
+        toolName,
+        paths: [],
+        reason: roleToolFsBoundaryDenyReason(toolName, []),
+      };
+    }
+  }
+
   const targets = extractBashMutationTargetPaths(command);
   const hasMutationVerb = commandHasMutationVerb(command);
-  const hasRedirect = /(?:^|[\s\d])>>?/.test(command);
+  const hasRedirect = />>?/.test(command);
 
   if (!hasMutationVerb && !hasRedirect) return undefined; // read-only / no mutation
 
@@ -232,11 +255,16 @@ function commandHasMutationVerb(command: string): boolean {
 
 function extractNestedShellBodies(command: string): string[] {
   const bodies: string[] = [];
-  // bash/sh -c 'body' or bash -c "body"
-  const re = /\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-[a-zA-Z]*)*\s+-c\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g;
+  // bash -c BODY / bash -lc BODY / env bash -c BODY — flag cluster containing c takes next arg.
+  const re =
+    /\b(?:env\s+)?(?:bash|sh|zsh|dash|ksh)\b((?:\s+-[a-zA-Z0-9]+)*)\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(command)) !== null) {
-    const body = match[1] ?? match[2] ?? match[3];
+    const flags = match[1] ?? "";
+    if (!/(?:^|\s)-[a-zA-Z]*c[a-zA-Z]*(?:\s|$)/.test(flags) && !/(?:^|\s)-c(?:\s|$)/.test(flags) && !/-[a-zA-Z]*c[a-zA-Z]*/.test(flags)) {
+      continue;
+    }
+    const body = match[2] ?? match[3] ?? match[4];
     if (typeof body === "string" && body.length > 0) bodies.push(body);
   }
   return bodies;
@@ -289,16 +317,12 @@ function expandAbsoluteLexical(absolute: string): string {
   return absolute.replace(/\/{2,}/g, "/");
 }
 
-function joinComponents(base: string, rel: string): string {
+/** Append relative segments under base without collapsing `..` (followComponents owns that). */
+function appendRelativePreservingDots(base: string, rel: string): string {
   const parts = rel.split(/[/\\]/).filter((p) => p.length > 0);
   let cur = base;
   for (const part of parts) {
-    if (part === ".") continue;
-    if (part === "..") {
-      cur = dirname(cur);
-      continue;
-    }
-    cur = join(cur, part);
+    cur = cur.endsWith(sep) ? `${cur}${part}` : `${cur}${sep}${part}`;
   }
   return cur;
 }
@@ -408,6 +432,13 @@ function collectMutationTargetsFromSimpleCommand(simple: string, targets: string
     if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>") {
       const next = tokens[i + 1];
       if (typeof next === "string" && next.length > 0 && next !== "&") targets.push(next);
+      continue;
+    }
+    // Fused redirect without space: printf X>file or 2>file
+    const fused = /^(?:.*[^>])?(>>?\|?)(.+)$/.exec(tok);
+    if (fused !== null && fused[1] !== undefined && fused[2] !== undefined && fused[2].length > 0 && tok.includes(">")) {
+      const dest = fused[2];
+      if (dest !== "&1" && dest !== "&2" && !dest.startsWith("&")) targets.push(dest);
     }
   }
 

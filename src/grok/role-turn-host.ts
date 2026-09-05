@@ -256,28 +256,33 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             && hookCapability.blockingEvents.includes("pre_tool_use")
             && Array.isArray(hookCapability.decisions)
             && hookCapability.decisions.includes("deny");
-          // ADR 0008: Fixer literal seatbelt hangs only on activated Fixer.
-          // #692: FS boundary PreToolUse installs for every role when host can deny
-          // (Grok native Bash/edit/write never hit the Pi tool_call envelope).
+          // #692: Grok native Bash/edit/write never hit the Pi tool_call envelope.
+          // When the host can deny PreToolUse, install the shared-authority FS boundary hook
+          // for every role. When it cannot, activation fails closed — no silent run without a belt.
+          // ADR 0008 Fixer literal seatbelt still hangs only on activated Fixer (extra).
           let preToolUseDeny = false;
-          if (canDeny) {
-            try {
-              await installGrokFsBoundaryHook({
-                controlledHome: request.home,
-                workspaceRoot: request.cwd,
-              });
-              preToolUseDeny = true;
-              if (request.activation.role === "fixer") {
-                await installGrokPreToolUseDeny(request.home);
-              }
-            } catch (error) {
-              // Controlled home must be writable for hook install; surface as activation failure.
-              return failure(
-                "activation",
-                "GrokFsBoundaryHookInstall",
-                error instanceof Error ? error.message : String(error),
-              );
+          if (!canDeny) {
+            return failure(
+              "activation",
+              "GrokFsBoundaryUnavailable",
+              "pre_tool_use deny required for role FS boundary",
+            );
+          }
+          try {
+            await installGrokFsBoundaryHook({
+              controlledHome: request.home,
+              workspaceRoot: request.cwd,
+            });
+            preToolUseDeny = true;
+            if (request.activation.role === "fixer") {
+              await installGrokPreToolUseDeny(request.home);
             }
+          } catch (error) {
+            return failure(
+              "activation",
+              "GrokFsBoundaryHookInstall",
+              error instanceof Error ? error.message : String(error),
+            );
           }
           await config.recordCapabilities(request, { nativeToolNarrowing: false, preToolUseDeny });
           const modelState = initializeMeta?.modelState;

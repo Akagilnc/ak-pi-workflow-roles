@@ -38,29 +38,29 @@ test("isWithinRoleToolFsBoundary admits W and T only", () => {
   assert.equal(isWithinRoleToolFsBoundary(join(protectedRoot, "keep.txt"), roots), false);
 });
 
-test("symlink component walk: W/link/../keep resolves into P (not lexical W)", () => {
+test("symlink component walk: absolute and relative link/../keep land in P", () => {
   const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
   const roots = { workspaceRoot, tempRoot };
   const link = join(workspaceRoot, "link");
   symlinkSync(join(protectedRoot, "sub"), link);
-  // Literal string — path.join would collapse `..` before follow.
-  const escaped = `${link}/../keep.txt`;
-  const resolved = resolveMutationPath(escaped, workspaceRoot);
-  assert.ok(
-    resolved.includes("keep.txt"),
-    `resolved=${resolved}`,
-  );
-  // Must land under P, not under W.
-  assert.equal(isWithinRoleToolFsBoundary(resolved, roots), false);
-
-  const write = assessRoleToolFsBoundary({
-    toolName: "write",
-    toolInput: { path: escaped, content: "HIJACK" },
-    cwd: workspaceRoot,
-    roots,
-  });
-  assert.ok(write, "write via symlink-.. escape must deny");
-  assert.equal(write.code, ROLE_TOOL_FS_BOUNDARY_CODE);
+  // Absolute and relative forms — path.join would collapse `..` before follow.
+  for (const escaped of [`${link}/../keep.txt`, "link/../keep.txt"] as const) {
+    const resolved = resolveMutationPath(escaped, workspaceRoot);
+    assert.equal(
+      isWithinRoleToolFsBoundary(resolved, roots),
+      false,
+      `resolved=${resolved} for ${escaped}`,
+    );
+    assert.ok(
+      assessRoleToolFsBoundary({
+        toolName: "write",
+        toolInput: { path: escaped, content: "HIJACK" },
+        cwd: workspaceRoot,
+        roots,
+      }),
+      `write via ${escaped} must deny`,
+    );
+  }
 });
 
 test("edit/write/rm/mv outside deny; read-only bash allows", () => {
@@ -106,38 +106,30 @@ test("edit/write/rm/mv outside deny; read-only bash allows", () => {
   }), undefined);
 });
 
-test("bash fail-closed: nested shell, cd, node -e, find -delete", () => {
+test("bash fail-closed: nested shell, -lc, fused redirect, cd, node -e, find -delete", () => {
   const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
   const roots = { workspaceRoot, tempRoot };
   const pFile = join(protectedRoot, "keep.txt");
 
-  assert.ok(assessRoleToolFsBoundary({
-    toolName: "bash",
-    toolInput: { command: `bash -c 'rm -f ${pFile}'` },
-    cwd: workspaceRoot,
-    roots,
-  }), "nested bash -c rm outside");
-
-  assert.ok(assessRoleToolFsBoundary({
-    toolName: "bash",
-    toolInput: { command: `cd ${JSON.stringify(protectedRoot)} && rm -f keep.txt` },
-    cwd: workspaceRoot,
-    roots,
-  }), "cd + relative rm fail-closed");
-
-  assert.ok(assessRoleToolFsBoundary({
-    toolName: "bash",
-    toolInput: { command: `node -e "require('fs').unlinkSync(${JSON.stringify(pFile)})"` },
-    cwd: workspaceRoot,
-    roots,
-  }), "node -e fail-closed");
-
-  assert.ok(assessRoleToolFsBoundary({
-    toolName: "bash",
-    toolInput: { command: `find ${JSON.stringify(protectedRoot)} -delete` },
-    cwd: workspaceRoot,
-    roots,
-  }), "find -delete fail-closed");
+  for (const command of [
+    `bash -c 'rm -f ${pFile}'`,
+    `bash -lc 'rm -f ${pFile}'`,
+    `env bash -c 'rm -f ${pFile}'`,
+    `printf X>${pFile}`,
+    `cd ${JSON.stringify(protectedRoot)} && rm -f keep.txt`,
+    `node -e "require('fs').unlinkSync(${JSON.stringify(pFile)})"`,
+    `find ${JSON.stringify(protectedRoot)} -delete`,
+  ] as const) {
+    assert.ok(
+      assessRoleToolFsBoundary({
+        toolName: "bash",
+        toolInput: { command },
+        cwd: workspaceRoot,
+        roots,
+      }),
+      `must deny: ${command}`,
+    );
+  }
 });
 
 test("detour argv: rm/bash -c outside deny; opaque engine argv alone allows (sandbox owns IO)", () => {
@@ -186,4 +178,45 @@ test("Darwin detour write sandbox blocks P and allows W (real IO)", async () => 
   });
   assert.equal(readFileSync(pFile, "utf8"), "PROTECTED", "P must stay intact under sandbox");
   assert.equal(readFileSync(wFile, "utf8").trim(), "OK", "W write allowed under sandbox");
+});
+
+test("Grok FS boundary hook runner imports shared assessor and denies outside write", async () => {
+  const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
+  const home = mkdtempSync(join(tmpdir(), "ak-692-grok-hook-"));
+  const { installGrokFsBoundaryHook } = await import("../../src/grok/fs-boundary-hook.ts");
+  await installGrokFsBoundaryHook({
+    controlledHome: home,
+    workspaceRoot,
+    tempRoot,
+  });
+  const script = join(home, "hooks", "ak-fs-boundary.mjs");
+  const hookJson = JSON.parse(readFileSync(join(home, "hooks", "ak-fs-boundary.json"), "utf8"));
+  const command: string = hookJson.hooks.PreToolUse[0].hooks[0].command;
+  assert.match(command, /tsx/);
+  const { spawnSync } = await import("node:child_process");
+  // Parse command into argv (simple split on spaces outside quotes — installer uses JSON.stringify paths)
+  const parts = command.match(/(?:[^\s"]+|"[^"]*")+/g)!.map((p) => p.replace(/^"|"$/g, ""));
+  const event = JSON.stringify({
+    toolName: "Write",
+    toolInput: { path: join(protectedRoot, "keep.txt"), content: "X" },
+    cwd: workspaceRoot,
+  });
+  const result = spawnSync(parts[0]!, parts.slice(1), {
+    input: event,
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.decision, "deny");
+  assert.match(String(decision.reason), new RegExp(ROLE_TOOL_FS_BOUNDARY_CODE));
+  // Malformed payload fail-closed
+  const bad = spawnSync(parts[0]!, parts.slice(1), {
+    input: "not-json",
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(bad.status, 0, bad.stderr);
+  assert.equal(JSON.parse(bad.stdout).decision, "deny");
+  void script;
 });
