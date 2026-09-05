@@ -3,6 +3,7 @@
  * plus #549 HOME redirect negative tracers on the real entry seams.
  * Observes the real runner entry (discovery, child argv, exit honesty) under
  * an isolated cwd/PATH child seam; does not touch production, grace, or Navigator.
+ * #685: heavy partition removed — single default-parallel child only.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -24,7 +25,6 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
-const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
 const THIS_CONTRACT_REL = "test/integration/run-test-all.test.ts";
 const HOST_HOME = userInfo().homedir;
 
@@ -41,21 +41,6 @@ function readHostModelsHash(): string | null {
   if (!existsSync(path)) return null;
   return sha256(readFileSync(path));
 }
-
-/** Exact heavy set — independent expected literals, not runner import (#160; #685 slimmed). */
-const TICKET_HEAVYWEIGHT = [
-  "test/integration/audit-failure-subprocess.test.ts",
-  "test/integration/public-cli-judge-run.test.ts",
-  "test/integration/public-cli-coder-installed-run.test.ts",
-  "test/integration/activation-envelope-contract.test.ts",
-  "test/package/package-entrypoint-navigator.integration.test.ts",
-  "test/package/package-entrypoint-cold-help.integration.test.ts",
-  "test/package/package-entrypoint-observation.integration.test.ts",
-  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
-  "test/package/doctor-package-lifecycle.test.ts",
-  "test/package/public-cli-install.test.ts",
-  "test/package/public-cli-cold-matrix.test.ts",
-] as const;
 
 type ChildRecord = {
   argv: string[];
@@ -244,8 +229,7 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
   const workspace = await mkdtemp(join(tmpdir(), "ak-549-test-all-home-"));
   await withPrimaryAwareCleanup(
     async () => {
-      const ordinary = ["test/unit/one.test.ts"];
-      const files = [...ordinary, ...TICKET_HEAVYWEIGHT];
+      const files = ["test/unit/one.test.ts"];
       await seedTierTree(workspace, files);
 
       const binDir = join(workspace, "bin");
@@ -262,115 +246,21 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
         extraEnv: { AK_549_HOME_PROBE_SENTINEL: sentinelName },
       });
 
-      assert.equal(
-        result.code,
-        0,
-        `stderr=${result.stderr}\nstdout=${result.stdout}`,
+      assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
+      assert.equal(result.records.length, 1, "single default-parallel child");
+      const child = result.records[0]!;
+      assert.ok(child.homeProbe, "child must report HOME probe proof on the record channel");
+      assert.equal(child.homeProbe.sentinel, "fixture-poison-sentinel");
+      assert.equal(child.homeProbe.modelsWritten, true);
+      assert.ok(
+        typeof child.home === "string" && child.home.length > 0,
+        "child HOME must be set by runner isolation",
       );
-      assert.ok(result.records[0]?.home, "child must receive HOME");
-      const childHome = result.records[0]!.home!;
-      assert.notEqual(childHome, HOST_HOME);
-
+      assert.notEqual(child.home, HOST_HOME, "child HOME must not be the host home");
       assert.equal(
         readHostModelsHash(),
         beforeHash,
-        "host ~/.pi/agent/models.json hash must be unchanged",
-      );
-      assert.equal(
-        existsSync(hostSentinel),
-        false,
-        "host sentinel absolute path must not exist",
-      );
-      // Positive write proof from inside the child, before process-owned HOME rm.
-      assert.deepEqual(result.records[0]!.homeProbe, {
-        sentinel: "fixture-poison-sentinel",
-        modelsWritten: true,
-      });
-      // #612: runner default HOME is process-owned — gone after exit.
-      assert.equal(
-        existsSync(childHome),
-        false,
-        "run-test-all default test home must be deleted on exit",
-      );
-    },
-    async () => {
-      await rm(workspace, { recursive: true, force: true });
-    },
-  );
-});
-
-/**
- * AC4 (#549): bare preload entry write proof via process.env.HOME (not run-test-all).
- * Independent of AC3; package.json wiring locked above as exact strings.
- */
-test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-549-bare-preload-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      const beforeHash = readHostModelsHash();
-      const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
-      const hostSentinel = join(HOST_HOME, sentinelName);
-      const probe = join(workspace, "home-redirect-probe.mjs");
-      await writeFile(
-        probe,
-        `import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { userInfo } from "node:os";
-import { dirname, join } from "node:path";
-
-const hostHome = userInfo().homedir;
-const home = process.env.HOME;
-assert.ok(home && home !== hostHome, "HOME must be redirected by preload");
-assert.equal(process.env.XDG_CONFIG_HOME, join(home, ".config"));
-assert.equal(process.env.PI_CODING_AGENT_DIR, undefined);
-
-const sentinelName = process.env.AK_549_SENTINEL_NAME;
-const hostSentinel = join(hostHome, sentinelName);
-const beforeHash = process.env.AK_549_BEFORE_HASH === "" ? null : process.env.AK_549_BEFORE_HASH;
-const hostModels = join(hostHome, ".pi", "agent", "models.json");
-
-const modelsPath = join(home, ".pi", "agent", "models.json");
-try {
-  mkdirSync(dirname(modelsPath), { recursive: true });
-  writeFileSync(modelsPath, JSON.stringify({ providers: { poison: true } }) + "\\n");
-  writeFileSync(join(home, sentinelName), "bare-fixture-poison");
-
-  assert.equal(existsSync(hostSentinel), false, "host sentinel must not exist");
-  const afterHash = existsSync(hostModels)
-    ? createHash("sha256").update(readFileSync(hostModels)).digest("hex")
-    : null;
-  assert.equal(afterHash, beforeHash);
-  assert.equal(readFileSync(join(home, sentinelName), "utf8"), "bare-fixture-poison");
-  console.log(JSON.stringify({ ok: true, home, hostHome }));
-} finally {
-  rmSync(join(home, sentinelName), { force: true });
-  rmSync(join(home, ".pi"), { recursive: true, force: true });
-}
-`,
-        "utf8",
-      );
-
-      const result = await runTestSubprocess(
-        process.execPath,
-        ["--import", PRELOAD, probe],
-        {
-          cwd: packageRoot,
-          env: {
-            ...process.env,
-            // Start from host HOME so the preload must do the redirect.
-            HOME: HOST_HOME,
-            AK_549_SENTINEL_NAME: sentinelName,
-            AK_549_BEFORE_HASH: beforeHash ?? "",
-          },
-          owner: "bare-preload-home-redirect",
-          timeoutMs: 15_000,
-        },
-      );
-      assert.equal(
-        result.code,
-        0,
-        `preload probe failed: stderr=${result.stderr}\nstdout=${result.stdout}`,
+        "host models.json hash must be unchanged after test:all",
       );
       assert.equal(
         existsSync(hostSentinel),
@@ -385,17 +275,16 @@ try {
   );
 });
 
-test("runner partitions discovered universe into ordinary default-parallel then heavy concurrency-2 children", async () => {
+test("runner discovers seeded tree into one default-parallel child", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-partition-"));
   await withPrimaryAwareCleanup(
     async () => {
-      const ordinary = [
+      const files = [
         "test/unit/one.test.ts",
         "test/contract/two.test.ts",
         "test/integration/light.test.ts",
         "test/package/light.test.ts",
       ];
-      const files = [...ordinary, ...TICKET_HEAVYWEIGHT];
       await seedTierTree(workspace, files);
 
       const binDir = join(workspace, "bin");
@@ -408,43 +297,19 @@ test("runner partitions discovered universe into ordinary default-parallel then 
       });
 
       assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-      assert.equal(result.records.length, 2, "exactly two child invocations");
+      assert.equal(result.records.length, 1, "no heavy partition child");
 
-      const [ordinaryChild, heavyChild] = result.records;
-      assert.ok(ordinaryChild && heavyChild);
-
-      assert.ok(
-        ordinaryChild.argv.includes("--test"),
-        "ordinary child is a node --test invocation",
-      );
+      const [child] = result.records;
+      assert.ok(child);
+      assert.ok(child.argv.includes("--test"), "child is a node --test invocation");
       assert.equal(
-        hasConcurrencyTwo(ordinaryChild.argv),
+        hasConcurrencyTwo(child.argv),
         false,
-        "ordinary child must retain default parallelism (no --test-concurrency=2)",
-      );
-      assert.equal(
-        hasConcurrencyTwo(heavyChild.argv),
-        true,
-        "heavy child must pass --test-concurrency=2",
+        "child must retain default parallelism (no --test-concurrency=2)",
       );
 
-      const ordinaryFiles = filesFromArgv(ordinaryChild.argv).sort();
-      const heavyFiles = filesFromArgv(heavyChild.argv).sort();
-      const expectedHeavy = [...TICKET_HEAVYWEIGHT].sort();
-      const expectedOrdinary = [...ordinary].sort();
-
-      assert.deepEqual(heavyFiles, expectedHeavy);
-      assert.deepEqual(ordinaryFiles, expectedOrdinary);
-
-      const union = new Set([...ordinaryFiles, ...heavyFiles]);
-      assert.equal(union.size, files.length, "union covers every discovered file");
-      for (const f of ordinaryFiles) {
-        assert.equal(
-          expectedHeavy.some((h) => h === f),
-          false,
-          `ordinary ${f} must not reappear in heavy`,
-        );
-      }
+      const scheduled = filesFromArgv(child.argv).sort();
+      assert.deepEqual(scheduled, [...files].sort());
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -452,7 +317,7 @@ test("runner partitions discovered universe into ordinary default-parallel then 
   );
 });
 
-test("runner discovers the live package tree as ordinary ⊎ exact heavy manifest, including this contract once", async () => {
+test("runner discovers the live package tree once under default parallelism, including this contract", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-live-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -466,37 +331,27 @@ test("runner discovers the live package tree as ordinary ⊎ exact heavy manifes
       });
 
       assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-      assert.equal(result.records.length, 2);
+      assert.equal(result.records.length, 1, "single child on live tree");
 
-      const ordinaryFiles = filesFromArgv(result.records[0]!.argv);
-      const heavyFiles = filesFromArgv(result.records[1]!.argv);
-
+      const scheduled = filesFromArgv(result.records[0]!.argv);
       assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
-      assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
-      assert.deepEqual([...heavyFiles].sort(), [...TICKET_HEAVYWEIGHT].sort());
+      assert.equal(new Set(scheduled).size, scheduled.length, "no file runs twice");
 
-      const all = [...ordinaryFiles, ...heavyFiles];
-      assert.equal(new Set(all).size, all.length, "no file runs twice");
-      for (const heavy of TICKET_HEAVYWEIGHT) {
-        assert.equal(ordinaryFiles.includes(heavy), false, `${heavy} must leave ordinary`);
-        assert.equal(all.filter((f) => f === heavy).length, 1);
-      }
-
-      // Owning contract lives in the ordinary tier and executes exactly once via test:all.
+      // Owning contract lives in discovery and executes exactly once via test:all.
       assert.equal(
-        ordinaryFiles.filter((f) => f.replaceAll("\\", "/") === THIS_CONTRACT_REL).length,
+        scheduled.filter((f) => f.replaceAll("\\", "/") === THIS_CONTRACT_REL).length,
         1,
-        "owning contract must be discovered once in ordinary",
+        "owning contract must be discovered once",
       );
 
       // Every scheduled path stays inside the ticket's four-tier universe shape.
-      for (const file of all) {
+      for (const file of scheduled) {
         assert.match(
           file.replaceAll("\\", "/"),
           /^test\/(unit|contract|integration|package)\/.+\.test\.ts$/,
         );
       }
-      assert.ok(ordinaryFiles.length > 0, "ordinary tier must be non-empty on the live tree");
+      assert.ok(scheduled.length > 0, "discovery must be non-empty on the live tree");
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -504,72 +359,25 @@ test("runner discovers the live package tree as ordinary ⊎ exact heavy manifes
   );
 });
 
-test("runner fails closed on missing manifest entry and does not spawn children", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-missing-"));
+test("runner propagates child non-zero exits honestly", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-exit-"));
   await withPrimaryAwareCleanup(
     async () => {
-      // Omit the sole heavyweight file from the tree.
-      const files = [
-        "test/unit/one.test.ts",
-        // missing TICKET_HEAVYWEIGHT[0]
-      ];
+      const files = ["test/unit/one.test.ts", "test/integration/light.test.ts"];
       await seedTierTree(workspace, files);
       const binDir = join(workspace, "bin");
       await writePathNodeShim(binDir);
-      const recordPath = join(workspace, "records.jsonl");
+
+      const recordPath = join(workspace, "ord-fail.jsonl");
       const result = await runRunner({
         cwd: workspace,
         binDir,
         recordPath,
+        childExits: "7",
       });
-      assert.notEqual(result.code, 0, "missing manifest entry must fail");
-      assert.equal(result.records.length, 0, "must not spawn test children");
-    },
-    async () => {
-      await rm(workspace, { recursive: true, force: true });
-    },
-  );
-});
-
-test("runner propagates ordinary and heavy child non-zero exits honestly", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-exit-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      const files = [
-        "test/unit/one.test.ts",
-        ...TICKET_HEAVYWEIGHT,
-      ];
-      await seedTierTree(workspace, files);
-      const binDir = join(workspace, "bin");
-      await writePathNodeShim(binDir);
-
-      // Ordinary fails: fail-fast, no heavy child, exit preserved.
-      {
-        const recordPath = join(workspace, "ord-fail.jsonl");
-        const result = await runRunner({
-          cwd: workspace,
-          binDir,
-          recordPath,
-          childExits: "7,0",
-        });
-        assert.equal(result.code, 7, `ordinary failure must surface; stderr=${result.stderr}`);
-        assert.equal(result.records.length, 1, "fail-fast after ordinary non-zero");
-        assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
-      }
-
-      // Ordinary ok, heavy fails: heavy exit preserved.
-      {
-        const recordPath = join(workspace, "heavy-fail.jsonl");
-        const result = await runRunner({
-          cwd: workspace,
-          binDir,
-          recordPath,
-          childExits: "0,5",
-        });
-        assert.equal(result.code, 5, `heavy failure must surface; stderr=${result.stderr}`);
-        assert.equal(result.records.length, 2);
-        assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
-      }
+      assert.equal(result.code, 7, `child failure must surface; stderr=${result.stderr}`);
+      assert.equal(result.records.length, 1);
+      assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -581,13 +389,10 @@ test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-sigterm-"));
   await withPrimaryAwareCleanup(
     async () => {
-      const files = [
-        "test/unit/one.test.ts",
-        ...TICKET_HEAVYWEIGHT,
-      ];
+      const files = ["test/unit/one.test.ts"];
       await seedTierTree(workspace, files);
       const binDir = join(workspace, "bin");
-      // Ordinary child self-terminates with SIGTERM; runner must surface 128+15=143.
+      // Child self-terminates with SIGTERM; runner must surface 128+15=143.
       await writePathNodeShim(binDir, { signalSelf: "SIGTERM" });
       const recordPath = join(workspace, "sigterm.jsonl");
       const result = await runRunner({
@@ -600,7 +405,7 @@ test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async
         143,
         `SIGTERM child must surface as 143, not generic 1; stderr=${result.stderr}`,
       );
-      assert.equal(result.records.length, 1, "fail-fast after ordinary SIGTERM");
+      assert.equal(result.records.length, 1);
       assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
     },
     async () => {

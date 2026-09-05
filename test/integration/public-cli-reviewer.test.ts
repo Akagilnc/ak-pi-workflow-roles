@@ -48,7 +48,6 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
-  runPiSubprocess,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
