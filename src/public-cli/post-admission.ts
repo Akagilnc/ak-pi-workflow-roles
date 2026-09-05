@@ -59,10 +59,12 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
+  projectThrownFailureLeaf,
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   sealedAcceptanceRedispatchDisposition,
+  type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -240,52 +242,34 @@ function presentSecondaryTerminal(terminal: TerminalResult, io: CliIo): void {
   }
 }
 
-/**
- * Project a last-host write failure as one concurrent leaf (structured fact, not a
- * forged host throw). Mirrors thrown-leaf identity/diagnostic without inventing types.
- */
-function lastHostWriteFailureLeaf(error: unknown): {
+/** Serialize one failure leaf for details.concurrentFailures (sole leaf owner = settlement). */
+function concurrentFailureLeafRecord(leaf: ControlledFailure): {
   readonly cause: ControlledFailureCause;
   readonly diagnostic: string;
   readonly identity?: { readonly name?: string; readonly code?: string | number };
+  readonly details?: Readonly<Record<string, unknown>>;
 } {
-  if (error instanceof Error) {
-    const identity: { name?: string; code?: string | number } = { name: error.name };
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" || typeof code === "number") {
-      identity.code = code;
-    }
-    return {
-      cause: "unrecognized",
-      diagnostic: error.message || error.name || "unrecognized exception",
-      identity,
-    };
-  }
   return {
-    cause: "unrecognized",
-    diagnostic: String(error),
+    cause: leaf.cause,
+    diagnostic: leaf.diagnostic,
+    ...(leaf.identity === undefined ? {} : { identity: leaf.identity }),
+    ...(leaf.details === undefined ? {} : { details: leaf.details }),
   };
 }
 
 /**
- * When last-host write fails after a returned host turn that already failed,
- * keep the returned failure channel (knownFailure / timeout / activation) and
- * attach the write leaf under details.concurrentFailures — no forged throws.
+ * Attach last-host write failure as concurrent secondary evidence on an existing
+ * returned-path ControlledFailureInput — no forged host throw identity.
  */
-function controlledFailureInputForReturnedHostAndLastHostWrite(
-  result: RoleTurnResult,
+function withLastHostWriteConcurrentFailure(
+  input: ControlledFailureInput,
   writeError: unknown,
 ): ControlledFailureInput {
-  const writeLeaf = lastHostWriteFailureLeaf(writeError);
-  const base = {
-    timedOut: result.timedOut,
-    code: result.code,
-    stderr: result.stderr,
-  };
-  if (result.knownFailure !== undefined) {
-    const failure = result.knownFailure;
+  const writeLeaf = concurrentFailureLeafRecord(projectThrownFailureLeaf(writeError));
+  if (input.knownFailure !== undefined) {
+    const failure = input.knownFailure;
     return {
-      ...base,
+      ...input,
       knownFailure: {
         cause: failure.cause,
         ...(failure.identity === undefined ? {} : { identity: failure.identity }),
@@ -299,20 +283,12 @@ function controlledFailureInputForReturnedHostAndLastHostWrite(
       },
     };
   }
-  if (result.timedOut) {
-    return {
-      ...base,
-      knownCause: "timeout",
-      knownDiagnostic: "role run timed out",
-      knownDetails: { concurrentFailures: [writeLeaf] },
-    };
-  }
-  // nonzero exit without typed knownFailure — same activation channel as normal
-  // settlement (conciseChildDiagnostic owns stderr); write leaf rides knownDetails.
   return {
-    ...base,
-    knownCause: "activation",
-    knownDetails: { concurrentFailures: [writeLeaf] },
+    ...input,
+    knownDetails: {
+      ...(input.knownDetails ?? {}),
+      concurrentFailures: [writeLeaf],
+    },
   };
 }
 
@@ -503,9 +479,10 @@ export async function dispatchPostAdmissionTurn<
       } catch (error) {
         // Dual failure: host already failed AND last-host write failed — keep both.
         // Thrown host: real AggregateError leaves (incl. throw undefined).
-        // Returned host failure: existing knownFailure/timeout/activation channels
-        // plus write leaf in details.concurrentFailures (no forged throw identity).
-        // Clean returned turn + write fail: write error alone.
+        // Returned host: same evidence-priority chain as the normal failure path
+        // (resolveRunnerKnownFailure / credential / audited resolution), then attach
+        // the write leaf under details.concurrentFailures — no forged throw identity.
+        // Lawful settled success + write fail: write error alone.
         if (turnOutcome.kind === "thrown") {
           return (await presentControlledFailure(
             admitted,
@@ -525,21 +502,93 @@ export async function dispatchPostAdmissionTurn<
           )) as { exitCode: number; admitted: A; terminal: T };
         }
         const result = turnOutcome.result;
-        const returnedHostFailed =
-          result.knownFailure !== undefined ||
-          result.timedOut ||
-          (result.code !== null && result.code !== 0);
-        const failureInput = returnedHostFailed
-          ? controlledFailureInputForReturnedHostAndLastHostWrite(result, error)
-          : {
+        try {
+          await writeFile(
+            join(admitted.runDirectory, "stderr.log"),
+            result.stderr,
+            "utf8",
+          );
+        } catch {
+          // continue to dual-failure settlement
+        }
+        let settledOnWriteFail: T | undefined;
+        try {
+          settledOnWriteFail = await adapters.trySettle(
+            admitted,
+            env.principalAuthority,
+          );
+        } catch {
+          // Settle throw is not the host turn outcome; fall through to host
+          // failure projection + write concurrent (host facts remain primary).
+          settledOnWriteFail = undefined;
+        }
+        if (
+          settledOnWriteFail !== undefined &&
+          shouldPresent(settledOnWriteFail)
+        ) {
+          // Host produced a lawful terminal — last-host write is the sole failure.
+          return (await presentControlledFailure(
+            admitted,
+            {
               timedOut: result.timedOut,
               code: result.code,
               stderr: result.stderr,
               thrown: error,
-            };
+            },
+            adapters,
+            env.principalAuthority,
+            io,
+          )) as { exitCode: number; admitted: A; terminal: T };
+        }
+        if (adapters.trySettleSecondary !== undefined) {
+          const secondary = await adapters.trySettleSecondary(
+            admitted,
+            env.principalAuthority,
+          );
+          if (secondary !== undefined) {
+            // Lawful secondary terminal — write is still the sole public failure.
+            return (await presentControlledFailure(
+              admitted,
+              {
+                timedOut: result.timedOut,
+                code: result.code,
+                stderr: result.stderr,
+                thrown: error,
+              },
+              adapters,
+              env.principalAuthority,
+              io,
+            )) as { exitCode: number; admitted: A; terminal: T };
+          }
+        }
+        const sessionFile =
+          admitted.principal !== undefined
+            ? env.principalAuthority.decode(admitted.principal).sessionFile
+            : "";
+        const runnerKnownFailure =
+          adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
+            ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
+            : result.knownFailure;
+        const credentialFailure = postRunMissingCredentialFailure(
+          result,
+          env.model,
+          env.credentials,
+        );
+        const resolution = await resolveAuditedRunnerFailureResolution({
+          runner: runnerKnownFailure,
+          sessionFile,
+          credential: credentialFailure,
+          runDirectory: admitted.runDirectory,
+        });
+        const hostFailureInput: ControlledFailureInput = {
+          timedOut: result.timedOut,
+          code: result.code,
+          stderr: result.stderr,
+          ...controlledFailureInputFromResolution(resolution),
+        };
         return (await presentControlledFailure(
           admitted,
-          failureInput,
+          withLastHostWriteConcurrentFailure(hostFailureInput, error),
           adapters,
           env.principalAuthority,
           io,

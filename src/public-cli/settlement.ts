@@ -449,10 +449,11 @@ function flattenThrownFailureLeaves(error: unknown): unknown[] {
 
 /**
  * Project one thrown value into a ControlledFailure leaf.
- * AggregateError is handled by the caller (classifyThrownFailure) so nested
- * concurrent facts are not washed into a generic AggregateError name/message.
+ * Sole owner for thrown-leaf identity/diagnostic mapping (last-host write concurrent
+ * facts reuse this — do not fork a second leaf mapper).
+ * AggregateError nesting is handled by classifyThrownFailure.
  */
-function classifyThrownFailureLeaf(error: unknown): ControlledFailure {
+export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
   if (isTypedActivationError(error)) {
     const identity = thrownIdentity(error);
     if (error.failureCode !== undefined && identity.code === undefined) {
@@ -486,19 +487,19 @@ function classifyThrownFailureLeaf(error: unknown): ControlledFailure {
  */
 function classifyThrownFailure(error: unknown): ControlledFailure {
   if (!(error instanceof AggregateError)) {
-    return classifyThrownFailureLeaf(error);
+    return projectThrownFailureLeaf(error);
   }
   const leaves = flattenThrownFailureLeaves(error);
   if (leaves.length === 0) {
     // Empty aggregate — retain the aggregate shell rather than invent a cause.
-    return classifyThrownFailureLeaf(error);
+    return projectThrownFailureLeaf(error);
   }
-  const primary = classifyThrownFailureLeaf(leaves[0]);
+  const primary = projectThrownFailureLeaf(leaves[0]);
   if (leaves.length === 1) {
     return primary;
   }
   const concurrentFailures = leaves.slice(1).map((leaf) => {
-    const secondary = classifyThrownFailureLeaf(leaf);
+    const secondary = projectThrownFailureLeaf(leaf);
     return {
       cause: secondary.cause,
       diagnostic: secondary.diagnostic,
@@ -513,6 +514,22 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
     details: {
       ...(primary.details ?? {}),
       concurrentFailures,
+    },
+  };
+}
+
+/** Merge caller-owned secondary evidence into a classified failure without washing path facts. */
+function withKnownDetails(
+  failure: ControlledFailure,
+  knownDetails: Readonly<Record<string, unknown>> | undefined,
+): ControlledFailure {
+  if (knownDetails === undefined) return failure;
+  const { timedOut: _knownTimedOut, ...rest } = knownDetails;
+  return {
+    ...failure,
+    details: {
+      ...rest,
+      ...(failure.details ?? {}),
     },
   };
 }
@@ -587,39 +604,54 @@ export function classifyPostAdmissionFailure(input: {
     };
   }
   if (input.timedOut) {
-    return {
-      cause: "timeout",
-      diagnostic: "role run timed out",
-      details: { timedOut: true, exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "timeout",
+        diagnostic: "role run timed out",
+        details: { timedOut: true, exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.code !== 0) {
     const fallback = `role run failed with exit ${input.code ?? "null"}`;
-    return {
-      cause: "activation",
-      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "activation",
+        diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+        details: { exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "missing") {
-    return {
-      cause: "session",
-      diagnostic: "role run left no readable session transcript",
-      details: { exitCode: input.code, session: "missing" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: "role run left no readable session transcript",
+        details: { exitCode: input.code, session: "missing" },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "unreadable") {
-    return {
-      cause: "session",
-      diagnostic: input.session.diagnostic,
-      details: { exitCode: input.code, session: "unreadable" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: input.session.diagnostic,
+        details: { exitCode: input.code, session: "unreadable" },
+      },
+      input.knownDetails,
+    );
   }
-  return {
-    cause: "output",
-    diagnostic: "role run completed without a lawful typed terminal result",
-    details: { exitCode: input.code },
-  };
+  return withKnownDetails(
+    {
+      cause: "output",
+      diagnostic: "role run completed without a lawful typed terminal result",
+      details: { exitCode: input.code },
+    },
+    input.knownDetails,
+  );
 }
 
 /** One projection owner for the four audited public runners. */
