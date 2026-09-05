@@ -1,26 +1,39 @@
 /**
- * Build an environment for test-owned processes without inheriting machine
- * role-ledger or Pi-home pointers.
- *
- * Default (#549): HOME + XDG_* point at a per-process temp directory.
- *
- * #685 / owner 2026-09-05 (ticket r10 = 判官 r3 option ②):
- * temps only under system tmpdir; tests/helpers/runners/preloads never delete
- * any directory. #612 no-residue voided on this ticket.
- *
- * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
- * @returns {NodeJS.ProcessEnv}
+ * #549 HOME redirect + #685 worktree-internal default home with exit cleanup.
+ * Owner 2026-09-06: may only delete inside this worktree; default home under .test-tmp/.
  */
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const WORKTREE_TEST_TMP = join(PACKAGE_ROOT, ".test-tmp");
 
 let defaultTestHome;
+let defaultTestHomeCleanupRegistered = false;
 let sharedHermesBinDir;
+
+function registerDefaultTestHomeCleanup() {
+  if (defaultTestHomeCleanupRegistered) return;
+  defaultTestHomeCleanupRegistered = true;
+  process.on("exit", () => {
+    if (defaultTestHome === undefined) return;
+    try {
+      rmSync(defaultTestHome, { recursive: true, force: true });
+    } catch (error) {
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      try {
+        process.stderr.write(`[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`);
+      } catch {}
+    }
+  });
+}
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
-    defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
+    mkdirSync(WORKTREE_TEST_TMP, { recursive: true });
+    defaultTestHome = mkdtempSync(join(WORKTREE_TEST_TMP, "ak-roles-test-home-"));
+    registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;
 }
@@ -38,14 +51,10 @@ function ensureSharedHermesFixtureBin() {
   sharedHermesBinDir = join(home, ".ak-test-path-bin");
   mkdirSync(sharedHermesBinDir, { recursive: true });
   const hermesPath = join(sharedHermesBinDir, "hermes");
-  writeFileSync(
-    hermesPath,
-    `#!/usr/bin/env node
+  writeFileSync(hermesPath, `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ assertion: "true-unbound" }));
 process.exit(0);
-`,
-    "utf8",
-  );
+`, "utf8");
   chmodSync(hermesPath, 0o755);
   return sharedHermesBinDir;
 }
@@ -64,8 +73,7 @@ export function isolatedTestProcessEnv(options = {}) {
     AK_ROLE_RUN_DIR: undefined,
     PI_CODING_AGENT_DIR: undefined,
   };
-  const home =
-    options.home !== undefined ? options.home : defaultIsolatedTestHome();
+  const home = options.home !== undefined ? options.home : defaultIsolatedTestHome();
   redirectHomeEnv(env, home);
   if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
   withSharedHermesOnPath(env);
