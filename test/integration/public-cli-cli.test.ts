@@ -70,6 +70,13 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
 
+    // Nested free content is a sample of lawful extras (#696) — not a required schema.
+    const freeContent = {
+      codeComplexity: { conclusion: "pass-sample", nested: { ok: true } },
+      testQuality: { conclusion: "rewrite-sample" },
+      testComplexityAndDuration: { conclusion: "unknown-duration" },
+      inspection: { head: "abc", commands: ["git status"] },
+    } as const;
     for (const [index, row] of [
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
@@ -79,7 +86,7 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       const runId = `inspector-public-${index}`;
       const details = row.status === "malformed"
         ? row.details
-        : { status: row.status, findings: row.findings };
+        : { status: row.status, findings: row.findings, ...freeContent };
       const result = await runAkRole(
         [
           "inspector",
@@ -123,11 +130,26 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
         assert.equal(typeof outcome.decisiveFacts.reason, "string");
         assert.notEqual(outcome.decisiveFacts.reason, "");
+        assert.deepEqual(outcome.decisiveFacts.codeComplexity, freeContent.codeComplexity);
+        assert.deepEqual(outcome.decisiveFacts.testQuality, freeContent.testQuality);
+        assert.deepEqual(
+          outcome.decisiveFacts.testComplexityAndDuration,
+          freeContent.testComplexityAndDuration,
+        );
+        assert.deepEqual(outcome.decisiveFacts.inspection, freeContent.inspection);
       } else {
         assert.equal(outcome.kind, "accepted");
         if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
         assert.equal(outcome.status, row.status);
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+        assert.equal(outcome.decisiveFacts.status, row.status);
+        assert.deepEqual(outcome.decisiveFacts.codeComplexity, freeContent.codeComplexity);
+        assert.deepEqual(outcome.decisiveFacts.testQuality, freeContent.testQuality);
+        assert.deepEqual(
+          outcome.decisiveFacts.testComplexityAndDuration,
+          freeContent.testComplexityAndDuration,
+        );
+        assert.deepEqual(outcome.decisiveFacts.inspection, freeContent.inspection);
       }
     }
   });
