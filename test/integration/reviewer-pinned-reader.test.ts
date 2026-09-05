@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {

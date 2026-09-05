@@ -4,7 +4,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,10 +14,10 @@ import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
   createEngineDetourToolDefinition,
 } from "../../src/engine-detour-tool.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 await sleep(600_000);
 console.log("should-not-print");
 `;
