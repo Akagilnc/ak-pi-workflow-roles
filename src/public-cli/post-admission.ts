@@ -1,8 +1,9 @@
 /**
  * Unified post-admission Role lifecycle coordinator (stages ③–⑤; ADR 0018 / #505 / #517 / #526).
  * Owns writer lease → running → ③ dispatch → ④ tool loop / gates → ⑤ settle / fail →
- * terminal → release. The durable admitted mark (markRunAdmitted) is owned by the
- * initial role facades before entering; manual resume never re-admits.
+ * terminal → release. Initial facades (or ticket-seat shared prep) own the durable
+ * admitted mark before dispatch; manual resume never re-admits. Ticket-seat prep
+ * marks admitted before external bind work and re-syncs principal after rebind.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { readFile, writeFile } from "node:fs/promises";
@@ -27,10 +28,20 @@ import type {
 } from "../host-contracts.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import {
+  engineSessionMaterialFromOptions,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
+import {
+  isPrincipalOnTicketSeatNest,
   isTicketSeatMemoryBound,
+  isTicketSeatMemorySeat,
+  openTicketSeatMemoryCoordinates,
   readTicketSeatMemoryLastHost,
+  rebindAdmittedToTicketSeatMemory,
   writeTicketSeatMemoryLastHost,
+  type TicketSeatMemorySeat,
 } from "../ticket-seat-memory.ts";
+import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   missingCredentialPreDispatchFailure,
@@ -39,6 +50,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
+  markRunAdmitted,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -84,6 +96,39 @@ async function readInvocationHost(runDirectory: string): Promise<string | undefi
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+/**
+ * When the admitted principal already sits on a ticket-seat nest, append this
+ * run's binding before an actual write dispatch. No-op for private per-run
+ * principals and for seats without a bound ticket (no migration guess).
+ */
+async function appendTicketSeatRunBindingForDispatch(
+  admitted: AdmittedRoleInvocation,
+  principalAuthority: DurablePrincipalAuthority,
+): Promise<void> {
+  const bound = {
+    role: admitted.role,
+    ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
+  };
+  if (!isTicketSeatMemoryBound(bound)) return;
+  const coordinates = principalAuthority.decode(admitted.principal);
+  if (
+    !isPrincipalOnTicketSeatNest({
+      runDirectory: admitted.runDirectory,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+    })
+  ) {
+    return;
+  }
+  await openTicketSeatMemoryCoordinates({
+    ticketNumber: bound.ticketNumber,
+    seat: bound.role,
+    cwd: admitted.projectRoot,
+    ledgerAnchorSessionFile: coordinates.sessionFile,
+    runId: admitted.runId,
+  });
 }
 
 export type PostAdmissionEnv = {
@@ -403,16 +448,25 @@ export async function dispatchPostAdmissionTurn<
       admitted.principal === undefined
         ? undefined
         : env.principalAuthority.decode(admitted.principal);
-    const ticketSeatMemoryBound = isTicketSeatMemoryBound({
+    // Seat eligibility (role+ticket) ≠ actual nest binding. Old per-run principals stay
+    // on invocation.host / per-run transition source; only principals already sealed onto
+    // the shared nest read/write nest last-host (#637 class 1). Do not fall back from a
+    // missing nest last-host to invocation.host — that re-reads a stale run host after
+    // another host already wrote the shared volume.
+    const ticketSeatEligible = isTicketSeatMemoryBound({
       role: admitted.role,
       ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
     });
+    const principalOnTicketSeatNest =
+      principalCoordinates !== undefined &&
+      isPrincipalOnTicketSeatNest({
+        runDirectory: admitted.runDirectory,
+        sessionDirectory: principalCoordinates.sessionDirectory,
+        sessionFile: principalCoordinates.sessionFile,
+      });
+    const ticketSeatMemoryBound = ticketSeatEligible && principalOnTicketSeatNest;
     let turnRequest: RoleTurnRequest;
     try {
-      // Ticket-seat host authority lives on the nest last-host page only.
-      // Per-run invocation.host must not override: old-run retry after a cross-host
-      // intermediate would otherwise keep the stale run host and drop the transition.
-      // Non-ticket-seat paths still read the per-run invocation mark (#617).
       if (ticketSeatMemoryBound && principalCoordinates !== undefined) {
         const lastHost = await readTicketSeatMemoryLastHost(
           principalCoordinates.sessionDirectory,
@@ -694,6 +748,28 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
+ * Shared initial-call turn projection options from post-admission env
+ * (mirrors resumeTurnRequestProjectionOptions without the resume envelope).
+ */
+export function initialTurnRequestProjectionOptions(
+  env: PostAdmissionEnv,
+  continuation: RoleTurnRequest["continuation"],
+): RoleTurnRequestProjectionOptions {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    continuation,
+  };
+}
+
+/**
  * Shared resume continuation projection (#471 / #600 / #633): seat-table
  * model/engine/timeout axes, restored correlation, and the package resume
  * envelope (message optional). Seats add only their activation projection.
@@ -725,6 +801,107 @@ export function resumeTurnRequestProjectionOptions(
 }
 
 /**
+ * Shared ticket-seat memory initial orchestration (#636 / #637):
+ * rebind → mark admitted → continuation kind from nest → turn projection → one-shot.
+ * Seats keep ticket bind prep, transport prompt, turn activation, adapters, and
+ * prep-failure face; only the isomorphic continuation/projection path is shared.
+ */
+export async function runPostAdmissionTicketSeatMemoryOneShot<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  seat: TicketSeatMemorySeat;
+  buildPrompt: (admitted: A, engineMaterial: EngineSessionMaterial | undefined) => string;
+  buildTurnRequest: (
+    admitted: A,
+    options: RoleTurnRequestProjectionOptions,
+  ) => RoleTurnRequest;
+  adapters: PostAdmissionAdapters<A, T>;
+  /** Seat prep before memory rebind (e.g. resolveSeatTicketBinding). */
+  beforeMemoryRebind?: (admitted: A) => Promise<void> | void;
+  /**
+   * When true, prep/rebind failures mark admitted and present controlled failure
+   * (countersign). Default: propagate.
+   */
+  settleMemoryPrepFailure?: boolean;
+  effectiveEngine?: string;
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  const {
+    admitted,
+    env,
+    io,
+    seat,
+    buildPrompt,
+    buildTurnRequest,
+    adapters,
+    beforeMemoryRebind,
+    settleMemoryPrepFailure,
+    effectiveEngine,
+  } = input;
+
+  // Durable admitted before Hermes/GitHub/external prep so an interrupt leaves a
+  // resumable run-state (not admitted-request-only). Rebind rewrites the sole
+  // durable principal afterward via the same mark (#637 class 3).
+  await markRunAdmitted(admitted, env.principalAuthority);
+
+  let memory: Awaited<ReturnType<typeof rebindAdmittedToTicketSeatMemory>>;
+  try {
+    if (beforeMemoryRebind !== undefined) {
+      await beforeMemoryRebind(admitted);
+    }
+    memory = await rebindAdmittedToTicketSeatMemory({
+      admitted,
+      seat,
+      principalAuthority: env.principalAuthority,
+    });
+  } catch (error) {
+    if (settleMemoryPrepFailure === true) {
+      // Keep durable admitted coordinates current even when prep fails mid-flight.
+      await markRunAdmitted(admitted, env.principalAuthority);
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    throw error;
+  }
+  // Sync the unique durable principal after memory rebind.
+  await markRunAdmitted(admitted, env.principalAuthority);
+
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  const continuation = {
+    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
+    prompt: buildPrompt(admitted, engineMaterial),
+  };
+
+  return await runPostAdmissionOneShot({
+    admitted,
+    env,
+    io,
+    request: buildTurnRequest(
+      admitted,
+      initialTurnRequestProjectionOptions(env, continuation),
+    ),
+    adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
+}
+
+/**
  * Shared manual-resume orchestration for seats whose continuation is the
  * package resume envelope (#599 / #633): load → structural rejection → seat
  * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
@@ -751,6 +928,12 @@ export async function runPostAdmissionSeatResume<
       return { exitCode: 2 };
     }
     throw error;
+  }
+  // Incomplete ticket prep on an already-admitted run must continue resolution
+  // (never skip or invent true-unbound). Already-settled admissions short-circuit
+  // inside resolveSeatTicketBinding (#635 / #637 class 3).
+  if (isTicketSeatMemorySeat(loaded.admitted.role)) {
+    await resolveSeatTicketBinding(loaded.admitted, input.env);
   }
   return await runPostAdmissionManualResume({
     admitted: loaded.admitted,
@@ -955,6 +1138,31 @@ export async function runPostAdmissionManualResume<
       };
     }
     throw error;
+  }
+
+  // Actual write resume on a shared nest appends this run's binding so A→B→resume A
+  // owns the new interval. Sealed-only projection above never reaches here — no
+  // false write interval for pure receipt projection (#637 class 4).
+  try {
+    await appendTicketSeatRunBindingForDispatch(admitted, env.principalAuthority);
+  } catch (error) {
+    return (await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      adapters,
+      env.principalAuthority,
+      io,
+    )) as {
+      exitCode: number;
+      admitted: A;
+      terminal: T;
+      staleWriterLeaseReclaimed?: true;
+    };
   }
 
   const result = await dispatchPostAdmissionTurn({

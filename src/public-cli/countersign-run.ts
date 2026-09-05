@@ -1,9 +1,10 @@
 /**
- * Public Countersign Role run: admit ticket materials → diarist pipeline step →
- * shared post-admission coordinator → settle Terminal result
- * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
+ * Public Countersign Role run: admit ticket materials → seat ticket bind →
+ * ticket+seat memory principal (#637) → diarist pipeline step → shared
+ * post-admission coordinator → settle Terminal result
+ * (#572 / ADR 0074 / ADR 0075 / ADR 0079). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
- * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
+ * Unbound admission resolves ticket via shared seat LLM bind (#635) before memory rebind.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -15,7 +16,6 @@ import {
   type DiaristRunResult,
 } from "../diarist.ts";
 import { appendIssueSourceFailureDiagnostic } from "../ticket-provenance.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
@@ -26,14 +26,13 @@ import {
 import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
-  runPostAdmissionOneShot,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
+  runPostAdmissionTicketSeatMemoryOneShot,
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
   loadResumableCountersignRun,
-  markRunAdmitted,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -104,46 +103,26 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  await markRunAdmitted(admitted, env.principalAuthority);
-
-  const turnProjection: RoleTurnRequestProjectionOptions = {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildCountersignTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
-    },
-  };
-  // Mutable shell: pre-court ticket resolution may rebind activation before executeTurn.
-  const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
-
-  return await runPostAdmissionOneShot({
+  // #635 seat self-ticket then #637 ticket+seat memory principal before post-admission
+  // so last-host / host-transition see the bound ticket (ticketSeatMemoryBound gate).
+  // Binding/rebind failures settle as controlled failure (same product face as the old
+  // beforeDispatch path) — shared seam marks admitted first so the run is not left
+  // without a terminal. Diarist stays a court-pipeline prior station after running.
+  return await runPostAdmissionTicketSeatMemoryOneShot({
     admitted,
     env,
     io,
-    request: turnRequest,
+    seat: "countersign",
+    beforeMemoryRebind: async () => {
+      await resolveSeatTicketBinding(admitted, env);
+    },
+    settleMemoryPrepFailure: true,
+    buildPrompt: (bound, engineMaterial) =>
+      buildCountersignTransportPrompt(bound, engineMaterial),
+    buildTurnRequest: buildCountersignTurnRequest,
     adapters: countersignAdapters({
-      beforeDispatch: async (admitted) => {
-        await resolveSeatTicketBinding(admitted, env);
-        // Re-project activation so Notary gate flag carries the post-admission binding.
-        Object.assign(
-          turnRequest,
-          buildCountersignTurnRequest(admitted, turnProjection),
-        );
-        await runCountersignDiaristStation(admitted, env);
+      beforeDispatch: async (bound) => {
+        await runCountersignDiaristStation(bound, env);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

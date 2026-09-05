@@ -4,11 +4,12 @@
  * second call sends continuation.resume on the sealed principal. Native host
  * reopen + cross-host DK-4 true runs are #638 family evidence — this suite
  * does not treat mock handoff as DK-4 completion.
+ *
+ * Shares ticket-seat memory CLI fixtures with #637 (tmpdir only; no directory
+ * deletion; never write the real home).
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -16,41 +17,25 @@ import {
   readTicketSeatMemoryLastHost,
   ticketSeatMemorySessionDirectory,
 } from "../../src/ticket-seat-memory.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runPublicInspector } from "../../src/public-cli/inspector-run.ts";
 import { runPublicNotary, runPublicNotaryResume } from "../../src/public-cli/notary-run.ts";
 import { parseInspectorArgv, parseNotaryArgv } from "../../src/public-cli/invocation.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import {
-  packageRoot,
-  seedGitRepository,
-} from "../helpers/pi-test-harness.ts";
-
-function seedGitProject(root: string): void {
-  seedGitRepository(root);
-  execFileSync(
-    "git",
-    ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-    { cwd: root },
-  );
-}
+  createNativeHomeTurnRecorder,
+  createPrincipalTurnRecorder,
+  installSeatTicketFixtures,
+  silentCliIo,
+  ticketSeatMemoryEnvBase,
+  withTicketSeatMemoryHome,
+} from "../helpers/ticket-seat-memory-cli-fixture.ts";
 
 test("#636 public notary CLI: same-ticket resume, different-ticket isolation, independent runs", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-mem-"));
-  try {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
+  await withTicketSeatMemoryHome("ak-public-notary-mem-", async ({ home, project }) => {
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const admittedPath = join(sourceRunPath, "admitted-request.json");
     const admittedRaw = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
@@ -77,38 +62,14 @@ test("#636 public notary CLI: same-ticket resume, different-ticket isolation, in
     });
 
     // Observing typed continuation + principal path only — not a DK-4 mock-handoff proof.
-    const seen: Array<{
-      sessionFile: string;
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-        seen.push({
-          sessionFile,
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-        });
-        // No scripted session rewrite: contract under test is the turn request wire.
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
+    const { seen, host } = createPrincipalTurnRecorder();
+    const io = silentCliIo();
+    const envBase = ticketSeatMemoryEnvBase({
       home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-      host: "pi" as const,
-    };
+      project,
+      host,
+      liveHost: "pi",
+    });
 
     await runPublicNotary(
       ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
@@ -165,24 +126,13 @@ test("#636 public notary CLI: same-ticket resume, different-ticket isolation, in
       seen[0]!.sessionFile,
       "distinct tickets must not share the native volume",
     );
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 });
 
 test("#636 public inspector CLI: ticket+seat nest seals and second call resumes", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-inspector-mem-"));
-  try {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
+  await withTicketSeatMemoryHome("ak-public-inspector-mem-", async ({ home, project, binDir }) => {
     // #635 seat self-ticket via hermes/gh fixtures — no CLI --ticket.
-    await installGhFixture(join(home, "bin"), {
-      issues: { 636: { body: "issue 636 body", comments: [] } },
-    });
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 636 },
-    });
+    await installSeatTicketFixtures(binDir, 636);
     const memoryDir = ticketSeatMemorySessionDirectory({
       ticketNumber: 636,
       seat: "inspector",
@@ -190,87 +140,51 @@ test("#636 public inspector CLI: ticket+seat nest seals and second call resumes"
       home,
     });
 
-    const seen: Array<{
-      sessionFile: string;
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
-        seen.push({
-          sessionFile,
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-        });
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
+    const { seen, host } = createPrincipalTurnRecorder();
+    const io = silentCliIo();
+    const envBase = ticketSeatMemoryEnvBase({
       home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-      host: "pi" as const,
-    };
+      project,
+      host,
+      liveHost: "pi",
+    });
 
-    // PATH must see hermes/gh fixtures for seat ticket bind.
-    const prevPath = process.env.PATH;
-    process.env.PATH = `${join(home, "bin")}${prevPath ? `:${prevPath}` : ""}`;
-    try {
-      await runPublicInspector(
-        ["inspect once for ticket #636"],
-        { ...envBase, createRunId: () => "inspector-mem-1" },
-        io,
-        parseInspectorArgv,
-      );
-      assert.equal(seen.length, 1, "first public inspector must dispatch one turn");
-      assert.equal(seen[0]!.kind, "initial", "first inspector nest open is initial");
-      assert.ok(
-        seen[0]!.sessionFile.startsWith(memoryDir),
-        `inspector principal must seal ticket-seat nest, got ${seen[0]!.sessionFile}`,
-      );
+    await runPublicInspector(
+      ["inspect once for ticket #636"],
+      { ...envBase, createRunId: () => "inspector-mem-1" },
+      io,
+      parseInspectorArgv,
+    );
+    assert.equal(seen.length, 1, "first public inspector must dispatch one turn");
+    assert.equal(seen[0]!.kind, "initial", "first inspector nest open is initial");
+    assert.ok(
+      seen[0]!.sessionFile.startsWith(memoryDir),
+      `inspector principal must seal ticket-seat nest, got ${seen[0]!.sessionFile}`,
+    );
 
-      await runPublicInspector(
-        ["inspect again for ticket #636"],
-        { ...envBase, createRunId: () => "inspector-mem-2" },
-        io,
-        parseInspectorArgv,
-      );
-      assert.equal(seen.length, 2, "second public inspector must dispatch one turn");
-      assert.equal(seen[1]!.kind, "resume", "existing inspector nest must send continuation.resume");
-      assert.equal(
-        seen[1]!.sessionFile,
-        seen[0]!.sessionFile,
-        "same ticket inspector must reopen the same native session file path",
-      );
-      assert.notEqual(
-        seen[1]!.runDirectory,
-        seen[0]!.runDirectory,
-        "each inspector call keeps its own run directory",
-      );
-    } finally {
-      if (prevPath === undefined) delete process.env.PATH;
-      else process.env.PATH = prevPath;
-    }
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    await runPublicInspector(
+      ["inspect again for ticket #636"],
+      { ...envBase, createRunId: () => "inspector-mem-2" },
+      io,
+      parseInspectorArgv,
+    );
+    assert.equal(seen.length, 2, "second public inspector must dispatch one turn");
+    assert.equal(seen[1]!.kind, "resume", "existing inspector nest must send continuation.resume");
+    assert.equal(
+      seen[1]!.sessionFile,
+      seen[0]!.sessionFile,
+      "same ticket inspector must reopen the same native session file path",
+    );
+    assert.notEqual(
+      seen[1]!.runDirectory,
+      seen[0]!.runDirectory,
+      "each inspector call keeps its own run directory",
+    );
+  });
 });
 
 test("#636 public notary: Grok native home spans failure, same-run retry, return-to-Grok", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-native-home-"));
-  try {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
+  await withTicketSeatMemoryHome("ak-public-notary-native-home-", async ({ home, project }) => {
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const admittedPath = join(sourceRunPath, "admitted-request.json");
     const admittedRaw = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
@@ -291,41 +205,9 @@ test("#636 public notary: Grok native home spans failure, same-run retry, return
     });
 
     // Typed request + last-host ownership only — not a native ACP true-run (#638).
-    const seen: Array<{
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-      nativeHomeRunDirectory?: string;
-      previousHost?: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        seen.push({
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-          ...(request.nativeHomeRunDirectory === undefined
-            ? {}
-            : { nativeHomeRunDirectory: request.nativeHomeRunDirectory }),
-          ...(request.hostTransition === undefined
-            ? {}
-            : { previousHost: request.hostTransition.previousHost }),
-        });
-        return { code: 1, stderr: "controlled-stop\n", timedOut: false };
-      },
-    };
-
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
-      home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-    };
+    const { seen, host } = createNativeHomeTurnRecorder();
+    const io = silentCliIo();
+    const envBase = ticketSeatMemoryEnvBase({ home, project, host });
 
     // 1) Failure path still records Grok native-home ownership on the nest.
     await runPublicNotary(
@@ -400,7 +282,5 @@ test("#636 public notary: Grok native home spans failure, same-run retry, return
       host: "grok-build",
       runDirectory: seen[0]!.runDirectory,
     });
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 });
