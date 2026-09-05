@@ -2,20 +2,50 @@
  * #636 ticket+seat logical memory principal for officer seats.
  * Reuses archivist subject-keyed createRecordSession resume (navigator path);
  * no parallel continuation machine, no length/round thresholds.
+ *
+ * Pure read/topology stays free of SessionManager so public-bin cold paths
+ * (analyst/settlement/invocation) cannot fold pi-coding-agent into main.js.
+ * Open-session loads createRecordSessionOpen via runtime-constructed import.
  */
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
-import {
-  createRecordSessionOpen,
-  subjectKeyedRecordDirectory,
-} from "./archivist-record-entry.ts";
+import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "./host-contracts.ts";
+
+type CreateRecordSessionOpen = typeof import("./archivist-record-entry.ts").createRecordSessionOpen;
+
+/**
+ * Resolve createRecordSessionOpen without a static graph edge into the public
+ * CLI bundle (same deferred-load pattern as load-production-grok-host / #580).
+ */
+async function loadCreateRecordSessionOpen(): Promise<CreateRecordSessionOpen> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // Source/tsx: sibling under src/. Bundled public bin: dist/public-cli/main.js → ../.
+  const candidates = [
+    join(here, "archivist-record-entry.ts"),
+    join(here, "archivist-record-entry.js"),
+    join(here, "..", "archivist-record-entry.js"),
+    join(here, "..", "archivist-record-entry.ts"),
+  ];
+  const target = candidates.find((path) => existsSync(path));
+  if (target === undefined) {
+    throw new Error(
+      `archivist record entry module not found from ${here} (ticket-seat memory open)`,
+    );
+  }
+  const mod = (await import(pathToFileURL(target).href)) as {
+    createRecordSessionOpen: CreateRecordSessionOpen;
+  };
+  return mod.createRecordSessionOpen;
+}
 
 /** Record kind for officer ticket-seat memory nests (subject-keyed resume). */
 export const TICKET_SEAT_MEMORY_KIND = "auditor-roles" as const;
@@ -216,12 +246,13 @@ export async function resolveTicketSeatMemoryNestDirectories(input: {
  *
  * `resumed` comes only from the archivist open fact — no parallel existsSync.
  */
-export function openTicketSeatMemoryCoordinates(input: {
+export async function openTicketSeatMemoryCoordinates(input: {
   readonly ticketNumber: number;
   readonly seat: TicketSeatMemorySeat;
   readonly cwd: string;
   readonly ledgerAnchorSessionFile: string;
-}): DurablePrincipalCoordinates & { readonly resumed: boolean } {
+}): Promise<DurablePrincipalCoordinates & { readonly resumed: boolean }> {
+  const createRecordSessionOpen = await loadCreateRecordSessionOpen();
   const opened = createRecordSessionOpen({
     cwd: input.cwd,
     kind: TICKET_SEAT_MEMORY_KIND,
@@ -275,7 +306,7 @@ export async function rebindAdmittedToTicketSeatMemory(input: {
   // Anchor under the already-issued run principal so ledger home path-derives
   // from the package home that issued admission (never ambient passwd home).
   const anchor = input.principalAuthority.decode(input.admitted.principal);
-  const opened = openTicketSeatMemoryCoordinates({
+  const opened = await openTicketSeatMemoryCoordinates({
     ticketNumber,
     seat: input.seat,
     cwd: input.admitted.projectRoot,

@@ -21,6 +21,10 @@ const entries = [
   "activation-ledger-topology",
   "activation-reconciliation",
   "archivist-record-entry",
+  // Pure subject nest topology — cold discovery without SessionManager (#636).
+  "archivist-record-topology",
+  // Officer ticket-seat pure read + deferred open (#636 public-bin cold graph).
+  "ticket-seat-memory",
   "typed-provider-http",
   "upstream-error-testimony",
 ];
