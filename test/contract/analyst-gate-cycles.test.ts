@@ -17,13 +17,17 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystB2FrameBucketsActionsSection } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystLegWallClockSection } from "../../src/analyst-metric-families/leg-wall-clock.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { TICKET_SEAT_RUN_BINDING_ENTRY_TYPE } from "../../src/ticket-seat-memory.ts";
+import {
+  TICKET_SEAT_RUN_BINDING_ENTRY_TYPE,
+  ticketSeatMemorySessionDirectory,
+} from "../../src/ticket-seat-memory.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -528,13 +532,23 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
 
 test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame span after continuations", async () => {
   await withTempHome(async (home) => {
-    // #636 D: two inspector runs share one main sessionFile. Whole-volume read
-    // would give both the cumulative wall and double-count activity; binding
-    // intervals must keep each run's frame span stable across later appends.
+    // #636 D: two inspector runs share one main sessionFile under the real
+    // ticket-seat nest (git projectRoot + admitted ticket). Whole-volume read
+    // would give both the cumulative wall; binding intervals must keep each
+    // run stable across later appends and later-run damage. Fake dirs without
+    // admitted-request bypass nest discovery and cannot prove the seam.
+    const projectRoot = packageRoot;
+    const book = resolveBookKeyFromGit(projectRoot);
+    const ticketNumber = 636;
     const runA = "019ff636-0001-7000-8000-0000000000a1";
     const runB = "019ff636-0002-7000-8000-0000000000b2";
-    const bookRuns = join(home, ".ak-roles", "books", BOOK, "runs");
-    const sharedDir = join(home, ".ak-roles", "books", BOOK, "auditor-roles", "ticket-seat-636-inspector");
+    const bookRuns = join(home, ".ak-roles", "books", book, "runs");
+    const sharedDir = ticketSeatMemorySessionDirectory({
+      ticketNumber,
+      seat: "inspector",
+      cwd: projectRoot,
+      home,
+    });
     const sharedSession = join(sharedDir, "session.jsonl");
     await mkdir(sharedDir, { recursive: true });
 
@@ -594,7 +608,7 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
           version: 3,
           id: "shared-inspector",
           timestamp: "2026-09-03T00:00:00.000Z",
-          cwd: ISSUE_PROJECT_ROOT,
+          cwd: projectRoot,
         }),
         binding(runA, "bind-a", "2026-09-03T00:00:00.000Z"),
         activity("a", "2026-09-03T00:00:00.000Z", "2026-09-03T00:00:01.000Z", "model-a", "call_a"),
@@ -613,10 +627,22 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
         `${JSON.stringify({
           role,
           runId,
-          bookKey: BOOK,
-          projectRoot: ISSUE_PROJECT_ROOT,
+          bookKey: book,
+          projectRoot,
+          ticketNumber,
           sessionDirectory: sharedDir,
           sessionFile: sharedSession,
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      // Real ticket-key discovery requires admitted-request{ticketNumber,projectRoot}.
+      await writeFile(
+        join(runDir, "admitted-request.json"),
+        `${JSON.stringify({
+          role,
+          runId,
+          ticketNumber,
+          projectRoot,
         }, null, 2)}\n`,
         "utf8",
       );
@@ -682,7 +708,7 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
     }
 
     const first = await runAnalyst(
-      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { mode: "issue", projectRoot },
       { home },
     );
     assertRunFacts(first.page, "initial");
@@ -700,7 +726,7 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
     );
 
     const second = await runAnalyst(
-      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { mode: "issue", projectRoot },
       { home },
     );
     assertRunFacts(second.page, "after continuations");
@@ -709,14 +735,14 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
     await appendFile(sharedSession, "{broken\n", "utf8");
 
     const third = await runAnalyst(
-      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { mode: "issue", projectRoot },
       { home },
     );
     assertRunFacts(third.page, "after later-run damage");
 
     // Typed model face: closed intervals keep their session models after damage.
     const models = await runAnalyst(
-      { mode: "model-groups", projectRoots: [ISSUE_PROJECT_ROOT] },
+      { mode: "model-groups", projectRoots: [projectRoot] },
       { home },
     );
     const groupKeys = new Set(models.page.groups.map((group) => group.rawGroupKey));

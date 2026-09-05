@@ -21,8 +21,6 @@ export function gateToolSessionJsonl(input: {
    * Historical dispatch↔officer pairs must share this typed key.
    */
   readonly attemptEntryId?: string;
-  /** Optional parent session file on the binding (#636 multi-parent memory filter). */
-  readonly parentSessionFile?: string;
   /**
    * When false, omit the session header — used to append a second summons onto an
    * existing continuous ticket-seat volume (#636 interval read).
@@ -68,9 +66,6 @@ export function gateToolSessionJsonl(input: {
             version: 1,
             parent: {
               attemptEntryId: input.attemptEntryId,
-              ...(input.parentSessionFile === undefined
-                ? {}
-                : { sessionFile: input.parentSessionFile }),
             },
           },
         };
