@@ -1,7 +1,7 @@
 /**
  * #319 Batch 4 (R1): thematic split from package-entrypoint.integration.test.ts.
  * Navigator packaged attendance / continuity / failure matrix
- * All split files remain on the heavy serial manifest (庭定『先拆且全留 heavy』).
+ * #685: demoted from heavy — in-process packaged Navigator cases only.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
