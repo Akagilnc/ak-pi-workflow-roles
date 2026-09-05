@@ -40,12 +40,8 @@ import {
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
-import {
-  listRolesForDisplay,
-  loadCredentialProviders,
-  loadPublicCliConfig,
-  resolveEffectiveSeat,
-} from "../../src/public-cli/config.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { loadCredentialProviders } from "../../src/public-cli/config.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
@@ -355,24 +351,33 @@ test("one cold install exercises all public roles plus Navigator gates", async (
       { cwd: project, stdio: "ignore" },
     );
 
-    // Discoverability: packaged callable seats (all of them, #639); no auditors.
-    // Typed seat projection (ADR 0052) — do not bite roles TSV presentation.
-    const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
+    // Discoverability: installed bin exits 0; seat roster from public CLI typed
+    // product (CliResult.seats) — ADR 0052, never bite renderRoles TSV.
+    const rolesBin = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
       cwd: project,
     });
-    assert.equal(roles.localTimeout, false, roles.stderr);
-    assert.equal(roles.code, 0, roles.stderr);
+    assert.equal(rolesBin.localTimeout, false, rolesBin.stderr);
+    assert.equal(rolesBin.code, 0, rolesBin.stderr);
     const credentials = await loadCredentialProviders(piAgentDir);
-    const projected = listRolesForDisplay(await loadPublicCliConfig(home), credentials);
+    const roles = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      agentDir: piAgentDir,
+      credentials,
+      io: { stdout() {}, stderr() {} },
+    });
+    assert.equal(roles.exitCode, 0);
+    assert.ok(roles.seats, "roles CLI product must carry typed seats");
     assert.deepEqual(
-      projected.map((row) => row.seat),
+      roles.seats.map((row) => row.seat),
       [...PUBLIC_CONFIGURABLE_SEATS],
     );
     assert.equal(
-      (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("auditor"),
+      roles.seats.some((row) => (row.seat as string) === "auditor"),
       false,
+      "CLI seats product must not enumerate auditor",
     );
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
@@ -393,17 +398,23 @@ test("one cold install exercises all public roles plus Navigator gates", async (
       { home, agentDir: piAgentDir, cwd: project },
     );
     assert.equal(setNav.code, 0, setNav.stderr);
-    const rolesAfter = await runAkRoleBin(installed.akRoleBin, ["roles"], {
+    const rolesAfterBin = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
       cwd: project,
     });
-    assert.equal(rolesAfter.code, 0, rolesAfter.stderr);
-    const navPersistent = resolveEffectiveSeat(
-      await loadPublicCliConfig(home),
-      "navigator",
-      await loadCredentialProviders(piAgentDir),
-    );
+    assert.equal(rolesAfterBin.code, 0, rolesAfterBin.stderr);
+    const rolesAfter = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      agentDir: piAgentDir,
+      credentials: await loadCredentialProviders(piAgentDir),
+      io: { stdout() {}, stderr() {} },
+    });
+    assert.equal(rolesAfter.exitCode, 0);
+    assert.ok(rolesAfter.seats);
+    const navPersistent = rolesAfter.seats.find((row) => row.seat === "navigator");
+    assert.ok(navPersistent);
     assert.equal(navPersistent.source, "persistent");
     assert.deepEqual(navPersistent.selection, {
       provider: "xai",
@@ -948,18 +959,23 @@ test("documented Pi package update refreshes CLI and runtime from one private co
       );
 
       // Updated executable still discovers roles from the same package copy.
-      const roles = await runAkRoleBin(akRoleBin, ["roles"], {
+      const rolesBin = await runAkRoleBin(akRoleBin, ["roles"], {
         home,
         agentDir: piAgentDir,
       });
-      assert.equal(roles.localTimeout, false, roles.stderr);
-      assert.equal(roles.code, 0, roles.stderr);
-      const updatedSeats = listRolesForDisplay(
-        await loadPublicCliConfig(home),
-        await loadCredentialProviders(piAgentDir),
-      );
+      assert.equal(rolesBin.localTimeout, false, rolesBin.stderr);
+      assert.equal(rolesBin.code, 0, rolesBin.stderr);
+      const roles = await runAkRole(["roles"], {
+        packageRoot,
+        home,
+        agentDir: piAgentDir,
+        credentials: await loadCredentialProviders(piAgentDir),
+        io: { stdout() {}, stderr() {} },
+      });
+      assert.equal(roles.exitCode, 0);
+      assert.ok(roles.seats);
       assert.deepEqual(
-        updatedSeats.map((row) => row.seat),
+        roles.seats.map((row) => row.seat),
         [...PUBLIC_CALLABLE_ROLES],
       );
     } finally {
