@@ -5,10 +5,14 @@ import {
   enrichCollectorFindings,
   extractCollectorEvidenceIdentityGroups,
   extractCollectorUnfinishedReasons,
-  type CollectorSubmissionProjection,
   type ExtractedCollectorIdentityGroup,
 } from "./collector-identity.ts";
-import { validateAcceptedCollectorReceipt, type CollectorEvidenceRecord as ReceiptEvidenceRecord } from "./package-contracts/collector-output.ts";
+import {
+  validateAcceptedCollectorReceipt,
+  type CollectorEvidenceRecord as ReceiptEvidenceRecord,
+  type CollectorReceipt as PackageCollectorReceipt,
+  type CollectorSubmissionProjection,
+} from "./package-contracts/collector-output.ts";
 
 export { validateAcceptedCollectorReceipt };
 export type { CollectorSubmissionProjection };
@@ -20,26 +24,14 @@ export type { CollectorSubmissionProjection };
  */
 export type CollectorReceiptEvidenceRecord = ReceiptEvidenceRecord;
 
-export type CollectorReceipt = {
-  host: "github.com";
-  repository: string;
-  prNumber: number;
-  /** Final observed PR state (OPEN/CLOSED/MERGED/…); non-OPEN still delivers materials. */
+/**
+ * #676 C: single authority for receipt shape is package-contracts/collector-output.
+ * Production builder always emits the full projection object and concrete prState;
+ * package leaf keeps those optional so old volumes stay readable.
+ */
+export type CollectorReceipt = PackageCollectorReceipt & {
   prState: string;
-  manifestDigest: string;
-  activationTime: string;
-  deadlineTime: string;
-  finalObservationTime: string;
-  finalSnapshotId: string;
-  targetHead: string;
   groups: ExtractedCollectorIdentityGroup[];
-  /** Optional unfinished reasons supplied with the sealed materials (#676 D6). */
-  unfinishedReasons?: string[];
-  /**
-   * #676 C: structured projection facts. Distinguishes readable-empty findings
-   * from original submission content that could not project. Session tool-call
-   * is the 正本 for unprojected content — no body copy on the receipt.
-   */
   submissionProjection: CollectorSubmissionProjection;
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
@@ -58,6 +50,9 @@ export function buildCollectorReceipt(
   if (ledger.unresolvedTransportFailure) fail("Collector cannot output while a transport failure is unrecovered");
   if (ledger.latestCompleteSnapshotId === undefined) fail("Collector output requires a complete final snapshot");
   if (ledger.activationTime === undefined || ledger.deadlineTime === undefined) fail("Collector output requires activation timeline");
+  if (ledger.config.prNumber === undefined) {
+    fail("Collector output requires a bound PR target; call ak_collector_bind_target first or pass --pr");
+  }
 
   if (clock !== undefined) ledger.assertOutputObservationLaw(clock);
   else if (ledger.observedGeneration !== ledger.mutationGeneration ||

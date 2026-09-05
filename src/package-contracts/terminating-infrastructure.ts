@@ -20,16 +20,30 @@ export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 
 /**
  * Shared declaration fragment for model guidance (#541 / #676 C / ADR 0057).
- * Field declarations + descriptions only — host must not pure-shape-reject the
- * envelope (第 0 条). Runtime `failOnInfrastructureFailureDeclaration` still
+ * Nested field declarations + descriptions only — host must not pure-shape-reject
+ * the envelope (第 0 条). Runtime `failOnInfrastructureFailureDeclaration` still
  * recognizes a real non-empty diagnostic string as the failure declaration.
+ * No required/minLength/type host gates on the declaration fragment.
  */
+const infrastructureFailureNested = Type.Object(
+  {
+    [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type.Unknown({
+      description:
+        "非空基础设施失败诊断字符串。无失败时必须省略整个 infrastructureFailure。形状指引，非 schema 闸。",
+    }),
+  },
+  {
+    additionalProperties: true,
+    description:
+      "基础设施真实失败声明（如需）。规范形：{ diagnostic: 非空诊断字符串 }；无失败时必须省略。形状指引，非 schema 闸。",
+  },
+);
+// Open nested required so host cannot pure-shape-reject the declaration fragment.
+(infrastructureFailureNested as unknown as { required: string[] }).required = [];
+
 const infrastructureFailureDeclarationSchema = Type.Object(
   {
-    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: Type.Unknown({
-      description:
-        "基础设施真实失败声明（如需）。规范形：{ diagnostic: 非空诊断字符串 }；无失败时必须省略。形状指引，非 schema 闸。",
-    }),
+    [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: infrastructureFailureNested,
   },
   { additionalProperties: true },
 );

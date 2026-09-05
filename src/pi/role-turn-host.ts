@@ -107,8 +107,7 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
         "collector",
         "--ak-collector-repo",
         activation.repo,
-        "--ak-collector-pr",
-        activation.pr,
+        ...(activation.pr === undefined ? [] : ["--ak-collector-pr", activation.pr]),
         ...(activation.requestManifestPath === undefined
           ? []
           : ["--ak-collector-request-manifest", activation.requestManifestPath]),

@@ -175,7 +175,8 @@ export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "collector";
-  readonly prNumber: number;
+  /** Bound at admission when explicit/--pr or unique head/commit; otherwise role binds. */
+  readonly prNumber?: number;
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
   readonly manifestDigest: string;
@@ -1749,11 +1750,14 @@ export function resolveGitHubRemoteRepository(
   }
 }
 
-/** git remote get-url: exit 2 = no such remote on common git; treat as missing config. */
+/**
+ * git remote get-url: exit 2 = no such remote on common git (missing config).
+ * Other statuses keep true cause — do not broaden into usage (#676 B).
+ */
 function isGitRemoteMissing(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const status = (error as { status?: unknown }).status;
-  return status === 2 || status === 1;
+  return status === 2;
 }
 
 export type AdmitCollectorInvocationOptions = {
@@ -1839,8 +1843,9 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
-  // #676 A: freeze task materials BEFORE target bind so issue/PR recognition can
-  // use real instruction + attachments with online association (not branch-only lock).
+  // #676 A: freeze task materials BEFORE target resolution so the role receives
+  // real instruction + attachments. Admission binds only explicit --pr or unique
+  // head/commit association — task-text scrape is not a target lock.
   const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
   const instruction = options.instruction ?? "";
   const instructionEmpty = instruction.trim() === "";
@@ -1849,10 +1854,8 @@ export async function admitCollectorInvocation(
     projectRoot,
     repository,
     ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
-    instruction,
-    attachmentPaths: attachments.map((a) => a.frozenPath),
   });
-  const prNumber = target.prNumber;
+  const prNumber = target.kind === "bound" ? target.prNumber : undefined;
 
   let requestManifestPath: string | undefined;
   if (manifestCanonicalJson !== undefined) {
@@ -1868,7 +1871,7 @@ export async function admitCollectorInvocation(
     principal,
     instruction,
     instructionEmpty,
-    prNumber,
+    ...(prNumber === undefined ? {} : { prNumber }),
     repository: repository.canonical,
     repositoryDisplay: repository.display,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
@@ -1899,7 +1902,7 @@ export async function admitCollectorInvocation(
     runDirectory,
     principal,
     admittedRequestPath,
-    prNumber,
+    ...(prNumber === undefined ? {} : { prNumber }),
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     manifestDigest,
@@ -1908,9 +1911,9 @@ export async function admitCollectorInvocation(
 
 /**
  * #676 A: Collector consumes the real call task + frozen attachments so the role
- * can identify issue/PR context from materials. Explicit --pr still wins at
- * admission; machine unique online association covers unambiguous branch targets.
- * No fixed kickoff rewrite of the caller task.
+ * can identify issue/PR from materials via ak_collector_bind_target. Explicit --pr
+ * still wins at admission; unique head/commit association also binds. No fixed
+ * kickoff rewrite of the caller task; no mechanical task-text target lock.
  */
 export function buildCollectorTransportPrompt(
   admitted: AdmittedCollectorInvocation,

@@ -196,7 +196,8 @@ else process.exit(2);
           group.findings.some((finding: any) => finding.pointer?.commentId === 91),
         ),
       );
-      // #676 D/C: submissionProjection reaches public Terminal; evidence pointer opens on receipt.
+      // #676 D/C: submissionProjection reaches public Terminal; open published artifacts +
+      // bound session 正本 (not sealed.decisiveFacts internal substitute).
       const terminalProjection = result.terminal?.roleOutcome.decisiveFacts.submissionProjection as
         | Record<string, unknown>
         | undefined;
@@ -209,6 +210,16 @@ else process.exit(2);
         report.receipt.evidenceRecords.some((r: any) => r.evidenceId === finding.source.evidenceId),
         "evidenceId must resolve on the sealed receipt volume",
       );
+      // Open published evidence artifact and session file for structured identity only.
+      const evidenceArt = result.terminal?.artifacts.find((artifact) => artifact.kind === "evidence");
+      assert.ok(evidenceArt?.path, "Terminal must publish evidence artifact");
+      const evidenceDoc = JSON.parse(await readFile(evidenceArt.path, "utf8")) as Record<string, unknown>;
+      assert.equal(evidenceDoc.prNumber, 9);
+      assert.equal(evidenceDoc.repository, "acme/widgets");
+      assert.equal(typeof evidenceDoc.sessionFile, "string");
+      const sessionFile = evidenceDoc.sessionFile as string;
+      const sessionText = await readFile(sessionFile, "utf8");
+      assert.ok(sessionText.includes("ak_collector_output"), "bound session 正本 must retain output tool identity");
       const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
       assert.equal(calls.some((call: any) => call.method === "POST"), false, "merged PR must not POST");
     } finally {
@@ -217,7 +228,7 @@ else process.exit(2);
   });
 });
 
-test("#676 D1 public Collector rejects zero/multi/detached targets without POST", { timeout: 60_000 }, async () => {
+test("#676 D1 public Collector rejects multi-candidate git targets without POST; zero stays unbound", { timeout: 60_000 }, async () => {
   await withHermeticHome({ prefix: "ak-public-collector-ambiguous-" }, async ({ home }) => {
     const project = resolve(home, "work");
     const agentDir = resolve(home, ".pi", "agent");
@@ -229,7 +240,7 @@ test("#676 D1 public Collector rejects zero/multi/detached targets without POST"
 
     const logPath = resolve(home, "gh-calls.jsonl");
     const modePath = resolve(home, "gh-mode.txt");
-    await writeFile(modePath, "zero", "utf8");
+    await writeFile(modePath, "multi", "utf8");
     const gh = resolve(binDir, "gh");
     await writeFile(gh, `#!/usr/bin/env node
 const fs=require('node:fs');
@@ -255,57 +266,28 @@ process.exit(2);
 
     const previousPath = process.env.PATH;
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-    const runAmbiguous = async (label: string) => {
-      const before = (await readFile(logPath, "utf8").catch(() => "")).length;
-      const stderr: string[] = [];
-      const result = await runAkRole([
-        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
-        "--project", project, "--repo", "acme/widgets",
-        `Ambiguous ${label}`,
-      ], {
-        packageRoot, home, agentDir, cwd: project,
-        createRunId: () => `public-collector-ambiguous-${label}`,
-        credentials: { "openai-codex": true, xai: false },
-        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
-        collectorTimeoutMs: 30_000,
-        io: { stdout() {}, stderr: (text) => stderr.push(text) },
-      });
-      assert.equal(result.exitCode, 2, `${label}: ${stderr.join("")}`);
-      assert.equal(result.terminal, undefined, label);
-      const lines = (await readFile(logPath, "utf8")).slice(before).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-      assert.equal(lines.some((call: any) => call.method === "POST"), false, `${label} must not POST`);
-      assert.ok(lines.length >= 1, `${label} must record gh lookup calls`);
-    };
-
     try {
       execFileSync("git", ["checkout", "-b", "feature/no-unique-pr"], { cwd: project });
-      await writeFile(modePath, "zero", "utf8");
-      await runAmbiguous("zero");
-
+      // Multi-candidate structured git context → require explicit --pr (usage exit 2).
       await writeFile(modePath, "multi", "utf8");
-      await writeFile(logPath, "", "utf8");
-      await runAmbiguous("multi");
-
-      const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
-      execFileSync("git", ["checkout", "--detach", sha], { cwd: project, stdio: "ignore" });
-      await writeFile(logPath, "", "utf8");
-      const stderr: string[] = [];
-      const detached = await runAkRole([
+      const multiStderr: string[] = [];
+      const multi = await runAkRole([
         "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
         "--project", project, "--repo", "acme/widgets",
-        "Detached HEAD must not guess.",
+        "Ambiguous multi",
       ], {
         packageRoot, home, agentDir, cwd: project,
-        createRunId: () => "public-collector-ambiguous-detached",
+        createRunId: () => "public-collector-ambiguous-multi",
         credentials: { "openai-codex": true, xai: false },
         collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
         collectorTimeoutMs: 30_000,
-        io: { stdout() {}, stderr: (text) => stderr.push(text) },
+        io: { stdout() {}, stderr: (text) => multiStderr.push(text) },
       });
-      assert.equal(detached.exitCode, 2, stderr.join(""));
-      assert.equal(detached.terminal, undefined);
-      const detachedCalls = (await readFile(logPath, "utf8")).trim();
-      assert.equal(detachedCalls.length, 0, "detached HEAD must not query gh before requiring --pr");
+      assert.equal(multi.exitCode, 2, multiStderr.join(""));
+      assert.equal(multi.terminal, undefined);
+      const multiCalls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      assert.equal(multiCalls.some((call: any) => call.method === "POST"), false, "multi must not POST");
+      assert.ok(multiCalls.length >= 1, "multi must record gh lookup calls");
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }
@@ -467,7 +449,7 @@ process.stdout.write('HTTP/1.1 502 Bad Gateway\\r\\ncontent-type: application/js
   });
 });
 
-test("#676 A public Collector resolves issue task materials via online ticket→PR without --pr", { timeout: 120_000 }, async () => {
+test("#676 A public Collector role-binds issue task materials via bind-target without --pr", { timeout: 120_000 }, async () => {
   await withHermeticHome({ prefix: "ak-public-collector-issue-task-" }, async ({ home }) => {
     const project = resolve(home, "work");
     const agentDir = resolve(home, ".pi", "agent");
@@ -476,7 +458,7 @@ test("#676 A public Collector resolves issue task materials via online ticket→
     await mkdir(agentDir, { recursive: true });
     await mkdir(binDir, { recursive: true });
     seedProject(project);
-    // Detached HEAD: branch association unavailable — materials + online ticket must bind.
+    // Detached HEAD: no unique head/commit bind — role decides from materials via bind-target.
     const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
     execFileSync("git", ["checkout", "--detach", sha], { cwd: project, stdio: "ignore" });
 
@@ -495,6 +477,7 @@ if(args.includes('graphql')){
   process.exit(0);
 }
 if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('/commits/') && path.endsWith('/pulls')) ok([]);
 else if(path.includes('/issues/676')&&!path.includes('/comments')) ok({number:676,title:'slice',body:'x'});
 else if(path.includes('/pulls/679')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:679,state:'open',head:{sha:'issuehead'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/679'});
 else if(path.includes('/reviews')) ok([{id:71,user:{login:'bot',type:'Bot',id:1},state:'COMMENTED',body:'from-issue-task',commit_id:'issuehead',submitted_at:'2026-01-01T00:01:00Z',html_url:'https://github.com/acme/widgets/pull/679#pullrequestreview-71'}]);
@@ -514,7 +497,7 @@ else process.exit(2);
         packageRoot, home, agentDir, cwd: project,
         createRunId: () => "public-collector-issue-task",
         credentials: { "openai-codex": true, xai: false },
-        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-bind-observe-provider.ts")],
         collectorTimeoutMs: 90_000,
         io: { stdout() {}, stderr() {} },
       });
@@ -530,7 +513,7 @@ else process.exit(2);
       assert.equal(calls.some((call: any) => call.method === "POST"), false);
       assert.ok(
         calls.some((call: any) => typeof call.path === "string" && call.path.includes("/issues/676")),
-        "issue task must query the structured ticket online",
+        "role bind-target must query the role-decided ticket online",
       );
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
@@ -558,9 +541,9 @@ test("#676 A upstream head hit does not skip commit association conflict", { tim
 const fs=require('node:fs');
 const args=process.argv.slice(2);
 const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({path})+'\\n');
+const methodIdx=args.indexOf('-X'); const method=methodIdx>=0?args[methodIdx+1]:'GET';
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({method,path})+'\\n');
 function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
-const decoded=decodeURIComponent(path);
 if(path.includes('pulls?head=') || (path.includes('/pulls?') && path.includes('head='))) ok([{number:100,head:{ref:'feature/conflict'}}]);
 else if(path.includes('/commits/') && path.endsWith('/pulls')) ok([{number:200}]);
 else process.exit(2);
@@ -592,5 +575,82 @@ else process.exit(2);
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }
+  });
+});
+
+test("#676 B public Collector default origin (no --repo) accepts github.com origin", { timeout: 120_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-origin-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project); // seeds origin https://github.com/acme/widgets.git
+
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const args=process.argv.slice(2); const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('/pulls/3')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:3,state:'open',head:{sha:'deadbeef'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/3'});
+else if(path.includes('/reviews')||path.includes('/comments')||path.includes('/reactions')) ok([]);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--pr", "3",
+        "Default origin must resolve without --repo.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-origin",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+      });
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.repository, "acme/widgets");
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prNumber, 3);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});
+
+test("#676 B public Collector missing origin without --repo is usage exit 2", { timeout: 30_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-no-origin-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "collector@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Collector"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    // No origin remote.
+
+    const stderr: string[] = [];
+    const result = await runAkRole([
+      "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+      "--project", project, "--pr", "3",
+      "Missing origin must be usage.",
+    ], {
+      packageRoot, home, agentDir, cwd: project,
+      createRunId: () => "public-collector-no-origin",
+      credentials: { "openai-codex": true, xai: false },
+      collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+      collectorTimeoutMs: 30_000,
+      io: { stdout() {}, stderr: (text) => stderr.push(text) },
+    });
+    assert.equal(result.exitCode, 2, stderr.join(""));
+    assert.equal(result.terminal, undefined);
+    assert.ok(stderr.join("").includes("origin") || stderr.join("").includes("--repo"), stderr.join(""));
   });
 });

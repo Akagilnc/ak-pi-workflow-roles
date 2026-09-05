@@ -51,7 +51,8 @@ export function buildCollectorTurnRequest(
       activation: {
         role: "collector" as const,
         repo: admitted.repository.display,
-        pr: String(admitted.prNumber),
+        // #676 A: omit pr when unbound — role binds via ak_collector_bind_target.
+        ...(admitted.prNumber === undefined ? {} : { pr: String(admitted.prNumber) }),
         ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
       },
     },

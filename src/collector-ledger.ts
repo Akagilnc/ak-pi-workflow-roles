@@ -39,9 +39,12 @@ export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 export const COLLECTOR_READ_TOOL = "ak_collector_read";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+/** #676 A: role-decided target bind — business tool, ledger-booked. */
+export const COLLECTOR_BIND_TARGET_TOOL = "ak_collector_bind_target";
 export { COLLECTOR_OUTPUT_TOOL };
 
 export const COLLECTOR_OPERATIONAL_TOOLS = [
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -158,7 +161,8 @@ export type CollectorTransportFailure = {
 
 export type CollectorConfigState = {
   repository: CollectorRepository;
-  prNumber: number;
+  /** Bound PR target; undefined until explicit flag, admission bind, or role bind-target tool. */
+  prNumber: number | undefined;
   manifest: CollectorManifest;
 };
 
@@ -196,6 +200,8 @@ export type CollectorLedger = {
   assertNotFatal(): void;
   recordActivation(clock: CollectorClock): void;
   recordOutputCandidate(): void;
+  /** #676 A: role-decided unique PR bind (business fact on the ledger). */
+  bindTarget(prNumber: number): void;
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
   noteCutoffObserved(): void;
@@ -327,6 +333,15 @@ export function createCollectorLedger(
   const prIdentity = (pr: GitHubPullRequest): string =>
     `${pr.state}|${pr.headOid}|${pr.updatedAt ?? ""}`;
 
+  const requireBoundPr = (): number => {
+    if (config.prNumber === undefined) {
+      throw new Error(
+        "Collector PR target is unbound; call ak_collector_bind_target with the role-decided issue/PR or pass --pr",
+      );
+    }
+    return config.prNumber;
+  };
+
   const fetchObserveSurfaces = async (
     transport: CollectorGitHubTransport,
     observedAt: string,
@@ -334,7 +349,7 @@ export function createCollectorLedger(
   ) => {
     const owner = config.repository.owner;
     const repo = config.repository.repo;
-    const prNumber = config.prNumber;
+    const prNumber = requireBoundPr();
     const signalOpt = signal === undefined ? {} : { signal };
     const user = await transport.getAuthenticatedUser(signalOpt);
     const prInitial = await transport.getPullRequest({
@@ -654,6 +669,26 @@ export function createCollectorLedger(
       outputCandidate = true;
     },
 
+    bindTarget(prNumber) {
+      assertNotFatal();
+      if (outputCandidate || pendingOutputCallId !== undefined) {
+        throw new Error("通进司已产出输出候选，本局不再受理目标绑定");
+      }
+      if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
+        throw new Error("Collector bind target requires a positive safe-integer PR number");
+      }
+      if (config.prNumber !== undefined && config.prNumber !== prNumber) {
+        throw new Error(
+          `Collector target already bound to PR ${config.prNumber}; cannot rebind to ${prNumber}`,
+        );
+      }
+      config.prNumber = prNumber;
+      appendJournal("ak-collector-target-bound", {
+        prNumber,
+        repository: config.repository.canonical,
+      });
+    },
+
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
       if (
@@ -834,7 +869,7 @@ export function createCollectorLedger(
         completedMono,
         host: "github.com",
         repository: config.repository.canonical,
-        prNumber: config.prNumber,
+        prNumber: requireBoundPr(),
         prState: pr.state,
         headOid: pr.headOid,
         complete: true,
@@ -920,9 +955,10 @@ export function createCollectorLedger(
         );
       }
 
+      const boundPr = requireBoundPr();
       const attemptKey = [
         config.repository.canonical,
-        String(config.prNumber),
+        String(boundPr),
         snapshot.headOid,
         request.id,
       ].join("|");
@@ -953,7 +989,7 @@ export function createCollectorLedger(
       const result = await transport.createIssueComment({
         owner: config.repository.owner,
         repo: config.repository.repo,
-        prNumber: config.prNumber,
+        prNumber: boundPr,
         body,
         ...(signal === undefined ? {} : { signal }),
       });

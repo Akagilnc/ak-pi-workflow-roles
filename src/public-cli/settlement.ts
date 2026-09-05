@@ -1834,7 +1834,9 @@ export function assertCollectorReceiptMatchesAdmitted(
       `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
     );
   }
-  if (receipt.prNumber !== admitted.prNumber) {
+  // #676 A: when admission left the target unbound, receipt.prNumber is the role bind.
+  // When admission bound explicitly/head-commit, receipt must match.
+  if (admitted.prNumber !== undefined && receipt.prNumber !== admitted.prNumber) {
     throw collectorReceiptBindingFailure(
       `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
     );
@@ -2917,7 +2919,7 @@ export async function publishCollectorArtifacts(
       {
         runId: admitted.runId,
         role: "collector",
-        prNumber: admitted.prNumber,
+        ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory: coordinates.sessionDirectory,

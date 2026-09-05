@@ -119,7 +119,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
-    collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
     // #590: auditors / navigator / reviewer consume HostContext directly (no Pi WeakMap recover).

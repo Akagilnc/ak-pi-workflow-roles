@@ -362,6 +362,13 @@ test("packaged terminating tools expose the provider-open registration inventory
           Object.hasOwn(properties, "infrastructureFailure"),
           `${label} retains infrastructureFailure declaration`,
         );
+        // #676 D/C / ADR 0057: nested diagnostic declaration survives the registration boundary.
+        // Compare registered result against the composed schema true source — not a hand roster.
+        const registeredInfra = properties.infrastructureFailure as Schema | undefined;
+        assert.ok(
+          registeredInfra?.properties && Object.hasOwn(registeredInfra.properties, "diagnostic"),
+          `${label}.infrastructureFailure.diagnostic nested declaration retained across registration`,
+        );
         for (const [field, declaration] of Object.entries(properties)) {
           assert.ok(
             typeof declaration.description === "string" && declaration.description.trim().length > 0,
@@ -380,13 +387,18 @@ test("packaged terminating tools expose the provider-open registration inventory
         } else if (entry.role === "doctor") {
           assert.ok(properties.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
         } else if (entry.role === "collector") {
-          // #676: collector may add fields (e.g. unfinishedReasons); prove declarations
-          // survive without locking a parallel roster. Nested guidance lives in description.
+          // #676 D/C: nested findings item declarations (evidenceId/category/summary) survive
+          // registration without locking a parallel field roster or wording.
           assert.ok(Object.hasOwn(properties, "findings"), `${label}.findings declaration retained`);
           assert.ok(
             Object.hasOwn(properties, "unfinishedReasons"),
             `${label}.unfinishedReasons declaration retained`,
           );
+          const findingsDecl = properties.findings as Schema | undefined;
+          const itemProps = findingsDecl?.items?.properties;
+          assert.ok(itemProps && Object.hasOwn(itemProps, "evidenceId"), `${label}.findings.items.evidenceId nested declaration`);
+          assert.ok(itemProps && Object.hasOwn(itemProps, "category"), `${label}.findings.items.category nested declaration`);
+          assert.ok(itemProps && Object.hasOwn(itemProps, "summary"), `${label}.findings.items.summary nested declaration`);
         }
       });
     }
