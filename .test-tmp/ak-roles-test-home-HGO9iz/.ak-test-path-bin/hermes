@@ -1,3 +1,0 @@
-#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ assertion: "true-unbound" }));
-process.exit(0);

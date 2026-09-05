@@ -5,3 +5,6 @@ dist/
 
 # Claude Code session dir (local only)
 .claude/
+
+# accidental local residue (temps must be system tmpdir per #685 r10)
+.test-tmp/

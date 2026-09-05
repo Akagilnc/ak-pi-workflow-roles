@@ -71,7 +71,7 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const withAliases = await createReviewerPinnedGitReader(root);
     await assert.rejects(withAliases.resolve("same"), /base revision is ambiguous across pinned refs/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /base revision syntax is invalid or uses a forbidden revision form/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
@@ -94,7 +94,7 @@ test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", asyn
     assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
@@ -155,7 +155,7 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     await git(root, "update-ref", "HEAD", chain[0]!);
     const ambiguousReader = await createReviewerPinnedGitReader(root);
     await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
@@ -171,7 +171,7 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
     const canonicalRoot = await realpath(root);
     assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
     assert.equal((await createReviewerPinnedGitReader(join(linked, "nested"))).pin.repositoryRoot, canonicalRoot);
-  } finally { await rm(temporary, { recursive: true, force: true }); }
+  }
 });
 
 test("pinning rejects non-repositories and bare repositories", async () => {
@@ -181,7 +181,7 @@ test("pinning rejects non-repositories and bare repositories", async () => {
     await assert.rejects(createReviewerPinnedGitReader(temporary));
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
-  } finally { await rm(temporary, { recursive: true, force: true }); }
+  }
 });
 
 test("shared ref snapshot helper canonicalizes refs immutably", () => {
