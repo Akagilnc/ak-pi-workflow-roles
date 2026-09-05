@@ -165,6 +165,12 @@ export type RoleTurnRequest = {
   readonly timeoutMs?: number;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
+  /**
+   * Same-host Grok resume across ticket-seat runs (#636 / ADR 0079):
+   * reopen native isolation under this prior run's grok-home (ACP storage lives
+   * there). Absent → isolate under runDirectory. Never a cross-host byte handoff.
+   */
+  readonly nativeHomeRunDirectory?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */

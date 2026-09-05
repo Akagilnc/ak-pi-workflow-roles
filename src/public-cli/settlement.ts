@@ -991,8 +991,8 @@ async function loadBoundAuditorVolumes(
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // One matching summons interval is enough for the current parent attempt.
-        break;
+        // Keep every qualifying interval in the current parent-user range.
+        // A single first-match break drops later same-user summons failures (#636).
       }
     }
   }

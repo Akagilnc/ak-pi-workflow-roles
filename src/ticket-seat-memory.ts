@@ -3,19 +3,14 @@
  * Reuses archivist subject-keyed createRecordSession resume (navigator path);
  * no parallel continuation machine, no length/round thresholds.
  */
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, relative, isAbsolute } from "node:path";
+import { join } from "node:path";
 
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import {
-  activationBookDirectory,
-  homeFromRunDirectory,
-  resolveActivationLedgerHome,
-  tryHomeFromAkRolesPath,
-} from "./activation-ledger-topology.ts";
-import { createRecordSession } from "./archivist-record-entry.ts";
+  createRecordSessionOpen,
+  subjectKeyedRecordDirectory,
+} from "./archivist-record-entry.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -32,6 +27,22 @@ export type TicketSeatMemorySeat = (typeof TICKET_SEAT_MEMORY_SEATS)[number];
 
 export function isTicketSeatMemorySeat(value: string): value is TicketSeatMemorySeat {
   return (TICKET_SEAT_MEMORY_SEATS as readonly string[]).includes(value);
+}
+
+/**
+ * Explicit ticket+seat binding fact for memory side effects (#636).
+ * Directory-outside-run guessing is not a business identity.
+ */
+export function isTicketSeatMemoryBound(input: {
+  readonly role: string;
+  readonly ticketNumber?: number;
+}): input is { readonly role: TicketSeatMemorySeat; readonly ticketNumber: number } {
+  return (
+    isTicketSeatMemorySeat(input.role) &&
+    typeof input.ticketNumber === "number" &&
+    Number.isSafeInteger(input.ticketNumber) &&
+    input.ticketNumber >= 1
+  );
 }
 
 function isEnoent(error: unknown): boolean {
@@ -59,24 +70,85 @@ export function ticketSeatMemorySubject(
   return `${ticketNumber}:${seat}`;
 }
 
-/** Book-relative session directory for a ticket+seat memory principal (topology only). */
+/** Book-relative session directory via sole archivist subject topology. */
 export function ticketSeatMemorySessionDirectory(input: {
   readonly ticketNumber: number;
   readonly seat: TicketSeatMemorySeat;
   readonly cwd: string;
   readonly home?: string;
+  readonly parentSessionFile?: string;
 }): string {
-  const ledgerHome = resolveActivationLedgerHome(input.home);
-  const bookKey = resolveBookKeyFromGit(input.cwd);
-  const digest = createHash("sha256")
-    .update(ticketSeatMemorySubject(input.ticketNumber, input.seat))
-    .digest("hex")
-    .slice(0, 32);
-  return join(
-    activationBookDirectory(ledgerHome, bookKey),
-    TICKET_SEAT_MEMORY_KIND,
-    digest,
-  );
+  return subjectKeyedRecordDirectory({
+    cwd: input.cwd,
+    kind: TICKET_SEAT_MEMORY_KIND,
+    subject: ticketSeatMemorySubject(input.ticketNumber, input.seat),
+    ...(input.parentSessionFile === undefined
+      ? {}
+      : { parentSessionFile: input.parentSessionFile }),
+    ...(input.home === undefined ? {} : { home: input.home }),
+  });
+}
+
+type RunAdmittedPageFacts = {
+  readonly ticketNumber?: number;
+  readonly projectRoot?: string;
+};
+
+/**
+ * One read of admitted-request.json facts used by ticket-seat discovery.
+ * Missing page (ENOENT) → empty facts; damage / non-ENOENT IO propagate.
+ */
+async function readRunAdmittedPageFacts(
+  runDirectory: string,
+): Promise<RunAdmittedPageFacts> {
+  try {
+    const raw = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    ) as unknown;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return {};
+    }
+    const record = raw as Record<string, unknown>;
+    const ticketNumber = record.ticketNumber;
+    const projectRoot = record.projectRoot;
+    return {
+      ...(typeof ticketNumber === "number" &&
+      Number.isSafeInteger(ticketNumber) &&
+      ticketNumber >= 1
+        ? { ticketNumber }
+        : {}),
+      ...(typeof projectRoot === "string" ? { projectRoot } : {}),
+    };
+  } catch (error) {
+    if (isEnoent(error)) return {};
+    throw error;
+  }
+}
+
+/** Ticket number from invocation.json only (admitted page already consulted). */
+async function readInvocationTicketNumber(
+  runDirectory: string,
+): Promise<number | undefined> {
+  try {
+    const raw = JSON.parse(
+      await readFile(join(runDirectory, "invocation.json"), "utf8"),
+    ) as unknown;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return undefined;
+    }
+    const ticketNumber = (raw as Record<string, unknown>).ticketNumber;
+    if (
+      typeof ticketNumber === "number" &&
+      Number.isSafeInteger(ticketNumber) &&
+      ticketNumber >= 1
+    ) {
+      return ticketNumber;
+    }
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
+  return undefined;
 }
 
 /**
@@ -88,55 +160,15 @@ export function ticketSeatMemorySessionDirectory(input: {
 export async function readRunTicketNumber(
   runDirectory: string,
 ): Promise<number | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
-    try {
-      const raw = JSON.parse(
-        await readFile(join(runDirectory, page), "utf8"),
-      ) as unknown;
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const ticketNumber = (raw as Record<string, unknown>).ticketNumber;
-      if (
-        typeof ticketNumber === "number" &&
-        Number.isSafeInteger(ticketNumber) &&
-        ticketNumber >= 1
-      ) {
-        return ticketNumber;
-      }
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Read projectRoot from a retained run's admitted-request.json.
- * Missing page (ENOENT) → undefined; damage / permission failures propagate.
- */
-async function readRunProjectRoot(runDirectory: string): Promise<string | undefined> {
-  try {
-    const raw = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as unknown;
-    if (
-      raw !== null &&
-      typeof raw === "object" &&
-      !Array.isArray(raw) &&
-      typeof (raw as { projectRoot?: unknown }).projectRoot === "string"
-    ) {
-      return (raw as { projectRoot: string }).projectRoot;
-    }
-    return undefined;
-  } catch (error) {
-    if (isEnoent(error)) return undefined;
-    throw error;
-  }
+  const admitted = await readRunAdmittedPageFacts(runDirectory);
+  if (admitted.ticketNumber !== undefined) return admitted.ticketNumber;
+  return readInvocationTicketNumber(runDirectory);
 }
 
 /**
  * Sole discovery of ticket-seat memory nest directories for a retained run.
- * Reads ticket + projectRoot from the run pages; home path-derives from the run.
+ * Reads ticket + projectRoot once from the admitted page (ticket falls back to
+ * invocation only); home path-derives from the run.
  * Missing ticket / projectRoot / home topology → [] (callers keep legacy parent-nest lookup).
  * Damaged pages and non-ENOENT IO failures propagate (failure honesty).
  */
@@ -145,7 +177,12 @@ export async function resolveTicketSeatMemoryNestDirectories(input: {
   readonly seats: readonly TicketSeatMemorySeat[];
 }): Promise<readonly string[]> {
   if (input.seats.length === 0) return [];
-  const ticketNumber = await readRunTicketNumber(input.runDirectory);
+
+  // One admitted-request read supplies both ticket and projectRoot; ticket may
+  // still fall back to invocation.json without re-opening the admitted page.
+  const admitted = await readRunAdmittedPageFacts(input.runDirectory);
+  const ticketNumber =
+    admitted.ticketNumber ?? (await readInvocationTicketNumber(input.runDirectory));
   if (ticketNumber === undefined) return [];
 
   let home: string;
@@ -156,7 +193,7 @@ export async function resolveTicketSeatMemoryNestDirectories(input: {
     return [];
   }
 
-  const projectRoot = await readRunProjectRoot(input.runDirectory);
+  const projectRoot = admitted.projectRoot;
   if (projectRoot === undefined) return [];
 
   return input.seats.map((seat) =>
@@ -176,6 +213,8 @@ export async function resolveTicketSeatMemoryNestDirectories(input: {
  * `ledgerAnchorSessionFile` must live under the intended package home `.ak-roles`
  * tree so createRecordSession path-derives the correct ledger home (ADR 0048).
  * Subject placement still lands at book/kind/digest — anchor is not the nest.
+ *
+ * `resumed` comes only from the archivist open fact — no parallel existsSync.
  */
 export function openTicketSeatMemoryCoordinates(input: {
   readonly ticketNumber: number;
@@ -183,19 +222,7 @@ export function openTicketSeatMemoryCoordinates(input: {
   readonly cwd: string;
   readonly ledgerAnchorSessionFile: string;
 }): DurablePrincipalCoordinates & { readonly resumed: boolean } {
-  // Nest existence before open is the sole resumed signal (createRecordSession
-  // materializes a header even on first create, so post-open isAvailable is always true).
-  // Path math mirrors createRecordSession subject placement (ADR 0048).
-  const packageHome = tryHomeFromAkRolesPath(input.ledgerAnchorSessionFile);
-  const nestDirectory = ticketSeatMemorySessionDirectory({
-    ticketNumber: input.ticketNumber,
-    seat: input.seat,
-    cwd: input.cwd,
-    ...(packageHome === undefined ? {} : { home: packageHome }),
-  });
-  const resumed = existsSync(nestDirectory);
-
-  const session = createRecordSession({
+  const opened = createRecordSessionOpen({
     cwd: input.cwd,
     kind: TICKET_SEAT_MEMORY_KIND,
     subject: ticketSeatMemorySubject(input.ticketNumber, input.seat),
@@ -203,8 +230,8 @@ export function openTicketSeatMemoryCoordinates(input: {
       getSessionFile: () => input.ledgerAnchorSessionFile,
     },
   });
-  const sessionFile = session.getSessionFile();
-  const sessionDirectory = session.getSessionDir();
+  const sessionFile = opened.session.getSessionFile();
+  const sessionDirectory = opened.session.getSessionDir();
   if (typeof sessionFile !== "string" || sessionFile.length === 0) {
     throw new Error(
       `ticket-seat memory principal missing session file for ticket #${input.ticketNumber} seat ${input.seat}`,
@@ -215,7 +242,7 @@ export function openTicketSeatMemoryCoordinates(input: {
       `ticket-seat memory principal missing session directory for ticket #${input.ticketNumber} seat ${input.seat}`,
     );
   }
-  return { sessionDirectory, sessionFile, resumed };
+  return { sessionDirectory, sessionFile, resumed: opened.resumed };
 }
 
 export type TicketSeatMemoryRebindResult = {
@@ -356,21 +383,4 @@ export async function writeTicketSeatMemoryLastHost(
     `${JSON.stringify(body, null, 2)}\n`,
     "utf8",
   );
-}
-
-/**
- * True when the durable principal lives outside this run directory — the
- * ticket-seat memory nest case. Ordinary run-local principals stay false so
- * post-admission does not write ticket-memory side effects onto unrelated seats.
- */
-export function isTicketSeatMemoryPrincipalOutsideRun(
-  sessionDirectory: string,
-  runDirectory: string,
-): boolean {
-  if (sessionDirectory.length === 0 || runDirectory.length === 0) return false;
-  const rel = relative(runDirectory, sessionDirectory);
-  // Inside run → rel is "" / "." / subpath without "..". Outside → ".." prefix or absolute jump.
-  if (rel === "" || rel === ".") return false;
-  if (!rel.startsWith("..") && !isAbsolute(rel)) return false;
-  return true;
 }
