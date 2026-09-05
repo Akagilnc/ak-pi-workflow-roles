@@ -9,6 +9,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
+import { AUDITOR_DOSSIER_PROMPT } from "../../src/compliance-transport.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
@@ -156,6 +157,8 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
   const root = await mkdtemp(worktreeTempPrefix("ak-judge-zero-input-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
+  // Parent-session fixture material that must NOT be hand-delivered into the child user turn.
+  const parentAssignment = "OWNER ASSIGNMENT: adjudicate issue 233";
   try {
     const sessionManager = SessionManager.inMemory(root);
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
@@ -163,16 +166,21 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection("test", "test"),
     });
-    let userPromptSeen = false;
+    let observedUserTexts: string[] | undefined;
     const faux = fauxProvider({ provider: "test" });
     faux.setResponses([
       (request: any) => {
-        userPromptSeen = true;
-        // Zero-projection contract: child user turns must not carry projected
-        // materials as structured message roles — only the fixed envelope path.
-        // Do not regex-lock generated prompt prose (#685 C3).
-        const userMessages = (request?.messages ?? []).filter((message: any) => message.role === "user");
-        assert.ok(Array.isArray(userMessages));
+        // Zero-projection: child user turn is exactly the fixed dossier-ready envelope
+        // (AUDITOR_DOSSIER_PROMPT call-input), never parent assignment / soul / verdict text.
+        observedUserTexts = (request?.messages ?? [])
+          .filter((message: any) => message.role === "user")
+          .map((message: any) =>
+            typeof message.content === "string"
+              ? message.content
+              : (message.content ?? [])
+                .map((part: any) => (part?.type === "text" ? part.text : ""))
+                .join(""),
+          );
         return fauxAssistantMessage(
           fauxToolCall(JUDGE_AUDIT_TOOL_NAME, {
             status: "pass",
@@ -189,7 +197,9 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
       auditor({ context: countingAuditContext(sessionManager, faux) }),
     );
     assert.equal(decision.status, "pass");
-    assert.equal(userPromptSeen, true);
+    assert.ok(observedUserTexts !== undefined, "auditor child must issue one provider turn");
+    assert.deepEqual(observedUserTexts, [AUDITOR_DOSSIER_PROMPT]);
+    assert.equal(observedUserTexts!.join("\n").includes(parentAssignment), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
