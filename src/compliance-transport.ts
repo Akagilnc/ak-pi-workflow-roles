@@ -93,12 +93,24 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 
 export type AuditorSummon = (sourceRunDirectory: string) => Promise<PublicSummonResult>;
 
-/** Offline-test hook for public auditor summons; production leaves this undefined. */
-let testAuditorSummon: AuditorSummon | undefined;
+/** Offline-test hook key — globalThis so extension/test share one inject (no dual-module). */
+const TEST_AUDITOR_SUMMON = Symbol.for("ak-roles.test-auditor-summon");
 
-/** Install or clear the offline auditor summon hook (tests only). */
-export function setTestAuditorSummon(summon: AuditorSummon | undefined): void {
-  testAuditorSummon = summon;
+/**
+ * Install or clear the offline auditor summon hook (tests only).
+ * Returns a restore function that puts back the previous hook.
+ */
+export function setTestAuditorSummon(summon: AuditorSummon | undefined): () => void {
+  const slot = globalThis as Record<symbol, AuditorSummon | undefined>;
+  const previous = slot[TEST_AUDITOR_SUMMON];
+  slot[TEST_AUDITOR_SUMMON] = summon;
+  return () => {
+    slot[TEST_AUDITOR_SUMMON] = previous;
+  };
+}
+
+function testAuditorSummon(): AuditorSummon | undefined {
+  return (globalThis as Record<symbol, AuditorSummon | undefined>)[TEST_AUDITOR_SUMMON];
 }
 
 export type RunComplianceAuditOptions = {
@@ -150,33 +162,27 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   if (runDirectory === undefined) {
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
-  // Offline tracers may force a typed audit decision without nested public spawn.
-  if (options.summonAuditor === undefined && testAuditorSummon === undefined) {
-    if (process.env.AK_ROLE_TEST_AUDIT_ESCALATE === "1") {
-      return {
-        status: "escalate",
-        conflicts: ["Soul authority conflicts with controlling authority"],
-        decisionGate: {
-          question: "Which authority governs this verdict?",
-          options: ["Soul", "Controlling authority"],
-        },
-      };
-    }
-    if (process.env.AK_ROLE_TEST_AUDIT_PASS === "1") {
-      return { status: "pass" };
-    }
-  }
   const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   const summon =
     options.summonAuditor
-    ?? testAuditorSummon
+    ?? testAuditorSummon()
     ?? (async (sourceRunDirectory: string) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
+      let home: string | undefined;
+      try {
+        const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
+        home = homeFromRunDirectory(sourceRunDirectory);
+      } catch {
+        // resolveSummonHome falls back.
+      }
+      // Publish source-run for public auditor dossier tool registration (#675).
+      process.env.AK_ROLE_AUDITOR_SOURCE_RUN = sourceRunDirectory;
       return summonPublicRole({
         role: "auditor",
         argv: [`卷宗指针：${sourceRunDirectory}\n${prompt}`],
         cwd: options.context.cwd ?? process.cwd(),
+        ...(home === undefined ? {} : { home }),
       });
     });
   const summoned = await summon(runDirectory);

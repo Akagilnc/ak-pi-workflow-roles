@@ -3,48 +3,22 @@
  * Gate / compliance / evidence callers invoke the same post-admission face a
  * human uses; no second institutional session open, no model-only seat page.
  *
- * Does not import public-cli/cli.ts (circular with role-runtime composition).
- * Composes the same seat resolution + role runners the CLI uses.
+ * Lazy-loads every local value dependency. Pi loads extensions through jiti
+ * (CJS transform, moduleCache:false); a static import graph that re-enters this
+ * module via settlement → compliance leaves binding slots undefined
+ * (`reading 'dirname'`, `reading 'tryHomeFromAkRolesPath'`). Dynamic import
+ * starts after the caller module has finished init, so those slots stay intact.
  */
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-import {
-  homeFromRunDirectory,
-  packageMachineHome,
-  tryHomeFromAkRolesPath,
-} from "./activation-ledger-topology.ts";
-import { engineNameFromEnv } from "./engine-detour.ts";
-import { piDurablePrincipalAuthority } from "./pi/durable-principal.ts";
-import {
-  appendPiSessionCustomEntry,
-  createPiRoleTurnHost,
-} from "./pi/role-turn-host.ts";
 import type { CliIo } from "./public-cli/cli-io.ts";
-import {
-  loadCredentialProviders,
-  loadPublicCliConfig,
-  resolveEffectiveSeat,
-  type CredentialProviders,
-  type EffectiveSeat,
-} from "./public-cli/config.ts";
-import { runPublicInstructionSeat } from "./public-cli/instruction-seat-run.ts";
-import { runPublicInspector } from "./public-cli/inspector-run.ts";
-import {
-  parseAuditorArgv,
-  parseEvidenceChildArgv,
-  parseGatekeeperArgv,
-  parseInspectorArgv,
-  parseNavigatorArgv,
-  parseNotaryArgv,
-  recordLaunchedPiIdentity,
-  recordLaunchedRolePackageIdentity,
-  observeLaunchedRolePackageIdentity,
-} from "./public-cli/invocation.ts";
-import { runPublicNotary } from "./public-cli/notary-run.ts";
+import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+
+/** Env published by the parent activation so nested summons never re-derive root. */
+export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
 
 export type PublicSummonRole =
   | "inspector"
@@ -87,33 +61,73 @@ function createCapturingIo(): { io: CliIo; stderrText(): string } {
   };
 }
 
-/** Install package root from this module (src/ or dist/). */
-export function resolveSummonsPackageRoot(moduleUrl: string = import.meta.url): string {
-  let dir = dirname(fileURLToPath(moduleUrl));
-  for (let i = 0; i < 8; i += 1) {
+/** Path parent without depending on a jiti-bound `path.dirname` closure. */
+function parentDir(path: string): string {
+  const end = path.endsWith("/") || path.endsWith("\\") ? path.slice(0, -1) : path;
+  const idx = Math.max(end.lastIndexOf("/"), end.lastIndexOf("\\"));
+  if (idx <= 0) return end;
+  return end.slice(0, idx);
+}
+
+function walkPackageRoot(start: string): string | undefined {
+  let dir = start;
+  for (let i = 0; i < 12; i += 1) {
     if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "souls"))) {
       return dir;
     }
-    const parent = dirname(dir);
+    const parent = parentDir(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return fileURLToPath(new URL("..", moduleUrl));
+  return undefined;
 }
 
-function resolveSummonHome(options: PublicSummonRequest): string {
+/**
+ * Resolve install package root for nested public summons.
+ * Prefer explicit / env coordinates; never require import.meta under jiti.
+ */
+export function resolveSummonsPackageRoot(explicit?: string): string {
+  if (typeof explicit === "string" && explicit.trim() !== "") {
+    return explicit;
+  }
+  const fromEnv = process.env[AK_ROLE_PACKAGE_ROOT_ENV];
+  if (typeof fromEnv === "string" && fromEnv.trim() !== "") {
+    return fromEnv;
+  }
+  const fromCwd = walkPackageRoot(process.cwd());
+  if (fromCwd !== undefined) return fromCwd;
+  try {
+    const metaUrl = import.meta.url;
+    if (typeof metaUrl === "string" && metaUrl.startsWith("file:")) {
+      const filePath = decodeURIComponent(metaUrl.slice("file://".length));
+      const fromMeta = walkPackageRoot(parentDir(filePath));
+      if (fromMeta !== undefined) return fromMeta;
+    }
+  } catch {
+    // import.meta unavailable — fall through.
+  }
+  throw new Error(
+    "public role summons cannot resolve package root (pass packageRoot or set AK_ROLE_PACKAGE_ROOT)",
+  );
+}
+
+async function resolveSummonHome(options: PublicSummonRequest): Promise<string> {
   if (options.home !== undefined && options.home.trim() !== "") {
     return options.home;
   }
+  const { tryHomeFromAkRolesPath, packageMachineHome } = await import(
+    "./activation-ledger-topology.ts"
+  );
   const fromCwd = tryHomeFromAkRolesPath(options.cwd);
   if (fromCwd !== undefined && fromCwd.length > 0) return fromCwd;
   return packageMachineHome();
 }
 
 function projectSeatEngine(seat: EffectiveSeat): { engine?: string } {
-  // Nested summons inherit the parent process engine when the child seat has none
-  // (#378 dual-path / #675 public activation — same detour tool surface).
-  const engine = seat.engine ?? engineNameFromEnv();
+  const raw = process.env.AK_ROLE_ENGINE;
+  const fromEnv =
+    typeof raw === "string" && raw.trim() !== "" ? raw.trim() : undefined;
+  const engine = seat.engine ?? fromEnv;
   return engine === undefined ? {} : { engine };
 }
 
@@ -121,7 +135,22 @@ function projectSeatHost(seat: EffectiveSeat): { host?: string } {
   return seat.host === undefined ? {} : { host: seat.host };
 }
 
-function createSummonEnv(options: {
+/** Nested seats with empty startup candidates inherit the live parent model (#675). */
+async function projectSeatModel(
+  seat: EffectiveSeat,
+): Promise<{ model?: import("./public-cli/config.ts").SeatModelConfig }> {
+  if (seat.selection !== undefined) return { model: seat.selection };
+  const raw = process.env.AK_ROLE_NESTED_MODEL;
+  if (typeof raw !== "string" || raw.trim() === "") return {};
+  const { parseModelSpec } = await import("./public-cli/config.ts");
+  try {
+    return { model: parseModelSpec(raw) };
+  } catch {
+    return {};
+  }
+}
+
+async function createSummonEnv(options: {
   readonly role: PublicCallableRole;
   readonly home: string;
   readonly agentDir: string;
@@ -130,9 +159,12 @@ function createSummonEnv(options: {
   readonly credentials: CredentialProviders;
   readonly seat: EffectiveSeat;
 }) {
+  const [{ piDurablePrincipalAuthority }, { appendPiSessionCustomEntry, createPiRoleTurnHost }] =
+    await Promise.all([
+      import("./pi/durable-principal.ts"),
+      import("./pi/role-turn-host.ts"),
+    ]);
   const principalAuthority = piDurablePrincipalAuthority;
-  // Offline tracers may publish nested-spawn Pi args (faux provider -e path) via env.
-  // Offline tracers may publish nested-spawn Pi args as JSON string array.
   const nestedExtraRaw = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
   let nestedExtraPiArgs: readonly string[] | undefined;
   if (typeof nestedExtraRaw === "string" && nestedExtraRaw.trim() !== "") {
@@ -145,6 +177,7 @@ function createSummonEnv(options: {
       // ignore malformed offline env
     }
   }
+  process.env[AK_ROLE_PACKAGE_ROOT_ENV] = options.packageRoot;
   return {
     home: options.home,
     principalAuthority,
@@ -155,13 +188,22 @@ function createSummonEnv(options: {
       packageRoot: options.packageRoot,
       principalAuthority,
       ...(nestedExtraPiArgs === undefined ? {} : { extraPiArgs: nestedExtraPiArgs }),
-      recordLaunchedPiIdentity,
-      recordLaunchedRolePackageIdentity,
-      observeLaunchedRolePackageIdentity,
+      async recordLaunchedPiIdentity(runDirectory, identity) {
+        const { recordLaunchedPiIdentity } = await import("./public-cli/invocation.ts");
+        return recordLaunchedPiIdentity(runDirectory, identity);
+      },
+      async recordLaunchedRolePackageIdentity(runDirectory, identity) {
+        const { recordLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
+        return recordLaunchedRolePackageIdentity(runDirectory, identity);
+      },
+      async observeLaunchedRolePackageIdentity(root, roleEntry) {
+        const { observeLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
+        return observeLaunchedRolePackageIdentity(root, roleEntry);
+      },
     }),
     cwd: options.cwd,
     credentials: options.credentials,
-    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...(await projectSeatModel(options.seat)),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
   };
@@ -174,17 +216,22 @@ function createSummonEnv(options: {
 export async function summonPublicRole(
   options: PublicSummonRequest,
 ): Promise<PublicSummonResult> {
-  const packageRoot = options.packageRoot ?? resolveSummonsPackageRoot();
-  const home = resolveSummonHome(options);
+  const packageRoot = resolveSummonsPackageRoot(options.packageRoot);
+  const home = await resolveSummonHome(options);
   const agentDir =
     options.agentDir
     ?? process.env.PI_CODING_AGENT_DIR
     ?? join(home, ".pi", "agent");
+  const {
+    loadCredentialProviders,
+    loadPublicCliConfig,
+    resolveEffectiveSeat,
+  } = await import("./public-cli/config.ts");
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
   const seat = resolveEffectiveSeat(config, options.role, credentials);
-  const env = createSummonEnv({
+  const env = await createSummonEnv({
     role: options.role,
     home,
     agentDir,
@@ -198,13 +245,27 @@ export async function summonPublicRole(
 
   let result: { exitCode: number; terminal?: TerminalResult };
   switch (options.role) {
-    case "notary":
+    case "notary": {
+      const [{ runPublicNotary }, { parseNotaryArgv }] = await Promise.all([
+        import("./public-cli/notary-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicNotary(options.argv, env, io, parseNotaryArgv);
       break;
-    case "inspector":
+    }
+    case "inspector": {
+      const [{ runPublicInspector }, { parseInspectorArgv }] = await Promise.all([
+        import("./public-cli/inspector-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicInspector(options.argv, env, io, parseInspectorArgv);
       break;
-    case "auditor":
+    }
+    case "auditor": {
+      const [{ runPublicInstructionSeat }, { parseAuditorArgv }] = await Promise.all([
+        import("./public-cli/instruction-seat-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicInstructionSeat(
         options.argv,
         env,
@@ -213,7 +274,12 @@ export async function summonPublicRole(
         parseAuditorArgv,
       );
       break;
-    case "evidence-child":
+    }
+    case "evidence-child": {
+      const [{ runPublicInstructionSeat }, { parseEvidenceChildArgv }] = await Promise.all([
+        import("./public-cli/instruction-seat-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicInstructionSeat(
         options.argv,
         env,
@@ -222,7 +288,12 @@ export async function summonPublicRole(
         parseEvidenceChildArgv,
       );
       break;
-    case "navigator":
+    }
+    case "navigator": {
+      const [{ runPublicInstructionSeat }, { parseNavigatorArgv }] = await Promise.all([
+        import("./public-cli/instruction-seat-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicInstructionSeat(
         options.argv,
         env,
@@ -231,7 +302,12 @@ export async function summonPublicRole(
         parseNavigatorArgv,
       );
       break;
-    case "gatekeeper":
+    }
+    case "gatekeeper": {
+      const [{ runPublicInstructionSeat }, { parseGatekeeperArgv }] = await Promise.all([
+        import("./public-cli/instruction-seat-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
       result = await runPublicInstructionSeat(
         options.argv,
         env,
@@ -240,6 +316,7 @@ export async function summonPublicRole(
         parseGatekeeperArgv,
       );
       break;
+    }
   }
 
   const stderr = captured?.stderrText();
@@ -259,10 +336,10 @@ export async function summonGateOfficer(options: {
   readonly packageRoot?: string;
   readonly io?: CliIo;
 }): Promise<PublicSummonResult> {
-  // Parent run topology owns home; project cwd is not under .ak-roles.
   let home = options.home;
   if (home === undefined) {
     try {
+      const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
       home = homeFromRunDirectory(options.sourceRunDirectory);
     } catch {
       // Fall through to summonPublicRole home resolution.

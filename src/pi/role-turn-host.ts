@@ -435,8 +435,23 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         HOME: request.home,
         PI_CODING_AGENT_DIR: request.agentDir,
         AK_ROLE_RUN_DIR: request.runDirectory,
+        // #675: nested public summons resolve package root without import.meta under jiti.
+        AK_ROLE_PACKAGE_ROOT: config.packageRoot,
       };
       applyEngineChildEnv(env, request.engine);
+      // #675: nested public seats with empty startup candidates inherit the live parent model.
+      if (request.model !== undefined) {
+        const thinking =
+          request.model.thinking === undefined ? "" : `:${request.model.thinking}`;
+        env.AK_ROLE_NESTED_MODEL = `${request.model.provider}/${request.model.model}${thinking}`;
+      }
+      // Nested auditor dossier tool binds the parent run pointer when published.
+      if (
+        typeof process.env.AK_ROLE_AUDITOR_SOURCE_RUN === "string"
+        && process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim() !== ""
+      ) {
+        env.AK_ROLE_AUDITOR_SOURCE_RUN = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+      }
       // Nested public role summons (#675) inherit offline faux provider args when present.
       if (config.extraPiArgs !== undefined && config.extraPiArgs.length > 0) {
         env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify([...config.extraPiArgs]);
