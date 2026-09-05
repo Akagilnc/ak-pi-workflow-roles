@@ -1,55 +1,20 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import {
-  copyFile,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import {
-  assertWritableTestAgentDir,
-  realMachineAgentDir,
-  realMachineHome,
-} from "./test-agent-dir-guard.ts";
-import { testTmpdir } from "./worktree-temp.ts";
+import { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome } from "./test-agent-dir-guard.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import {
-  type CredentialStore,
-  type FauxProviderHandle,
-  fauxProvider,
-  InMemoryCredentialStore,
-  type Model,
-  type Provider,
-} from "@earendil-works/pi-ai";
-import {
-  DefaultResourceLoader,
-  type ExtensionContext,
-  type InlineExtension,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
-import {
-  activationWaitingLedgerPath,
-  resolveActivationLedgerHome,
-  resolveBookKeyFromGit,
-  type AcceptedActivationFact,
-} from "../../src/activation-ledger.ts";
+import { type CredentialStore, type FauxProviderHandle, fauxProvider, InMemoryCredentialStore, type Model, type Provider } from "@earendil-works/pi-ai";
+import { DefaultResourceLoader, type ExtensionContext, type InlineExtension, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { activationWaitingLedgerPath, resolveActivationLedgerHome, resolveBookKeyFromGit, type AcceptedActivationFact } from "../../src/activation-ledger.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
 
 const execFileAsync = promisify(execFile);
@@ -186,7 +151,7 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-mat-"));
+  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
   try {
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
@@ -208,7 +173,7 @@ export async function packIsolatedPackage(
       files: entry.files,
     };
   } finally {
-    await rm(root, { recursive: true, force: true });
+    /* #685 */
   }
 }
 
@@ -277,7 +242,6 @@ async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() 
     try {
       await mkdir(lockDir);
       return async () => {
-        await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -404,7 +368,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
           cacheDir,
         };
       } finally {
-        await rm(materialRoot, { recursive: true, force: true });
+        /* #685 */
       }
     } finally {
       await release();
@@ -469,7 +433,7 @@ export async function withHermeticHome<T>(
   return await withProcessGlobalLock(async () => {
     // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
     const home = await mkdtemp(
-      resolve(testTmpdir(), options.prefix ?? "ak-pi-test-"),
+      resolve(tmpdir(), options.prefix ?? "ak-pi-test-"),
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
@@ -495,7 +459,6 @@ export async function withHermeticHome<T>(
       else process.env.PI_OFFLINE = previousOffline;
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      await rm(home, { recursive: true, force: true });
     }
   });
 }
@@ -543,7 +506,7 @@ export function createTempPackageHomeLedger(input: {
   sessionFile: string;
   dispose(): void;
 } {
-  const home = mkdtempSync(join(testTmpdir(), input.prefix));
+  const home = mkdtempSync(join(tmpdir(), input.prefix));
   const bookKey = basename(home);
   const ledgerHome = machineLedgerHome(home);
   const runDirectory = join(
@@ -564,7 +527,6 @@ export function createTempPackageHomeLedger(input: {
     sessionDirectory,
     sessionFile,
     dispose() {
-      rmSync(home, { recursive: true, force: true });
     },
   };
 }
@@ -958,7 +920,7 @@ export async function withInstitutionalProviderFixture<T>(
 ): Promise<T> {
   const mock = await createMockProviderServer(faux);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(join(testTmpdir(), "ak-institutional-agent-"));
+  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");
@@ -997,7 +959,6 @@ export async function withInstitutionalProviderFixture<T>(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rm(tempAgentDir, { recursive: true, force: true });
   }
 }
 
