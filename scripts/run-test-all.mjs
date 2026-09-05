@@ -14,15 +14,22 @@ import { join, relative } from "node:path";
 import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
-  // #685 retained shortest real-host/packaged tracers (no named true-run handoff yet).
-  // concurrency=2: ordinary file-parallelism flakes / contends these.
+  // #685 heavy = ledger-319 🔒 gates + ADR 0019/0052 install/activation face +
+  // multi-second packaged sessions that flake under ordinary file-parallelism.
+  // Bound exceptions to quality-law「真宿主以真跑为证」: preservation-ledger 🔒
+  // rows and ADR 0019 illegal-activation / ADR 0052 public install face — not
+  // "keep until true-run appears". Non-locked bulk culled.
+  "test/integration/audit-failure-subprocess.test.ts",
+  "test/integration/public-cli-judge-run.test.ts",
   "test/integration/public-cli-coder-installed-run.test.ts",
   "test/integration/activation-envelope-contract.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",
+  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
   "test/package/doctor-package-lifecycle.test.ts",
   "test/package/public-cli-install.test.ts",
+  "test/package/public-cli-cold-matrix.test.ts",
 ]);
 
 const TIERS = Object.freeze([
