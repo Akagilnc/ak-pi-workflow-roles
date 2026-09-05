@@ -2,7 +2,6 @@ import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts"
 import type { Static } from "typebox";
 
 import {
-  COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
   loadCollectorManifest,
   parseCollectorPrNumber,
@@ -54,9 +53,6 @@ export class CollectorNormalCompletionDeclarationError extends CorrectableSubmis
   }
 }
 
-export {
-  COLLECTOR_FIXED_KICKOFF,
-} from "./collector-config.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
@@ -155,7 +151,7 @@ export function createCollectorRoleRuntime(
     if (lifecycleRegistered) return;
     lifecycleRegistered = true;
 
-    pi.on("input", (event, ctx) => {
+    pi.on("input", (_event, _ctx) => {
       if (activation === undefined) {
         // role not active
         return { action: "continue" as const };
@@ -169,11 +165,8 @@ export function createCollectorRoleRuntime(
         return { action: "handled" as const };
       }
       inputCount += 1;
-      return {
-        action: "transform" as const,
-        text: COLLECTOR_FIXED_KICKOFF,
-        images: [],
-      };
+      // #676 A: pass through the real call task/attachments — do not rewrite to a fixed kickoff.
+      return { action: "continue" as const };
     });
 
     pi.on("before_agent_start", (event, ctx) => {
@@ -204,15 +197,6 @@ export function createCollectorRoleRuntime(
         hostActions.failInfrastructure(
           activation.ledger.latchFatal(
             "通进司检测到 appendSystemPrompt 漂移",
-          ),
-          ctx,
-        );
-      }
-
-      if (event.prompt !== COLLECTOR_FIXED_KICKOFF) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司首条提示不是固定开场令",
           ),
           ctx,
         );

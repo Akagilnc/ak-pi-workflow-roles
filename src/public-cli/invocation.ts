@@ -29,7 +29,6 @@ import {
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
-  COLLECTOR_FIXED_KICKOFF,
   emptyCollectorManifest,
   loadCollectorManifest,
   parseCollectorPrNumber,
@@ -1923,15 +1922,16 @@ export async function admitCollectorInvocation(
 }
 
 /**
- * Collector always consumes the fixed packaged kickoff (one-shot observation).
- * Optional public instruction is retained only in the admitted request.
+ * #676 A: Collector consumes the real call task + frozen attachments so the role
+ * can identify issue/PR context from materials. Explicit --pr still wins at
+ * admission; machine unique online association covers unambiguous branch targets.
+ * No fixed kickoff rewrite of the caller task.
  */
 export function buildCollectorTransportPrompt(
-  _admitted: AdmittedCollectorInvocation,
+  admitted: AdmittedCollectorInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  // Exact historical fixed kickoff bytes (one-shot observation).
-  return appendEngineSessionMaterial([COLLECTOR_FIXED_KICKOFF], engineMaterial).join("\n");
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */

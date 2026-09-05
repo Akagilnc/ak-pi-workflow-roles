@@ -1482,6 +1482,12 @@ function collectorDecisiveFacts(
     const reasons = unfinished.value.filter((item): item is string => typeof item === "string");
     if (reasons.length > 0) facts.unfinishedReasons = reasons;
   }
+  // #676 C: pass through structured projection facts so empty-readable vs unprojected
+  // original content stays distinguishable on the public Terminal face.
+  const projection = safelyRead(candidate, "submissionProjection");
+  if (projection.readable && isRecord(projection.value)) {
+    facts.submissionProjection = projection.value;
+  }
   const groups = safelyRead(candidate, "groups");
   if (groups.readable && Array.isArray(groups.value)) {
     try {

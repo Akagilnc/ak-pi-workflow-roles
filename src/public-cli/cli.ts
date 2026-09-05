@@ -1548,11 +1548,25 @@ export async function runAkRole(
       return { exitCode: 2 };
     }
     // Unrecognized outer failure: retain actual name/message identity (no wash).
+    // #676 B: cause (HTTP body/headers, git stderr, nested Error) must reach the
+    // caller — name/message alone drops the original diagnostic tail.
     if (error instanceof Error) {
-      const label =
+      let label =
         error.name !== "" && error.name !== "Error"
           ? `${error.name}: ${error.message}`
           : error.message;
+      if (error.cause !== undefined) {
+        const detail = error.cause instanceof Error
+          ? error.cause.message
+          : typeof error.cause === "object" && error.cause !== null
+            ? (() => {
+                try { return JSON.stringify(error.cause); } catch { return String(error.cause); }
+              })()
+            : String(error.cause);
+        if (detail.trim().length > 0) {
+          label = `${label || error.name || "unrecognized exception"}; cause: ${detail}`;
+        }
+      }
       io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
       return { exitCode: 1 };
     }

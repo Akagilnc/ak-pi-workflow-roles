@@ -5,11 +5,13 @@ import {
   enrichCollectorFindings,
   extractCollectorEvidenceIdentityGroups,
   extractCollectorUnfinishedReasons,
+  type CollectorSubmissionProjection,
   type ExtractedCollectorIdentityGroup,
 } from "./collector-identity.ts";
 import { validateAcceptedCollectorReceipt, type CollectorEvidenceRecord as ReceiptEvidenceRecord } from "./package-contracts/collector-output.ts";
 
 export { validateAcceptedCollectorReceipt };
+export type { CollectorSubmissionProjection };
 
 /**
  * #641 chain① receipt-local evidence projection: machine identity, integrity
@@ -33,6 +35,12 @@ export type CollectorReceipt = {
   groups: ExtractedCollectorIdentityGroup[];
   /** Optional unfinished reasons supplied with the sealed materials (#676 D6). */
   unfinishedReasons?: string[];
+  /**
+   * #676 C: structured projection facts. Distinguishes readable-empty findings
+   * from original submission content that could not project. Session tool-call
+   * is the 正本 for unprojected content — no body copy on the receipt.
+   */
+  submissionProjection: CollectorSubmissionProjection;
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorReceiptEvidenceRecord[];
@@ -76,7 +84,7 @@ export function buildCollectorReceipt(
   const groups = extractCollectorEvidenceIdentityGroups(evidenceRecords, finalSnapshot.headOid);
   // #641 chain①: the collector LLM submits findings as pointer refs; the runtime
   // enriches each with the machine locator from the same stored record.
-  enrichCollectorFindings({
+  const findingsProjection = enrichCollectorFindings({
     candidate: candidateRaw,
     records: evidenceRecords,
     groups,
@@ -92,7 +100,15 @@ export function buildCollectorReceipt(
       if (finding.source.evidenceId === undefined || !evidenceIndex.has(finding.source.evidenceId)) fail("Collector finding lacks a receipt-local evidence ref");
     }
   }
-  const unfinishedReasons = extractCollectorUnfinishedReasons(candidateRaw);
+  const unfinished = extractCollectorUnfinishedReasons(candidateRaw);
+  const submissionProjection: CollectorSubmissionProjection = {
+    findingsSource: findingsProjection.findingsSource,
+    findingsProjectedCount: findingsProjection.findingsProjectedCount,
+    findingsUnprojected: findingsProjection.findingsUnprojected,
+    unfinishedReasonsSource: unfinished.source,
+    unfinishedReasonsProjectedCount: unfinished.reasons?.length ?? 0,
+    unfinishedReasonsUnprojected: unfinished.unprojected,
+  };
 
   return {
     host: COLLECTOR_HOST,
@@ -106,7 +122,8 @@ export function buildCollectorReceipt(
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead: finalSnapshot.headOid,
     groups,
-    ...(unfinishedReasons === undefined ? {} : { unfinishedReasons }),
+    ...(unfinished.reasons === undefined ? {} : { unfinishedReasons: unfinished.reasons }),
+    submissionProjection,
     requestAttempts: [...ledger.requestAttempts()],
     snapshots,
     evidenceRecords: evidenceRecords.map(toReceiptEvidenceRecord),

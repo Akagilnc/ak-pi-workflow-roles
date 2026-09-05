@@ -566,8 +566,9 @@ test("#676 D6 closed PR still seals existing findings with prState and prior+cur
   assert.ok(findings.every((finding: any) => finding.pointer?.commentId !== undefined));
 });
 
-test("#676 D6 non-OPEN request bounces without latching fatal so materials can still seal", async () => {
-  const result = await runRealCollectorScript({
+test("#676 D6 non-OPEN request bounces before and after cutoff; materials seal without POST", async () => {
+  // Merged assembly covers pre-cutoff bounce + post-cutoff bounce + unfinishedReasons (#676 D).
+  const before = await runRealCollectorScript({
     pullRequest: samplePull({ headOid: "head-1", state: "MERGED" }),
     issueComments: [botIssueComment({ id: 8101, userLogin: "coderabbitai[bot]", userId: 136622811, body: "still collect me" })],
     requests: [{ id: "codex", body: "Please review." }],
@@ -587,21 +588,19 @@ test("#676 D6 non-OPEN request bounces without latching fatal so materials can s
       },
     ],
   });
-  const bounced = result.entries.filter((entry: any) =>
+  const bouncedBefore = before.entries.filter((entry: any) =>
     entry.type === "message" &&
     entry.message.role === "toolResult" &&
     entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
     entry.message.isError === true
   );
-  assert.equal(bounced.length, 1, "non-OPEN request must bounce visibly");
-  assert.equal(result.transport.calls.create, 0, "non-OPEN must not POST a new review request");
-  assert.ok(result.receipt, "after bounce, existing materials still seal");
-  assert.equal(result.receipt.prState, "MERGED");
-  assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 1);
-  assert.deepEqual(result.receipt.requestAttempts, []);
-});
+  assert.equal(bouncedBefore.length, 1, "non-OPEN request must bounce visibly");
+  assert.equal(before.transport.calls.create, 0, "non-OPEN must not POST a new review request");
+  assert.ok(before.receipt, "after bounce, existing materials still seal");
+  assert.equal(before.receipt.prState, "MERGED");
+  assert.equal(before.receipt.groups.flatMap((group: any) => group.findings).length, 1);
+  assert.deepEqual(before.receipt.requestAttempts, []);
 
-test("#676 D6 non-OPEN request after eligibility cutoff still bounces correctable and seals", async () => {
   const collectorClock = (() => {
     let elapsed = 0;
     return {
@@ -611,7 +610,7 @@ test("#676 D6 non-OPEN request after eligibility cutoff still bounces correctabl
       jumpPastCutoff() { elapsed = 16 * 60 * 1000; },
     };
   })();
-  const result = await withActivationHome({ prefix: "ak-collector-nonopen-cutoff-" }, async ({ agentDir, home }) => {
+  const after = await withActivationHome({ prefix: "ak-collector-nonopen-cutoff-" }, async ({ agentDir, home }) => {
     const manifest = resolve(home, "requests.json");
     await writeFile(manifest, JSON.stringify({ requests: [{ id: "codex", body: "Please review." }] }));
     const transport = createFakeGitHubTransport({
@@ -623,8 +622,7 @@ test("#676 D6 non-OPEN request after eligibility cutoff still bounces correctabl
     });
     const faux = fauxProvider({ api: "collector-nonopen-cutoff", provider: "collector-nonopen-cutoff", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([
-      (context: any) => {
-        // Observation itself finishes at/after cutoff (online finding scenario).
+      (_context: any) => {
         collectorClock.jumpPastCutoff();
         return observeOnce;
       },
@@ -662,63 +660,74 @@ test("#676 D6 non-OPEN request after eligibility cutoff still bounces correctabl
     });
     return { receipt, transport, entries };
   });
-  const bounced = result.entries.filter((entry: any) =>
+  const bouncedAfter = after.entries.filter((entry: any) =>
     entry.type === "message" &&
     entry.message.role === "toolResult" &&
     entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
     entry.message.isError === true
   );
-  assert.equal(bounced.length, 1, "non-OPEN after cutoff must bounce, not latch fatal");
-  assert.equal(result.transport.calls.create, 0, "no POST after cutoff non-OPEN");
-  assert.ok(result.receipt);
-  assert.equal(result.receipt.prState, "MERGED");
-  assert.deepEqual(result.receipt.requestAttempts, []);
-  assert.deepEqual(result.receipt.unfinishedReasons, ["request skipped: PR MERGED"]);
-  const findings = result.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(bouncedAfter.length, 1, "non-OPEN after cutoff must bounce, not latch fatal");
+  assert.equal(after.transport.calls.create, 0, "no POST after cutoff non-OPEN");
+  assert.ok(after.receipt);
+  assert.equal(after.receipt.prState, "MERGED");
+  assert.deepEqual(after.receipt.requestAttempts, []);
+  assert.deepEqual(after.receipt.unfinishedReasons, ["request skipped: PR MERGED"]);
+  const findings = after.receipt.groups.flatMap((group: any) => group.findings);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].summary, "kept after cutoff");
 });
 
-test("#676 C empty category is not pure-shape-rejected; summary/unfinished pass; unknown evidence still fails bind", async () => {
-  // Former pure-shape gate rejected empty category; runtime now passes it through and keeps summary.
-  const shaped = await runRealCollectorScript({
+test("#676 C non-array/non-object findings are not shape-rejected; unprojected content stays distinguishable", async () => {
+  // Host must not pure-shape-reject; runtime must not wash unreadable findings into "zero findings".
+  // Unknown-evidence bind failure remains covered by the earlier #641 chain① pointer test.
+  const nonArray = await runRealCollectorScript({
     issueComments: [botIssueComment({ id: 9201, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      outputCall({
+        findings: "not-an-array",
+        unfinishedReasons: "also-not-an-array",
+      }, "output-non-array"),
+    ],
+  });
+  assert.ok(nonArray.receipt, "non-array findings must seal, not pure-shape-reject");
+  assert.equal(nonArray.receipt.groups.flatMap((group: any) => group.findings).length, 0);
+  assert.equal(nonArray.receipt.unfinishedReasons, undefined);
+  assert.equal(nonArray.receipt.submissionProjection.findingsSource, "unreadable");
+  assert.equal(nonArray.receipt.submissionProjection.findingsUnprojected, true);
+  assert.equal(nonArray.receipt.submissionProjection.findingsProjectedCount, 0);
+  assert.equal(nonArray.receipt.submissionProjection.unfinishedReasonsSource, "unreadable");
+  assert.equal(nonArray.receipt.submissionProjection.unfinishedReasonsUnprojected, true);
+
+  const mixed = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9203, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
     responses: [
       observeOnce,
       (context: any) => {
         const views = providerObserveViews(context.messages);
         const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
         return outputCall({
-          findings: [{ evidenceId: target.evidenceId, category: "", summary: "bound-summary" }],
-          unfinishedReasons: ["partial bot unfinished"],
-        }, "output-empty-category");
+          findings: [
+            "skip-me",
+            { evidenceId: target.evidenceId, category: "", summary: "bound-summary" },
+            null,
+            { summary: "no-pointer" },
+          ],
+          unfinishedReasons: ["partial bot unfinished", 42, "still-here"],
+        }, "output-mixed");
       },
     ],
   });
-  assert.ok(shaped.receipt, "empty category must not reject sealing materials");
-  const findings = shaped.receipt.groups.flatMap((group: any) => group.findings);
+  assert.ok(mixed.receipt, "mixed findings array must seal with partial projection");
+  const findings = mixed.receipt.groups.flatMap((group: any) => group.findings);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].summary, "bound-summary");
   assert.equal(findings[0].category, "");
-  assert.deepEqual(shaped.receipt.unfinishedReasons, ["partial bot unfinished"]);
-
-  // Unknown evidenceId remains a binding failure (not washed into empty findings).
-  const unknown = await runRealCollectorScript({
-    issueComments: [botIssueComment({ id: 9202, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
-    responses: [
-      observeOnce,
-      outputCall({ findings: [{ evidenceId: "missing-evidence-id-0000", summary: "should bounce" }] }, "output-unknown"),
-      outputCall({}, "output-retry-empty"),
-    ],
-  });
-  const bounced = unknown.entries.filter((entry: any) =>
-    entry.type === "message" &&
-    entry.message.role === "toolResult" &&
-    entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
-    entry.message.isError === true
-  );
-  assert.ok(bounced.length >= 1, "unknown evidenceId must bounce as binding failure");
-  assert.ok(unknown.receipt, "retry without bad pointer seals");
-  assert.equal(unknown.receipt.groups.flatMap((group: any) => group.findings).length, 0);
+  assert.deepEqual(mixed.receipt.unfinishedReasons, ["partial bot unfinished", "still-here"]);
+  assert.equal(mixed.receipt.submissionProjection.findingsSource, "array");
+  assert.equal(mixed.receipt.submissionProjection.findingsUnprojected, true);
+  assert.equal(mixed.receipt.submissionProjection.findingsProjectedCount, 1);
+  assert.equal(mixed.receipt.submissionProjection.unfinishedReasonsUnprojected, true);
+  assert.equal(mixed.receipt.submissionProjection.unfinishedReasonsProjectedCount, 2);
 });
 

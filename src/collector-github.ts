@@ -342,13 +342,22 @@ export function normalizePullRequest(raw: unknown): GitHubPullRequest {
     throw new Error("GitHub pull request payload missing head.sha");
   }
   const number = requireNumber(raw["number"], "number");
-  const state = requireString(raw["state"], "state").toUpperCase();
+  // GitHub REST: merged PRs keep state="closed" and set merged/merged_at. Project the
+  // real merge fact so receipt/settlement can distinguish merged from merely closed (#676 D6).
+  const mergedFlag = raw["merged"] === true
+    || (typeof raw["merged_at"] === "string" && raw["merged_at"].length > 0);
+  const rawState = requireString(raw["state"], "state").toUpperCase();
+  const state = mergedFlag
+    ? "MERGED"
+    : rawState === "OPEN" || rawState === "open"
+      ? "OPEN"
+      : rawState;
   const htmlUrl = typeof raw["html_url"] === "string"
     ? raw["html_url"]
     : `https://github.com/unknown/unknown/pull/${number}`;
   return {
     number,
-    state: state === "OPEN" || state === "open" ? "OPEN" : state,
+    state,
     headOid: head["sha"],
     ...(typeof raw["updated_at"] === "string" ? { updatedAt: raw["updated_at"] } : {}),
     url: htmlUrl,
