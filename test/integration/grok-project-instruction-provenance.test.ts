@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Mid-tier: real git worktree + faux inspect JSON → classify HEAD provenance.
  * Host private-config-active / accept gates stay in unit (existing shortest contracts).
@@ -19,7 +19,7 @@ function git(cwd: string, args: string[]): void {
 }
 
 test("inspectControlledGrok: HEAD match, case-fold, and same-byte symlink leave privateActive empty; dirty, different-byte symlink, untracked stay private", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-match-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-grok-head-match-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);
@@ -89,7 +89,7 @@ process.stdout.write(JSON.stringify({
 });
 
 test("isHeadMatchedProjectInstruction: worktree permission failure stays loud with permission identity", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-perm-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-grok-head-perm-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);

@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 — seat self-ticket from public CLI true entry (no --ticket / no frontmatter).
  * Asserts typed ticketNumber on admitted-request.json + invocation.json only.
@@ -50,7 +50,7 @@ import {
 async function withTempHome(
   run: (home: string) => Promise<void>,
 ): Promise<void> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-seat-self-ticket-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-seat-self-ticket-"));
   const binDir = join(home, "bin");
   const priorPath = process.env.PATH;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;

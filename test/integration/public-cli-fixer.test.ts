@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -51,7 +51,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-fixer-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-fixer-"));
   try {
     return await scenario(home);
   } finally {

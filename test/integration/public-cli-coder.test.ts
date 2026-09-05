@@ -2,7 +2,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -37,7 +37,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-coder-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-coder-"));
   try {
     return await scenario(home);
   } finally {

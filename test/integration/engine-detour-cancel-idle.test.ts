@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Detour cancellation propagation + terminal process failures.
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
@@ -23,7 +23,7 @@ console.log("should-not-print");
 `;
 
 async function withHangCwd<T>(run: (cwd: string, argv: string[]) => Promise<T>): Promise<T> {
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-hang-"));
+  const cwd = await mkdtemp(worktreeTempPrefix("ak-detour-hang-"));
   const scriptPath = join(cwd, "hang.mjs");
   await writeFile(scriptPath, hangScript, "utf8");
   try {
@@ -70,7 +70,7 @@ test("detour spawn failure stops through the cause-bearing failure seam", async 
     engineName: "kimi",
     fail(error) { throw error; },
   });
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-spawn-miss-"));
+  const cwd = await mkdtemp(worktreeTempPrefix("ak-detour-spawn-miss-"));
   try {
     await assert.rejects(
       tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),

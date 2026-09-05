@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Mechanical regression for the activation-ledger append seam: when the
  * platform lacks O_NOFOLLOW (Windows — nodejs/node#41590), the JS bitwise-or
@@ -21,7 +21,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailable", async () => {
-  const home = mkdtempSync(join(testTmpdir(), "ak-ledger-nofollow-"));
+  const home = mkdtempSync(worktreeTempPrefix("ak-ledger-nofollow-"));
   try {
     // Shim node:fs so production sees a platform without O_NOFOLLOW (exactly
     // the Windows shape): the constants object simply lacks the key.

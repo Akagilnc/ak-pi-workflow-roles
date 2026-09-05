@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -70,7 +70,7 @@ async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-worker-gate-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-worker-gate-home-"));
   const root = await mkdtemp(join(home, "repo-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
@@ -168,7 +168,7 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    const bare = await mkdtemp(join(testTmpdir(), "ak-worker-gate-bare-"));
+    const bare = await mkdtemp(worktreeTempPrefix("ak-worker-gate-bare-"));
     try {
       const gate = bareGate(home);
       gate.arm(root);
@@ -337,7 +337,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.equal(existsSync(multiOwned.hookPath), false, "owned hook file must be removed");
       assert.ok(existsSync(foreignMultiHook), "foreign multi-value target must survive");
       git(root, ["config", "--worktree", "--unset-all", "core.hooksPath"]);
-      
+
       // Migrated core.bare / core.worktree stay (real path — fake path bricks git).
       const commonDir = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
       const mainWtConfig = join(commonDir, "config.worktree");

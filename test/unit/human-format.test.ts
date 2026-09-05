@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Human-read formatting on the S2 board (#162).
  *
@@ -126,7 +126,7 @@ async function writeMinimalAcceptedCoderRun(
 }
 
 test("S2 board projects full-precision machine attrs and human-formatted spans (no raw ms)", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "human-format-s2-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("human-format-s2-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -193,7 +193,7 @@ test("S2 board projects full-precision machine attrs and human-formatted spans (
 });
 
 test("S2 board formats zero/edge metric inputs without inventing machine values", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "human-format-edge-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("human-format-edge-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });

@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S1 single-ticket trajectory — external behavior at the unique seam
  * `(ledgerDir, ticketSnapshot, now) → HTML` and the page lifecycle entry.
@@ -241,7 +241,7 @@ test("each run evidence link resolves to the run ledger path, with typed data-le
 });
 
 test("page lifecycle writes only outside the ledger; hard link cannot smuggle bytes back", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-out-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("ticket-trajectory-out-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -361,7 +361,7 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
 });
 
 test("production lifecycle regenerates within refresh boundary and stops", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-live-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("ticket-trajectory-live-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -436,7 +436,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
 });
 
 test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerable", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-jsonl-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("ticket-trajectory-jsonl-"));
   try {
     const good = join(workspace, "good.jsonl");
     const tail = join(workspace, "tail.jsonl");
@@ -578,7 +578,7 @@ test("empty/minimal ticket snapshot still requires issueNumber for S1 single-tic
 });
 
 test("post-start regeneration failure faults the lifecycle with the original cause", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-fault-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("ticket-trajectory-fault-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -631,7 +631,7 @@ test("post-start regeneration failure faults the lifecycle with the original cau
 });
 
 test("malformed invocation.json and unexpected path resolution retain their causes", async () => {
-  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-evidence-"));
+  const workspace = await mkdtemp(worktreeTempPrefix("ticket-trajectory-evidence-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });

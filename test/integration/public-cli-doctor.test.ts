@@ -3,7 +3,7 @@ import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts"
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -45,7 +45,7 @@ import {
 } from "../helpers/doctor-fixtures.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-doctor-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-doctor-"));
   try {
     return await scenario(home);
   } finally {

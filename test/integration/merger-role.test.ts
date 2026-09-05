@@ -1,22 +1,17 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import test, { after } from "node:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
+import { type AssistantMessage } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
-import { activationExtensionContext, packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
+import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { activationExtensionContext, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -26,55 +21,6 @@ function harness(flag: unknown = "/input.json") { const flags = new Map<string, 
 function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { cwd: process.cwd(), sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
 function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(createPiRoleHostAdapter(h.pi as unknown as ExtensionAPI).host, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
 
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-
-/** One conflicted-repo template per process; cases clone locally. */
-let conflictedTemplateRoot: string | undefined;
-let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
-async function conflictedTemplate() {
-  conflictedTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-conflict-template-"));
-    conflictedTemplateRoot = root;
-    git(root, "init", "-b", "main");
-    git(root, "config", "user.name", "Merger Test");
-    git(root, "config", "user.email", "merger@test.local");
-    await writeFile(resolve(root, "same.txt"), "base\n");
-    git(root, "add", ".");
-    git(root, "commit", "-m", "base");
-    git(root, "checkout", "-b", "source");
-    await writeFile(resolve(root, "same.txt"), "source\n");
-    git(root, "commit", "-am", "source");
-    const source = git(root, "rev-parse", "HEAD");
-    git(root, "checkout", "main");
-    await writeFile(resolve(root, "same.txt"), "target\n");
-    git(root, "commit", "-am", "target");
-    const target = git(root, "rev-parse", "HEAD");
-    return { root, source, target };
-  })();
-  return conflictedTemplateMemo;
-}
-
-after(async () => {
-  if (conflictedTemplateRoot === undefined) return;
-  conflictedTemplateRoot = undefined;
-});
-
-async function materializeConflictedRepo() {
-  const template = await conflictedTemplate();
-  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-session-b-"));
-  execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], { stdio: "ignore" });
-  git(cwd, "config", "user.name", "Merger Test");
-  git(cwd, "config", "user.email", "merger@test.local");
-  git(cwd, "branch", "source", "origin/source");
-  assert.throws(() => git(cwd, "merge", "--no-edit", "source"));
-  return {
-    cwd,
-    source: git(cwd, "rev-parse", "source"),
-    target: git(cwd, "rev-parse", "HEAD"),
-  };
-}
 
 test("role extension binds Merger Git state to session cwd while preserving injected state", async () => {
   await withHermeticHome({ prefix: "ak-merger-bind-cwd-" }, async ({ home }) => {

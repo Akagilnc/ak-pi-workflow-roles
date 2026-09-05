@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -86,7 +86,7 @@ function runStamp(options: {
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(join(testTmpdir(), "ak-publish-registry-"));
+  const root = mkdtempSync(worktreeTempPrefix("ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),

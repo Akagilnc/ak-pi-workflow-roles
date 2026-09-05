@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #337 analyst public CLI sweep — caller-invoked attach path (ADR 0052 / ADR 0068).
  *
@@ -78,9 +78,9 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-337-business-"));
-  const home = await mkdtemp(join(testTmpdir(), "analyst-337-home-"));
-  const attachDir = await mkdtemp(join(testTmpdir(), "analyst-337-attach-"));
+  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-337-business-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-337-home-"));
+  const attachDir = await mkdtemp(worktreeTempPrefix("analyst-337-attach-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");

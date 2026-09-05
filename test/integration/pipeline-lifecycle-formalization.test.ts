@@ -3,7 +3,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -21,7 +21,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
  * stages ①②④⑤ are still borne by AK, not by the substituted host.
  */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
-  const home = await mkdtemp(join(testTmpdir(), "ak-faux-host-test-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-faux-host-test-"));
   try {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });

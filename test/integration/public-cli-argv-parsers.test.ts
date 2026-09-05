@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 自 public-cli-{coder,collector,doctor,fixer,engine-axis} 抽出 parser/resolver 案；
 // #672 按文件真实资源归 integration（含 Git 子进程与临时目录），非快档。
 import assert from "node:assert/strict";
@@ -30,7 +30,7 @@ import {
 const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtempFs(join(testTmpdir(), "ak-public-cli-parsers-"));
+  const home = await mkdtempFs(worktreeTempPrefix("ak-public-cli-parsers-"));
   return await scenario(home);
 }
 

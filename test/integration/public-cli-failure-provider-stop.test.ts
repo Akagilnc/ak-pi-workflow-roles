@@ -1,7 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #107 session provider-stop 绑定与 #307 typed HTTP 观察家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -998,7 +998,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
   });
 });
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
-  const runDir = await mkdtemp(join(testTmpdir(), "http-2xx-clear-"));
+  const runDir = await mkdtemp(worktreeTempPrefix("http-2xx-clear-"));
   try {
     // Single shortest real tracer: production after_provider_response only.
     await observeTyped429ViaProductionHandler({

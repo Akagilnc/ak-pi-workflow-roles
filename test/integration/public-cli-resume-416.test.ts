@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #416 (scope correction 2026-08-22):撤前两闸 + 单次调用原地自动续跑 ≤2 次
  * Seams: loadResumableRunRecord / runAkRole(judge|resume) / Terminal autoResumeCount
@@ -23,7 +23,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(testTmpdir(),"ak-416-"));
+  const home=await mkdtemp(worktreeTempPrefix("ak-416-"));
   return await fn(home)
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}

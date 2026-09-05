@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 — engine material is optional notes, not a closed name catalog.
  * Entry-reachable delivery is covered by public-cli-engine-axis tracer.
@@ -66,7 +66,7 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-engine-empty-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-engine-empty-"));
   try {
     assert.deepEqual(listEngineMaterialNames(root), []);
     await mkdir(join(root, "resources", "engines"), { recursive: true });

@@ -1,7 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { installHermesFixture } from "../helpers/hermes-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -75,7 +75,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-engine-axis-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-engine-axis-"));
   try {
     return await scenario(home);
   } finally {
@@ -227,7 +227,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     // (absorbed from the former dedicated unset-engine test; golden byte
     // reassertion deleted with the frozen-baseline oracle).
     {
-      const cliHome = await mkdtemp(join(testTmpdir(), "ak-engine-unset-"));
+      const cliHome = await mkdtemp(worktreeTempPrefix("ak-engine-unset-"));
       try {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],

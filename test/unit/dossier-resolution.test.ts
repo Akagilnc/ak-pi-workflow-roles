@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -17,7 +17,7 @@ import {
 // isolation contract and helper-level subject shape here.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-dossier-concurrent-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-dossier-concurrent-"));
   const previous = process.env.AK_ROLE_RUN_DIR;
   try {
     const runA = join(root, "run-a");
@@ -41,6 +41,7 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
