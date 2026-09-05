@@ -13,8 +13,6 @@ import {
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
-  AUDITOR_TURN_LIMIT,
-  AuditorTurnLimitError,
   DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
 } from "../../src/evidence-child-executor.ts";
 import {
@@ -597,11 +595,15 @@ test("injected pending completion settles a same-turn evidence and decision batc
   }
 });
 
-test("auditor completion gives unknown tools native receipts and exhausts at the exact turn limit", async () => {
-  const fixture = openAuditorFixture("ak-auditor-turn-exhaustion-");
+test("auditor completion gives unknown tools native receipts and continues past former 32-turn ceiling to a decision", async () => {
+  // #687: former AUDITOR_TURN_LIMIT=32 counted assistant replies and aborted.
+  // Prove the real entry still gathers and settles after that historical ceiling.
+  const formerTurnCeiling = 32;
+  const fixture = openAuditorFixture("ak-auditor-turn-continuation-");
   const { cwd, runDirectory, sessionManager } = fixture;
   try {
     const faux = fauxProvider({ provider: "ak-auditor-provider" });
+    const tool = createComplianceDecisionTool("ak_real_turn_decision", "Submit.");
     const unknownId = "turn-unknown-call";
     const unknownTool = "ak_turn_unknown_decision";
     let turns = 0;
@@ -615,29 +617,29 @@ test("auditor completion gives unknown tools native receipts and exhausts at the
         assert.equal(receipt.toolName, unknownTool);
         assert.equal(receipt.isError, true);
       }
-      return fauxAssistantMessage([{
-        ...fauxToolCall(unknownTool, {}),
-        id: unknownId,
-      }], { stopReason: "toolUse" });
+      if (turns <= formerTurnCeiling) {
+        return fauxAssistantMessage([{
+          ...fauxToolCall(unknownTool, {}),
+          id: unknownId,
+        }], { stopReason: "toolUse" });
+      }
+      return fauxAssistantMessage(
+        [fauxToolCall(tool.name, { status: "pass", violations: [], conflicts: [], decisionGate: null })],
+        { stopReason: "toolUse" },
+      );
     };
 
-    faux.setResponses(Array.from({ length: AUDITOR_TURN_LIMIT }, () => traceTurn));
-    await assert.rejects(
-      withRunDir(runDirectory, faux, () => runComplianceAudit({
-        tool: createComplianceDecisionTool("ak_real_turn_decision", "Submit."),
-        systemPrompt: "Decide.",
-        roleLabel: "Exhaustion auditor",
-        invalidDecisionLabel: "invalid decision",
-        context: auditExtensionContext(cwd, sessionManager, faux),
-        runDirectory,
-      })),
-      (error: unknown) => error instanceof AuditorTurnLimitError
-        && error.limit === AUDITOR_TURN_LIMIT
-        && error.observedTurns === AUDITOR_TURN_LIMIT
-        && error.lastResponse?.stopReason === "toolUse"
-        && error.lastResponse.toolNames.includes(unknownTool),
-    );
-    assert.equal(turns, AUDITOR_TURN_LIMIT);
+    faux.setResponses(Array.from({ length: formerTurnCeiling + 1 }, () => traceTurn));
+    const decision = await withRunDir(runDirectory, faux, () => runComplianceAudit({
+      tool,
+      systemPrompt: "Decide.",
+      roleLabel: "Continuation auditor",
+      invalidDecisionLabel: "invalid decision",
+      context: auditExtensionContext(cwd, sessionManager, faux),
+      runDirectory,
+    }));
+    assert.equal(decision.status, "pass");
+    assert.equal(turns, formerTurnCeiling + 1);
   } finally {
     fixture.dispose();
   }
