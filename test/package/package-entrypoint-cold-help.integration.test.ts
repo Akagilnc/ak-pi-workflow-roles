@@ -120,7 +120,11 @@ test("cold-installed live help follows the loaded extension and changes on the n
         await attendanceModule.writeNavigatorModelSetting("provider/one:max", modelSettingPath);
         assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/one:max");
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/one:backup" }), "utf8");
-        assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /thinking level|thinking suffix/);
+        // Suffix is opaque pass-through — no whitelist reject (#683).
+        assert.deepEqual(
+          attendanceModule.parseNavigatorModelSetting("provider/one:backup"),
+          { provider: "provider", model: "one", thinkingLevel: "backup" },
+        );
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
         const events: Array<{ command?: string; disposition?: string; unavailableReason?: string }> = [];
         const prepareRequests: string[] = [];
