@@ -4,9 +4,9 @@
  * no behavior change.
  */
 import assert from "node:assert/strict";
-import { rmWorktreeDir, testTmpdir } from "./worktree-temp.ts";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { testTmpdir } from "./worktree-temp.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,7 +39,7 @@ export async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: st
     assert.equal(gitPorcelain(businessRepo), porcelainBefore, "business repo zero write");
     return result;
   } finally {
-    await rmWorktreeDir(businessRepo);
+    await rm(businessRepo, { recursive: true, force: true });
   }
 }
 
@@ -53,6 +53,6 @@ export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    await rmWorktreeDir(home);
+    await rm(home, { recursive: true, force: true });
   }
 }

@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -5,7 +6,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
 
@@ -193,7 +193,7 @@ async function registerInstitutionalProviderFixture(
 ): Promise<void> {
   const mock = await createMockProviderServer(faux, observers);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = mkdtempSync(join(tmpdir(), "ak-judge-provider-"));
+  const tempAgentDir = mkdtempSync(join(testTmpdir(), "ak-judge-provider-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   const providers: Record<string, unknown> = {
     [faux.provider.id]: {
@@ -2180,7 +2180,7 @@ test(
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
     const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
-    const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
+    const modelRoot = await mkdtemp(join(testTmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
 
@@ -2364,6 +2364,7 @@ test(
         assert.ok(formatted.length > 0);
       });
     } finally {
+      await rm(modelRoot, { recursive: true, force: true });
     }
   },
 );

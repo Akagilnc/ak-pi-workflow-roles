@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -9,7 +10,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
@@ -101,7 +101,7 @@ async function conflictedRepository(root: string) {
 }
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-role-table-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;

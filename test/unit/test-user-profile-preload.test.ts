@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #604: test-process user-profile preload redirects os.userInfo().homedir
  * so cold bins never write the operator's real machine home. Production code
@@ -5,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -25,7 +26,7 @@ test("parent process packageMachineHome still follows real user profile", () => 
 
 test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {
   // Spaced temp preload path: bare `--require $path` truncates; encoding must keep it one token.
-  const spacedRoot = mkdtempSync(join(tmpdir(), "ak test user profile "));
+  const spacedRoot = mkdtempSync(join(testTmpdir(), "ak test user profile "));
   const preloadPath = join(spacedRoot, "pre load.cjs");
   const profileHome = mkdtempSync(join(spacedRoot, "profile "));
   const callerNodeOptions = "--unhandled-rejections=strict";
@@ -84,6 +85,7 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     assert.equal(body.realHome, REAL_PASSWD_HOME);
     assert.equal(body.preserved, REAL_PASSWD_HOME);
   } finally {
+    rmSync(profileHome, { recursive: true, force: true });
   }
 });
 

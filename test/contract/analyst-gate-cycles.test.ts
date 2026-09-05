@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #446 analyst gate-cycle metric family — real-entry tracers only.
  *
@@ -11,7 +12,6 @@
  */
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -237,11 +237,12 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-gate-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

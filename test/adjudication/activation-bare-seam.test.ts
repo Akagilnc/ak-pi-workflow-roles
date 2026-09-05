@@ -3,7 +3,6 @@ import {
   chmodSync,
   mkdirSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,6 +23,7 @@ import {
   withActivationHome,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -197,7 +197,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     await rejectSessionClass("relative path", "relative/session.jsonl");
 
     // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).
-    await rejectSessionClass("outside-home /tmp", join(tmpdir(), "ak-act-outside-session.jsonl"));
+    await rejectSessionClass("outside-home /tmp", join(testTmpdir(), "ak-act-outside-session.jsonl"));
 
     // Consumer-repository pointer with no file: still rejected (cannot materialize outside home).
     await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));

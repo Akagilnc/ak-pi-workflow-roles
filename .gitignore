@@ -6,5 +6,5 @@ dist/
 # Claude Code session dir (local only)
 .claude/
 
-# accidental local residue (temps must be system tmpdir per #685 r10)
+# worktree-local test fixture roots (#685 r12 / #612)
 .test-tmp/

@@ -1,4 +1,3 @@
-import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -6,6 +5,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, symlink, writeFi
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
@@ -19,7 +19,7 @@ async function git(root: string, ...args: string[]): Promise<string> {
 let seededTemplateMemo: Promise<string> | undefined;
 async function seededTemplate(): Promise<string> {
   seededTemplateMemo ??= (async () => {
-    const root = await mkdtemp(join(tmpdir(), "reviewer-pin-template-"));
+    const root = await mkdtemp(join(testTmpdir(), "reviewer-pin-template-"));
     await git(root, "init");
     await git(root, "config", "maintenance.auto", "false");
     await git(root, "config", "gc.auto", "0");
@@ -35,7 +35,7 @@ async function seededTemplate(): Promise<string> {
 
 async function materializeSeededRepo(prefix: string): Promise<string> {
   const template = await seededTemplate();
-  const root = await mkdtemp(join(tmpdir(), prefix));
+  const root = await mkdtemp(join(testTmpdir(), prefix));
   await cp(template, root, { recursive: true });
   return root;
 }
@@ -75,7 +75,7 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
 });
 
 test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
+  const root = await mkdtemp(join(testTmpdir(), "reviewer-sha256-"));
   try {
     try { await git(root, "init", "--object-format=sha256"); }
     catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
@@ -159,7 +159,7 @@ test("abbreviated bases are resolved only among commits reachable from the activ
 });
 
 test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-"));
+  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-"));
   const root = join(temporary, "repository");
   const nested = join(root, "nested", "directory");
   const linked = join(temporary, "linked-repository");
@@ -175,7 +175,7 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
 });
 
 test("pinning rejects non-repositories and bare repositories", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-reject-"));
+  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-reject-"));
   const bare = join(temporary, "bare.git");
   try {
     await assert.rejects(createReviewerPinnedGitReader(temporary));
@@ -257,7 +257,7 @@ test("pinned reader: execGit pins LC_ALL=C so soft-degrade classifiers stay Engl
   await git(root, "add", ".");
   await git(root, "commit", "-m", "adr");
 
-  const shimDir = await mkdtemp(join(tmpdir(), "reviewer-git-lc-shim-"));
+  const shimDir = await mkdtemp(join(testTmpdir(), "reviewer-git-lc-shim-"));
   const lcLog = join(shimDir, "lc_all.log");
   const realGit = (await exec("which", ["git"])).stdout.trim();
   assert.ok(realGit.length > 0);

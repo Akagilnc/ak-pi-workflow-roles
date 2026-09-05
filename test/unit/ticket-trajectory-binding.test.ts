@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import {
   buildTicketTrajectoryBookIndex,
@@ -11,10 +11,11 @@ import {
 } from "../../src/ticket-trajectory.ts";
 
 async function withBookDir<T>(scenario: (ledgerDir: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-ticket-traj-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-ticket-traj-"));
   try {
     return await scenario(root);
   } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 

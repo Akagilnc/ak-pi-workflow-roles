@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -8,7 +9,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -69,10 +69,11 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-resume-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-resume-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 

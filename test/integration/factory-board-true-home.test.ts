@@ -1,8 +1,9 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #420 整改：自 test/contract/factory-board.test.ts 按性质移出（动 owner 真 home 卷宗，
 // 不属开发内环快档）。契约不变：真 home 验收 tracer（#127 已接受轨迹、活跃腿、#130 成本对账）。
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -36,7 +37,7 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     return;
   }
 
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-true-home-"));
   try {
     const ledgerDir = join(workspace, "ledger");
 
@@ -287,5 +288,6 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     assert.equal(tActive["data-last-activity-mtime-ms"], visibleAct["data-last-activity-mtime-ms"]);
     assert.equal(tActive["data-leg-age-ms"], visibleAge["data-leg-age-ms"]);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });

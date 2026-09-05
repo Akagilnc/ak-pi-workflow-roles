@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import {
   controlledGrokChildEnv,
@@ -31,7 +32,7 @@ test("real Grok isolates a personalized authenticated home while retaining AK pr
   });
   assert.ok(personalized.privateActive.length > 0, "fixture home must actually be personalized");
 
-  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-controlled-live-"));
+  const controlledHome = await mkdtemp(join(testTmpdir(), "ak-grok-controlled-live-"));
   try {
     await prepareControlledGrokHome(homedir(), controlledHome);
     const controlled = await inspectControlledGrok({
@@ -43,5 +44,6 @@ test("real Grok isolates a personalized authenticated home while retaining AK pr
     assert.deepEqual(controlled.privateActive, []);
     assert.ok(controlled.akActive.length > 0, "AK project material must remain active");
   } finally {
+    await rm(controlledHome, { recursive: true, force: true });
   }
 });

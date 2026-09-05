@@ -1,6 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { installHermesFixture } from "../helpers/hermes-fixture.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -13,7 +14,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -75,10 +75,11 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-engine-axis-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-engine-axis-"));
   try {
     return await scenario(home);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -226,7 +227,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     // (absorbed from the former dedicated unset-engine test; golden byte
     // reassertion deleted with the frozen-baseline oracle).
     {
-      const cliHome = await mkdtemp(join(tmpdir(), "ak-engine-unset-"));
+      const cliHome = await mkdtemp(join(testTmpdir(), "ak-engine-unset-"));
       try {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
@@ -245,6 +246,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
         assert.equal(unset.exitCode, 0);
         assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, undefined);
       } finally {
+        await rm(cliHome, { recursive: true, force: true });
       }
     }
   });

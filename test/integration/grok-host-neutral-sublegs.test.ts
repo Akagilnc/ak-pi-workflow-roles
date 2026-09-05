@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #590 production-deps tracers — separate contracts, shared fixtures.
  * Entry: createGrokRoleRuntimeDependencies (+ Grok envelope for doctor).
@@ -5,7 +6,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
@@ -80,7 +80,7 @@ async function withGrokRoot<T>(run: (ctx: {
   runDirectory: string;
   deps: ReturnType<typeof createGrokRoleRuntimeDependencies>;
 }) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-leg-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-leg-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
   delete process.env.AK_ROLE_ENGINE;

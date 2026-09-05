@@ -1,8 +1,8 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 // #420 整改拆分：路线记忆与重绑家族
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -24,7 +24,7 @@ import {
 // memory without createAgentSession.
 
 test("persistent model edits are immediate and have no fallback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-model-setting-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-model-setting-"));
   try {
     const path = join(root, "navigator-model.json");
     assert.equal(await readNavigatorModelSetting(path), NAVIGATOR_DEFAULT_MODEL);
@@ -45,7 +45,7 @@ test("persistent model edits are immediate and have no fallback", async () => {
 });
 
 test("future arrival is typed and presentation-only", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-arrival-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-arrival-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -168,7 +168,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
   assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
-  const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-nav-physical-"));
   try {
     const { realpathSync } = await import("node:fs");
     const physicalIssue = resolve(home, ".ak/work/issues/28");
@@ -178,6 +178,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
     assert.equal(subjectPath(session, physicalIssue), physicalIssue);
     assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
   } finally {
+    await rm(home, { recursive: true, force: true });
   }
 
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
@@ -189,7 +190,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
 });
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-dispose-race-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-dispose-race-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -242,7 +243,7 @@ test("dispose during pending createSession drains the created session without pr
 });
 
 test("attendance dispose settles session close rejection on the caller", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-attendance-close-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-attendance-close-"));
   let releasePrompt: (() => void) | undefined;
   try {
     const setting = join(root, "model.json");
@@ -391,7 +392,7 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
   ] as const;
 
   for (const row of rows) {
-    const root = await mkdtemp(join(tmpdir(), "navigator-rebind-as-is-"));
+    const root = await mkdtemp(join(testTmpdir(), "navigator-rebind-as-is-"));
     try {
       const setting = join(root, "model.json");
       await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -499,7 +500,7 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
 
 test("settlement-bound rebind that repeats divergent advice still emits recommendation as-is", async () => {
   // Former "still contradicts → unavailable" path deleted: code has no authority to discard advice.
-  const root = await mkdtemp(join(tmpdir(), "navigator-rebind-keep-divergent-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-rebind-keep-divergent-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -556,7 +557,7 @@ test("settlement-bound rebind that repeats divergent advice still emits recommen
 test("settlement-matched speculative advice is not rebound and divergent next still passes through", async () => {
   // matches keys the candidate to this settlement — not a next.role legality check.
   // Divergent next is still emitted as-is; no second prepare.
-  const root = await mkdtemp(join(tmpdir(), "navigator-matched-no-rebind-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-matched-no-rebind-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -636,7 +637,7 @@ test("status-specific route candidates outrank generics regardless of declaratio
 });
 
 test("resumed setModel and thinking failures preserve typed source and cause", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-resumed-cause-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-resumed-cause-"));
   try {
     const setting = join(root, "model.json");
     const cases = [

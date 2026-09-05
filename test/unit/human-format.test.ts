@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * Human-read formatting on the S2 board (#162).
  *
@@ -7,7 +8,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -126,7 +126,7 @@ async function writeMinimalAcceptedCoderRun(
 }
 
 test("S2 board projects full-precision machine attrs and human-formatted spans (no raw ms)", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "human-format-s2-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "human-format-s2-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -188,11 +188,12 @@ test("S2 board projects full-precision machine attrs and human-formatted spans (
     assert.notEqual(timeText[1], "2026-08-05T12:00:00.000Z", "local wall clock differs from raw ISO");
     assert.match(timeText[1]!, /\d{4}-\d{2}-\d{2}/, "local time keeps a calendar date shape");
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("S2 board formats zero/edge metric inputs without inventing machine values", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "human-format-edge-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "human-format-edge-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
@@ -223,5 +224,6 @@ test("S2 board formats zero/edge metric inputs without inventing machine values"
     const wallText = labeledText(html, "data-wall-label", "1");
     assert.ok(!wallText.includes("NaN") && !wallText.includes("Infinity"));
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });

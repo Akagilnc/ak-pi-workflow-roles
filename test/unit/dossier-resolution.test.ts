@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -17,7 +17,7 @@ import {
 // isolation contract and helper-level subject shape here.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-dossier-concurrent-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-dossier-concurrent-"));
   const previous = process.env.AK_ROLE_RUN_DIR;
   try {
     const runA = join(root, "run-a");

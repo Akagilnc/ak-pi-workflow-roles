@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -86,7 +86,7 @@ function runStamp(options: {
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "ak-publish-registry-"));
+  const root = mkdtempSync(join(testTmpdir(), "ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),
@@ -149,60 +149,48 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
     shortSha,
     useRealNpmVersion: true,
   });
-  try {
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Invalid version/i);
-    assert.equal(existsSync(join(result.root, "PWND")), false);
-    assert.equal(result.npmPath, "");
-    assert.equal(result.publishVersion, undefined);
-    // package.json must not have been stamped to the malicious identity.
-    assert.equal(result.packageVersion, "0.0.0");
-  } finally {
-  }
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Invalid version/i);
+  assert.equal(existsSync(join(result.root, "PWND")), false);
+  assert.equal(result.npmPath, "");
+  assert.equal(result.publishVersion, undefined);
+  // package.json must not have been stamped to the malicious identity.
+  assert.equal(result.packageVersion, "0.0.0");
 });
 
 test("legal missing-version publish carries next shortsha artifact identity", () => {
   const channel = "next";
   const shortSha = "abc1234";
   const result = runStamp({ channel, viewHit: false, shortSha });
-  try {
-    const expected = `0.1.9-${channel}.${shortSha}`;
-    assert.equal(result.status, 0);
-    assert.equal(result.npmPath, "publish");
-    assert.equal(result.publishVersion, expected);
-    assert.equal(result.publishTag, channel);
-    assert.equal(result.packageVersion, expected);
-    assert.equal(result.distTagPackage, undefined);
-  } finally {
-  }
+  const expected = `0.1.9-${channel}.${shortSha}`;
+  assert.equal(result.status, 0);
+  assert.equal(result.npmPath, "publish");
+  assert.equal(result.publishVersion, expected);
+  assert.equal(result.publishTag, channel);
+  assert.equal(result.packageVersion, expected);
+  assert.equal(result.distTagPackage, undefined);
 });
 
 test("legal existing-version moves next dist-tag only", () => {
   const channel = "next";
   const shortSha = "def5678";
   const result = runStamp({ channel, viewHit: true, shortSha });
-  try {
-    const expectedVersion = `0.1.9-${channel}.${shortSha}`;
-    assert.equal(result.status, 0);
-    assert.equal(result.npmPath, "dist-tag");
-    assert.equal(result.distTagPackage, `@akagilnc/pi-workflow-roles@${expectedVersion}`);
-    assert.equal(result.distTagName, channel);
-    assert.equal(result.packageVersion, expectedVersion);
-    assert.equal(result.publishTag, undefined);
-    assert.equal(result.publishVersion, undefined);
-  } finally {
-  }
+  const expectedVersion = `0.1.9-${channel}.${shortSha}`;
+  assert.equal(result.status, 0);
+  assert.equal(result.npmPath, "dist-tag");
+  assert.equal(result.distTagPackage, `@akagilnc/pi-workflow-roles@${expectedVersion}`);
+  assert.equal(result.distTagName, channel);
+  assert.equal(result.packageVersion, expectedVersion);
+  assert.equal(result.publishTag, undefined);
+  assert.equal(result.publishVersion, undefined);
 });
 
 test("latest channel publishes monotonic version without shortsha suffix", () => {
   const result = runStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" });
-  try {
-    const expected = "0.1.9";
-    assert.equal(result.status, 0);
-    assert.equal(result.npmPath, "publish");
-    assert.equal(result.publishVersion, expected);
-    assert.equal(result.publishTag, "latest");
-    assert.equal(result.packageVersion, expected);
-  } finally {
-  }
+  const expected = "0.1.9";
+  assert.equal(result.status, 0);
+  assert.equal(result.npmPath, "publish");
+  assert.equal(result.publishVersion, expected);
+  assert.equal(result.publishTag, "latest");
+  assert.equal(result.packageVersion, expected);
 });

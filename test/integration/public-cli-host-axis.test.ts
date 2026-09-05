@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -29,7 +29,7 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  const home = await mkdtemp(join(tmpdir(), "ak-host-axis-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-host-axis-"));
   await fn(home)
 }
 

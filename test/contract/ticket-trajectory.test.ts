@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * S1 single-ticket trajectory — external behavior at the unique seam
  * `(ledgerDir, ticketSnapshot, now) → HTML` and the page lifecycle entry.
@@ -10,7 +11,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -241,7 +241,7 @@ test("each run evidence link resolves to the run ledger path, with typed data-le
 });
 
 test("page lifecycle writes only outside the ledger; hard link cannot smuggle bytes back", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-out-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-out-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -356,11 +356,12 @@ test("page lifecycle writes only outside the ledger; hard link cannot smuggle by
     await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), /ENOENT/);
     await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), /ENOENT/);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("production lifecycle regenerates within refresh boundary and stops", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-live-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-live-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -430,11 +431,12 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     // Default boundary constant remains the production default (no second lifecycle tracer).
     assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerable", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-jsonl-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-jsonl-"));
   try {
     const good = join(workspace, "good.jsonl");
     const tail = join(workspace, "tail.jsonl");
@@ -564,6 +566,7 @@ test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerab
       },
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -575,7 +578,7 @@ test("empty/minimal ticket snapshot still requires issueNumber for S1 single-tic
 });
 
 test("post-start regeneration failure faults the lifecycle with the original cause", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-fault-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-fault-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -623,11 +626,12 @@ test("post-start regeneration failure faults the lifecycle with the original cau
     // stop surfaces the same original cause — no silent success.
     await assert.rejects(() => handle.stop(), (error: unknown) => error === closedError);
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("malformed invocation.json and unexpected path resolution retain their causes", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-evidence-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ticket-trajectory-evidence-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
@@ -666,5 +670,6 @@ test("malformed invocation.json and unexpected path resolution retain their caus
         (error as NodeJS.ErrnoException).code === "ELOOP",
     );
   } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });

@@ -1,3 +1,4 @@
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 /**
  * #603: published non-bundle dist graph must stay closed under relative imports.
  * After untracking committed dist, prepack rebuild is the sole inventory — every
@@ -7,7 +8,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -95,7 +95,7 @@ async function missingRelativeImports(distRoot: string): Promise<
 test(
   "fresh-build published dist relative-import graph is closed",
   async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "ak-dist-closure-"));
+    const root = await mkdtemp(resolve(testTmpdir(), "ak-dist-closure-"));
     try {
       await materializePackageTree(root, { nodeModules: "symlink" });
       await execFileAsync("npm", ["run", "build"], {
@@ -120,6 +120,7 @@ test(
         pathToFileURL(resolve(distRoot, "navigator-attendance.js")).href
       );
     } finally {
+      await rm(root, { recursive: true, force: true });
     }
   },
 );
