@@ -1,3 +1,4 @@
+// OWNER_R10_NO_DIR_DELETE_MARKER
 /**
  * Build an environment for test-owned processes without inheriting machine
  * role-ledger or Pi-home pointers. Right-hand masks survive downstream env

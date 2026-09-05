@@ -24,6 +24,7 @@ import {
 } from "../../src/grok/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -220,7 +221,6 @@ test("executeTurn resume after settle scrubs residual AK seatbelt hooks", async 
     await writeFile(binary, `#!/usr/bin/env node
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 const home = process.env.GROK_HOME ?? process.env.HOME ?? "";
 const hookPath = join(home, "hooks", "ak-bash-seatbelt.json");
 let hooks = [];

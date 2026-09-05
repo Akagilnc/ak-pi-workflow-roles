@@ -12,6 +12,7 @@ import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 

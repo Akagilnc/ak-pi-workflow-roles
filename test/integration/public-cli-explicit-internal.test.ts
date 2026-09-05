@@ -3,7 +3,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -19,6 +18,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -497,7 +497,6 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
         stub,
         `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(signal)}, "SIGTERM"); process.exit(143); });
 writeFileSync(${JSON.stringify(ready)}, "ready");
 setInterval(() => {}, 1000);
