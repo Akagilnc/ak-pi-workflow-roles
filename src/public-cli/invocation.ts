@@ -73,7 +73,7 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { loadPublicCliConfig, THINKING_LEVELS } from "./config.ts";
+import { loadPublicCliConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
   resolveInstitutionalSeatSelections,
@@ -311,7 +311,7 @@ async function writeAdmittedRequestPersistence(
 /**
  * Effective provider/model selection recorded on the invocation identity page.
  * thinking is present only when the caller/seat supplied it — bare model omits it.
- * Restored values are bounded to typed PublicThinkingLevel (never arbitrary string).
+ * Thinking is opaque pass-through (#683); no local whitelist filter on restore.
  */
 export type InvocationEffectiveModel = {
   readonly provider: string;
@@ -417,9 +417,8 @@ export async function recordEffectiveInvocationModel(
       ? {
           provider: next.provider,
           model: next.model,
-          ...(typeof next.thinking === "string" &&
-          THINKING_LEVELS.has(next.thinking as PublicThinkingLevel)
-            ? { thinking: next.thinking as PublicThinkingLevel }
+          ...(typeof next.thinking === "string"
+            ? { thinking: next.thinking }
             : {}),
         }
       : undefined;
