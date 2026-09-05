@@ -16,6 +16,7 @@ import {
   errorText,
   pathContainedIn,
   physicallyContainedIn,
+  resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 
@@ -76,6 +77,31 @@ export type CreateRecordSessionOptions = {
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
 /**
+ * Sole subject-keyed nest path under the ledger book (ADR 0048 / 0065).
+ * Callers must not re-hash subject or re-join book/kind/digest themselves.
+ */
+export function subjectKeyedRecordDirectory(input: {
+  readonly cwd: string;
+  readonly kind: string;
+  readonly subject: string;
+  /** Parent session file — home path-derives from it when present. */
+  readonly parentSessionFile?: string;
+  /** Explicit process home when no parent file is available (discovery-only). */
+  readonly home?: string;
+}): string {
+  const ledgerHome =
+    input.parentSessionFile !== undefined && input.parentSessionFile.length > 0
+      ? resolveActivationLedgerHomeForPath(input.parentSessionFile)
+      : resolveActivationLedgerHome(input.home);
+  const digest = createHash("sha256").update(input.subject).digest("hex").slice(0, 32);
+  return join(
+    activationBookDirectory(ledgerHome, resolveBookKeyFromGit(input.cwd)),
+    input.kind,
+    digest,
+  );
+}
+
+/**
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
  * invisible to that directory walk, so this runs once before SessionManager.open.
@@ -120,6 +146,13 @@ function assertRecentFinalFileUnderSessionDir(
   }
 }
 
+/** Open result including the sole resumed fact (nest existed before this open). */
+export type RecordSessionOpen = {
+  readonly session: SessionManager;
+  /** True only when an existing same-nest volume was reopened (subject/gate path). */
+  readonly resumed: boolean;
+};
+
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
@@ -133,8 +166,10 @@ function assertRecentFinalFileUnderSessionDir(
  * a sibling volume selected only by kind/cwd/mtime.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
+ *
+ * `resumed` is the sole open-or-continue fact — callers must not re-probe nest existence.
  */
-export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
+export function createRecordSessionOpen(options: CreateRecordSessionOptions): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
   // Path → ledger home is owned by topology (explicit env.home nests via parent path).
@@ -144,16 +179,18 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   let parentSession: string | undefined;
 
   if (options.subject !== undefined) {
-    const digest = createHash("sha256").update(options.subject).digest("hex").slice(0, 32);
-    sessionDir = join(
-      activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)),
-      options.kind,
-      digest,
-    );
+    sessionDir = subjectKeyedRecordDirectory({
+      cwd,
+      kind: options.kind,
+      subject: options.subject,
+      ...(parentFile === undefined || parentFile.length === 0
+        ? {}
+        : { parentSessionFile: parentFile }),
+    });
     parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
   } else if (parentFile === undefined || parentFile.length === 0) {
     // No durable parent principal — preserve prior in-memory child behavior.
-    return SessionManager.inMemory(cwd);
+    return { session: SessionManager.inMemory(cwd), resumed: false };
   } else {
     const parentResolved = resolve(parentFile);
     // Nest under parent only when the parent record already lives under the package home.
@@ -177,7 +214,10 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
   if (mayResumeSameNest && nestAlreadyExists) {
     const recentFile = readCurrentSession(sessionDir);
     assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
-    return SessionManager.open(recentFile, sessionDir, cwd);
+    return {
+      session: SessionManager.open(recentFile, sessionDir, cwd),
+      resumed: true,
+    };
   }
 
   const session = SessionManager.create(
@@ -202,5 +242,10 @@ export function createRecordSession(options: CreateRecordSessionOptions): Sessio
       writeCurrentSession(sessionDir, file);
     }
   }
-  return session;
+  return { session, resumed: false };
+}
+
+/** Session-only facade — most callers only need the manager. */
+export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
+  return createRecordSessionOpen(options).session;
 }

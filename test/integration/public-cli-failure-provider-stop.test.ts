@@ -626,6 +626,93 @@ test("#636 continuous auditor volume: parent A must not absorb B-only provider f
     );
   });
 });
+
+test("#636 continuous auditor volume: later same-user interval failure is not dropped by first match", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    // One current user turn with two assistant leaves — both bindings qualify.
+    await writeFile(
+      sessionFile,
+      [
+        { type: "session", id: "parent-session" },
+        { type: "message", id: "user-current", message: { role: "user" } },
+        { type: "message", id: "attempt-a", message: { role: "assistant" } },
+        { type: "message", id: "attempt-b", message: { role: "assistant" } },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+    await writeFile(
+      join(childDir, "continuous.jsonl"),
+      [
+        { type: "session", id: "child-session", parentSession: sessionFile },
+        {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          data: {
+            version: 1,
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-a",
+            },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "end_turn",
+            content: [{ type: "text", text: "A ok" }],
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          data: {
+            version: 1,
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-b",
+            },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "later-current-user-failure",
+            provider: "xai",
+            model: "audit-model",
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_auditor_compliance_failure",
+          data: {
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-b",
+            },
+            failure: {
+              cause: "unrecognized",
+              diagnostic: "later-current-user-failure",
+            },
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+    assert.deepEqual(await readBoundAuditorKnownFailure(sessionFile), {
+      cause: "unrecognized",
+      diagnostic: "later-current-user-failure",
+    });
+  });
+});
+
 test("bound auditor ENOTDIR evidence outranks credential in shared settlement", async () => {
   await withTempHome(async (home) => {
     const pathComponent = join(home, "not-a-directory");
