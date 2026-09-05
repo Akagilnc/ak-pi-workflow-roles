@@ -12,6 +12,7 @@ import {
   ActivationLedgerError,
   activationBookDirectory,
   ensureRealDirectoryTree,
+  errnoCode,
   errorText,
   pathContainedIn,
   physicallyContainedIn,
@@ -24,6 +25,22 @@ export { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
 type CurrentSessionRecord = { readonly sessionFile: string };
+
+/**
+ * Native errno from an error or its cause chain, skipping ActivationLedgerError's
+ * own `code = AK_ACTIVATION_LEDGER` brand so ENOENT/EEXIST on the fs cause remain visible.
+ */
+function nativeErrnoCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  while (current !== undefined && current !== null) {
+    if (!(current instanceof ActivationLedgerError)) {
+      const code = errnoCode(current);
+      if (code !== undefined) return code;
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return undefined;
+}
 
 function readCurrentSession(sessionDir: string): string {
   const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
@@ -46,16 +63,41 @@ function readCurrentSession(sessionDir: string): string {
   }
 }
 
-function writeCurrentSession(sessionDir: string, sessionFile: string): void {
+/**
+ * Exclusive first-publisher claim for the nest's current-session pointer.
+ * EEXIST means another creator already published — caller reopens the winner.
+ * Every other native failure stays fatal (failure honesty).
+ */
+function tryClaimCurrentSession(
+  sessionDir: string,
+  sessionFile: string,
+): "claimed" | "lost-to-concurrent-publisher" {
   const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
   try {
     writeFileSync(ledger, `${JSON.stringify({ sessionFile })}\n`, { flag: "wx" });
+    return "claimed";
   } catch (error) {
+    if (nativeErrnoCode(error) === "EEXIST") {
+      return "lost-to-concurrent-publisher";
+    }
     throw new ActivationLedgerError(
       `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
       { cause: error },
     );
   }
+}
+
+/** Open the published current-session principal (shared resume path). */
+function openPublishedCurrentSession(
+  sessionDir: string,
+  cwd: string,
+): RecordSessionOpen {
+  const recentFile = readCurrentSession(sessionDir);
+  assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+  return {
+    session: SessionManager.open(recentFile, sessionDir, cwd),
+    resumed: true,
+  };
 }
 
 /** Parent session surface needed to link and (when already under home) nest the record. */
@@ -180,20 +222,24 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
     parentSession = parentFile;
   }
 
-  const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
+  // Concurrent first creators share ensureRealDirectoryTree's EEXIST recovery — no
+  // existsSync→publish race on the nest directory itself.
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   // Subject-keyed nests continue by subject digest; gate durable resume is the only
   // authorized no-subject same-nest continuation. All other kinds mint fresh.
   const mayResumeSameNest =
     options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
-  if (mayResumeSameNest && nestAlreadyExists) {
-    const recentFile = readCurrentSession(sessionDir);
-    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
-    return {
-      session: SessionManager.open(recentFile, sessionDir, cwd),
-      resumed: true,
-    };
+  // Resume decision is the published current-session claim, not nest directory
+  // existence. Directory-exists / ledger-not-yet-published is a first-creator window:
+  // missing ledger → try claim; wx EEXIST → reopen the winner. Damaged ledger stays fatal.
+  if (mayResumeSameNest) {
+    try {
+      return openPublishedCurrentSession(sessionDir, cwd);
+    } catch (error) {
+      if (nativeErrnoCode(error) !== "ENOENT") throw error;
+      // Missing claim → fall through to first-publisher path.
+    }
   }
 
   const session = SessionManager.create(
@@ -215,7 +261,11 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
       }
     }
     if (mayResumeSameNest && file !== undefined) {
-      writeCurrentSession(sessionDir, file);
+      const claim = tryClaimCurrentSession(sessionDir, file);
+      if (claim === "lost-to-concurrent-publisher") {
+        // Another first creator published first — open their principal (reuse wx ownership).
+        return openPublishedCurrentSession(sessionDir, cwd);
+      }
     }
   }
   return { session, resumed: false };
