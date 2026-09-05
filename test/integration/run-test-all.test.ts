@@ -42,8 +42,10 @@ function readHostModelsHash(): string | null {
   return sha256(readFileSync(path));
 }
 
-/** Exact heavy set — independent expected literals, not runner import (#160; #685 emptied). */
-const TICKET_HEAVYWEIGHT = [] as const;
+/** Exact heavy set — independent expected literals, not runner import (#160; #685 slimmed). */
+const TICKET_HEAVYWEIGHT = [
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+] as const;
 
 type ChildRecord = {
   argv: string[];
@@ -373,7 +375,7 @@ try {
   );
 });
 
-test("runner partitions discovered universe into ordinary default-parallel; empty heavy skips second child", async () => {
+test("runner partitions discovered universe into ordinary default-parallel then heavy concurrency-2 children", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-partition-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -396,11 +398,10 @@ test("runner partitions discovered universe into ordinary default-parallel; empt
       });
 
       assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-      // #685: empty heavy manifest → ordinary child only (no concurrency=2 spawn).
-      assert.equal(result.records.length, 1, "empty heavy skips second child");
+      assert.equal(result.records.length, 2, "exactly two child invocations");
 
-      const [ordinaryChild] = result.records;
-      assert.ok(ordinaryChild);
+      const [ordinaryChild, heavyChild] = result.records;
+      assert.ok(ordinaryChild && heavyChild);
 
       assert.ok(
         ordinaryChild.argv.includes("--test"),
@@ -411,11 +412,29 @@ test("runner partitions discovered universe into ordinary default-parallel; empt
         false,
         "ordinary child must retain default parallelism (no --test-concurrency=2)",
       );
+      assert.equal(
+        hasConcurrencyTwo(heavyChild.argv),
+        true,
+        "heavy child must pass --test-concurrency=2",
+      );
 
       const ordinaryFiles = filesFromArgv(ordinaryChild.argv).sort();
+      const heavyFiles = filesFromArgv(heavyChild.argv).sort();
+      const expectedHeavy = [...TICKET_HEAVYWEIGHT].sort();
       const expectedOrdinary = [...ordinary].sort();
+
+      assert.deepEqual(heavyFiles, expectedHeavy);
       assert.deepEqual(ordinaryFiles, expectedOrdinary);
-      assert.equal(ordinaryFiles.length, files.length, "all discovered files run ordinary");
+
+      const union = new Set([...ordinaryFiles, ...heavyFiles]);
+      assert.equal(union.size, files.length, "union covers every discovered file");
+      for (const f of ordinaryFiles) {
+        assert.equal(
+          expectedHeavy.some((h) => h === f),
+          false,
+          `ordinary ${f} must not reappear in heavy`,
+        );
+      }
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -437,15 +456,21 @@ test("runner discovers the live package tree as ordinary ⊎ exact heavy manifes
       });
 
       assert.equal(result.code, 0, `stderr=${result.stderr}\nstdout=${result.stdout}`);
-      // #685: empty heavy → single ordinary child.
-      assert.equal(result.records.length, 1, "empty heavy skips second child on live tree");
+      assert.equal(result.records.length, 2);
 
       const ordinaryFiles = filesFromArgv(result.records[0]!.argv);
-      assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
-      assert.equal(TICKET_HEAVYWEIGHT.length, 0, "heavy manifest remains empty");
+      const heavyFiles = filesFromArgv(result.records[1]!.argv);
 
-      const all = [...ordinaryFiles];
+      assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
+      assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
+      assert.deepEqual([...heavyFiles].sort(), [...TICKET_HEAVYWEIGHT].sort());
+
+      const all = [...ordinaryFiles, ...heavyFiles];
       assert.equal(new Set(all).size, all.length, "no file runs twice");
+      for (const heavy of TICKET_HEAVYWEIGHT) {
+        assert.equal(ordinaryFiles.includes(heavy), false, `${heavy} must leave ordinary`);
+        assert.equal(all.filter((f) => f === heavy).length, 1);
+      }
 
       // Owning contract lives in the ordinary tier and executes exactly once via test:all.
       assert.equal(
@@ -469,15 +494,14 @@ test("runner discovers the live package tree as ordinary ⊎ exact heavy manifes
   );
 });
 
-test("runner with empty heavy manifest still discovers ordinary and spawns one child", async () => {
-  // #685: heavy emptied — missing-entry fail-closed has no heavy members to omit;
-  // keep a positive ordinary-only discovery tracer on the seeded tree.
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-empty-heavy-"));
+test("runner fails closed on missing manifest entry and does not spawn children", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-missing-"));
   await withPrimaryAwareCleanup(
     async () => {
+      // Omit the sole heavyweight file from the tree.
       const files = [
         "test/unit/one.test.ts",
-        "test/integration/light.test.ts",
+        // missing TICKET_HEAVYWEIGHT[0]
       ];
       await seedTierTree(workspace, files);
       const binDir = join(workspace, "bin");
@@ -488,9 +512,8 @@ test("runner with empty heavy manifest still discovers ordinary and spawns one c
         binDir,
         recordPath,
       });
-      assert.equal(result.code, 0, `stderr=${result.stderr}`);
-      assert.equal(result.records.length, 1, "empty heavy → one ordinary child");
-      assert.deepEqual(filesFromArgv(result.records[0]!.argv).sort(), [...files].sort());
+      assert.notEqual(result.code, 0, "missing manifest entry must fail");
+      assert.equal(result.records.length, 0, "must not spawn test children");
     },
     async () => {
       await rm(workspace, { recursive: true, force: true });
@@ -498,7 +521,7 @@ test("runner with empty heavy manifest still discovers ordinary and spawns one c
   );
 });
 
-test("runner propagates ordinary child non-zero exits honestly", async () => {
+test("runner propagates ordinary and heavy child non-zero exits honestly", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-exit-"));
   await withPrimaryAwareCleanup(
     async () => {
@@ -510,18 +533,32 @@ test("runner propagates ordinary child non-zero exits honestly", async () => {
       const binDir = join(workspace, "bin");
       await writePathNodeShim(binDir);
 
-      // Ordinary fails: fail-fast, exit preserved. Empty heavy never spawns.
+      // Ordinary fails: fail-fast, no heavy child, exit preserved.
       {
         const recordPath = join(workspace, "ord-fail.jsonl");
         const result = await runRunner({
           cwd: workspace,
           binDir,
           recordPath,
-          childExits: "7",
+          childExits: "7,0",
         });
         assert.equal(result.code, 7, `ordinary failure must surface; stderr=${result.stderr}`);
         assert.equal(result.records.length, 1, "fail-fast after ordinary non-zero");
         assert.equal(hasConcurrencyTwo(result.records[0]!.argv), false);
+      }
+
+      // Ordinary ok, heavy fails: heavy exit preserved.
+      {
+        const recordPath = join(workspace, "heavy-fail.jsonl");
+        const result = await runRunner({
+          cwd: workspace,
+          binDir,
+          recordPath,
+          childExits: "0,5",
+        });
+        assert.equal(result.code, 5, `heavy failure must surface; stderr=${result.stderr}`);
+        assert.equal(result.records.length, 2);
+        assert.equal(hasConcurrencyTwo(result.records[1]!.argv), true);
       }
     },
     async () => {
