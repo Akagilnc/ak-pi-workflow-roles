@@ -59,6 +59,16 @@ export type CollectorEvidenceRecord = {
   authoritativeTime?: string | null;
 };
 
+/** #676 C: structured projection facts on the sealed receipt. */
+export type CollectorSubmissionProjection = {
+  findingsSource: "absent" | "array" | "unreadable";
+  findingsProjectedCount: number;
+  findingsUnprojected: boolean;
+  unfinishedReasonsSource: "absent" | "array" | "unreadable";
+  unfinishedReasonsProjectedCount: number;
+  unfinishedReasonsUnprojected: boolean;
+};
+
 export type CollectorReceipt = {
   host: "github.com";
   repository: string;
@@ -73,6 +83,8 @@ export type CollectorReceipt = {
   targetHead: string;
   groups: CollectorIdentityGroup[];
   unfinishedReasons?: string[];
+  /** Distinguishes readable-empty from unprojected original submission content (#676 C). */
+  submissionProjection?: CollectorSubmissionProjection;
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorEvidenceRecord[];
@@ -102,6 +114,30 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
   }));
   const unfinishedRaw = safeGet(value, "unfinishedReasons");
   const unfinishedReasons = strings(unfinishedRaw);
+  const projectionRaw = safeGet(value, "submissionProjection");
+  let submissionProjection: CollectorSubmissionProjection | undefined;
+  if (projectionRaw !== null && typeof projectionRaw === "object" && !Array.isArray(projectionRaw)) {
+    const p = projectionRaw as Record<string, unknown>;
+    const findingsSource = p["findingsSource"];
+    const unfinishedSource = p["unfinishedReasonsSource"];
+    if (
+      (findingsSource === "absent" || findingsSource === "array" || findingsSource === "unreadable") &&
+      (unfinishedSource === "absent" || unfinishedSource === "array" || unfinishedSource === "unreadable") &&
+      typeof p["findingsProjectedCount"] === "number" &&
+      typeof p["findingsUnprojected"] === "boolean" &&
+      typeof p["unfinishedReasonsProjectedCount"] === "number" &&
+      typeof p["unfinishedReasonsUnprojected"] === "boolean"
+    ) {
+      submissionProjection = {
+        findingsSource,
+        findingsProjectedCount: p["findingsProjectedCount"],
+        findingsUnprojected: p["findingsUnprojected"],
+        unfinishedReasonsSource: unfinishedSource,
+        unfinishedReasonsProjectedCount: p["unfinishedReasonsProjectedCount"],
+        unfinishedReasonsUnprojected: p["unfinishedReasonsUnprojected"],
+      };
+    }
+  }
   return {
     host: safeGet(value, "host") as "github.com",
     repository: safeGet(value, "repository") as string,
@@ -115,6 +151,7 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     targetHead: safeGet(value, "targetHead") as string,
     groups,
     ...(unfinishedReasons.length > 0 ? { unfinishedReasons } : {}),
+    ...(submissionProjection === undefined ? {} : { submissionProjection }),
     requestAttempts: records(safeGet(value, "requestAttempts")) as unknown as CollectorRequestAttempt[],
     snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
       snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),

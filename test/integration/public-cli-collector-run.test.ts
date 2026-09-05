@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
@@ -183,11 +183,12 @@ else process.exit(2);
 
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "CLOSED");
+      // REST merged:true + state:closed must project MERGED through normalize → receipt → Terminal.
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "MERGED");
       const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
       assert.ok(reportPath);
       const report = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: any };
-      assert.equal(report.receipt.prState, "CLOSED");
+      assert.equal(report.receipt.prState, "MERGED");
       assert.equal(report.receipt.requestAttempts.length, 0);
       assert.ok(report.receipt.groups.some((group: any) => group.findings.length >= 1));
       assert.ok(
@@ -196,7 +197,7 @@ else process.exit(2);
         ),
       );
       const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-      assert.equal(calls.some((call: any) => call.method === "POST"), false, "closed PR must not POST");
+      assert.equal(calls.some((call: any) => call.method === "POST"), false, "merged PR must not POST");
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }
@@ -298,7 +299,7 @@ process.exit(2);
   });
 });
 
-test("#676 D1 public Collector resolves fork head and unique branch PR without guessing", { timeout: 120_000 }, async () => {
+test("#676 D1 public Collector resolves fork head via merge ref (local≠upstream name) without wrong lock", { timeout: 120_000 }, async () => {
   await withHermeticHome({ prefix: "ak-public-collector-branch-" }, async ({ home }) => {
     const project = resolve(home, "work");
     const agentDir = resolve(home, ".pi", "agent");
@@ -307,11 +308,11 @@ test("#676 D1 public Collector resolves fork head and unique branch PR without g
     await mkdir(agentDir, { recursive: true });
     await mkdir(binDir, { recursive: true });
     seedProject(project);
-    execFileSync("git", ["checkout", "-b", "codex/issue-676"], { cwd: project });
-    // Contributor fork remote as upstream of the working branch (base repo stays origin).
+    // Local branch name differs from upstream head ref — must use merge ref, not local name.
+    execFileSync("git", ["checkout", "-b", "local-work-name"], { cwd: project });
     execFileSync("git", ["remote", "add", "fork", "https://github.com/contributor/widgets.git"], { cwd: project });
-    execFileSync("git", ["config", "branch.codex/issue-676.remote", "fork"], { cwd: project });
-    execFileSync("git", ["config", "branch.codex/issue-676.merge", "refs/heads/codex/issue-676"], { cwd: project });
+    execFileSync("git", ["config", "branch.local-work-name.remote", "fork"], { cwd: project });
+    execFileSync("git", ["config", "branch.local-work-name.merge", "refs/heads/codex/issue-676"], { cwd: project });
 
     const logPath = resolve(home, "gh-calls.jsonl");
     const gh = resolve(binDir, "gh");
@@ -322,13 +323,17 @@ const methodIdx=args.indexOf('-X'); const method=methodIdx>=0?args[methodIdx+1]:
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({method,path})+'\\n');
 if(method==='POST'){ process.stderr.write('unexpected-post'); process.exit(3); }
 function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+const decoded=decodeURIComponent(path);
 if(path.endsWith('/user')) ok({login:'collector-fixture'});
 else if(path.includes('pulls?head=') || (path.includes('/pulls?') && path.includes('head='))) {
-  if(path.includes('contributor') || decodeURIComponent(path).includes('contributor:')) ok([{number:6761,head:{ref:'codex/issue-676'}}]);
+  // Wrong lock trap: local branch name uniquely hits a decoy PR if used as headRef.
+  if(decoded.includes('contributor:local-work-name')) ok([{number:9999,head:{ref:'local-work-name'}}]);
+  else if(decoded.includes('contributor:codex/issue-676') || path.includes(encodeURIComponent('contributor:codex/issue-676'))) ok([{number:6761,head:{ref:'codex/issue-676'}}]);
   else ok([]);
 }
 else if(path.includes('/commits/') && path.endsWith('/pulls')) ok([]);
 else if(path.includes('/pulls/6761')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:6761,state:'open',head:{sha:'branchhead'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/6761'});
+else if(path.includes('/pulls/9999')) { process.stderr.write('decoy-pr-locked'); process.exit(4); }
 else if(path.includes('/reviews')) ok([{id:61,user:{login:'chatgpt-codex-connector[bot]',type:'Bot',id:199175422},state:'COMMENTED',body:'branch-resolved finding',commit_id:'branchhead',submitted_at:'2026-01-01T00:01:00Z',html_url:'https://github.com/acme/widgets/pull/6761#pullrequestreview-61'}]);
 else if(path.includes('/comments')||path.includes('/reactions')) ok([]);
 else process.exit(2);
@@ -341,7 +346,7 @@ else process.exit(2);
       const result = await runAkRole([
         "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
         "--project", project, "--repo", "acme/widgets",
-        "Resolve fork branch target and collect.",
+        "Resolve fork branch target for issue 676 and collect.",
       ], {
         packageRoot, home, agentDir, cwd: project,
         createRunId: () => "public-collector-branch",
@@ -367,8 +372,13 @@ else process.exit(2);
       const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
       assert.equal(calls.some((call: any) => call.method === "POST"), false);
       assert.ok(
-        calls.some((call: any) => typeof call.path === "string" && (call.path.includes("contributor") || decodeURIComponent(call.path).includes("contributor:"))),
-        "fork head owner must appear in lookup path",
+        calls.some((call: any) => typeof call.path === "string" && decodeURIComponent(call.path).includes("contributor:codex/issue-676")),
+        "upstream merge ref must appear in head lookup path",
+      );
+      assert.equal(
+        calls.some((call: any) => typeof call.path === "string" && decodeURIComponent(call.path).includes("contributor:local-work-name")),
+        false,
+        "local branch name must not be used as headRef when merge ref differs",
       );
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
@@ -376,7 +386,7 @@ else process.exit(2);
   });
 });
 
-test("#676 D1 target lookup infrastructure failure is not washed into usage exit 2", { timeout: 30_000 }, async () => {
+test("#676 D1/B target lookup and git failures keep true cause on non-usage exit", { timeout: 30_000 }, async () => {
   await withHermeticHome({ prefix: "ak-public-collector-infra-" }, async ({ home }) => {
     const project = resolve(home, "work");
     const agentDir = resolve(home, ".pi", "agent");
@@ -388,9 +398,9 @@ test("#676 D1 target lookup infrastructure failure is not washed into usage exit
     execFileSync("git", ["checkout", "-b", "feature/lookup-fail"], { cwd: project });
 
     const gh = resolve(binDir, "gh");
+    // HTTP-shaped failure with body — cause must reach stderr (not name/message only).
     await writeFile(gh, `#!/usr/bin/env node
-process.stderr.write('gh simulated transport failure\\n');
-process.exit(1);
+process.stdout.write('HTTP/1.1 502 Bad Gateway\\r\\ncontent-type: application/json\\r\\nx-github-request-id: req-676-diag\\r\\n\\r\\n'+JSON.stringify({message:'upstream broken',documentation_url:'https://docs.github.com'}));
 `, "utf8");
     await chmod(gh, 0o755);
 
@@ -412,8 +422,31 @@ process.exit(1);
       });
       assert.notEqual(result.exitCode, 2, stderr.join(""));
       assert.equal(result.exitCode, 1, stderr.join(""));
-      assert.match(stderr.join(""), /lookup|gh api failed|HTTP|transport|failed/i);
+      const diagnostic = stderr.join("");
+      // Structured diagnostic channel: HTTP status + body facts, not wording laundry list.
+      assert.ok(diagnostic.includes("502"), `HTTP status must reach caller: ${diagnostic}`);
+      assert.ok(diagnostic.includes("upstream broken"), `HTTP body must reach caller: ${diagnostic}`);
       assert.equal(result.terminal, undefined);
+
+      // Git failure classification: destroy .git so rev-parse fails — must not be exit 2 ambiguity.
+      await rm(resolve(project, ".git"), { recursive: true, force: true });
+      const gitStderr: string[] = [];
+      const gitFail = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets",
+        "Git failure must not be labeled ambiguous.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-git-fail",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 30_000,
+        io: { stdout() {}, stderr: (text) => gitStderr.push(text) },
+      });
+      assert.notEqual(gitFail.exitCode, 2, gitStderr.join(""));
+      assert.equal(gitFail.exitCode, 1, gitStderr.join(""));
+      assert.ok(gitStderr.join("").includes("collector git failed"), gitStderr.join(""));
+      assert.equal(gitFail.terminal, undefined);
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }

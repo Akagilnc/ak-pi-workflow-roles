@@ -1,7 +1,9 @@
 /**
  * #676 D1: Collector admission target recognition.
- * Explicit PR wins; otherwise resolve a unique PR from branch/HEAD online association.
- * Zero or many candidates → require the caller to clarify. No guessing.
+ * Explicit PR wins; otherwise resolve a unique PR from branch upstream head and/or
+ * current HEAD online association. Zero or many candidates → require the caller to
+ * clarify. No guessing. Git/config/transport failures keep true cause (not washed
+ * into target ambiguity).
  */
 import { execFileSync } from "node:child_process";
 
@@ -27,6 +29,13 @@ function ambiguousTarget(detail: string, cause?: unknown): never {
   );
 }
 
+/** Real git failure — not target ambiguity. Propagates with true cause on exit 1. */
+function gitFailure(detail: string, cause: unknown): never {
+  throw new Error(`collector git failed: ${detail}`, {
+    cause: cause instanceof Error ? cause : new Error(String(cause)),
+  });
+}
+
 function gitText(projectRoot: string, args: readonly string[]): string {
   return execFileSync("git", [...args], {
     cwd: projectRoot,
@@ -35,11 +44,18 @@ function gitText(projectRoot: string, args: readonly string[]): string {
   }).trim();
 }
 
+/** git config --get exit 1 = key absent; other failures keep true cause. */
+function isGitConfigMissing(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return status === 1;
+}
+
 function readCurrentBranch(projectRoot: string): string {
   try {
     return gitText(projectRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
   } catch (error) {
-    ambiguousTarget("cannot read current git branch", error);
+    gitFailure("cannot read current git branch", error);
   }
 }
 
@@ -47,7 +63,7 @@ function readHeadSha(projectRoot: string): string {
   try {
     return gitText(projectRoot, ["rev-parse", "HEAD"]);
   } catch (error) {
-    ambiguousTarget("cannot read current HEAD", error);
+    gitFailure("cannot read current HEAD", error);
   }
 }
 
@@ -71,30 +87,70 @@ function ownerFromGitHubRemoteUrl(remoteUrl: string): string | undefined {
 }
 
 /**
- * Real head-owner context from the branch upstream remote when configured.
- * Reads branch.<name>.remote (+ merge) first so a configured fork remote counts
- * even before the remote-tracking ref is fetched; does not assume base owner.
+ * Head ref short name from branch.<name>.merge (refs/heads/<ref> or bare ref).
+ * Non-heads merge forms are not a structured head binding.
  */
-function readUpstreamHeadOwner(projectRoot: string, branch: string): string | undefined {
-  try {
-    const remote = gitText(projectRoot, ["config", "--get", `branch.${branch}.remote`]);
-    if (remote.length === 0) return undefined;
-    // merge must be present for a real upstream binding; otherwise ignore.
-    const merge = gitText(projectRoot, ["config", "--get", `branch.${branch}.merge`]);
-    if (merge.length === 0) return undefined;
-    const remoteUrl = gitText(projectRoot, ["remote", "get-url", remote]);
-    return ownerFromGitHubRemoteUrl(remoteUrl);
-  } catch {
-    return undefined;
+function headRefFromMerge(merge: string): string | undefined {
+  const trimmed = merge.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.startsWith("refs/heads/")) {
+    const ref = trimmed.slice("refs/heads/".length);
+    return ref.length > 0 ? ref : undefined;
   }
+  // Reject other refs/* (e.g. refs/remotes/…) — not a PR head ref binding.
+  if (trimmed.startsWith("refs/")) return undefined;
+  return trimmed;
+}
+
+/**
+ * Real upstream head owner + head ref from branch.<name>.remote/merge when configured.
+ * Missing config keys = not configured (undefined). Config/remote execution failures
+ * throw with true cause — never swallowed as "no upstream, keep fallback".
+ */
+function readUpstreamHeadBinding(
+  projectRoot: string,
+  branch: string,
+): { readonly headOwner: string; readonly headRef: string } | undefined {
+  let remote: string | undefined;
+  try {
+    remote = gitText(projectRoot, ["config", "--get", `branch.${branch}.remote`]);
+  } catch (error) {
+    if (isGitConfigMissing(error)) remote = undefined;
+    else gitFailure(`cannot read branch.${branch}.remote`, error);
+  }
+  if (remote === undefined || remote.length === 0) return undefined;
+
+  let merge: string | undefined;
+  try {
+    merge = gitText(projectRoot, ["config", "--get", `branch.${branch}.merge`]);
+  } catch (error) {
+    if (isGitConfigMissing(error)) merge = undefined;
+    else gitFailure(`cannot read branch.${branch}.merge`, error);
+  }
+  if (merge === undefined || merge.length === 0) return undefined;
+
+  const headRef = headRefFromMerge(merge);
+  if (headRef === undefined) return undefined;
+
+  let remoteUrl: string;
+  try {
+    remoteUrl = gitText(projectRoot, ["remote", "get-url", remote]);
+  } catch (error) {
+    gitFailure(`cannot read remote URL for ${remote}`, error);
+  }
+  const headOwner = ownerFromGitHubRemoteUrl(remoteUrl);
+  if (headOwner === undefined) return undefined;
+  return { headOwner, headRef };
 }
 
 /**
  * Resolve the Collector PR target without guessing.
  * - Explicit `--pr` → that number.
- * - Otherwise: unique PR from branch upstream head owner and/or current HEAD commit association.
+ * - Otherwise: unique PR from structured upstream head owner:ref and/or HEAD commit association.
  * - 0 or >1 candidates, detached HEAD → require explicit `--pr` (CliUsageError).
- * - Transport/HTTP/JSON failures propagate with true cause (not washed into ambiguity).
+ * - Git/config/transport/HTTP/JSON failures propagate with true cause (not washed into ambiguity).
+ * - Never use base-owner:local-branch as sole target basis; never lock a wrong unique head hit
+ *   by skipping commit association after a misread local branch name.
  */
 export async function resolveCollectorTarget(
   input: ResolveCollectorTargetInput,
@@ -111,38 +167,28 @@ export async function resolveCollectorTarget(
   const headSha = readHeadSha(input.projectRoot);
   const runner = createGhApiRunner();
   const { owner, repo } = input.repository;
-  const headOwner = readUpstreamHeadOwner(input.projectRoot, branch);
+  const upstream = readUpstreamHeadBinding(input.projectRoot, branch);
 
   const numbers: number[] = [];
-  // Prefer structured head owner:ref when branch upstream names the real head owner (fork-safe).
-  if (headOwner !== undefined) {
+  // Prefer structured head owner:ref from real upstream merge binding (fork-safe; local≠upstream name).
+  if (upstream !== undefined) {
     numbers.push(
       ...(await listPullRequestNumbersByHead(runner, {
         owner,
         repo,
-        headOwner,
-        headRef: branch,
+        headOwner: upstream.headOwner,
+        headRef: upstream.headRef,
       })),
     );
   }
   // Commit association covers same-repo and fork PRs that contain the current HEAD.
+  // Always available when head lookup is empty — never base-owner:local-branch as sole basis.
   if (numbers.length === 0) {
     numbers.push(
       ...(await listPullRequestNumbersByCommit(runner, {
         owner,
         repo,
         commitSha: headSha,
-      })),
-    );
-  }
-  // Last resort: base-owner head filter only when no upstream head owner was available.
-  if (numbers.length === 0 && headOwner === undefined) {
-    numbers.push(
-      ...(await listPullRequestNumbersByHead(runner, {
-        owner,
-        repo,
-        headOwner: owner,
-        headRef: branch,
       })),
     );
   }

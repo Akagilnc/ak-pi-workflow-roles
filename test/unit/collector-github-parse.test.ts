@@ -20,6 +20,24 @@ test("normalize helpers accept OPEN and valid review states and reject missing h
   });
   assert.equal(pr.state, "OPEN");
   assert.equal(pr.headOid, "fff");
+  // GitHub REST: merged PRs keep state=closed + merged/merged_at — project MERGED.
+  const merged = normalizePullRequest({
+    number: 9,
+    state: "closed",
+    merged: true,
+    merged_at: "2026-01-01T00:00:00Z",
+    head: { sha: "abc" },
+    html_url: "https://github.com/a/b/pull/9",
+  });
+  assert.equal(merged.state, "MERGED");
+  const closedOnly = normalizePullRequest({
+    number: 8,
+    state: "closed",
+    merged: false,
+    head: { sha: "def" },
+    html_url: "https://github.com/a/b/pull/8",
+  });
+  assert.equal(closedOnly.state, "CLOSED");
   assert.throws(
     () => normalizePullRequest({ number: 1, state: "open", head: {} }),
     /head\.sha/,

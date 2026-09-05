@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import { COLLECTOR_ELIGIBILITY_MS } from "./collector-evidence.ts";
+import { openToolObject } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
@@ -15,31 +16,32 @@ export const collectorWaitArgsSchema = Type.Object({
 }, { additionalProperties: false });
 
 /**
- * #641 chain① / #676 D6: the collector LLM does the splitting/classification.
- * Findings are pointer refs into stored evidence; runtime enriches machine locators.
- * category = short label (not the summary); summary = finding abstract for the caller;
- * neither is a body transcription. Schema is guidance — runtime does not pure-shape-reject.
+ * #641 chain① / #676 D6 / ADR 0057: collector LLM does splitting/classification.
+ * Field declarations + descriptions are guidance for the model — host must not
+ * pure-shape-reject the envelope (第 0 条 / ADR 0057). Runtime binds resolvable
+ * evidence pointers only; unprojected content stays distinguishable on the receipt.
+ *
+ * findings item guidance (not a host gate): evidenceId pointer into observe materials;
+ * optional category (short label, not summary); optional summary (finding abstract);
+ * open the body via ak_collector_read when the head excerpt is insufficient.
  */
-export const collectorFindingArgsSchema = Type.Object({
-  evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
-  category: Type.Optional(Type.String({ maxLength: 200, description: "该 finding 的简短归类标签（不是摘要）；需要头部之外的正文时先用 ak_collector_read 开卷再判读，不得誊写评论正文" })),
-  summary: Type.Optional(Type.String({ maxLength: 2000, description: "该 finding 的摘要：哪个 bot、什么问题；不要求誊抄全部原文，证据位置由 runtime 从指针补全" })),
-}, { additionalProperties: false });
-
-export const collectorOutputBaseSchema = Type.Object({
-  findings: Type.Optional(Type.Array(collectorFindingArgsSchema, {
-    description: "本次收集到的逐条 findings；零 finding 的模板通知不得进入。正常完工无 finding 时省略。",
-  })),
-  unfinishedReasons: Type.Optional(Type.Array(Type.String({ maxLength: 2000 }), {
-    description: "未完成原因（额度/故障/等待届满等现场依据）；不得把未完成表述为无问题。无可报告时省略。",
-  })),
-}, { additionalProperties: true, description: "正常完工提交空对象 {}；仅在基础设施真实失败时才填写 infrastructureFailure，无失败时必须省略该字段。" });
+export const collectorOutputBaseSchema = openToolObject(
+  Type.Object({
+    findings: Type.Unknown({
+      description:
+        "本次收集到的逐条 findings（指针数组为规范形）。每条：evidenceId（observe 返回的材料指针，必填语义）、可选 category（简短归类标签，不是摘要）、可选 summary（哪个 bot、什么问题的摘要；不誊抄正文）。零 finding 的模板通知不得进入；正常完工无 finding 时省略。形状指引，非 schema 闸。",
+    }),
+    unfinishedReasons: Type.Unknown({
+      description:
+        "未完成原因字符串数组（额度/故障/等待届满等现场依据）；不得把未完成表述为无问题。无可报告时省略。形状指引，非 schema 闸。",
+    }),
+  }),
+);
 
 /** Runtime owns the observed evidence; the model submits findings and signals sole-final submission. */
 export const collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
   collectorOutputBaseSchema,
 );
-(collectorOutputArgsSchema as unknown as { required: string[] }).required = [];
 
 export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;
