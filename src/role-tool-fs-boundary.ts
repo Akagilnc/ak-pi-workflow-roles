@@ -1,19 +1,18 @@
 /**
  * Role tool filesystem boundary (#692).
- * One layer: write/delete/move only inside workspace + process temp (symlink-
- * component realpath). Ordinary bash/edit/write → block call, run continues.
- * Detour → fail whole run (ADR 0071). Reads unrestricted. Unprovable bash/detour
- * mutation is fail-closed (no regex arms race). Ledger/host IO out of scope.
+ *
+ * One layer at the shared-envelope tool seam:
+ * - edit/write: path must land in workspace or process temp (symlink-component realpath).
+ * - bash: fail-closed. Only (a) strict read-only simple commands with no shell
+ *   metacharacters, or (b) simple mutation verbs/redirects whose every concrete
+ *   literal path resolves inside bounds. Everything else is denied — no wrapper
+ *   allowlist arms race, no “unknown exe + path-looking args” pass.
+ * - detour: same bash rules on script bodies; opaque engines only when OS write
+ *   sandbox confines (Darwin). Reads unrestricted. Ledger/host IO out of scope.
  */
 import { lstatSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  sep,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 
 import {
   pathContainedIn,
@@ -34,41 +33,33 @@ export type RoleToolFsBoundaryViolation = Readonly<{
   reason: string;
 }>;
 
-const MUTATION_COMMANDS = new Set([
+/** Verbs that may mutate when given path operands / redirects. */
+const MUTATION_VERBS = new Set([
   "rm", "rmdir", "unlink", "mv", "cp", "ln", "install", "truncate", "dd",
   "touch", "mkdir", "tee", "shred", "chmod", "chown", "chgrp",
 ]);
 
 /**
- * Verbs that are proven read-only when used without redirects / expansion.
- * Anything else is treated as a potential mutation (fail-closed).
+ * Verbs that are read-only only as a single simple command with no shell
+ * metacharacters and no write flags (sed -i / find -delete / git config set).
  */
-const READ_ONLY_COMMANDS = new Set([
+const READ_ONLY_VERBS = new Set([
   "cat", "head", "tail", "less", "more", "ls", "ll", "dir",
   "find", "grep", "egrep", "fgrep", "rg", "ag", "ack",
   "wc", "stat", "file", "diff", "cmp", "md5", "md5sum", "sha256sum",
   "echo", "printf", "true", "false", "test", "[",
   "pwd", "which", "type", "printenv",
   "date", "whoami", "id", "uname", "hostname", "basename", "dirname",
-  "realpath", "readlink", "git", "jq", "yq", "sort", "uniq", "cut",
-  "tr", "awk", "sed", // sed without -i is read-only; -i caught below
-  "sleep", "seq", "cal", "df", "du", "free", "ps",
+  "realpath", "readlink", "jq", "yq", "sort", "uniq", "cut", "tr", "awk", "sed",
+  "sleep", "seq", "cal", "df", "du", "free", "ps", "git",
 ]);
 
-/** Prefix wrappers: peel and reassess the remaining command (never "read-only" alone). */
-const COMMAND_WRAPPERS = new Set([
-  "command", "env", "nice", "nohup", "time", "timeout", "ionice", "stdbuf",
-]);
-
-/** Always-unprovable carriers (stdin/argv fan-out). */
-const UNPROVABLE_CARRIERS = new Set([
-  "xargs", "parallel", "watch", "su", "sudo", "script", "expect",
-]);
-
-/** Shell expansion / glob / brace / tilde / subshell — cannot prove concrete targets. */
-function hasUnprovableShellExpansion(command: string): boolean {
-  return /\$|`|\*|\?|~|\$\(|\$\{|\{[^}\s]*,[^}]*\}/.test(command);
-}
+/**
+ * Any of these in the command string means the shell can embed unprovable work
+ * (substitution, background, pipeline, brace, etc.). Strict read-only and
+ * simple-mutation paths both reject them.
+ */
+const SHELL_META = /\$|`|;|\||&|\n|\r|\(|\)|\{|\}|<|>|~|\*|\?/;
 
 export function defaultRoleToolFsBoundaryRoots(cwd: string): RoleToolFsBoundaryRoots {
   return {
@@ -104,22 +95,16 @@ export function roleToolFsBoundaryDenyReason(
 
 /**
  * Resolve a user path with symlink components followed left-to-right.
- * Does NOT lexically collapse `..` before following (closes W/link/../escape).
+ * Does NOT lexically collapse `..` before following (closes link/../escape).
  */
 export function resolveMutationPath(raw: string, cwd: string): string {
   const expanded = expandUserHome(raw);
-  // Never lexically collapse `..` before symlink follow. Relative inputs are
-  // appended as literal components under real cwd (closes link/../escape).
   const absolute = isAbsolute(expanded)
-    ? expandAbsoluteLexical(expanded)
+    ? expanded.replace(/\/{2,}/g, "/")
     : appendRelativePreservingDots(physicalPathIdentity(cwd), expanded);
   return followComponents(absolute);
 }
 
-/**
- * Assess bash/edit/write. Undefined = allow.
- * Bash: fail-closed on unprovable mutation; proven outside targets denied.
- */
 export function assessRoleToolFsBoundary(input: {
   readonly toolName: string;
   readonly toolInput: Record<string, unknown>;
@@ -142,7 +127,6 @@ export function assessRoleToolFsBoundary(input: {
   return assessBashCommand(command, input.cwd, roots, "bash");
 }
 
-/** Detour argv: same fail-closed mutation rules; exe path itself may live outside. */
 export function assessDetourArgvFsBoundary(input: {
   readonly argv: readonly string[];
   readonly cwd: string;
@@ -153,36 +137,23 @@ export function assessDetourArgvFsBoundary(input: {
   const exe = basename(input.argv[0] ?? "");
   const rest = input.argv.slice(1);
 
-  if (MUTATION_COMMANDS.has(exe)) {
+  if (MUTATION_VERBS.has(exe)) {
     const targets = rest.filter((t) => t !== "--" && !(t.startsWith("-") && t !== "-"));
-    if (targets.length === 0) {
-      return {
-        code: ROLE_TOOL_FS_BOUNDARY_CODE,
-        toolName: "ak_engine_detour",
-        paths: [],
-        reason: roleToolFsBoundaryDenyReason("ak_engine_detour", []),
-      };
+    if (targets.length === 0 || targets.some((t) => SHELL_META.test(t))) {
+      return denyUnprovable("ak_engine_detour");
     }
-    return denyIfOutside("ak_engine_detour", targets, input.cwd, roots);
+    return denyIfOutside("ak_engine_detour", targets, input.cwd, roots)
+      ?? undefined;
   }
 
-  const bodies = scriptBodiesFromArgv(exe, rest);
-  if (bodies.length === 0) {
-    // Opaque engine: only safe when OS write sandbox confines the child (Darwin).
-    // Without a real-IO sandbox, fail closed — no host-native sandbox in-tree.
-    if (process.platform === "darwin") return undefined;
-    return {
-      code: ROLE_TOOL_FS_BOUNDARY_CODE,
-      toolName: "ak_engine_detour",
-      paths: [],
-      reason: roleToolFsBoundaryDenyReason("ak_engine_detour", []),
-    };
+  const body = scriptBodyFromArgv(exe, rest);
+  if (body !== undefined) {
+    return assessBashCommand(body, input.cwd, roots, "ak_engine_detour");
   }
-  for (const body of bodies) {
-    const hit = assessBashCommand(body, input.cwd, roots, "ak_engine_detour");
-    if (hit !== undefined) return hit;
-  }
-  return undefined;
+
+  // Opaque engine binary: only when OS write sandbox confines the child.
+  if (process.platform === "darwin") return undefined;
+  return denyUnprovable("ak_engine_detour");
 }
 
 function assessBashCommand(
@@ -191,123 +162,111 @@ function assessBashCommand(
   roots: RoleToolFsBoundaryRoots,
   toolName: string,
 ): RoleToolFsBoundaryViolation | undefined {
-  // Peel outer wrappers (command/env/...) and reassess the inner command.
-  const peeled = peelCommandWrappers(command);
-  if (peeled !== command) {
-    return assessBashCommand(peeled, cwd, roots, toolName);
-  }
+  const trimmed = command.trim();
+  if (trimmed.length === 0) return undefined;
 
-  // Always assess nested shell -c bodies first (bash -c 'rm P', etc.).
-  for (const body of extractNestedShellBodies(command)) {
+  // Nested bash -c / -lc bodies: assess body; outer is still not a free pass.
+  for (const body of extractNestedShellBodies(trimmed)) {
     const hit = assessBashCommand(body, cwd, roots, toolName);
     if (hit !== undefined) return hit;
   }
 
-  // Nested shell without extractable -c body → fail closed.
-  if (/\b(?:bash|sh|zsh|dash|ksh)\b/.test(command) && extractNestedShellBodies(command).length === 0) {
-    const trimmed = command.trim();
-    if (!/^(?:\S*\/)?(?:bash|sh|zsh|dash|ksh)\s*$/.test(trimmed)) {
-      return denyUnprovable(toolName);
+  // Strict read-only: one simple command, allowlisted verb, zero shell meta.
+  if (isStrictReadOnly(trimmed)) return undefined;
+
+  // Simple mutation: mutation verb and/or redirects with only concrete literal paths.
+  const mutation = trySimpleConcreteMutation(trimmed, cwd, roots, toolName);
+  if (mutation !== "not-simple") return mutation;
+
+  return denyUnprovable(toolName);
+}
+
+function isStrictReadOnly(command: string): boolean {
+  if (SHELL_META.test(command)) return false;
+  if (/>>?/.test(command)) return false;
+  const tokens = tokenizeShell(command);
+  let idx = 0;
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+  if (idx >= tokens.length) return false;
+  const verb = basename(tokens[idx]!);
+  if (!READ_ONLY_VERBS.has(verb)) return false;
+  if (verb === "find" && /(?:-delete|-exec\b|-fprint)/.test(command)) return false;
+  if (verb === "sed" && /(?:^|\s)-[a-zA-Z]*i[a-zA-Z]*(?:\s|$)/.test(command)) return false;
+  if (verb === "git") {
+    const args = tokens.slice(idx + 1);
+    const sub = args.find((a) => !a.startsWith("-"));
+    if (sub === undefined) return true;
+    const reads = new Set([
+      "status", "log", "diff", "show", "rev-parse", "rev-list",
+      "branch", "tag", "remote", "ls-files", "ls-tree", "cat-file",
+      "describe", "blame", "shortlog", "help", "version",
+    ]);
+    if (sub === "config") {
+      return args.some((a) => a === "--list" || a === "--get" || a === "-l" || a === "--get-regexp");
+    }
+    return reads.has(sub);
+  }
+  // Remaining tokens must be free of shell meta (already whole-command checked).
+  return true;
+}
+
+/**
+ * @returns violation | undefined (allow) | "not-simple"
+ */
+function trySimpleConcreteMutation(
+  command: string,
+  cwd: string,
+  roots: RoleToolFsBoundaryRoots,
+  toolName: string,
+): RoleToolFsBoundaryViolation | undefined | "not-simple" {
+  // Reject if any shell meta remains besides redirect operators.
+  const withoutRedirectOps = command.replace(/(?:^|[\s\d])>>?\|?/g, " ");
+  if (SHELL_META.test(withoutRedirectOps)) return "not-simple";
+
+  const tokens = tokenizeShell(command);
+  if (tokens.length === 0) return "not-simple";
+
+  const targets: string[] = [];
+  // Redirect destinations.
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i]!;
+    if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>") {
+      const next = tokens[i + 1];
+      if (typeof next === "string" && next.length > 0) targets.push(next);
+      continue;
+    }
+    const fused = /^(?:.*[^>])?(>>?\|?)(.+)$/.exec(tok);
+    if (fused && tok.includes(">") && fused[2] && !fused[2].startsWith("&")) {
+      targets.push(fused[2]);
     }
   }
 
-  // Carriers that fan out stdin/argv cannot be proven from surface tokens.
-  if (commandHasVerb(command, UNPROVABLE_CARRIERS)) return denyUnprovable(toolName);
+  let idx = 0;
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+  if (idx >= tokens.length) {
+    return targets.length > 0 ? denyIfOutside(toolName, targets, cwd, roots) ?? undefined : "not-simple";
+  }
+  const verb = basename(tokens[idx]!);
+  const isMutation = MUTATION_VERBS.has(verb);
+  if (!isMutation && targets.length === 0) return "not-simple";
 
-  // Interpreters with -c/-e: body is not shell-path-provable.
-  if (hasInterpreterEvalInvocation(command)) return denyUnprovable(toolName);
-
-  // Proven read-only (no redirect, only allowlisted verbs) → allow.
-  if (isProvenReadOnlyBash(command)) return undefined;
-
-  // eval/source/exec and interpreter-eval sentinels are never concrete-path-provable.
-  if (/\b(?:eval|source|exec)\b/.test(command)) return denyUnprovable(toolName);
-
-  // Not proven read-only: fail closed on expansion / glob / brace / tilde / subshell.
-  if (hasUnprovableShellExpansion(command)) return denyUnprovable(toolName);
-
-  // Concrete mutation targets only — no path means unprovable mutation.
-  const targets = extractBashMutationTargetPaths(command);
-  targets.push(...extractPathOperandsFromNonReadOnly(command));
-  const unique = [...new Set(targets)];
-  if (unique.length === 0) return denyUnprovable(toolName);
-  return denyIfOutside(toolName, unique, cwd, roots);
-}
-
-/** Strip leading command/env/nice/... wrappers (and their flags) once. */
-function peelCommandWrappers(command: string): string {
-  for (const simple of splitSimpleCommands(command)) {
-    // Only peel when the whole command is a single simple command starting with a wrapper.
-    if (splitSimpleCommands(command).length !== 1) return command;
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) {
-      // env VAR=val keeps assignments; they stay with the wrapper peel of env.
-      idx += 1;
-    }
-    if (idx >= tokens.length) return command;
-    const verb = basename(tokens[idx]!);
-    if (!COMMAND_WRAPPERS.has(verb)) return command;
+  if (isMutation) {
     idx += 1;
-    // Skip wrapper flags (-u, -i, -- for env/command, duration for timeout, etc.).
-    while (idx < tokens.length) {
+    for (; idx < tokens.length; idx += 1) {
       const tok = tokens[idx]!;
-      if (tok === "--") {
-        idx += 1;
-        break;
-      }
-      if (tok.startsWith("-") && tok !== "-") {
-        // env -u NAME / timeout 5s — skip one value arg when flag requires it
-        if (
-          (verb === "env" && (tok === "-u" || tok === "--unset")) ||
-          (verb === "timeout" && !tok.startsWith("--")) ||
-          tok === "-s" || tok === "--signal"
-        ) {
-          idx += 2;
-          continue;
-        }
+      if (tok === "--") continue;
+      if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>" || tok === "<" || tok === "<<") {
         idx += 1;
         continue;
       }
-      break;
-    }
-    if (idx >= tokens.length) return command;
-    // Rejoin remaining tokens as the inner command (preserve simple quoting loss).
-    return tokens.slice(idx).map(shellQuoteIfNeeded).join(" ");
-  }
-  return command;
-}
-
-function shellQuoteIfNeeded(token: string): string {
-  if (/^[\w./@%+=:,-]+$/.test(token)) return token;
-  return `'${token.replace(/'/g, `'"'"'`)}'`;
-}
-
-function commandHasVerb(command: string, verbs: ReadonlySet<string>): boolean {
-  for (const simple of splitSimpleCommands(command)) {
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-    if (idx >= tokens.length) continue;
-    if (verbs.has(basename(tokens[idx]!))) return true;
-  }
-  return false;
-}
-
-function hasInterpreterEvalInvocation(command: string): boolean {
-  for (const simple of splitSimpleCommands(command)) {
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-    if (idx >= tokens.length) continue;
-    const verb = basename(tokens[idx]!);
-    if (!INTERPRETER_EXES.has(verb) && verb !== "node" && verb !== "nodejs") continue;
-    for (let i = idx + 1; i < tokens.length; i += 1) {
-      const tok = tokens[i]!;
-      if (NODE_EVAL_FLAGS.has(tok) || INTERPRETER_C_FLAGS.has(tok)) return true;
+      if (tok.startsWith("-") && tok !== "-") continue;
+      targets.push(tok);
     }
   }
-  return false;
+
+  if (targets.length === 0) return denyUnprovable(toolName);
+  if (targets.some((t) => SHELL_META.test(t))) return denyUnprovable(toolName);
+  return denyIfOutside(toolName, targets, cwd, roots) ?? undefined;
 }
 
 function denyUnprovable(toolName: string): RoleToolFsBoundaryViolation {
@@ -317,73 +276,6 @@ function denyUnprovable(toolName: string): RoleToolFsBoundaryViolation {
     paths: [],
     reason: roleToolFsBoundaryDenyReason(toolName, []),
   };
-}
-
-function isProvenReadOnlyBash(command: string): boolean {
-  // Redirects are writes. Expansion is fine for pure reads (read unrestricted).
-  if (/>>?/.test(command)) return false;
-  for (const simple of splitSimpleCommands(command)) {
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-    if (idx >= tokens.length) continue;
-    const verb = basename(tokens[idx]!);
-    if (!READ_ONLY_COMMANDS.has(verb)) return false;
-    if (verb === "find" && /(?:-delete|-exec\b|-fprint)/.test(simple)) return false;
-    if (verb === "sed" && /(?:^|\s)-[a-zA-Z]*i[a-zA-Z]*/.test(simple)) return false;
-    if (verb === "git" && !isReadOnlyGit(tokens.slice(idx + 1))) return false;
-  }
-  return true;
-}
-
-function isReadOnlyGit(args: readonly string[]): boolean {
-  const sub = args.find((a) => !a.startsWith("-"));
-  if (sub === undefined) return true;
-  // config with --file/-f writes an alternate file; never treat as read-only.
-  if (sub === "config") {
-    if (args.some((a) => a === "--file" || a === "-f" || a.startsWith("--file="))) {
-      return false;
-    }
-    // --list / --get are reads; bare config that sets values writes repo config — fail closed.
-    if (args.some((a) => a === "--list" || a === "--get" || a === "-l" || a === "--get-regexp")) {
-      return true;
-    }
-    return false;
-  }
-  return [
-    "status", "log", "diff", "show", "rev-parse", "rev-list",
-    "branch", "tag", "remote", "ls-files", "ls-tree", "cat-file",
-    "describe", "blame", "shortlog", "help", "version",
-  ].includes(sub);
-}
-
-/** Path-like operands after non-read-only verbs (covers sed -i, install, etc.). */
-function extractPathOperandsFromNonReadOnly(command: string): string[] {
-  const out: string[] = [];
-  for (const simple of splitSimpleCommands(command)) {
-    const tokens = tokenizeShell(simple);
-    let idx = 0;
-    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-    if (idx >= tokens.length) continue;
-    const verb = basename(tokens[idx]!);
-    if (READ_ONLY_COMMANDS.has(verb) && !(verb === "sed" && /(?:^|\s)-[a-zA-Z]*i/.test(simple))) {
-      continue;
-    }
-    idx += 1;
-    for (; idx < tokens.length; idx += 1) {
-      const tok = tokens[idx]!;
-      if (tok === ">" || tok === ">>" || tok === ">|" || tok === "<" || tok === "<<") {
-        idx += 1;
-        continue;
-      }
-      if (tok.startsWith("-") && tok !== "-") continue;
-      // Path-like: has / or . or is a bare filename operand
-      if (tok.includes("/") || tok.includes(".") || /^[A-Za-z0-9._-]+$/.test(tok)) {
-        out.push(tok);
-      }
-    }
-  }
-  return out;
 }
 
 function denyIfOutside(
@@ -406,59 +298,65 @@ function denyIfOutside(
   };
 }
 
-/** Exported for unit coverage of path extraction. */
+/** Exported for unit coverage of path extraction on simple mutation forms. */
 export function extractBashMutationTargetPaths(command: string): string[] {
+  if (SHELL_META.test(command.replace(/(?:^|[\s\d])>>?\|?/g, " "))) return [];
+  const tokens = tokenizeShell(command);
   const targets: string[] = [];
-  for (const simple of splitSimpleCommands(command)) {
-    collectMutationTargetsFromSimpleCommand(simple, targets);
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i]!;
+    if (tok === ">" || tok === ">>" || tok === ">|") {
+      const next = tokens[i + 1];
+      if (typeof next === "string") targets.push(next);
+    }
+  }
+  let idx = 0;
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+  if (idx < tokens.length && MUTATION_VERBS.has(basename(tokens[idx]!))) {
+    for (let i = idx + 1; i < tokens.length; i += 1) {
+      const tok = tokens[i]!;
+      if (tok === "--") continue;
+      if (tok.startsWith("-") && tok !== "-") continue;
+      if (tok === ">" || tok === ">>") {
+        i += 1;
+        continue;
+      }
+      targets.push(tok);
+    }
   }
   return targets;
 }
 
+function scriptBodyFromArgv(exe: string, rest: readonly string[]): string | undefined {
+  const shells = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+  const nodeFlags = new Set(["-e", "--eval", "-p", "--print"]);
+  const cFlags = new Set(["-c", "--command", "-lc", "-ic", "-sc"]);
+  const interpreters = new Set(["python", "python3", "ruby", "perl", "php", "lua", "node", "nodejs"]);
+  for (let i = 0; i < rest.length; i += 1) {
+    const tok = rest[i]!;
+    if (shells.has(exe) && (cFlags.has(tok) || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(tok)) && i + 1 < rest.length) {
+      return rest[i + 1]!;
+    }
+    if ((exe === "node" || exe === "nodejs") && nodeFlags.has(tok) && i + 1 < rest.length) {
+      return `eval ${rest[i + 1]!}`;
+    }
+    if (interpreters.has(exe) && cFlags.has(tok) && i + 1 < rest.length) {
+      return `eval ${rest[i + 1]!}`;
+    }
+  }
+  return undefined;
+}
+
 function extractNestedShellBodies(command: string): string[] {
   const bodies: string[] = [];
-  // bash -c BODY / bash -lc BODY / env bash -c BODY — flag cluster containing c takes next arg.
   const re =
     /\b(?:env\s+)?(?:bash|sh|zsh|dash|ksh)\b((?:\s+-[a-zA-Z0-9]+)*)\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(command)) !== null) {
     const flags = match[1] ?? "";
-    if (!/(?:^|\s)-[a-zA-Z]*c[a-zA-Z]*(?:\s|$)/.test(flags) && !/(?:^|\s)-c(?:\s|$)/.test(flags) && !/-[a-zA-Z]*c[a-zA-Z]*/.test(flags)) {
-      continue;
-    }
+    if (!/-[a-zA-Z]*c[a-zA-Z]*/.test(flags)) continue;
     const body = match[2] ?? match[3] ?? match[4];
     if (typeof body === "string" && body.length > 0) bodies.push(body);
-  }
-  return bodies;
-}
-
-const SHELL_SCRIPT_FLAGS = new Set(["-c", "-lc", "-ic", "-sc"]);
-const NODE_EVAL_FLAGS = new Set(["-e", "--eval", "-p", "--print"]);
-const INTERPRETER_C_FLAGS = new Set(["-c", "--command"]);
-const INTERPRETER_EXES = new Set(["python", "python3", "ruby", "perl", "php", "lua", "node", "nodejs"]);
-
-function scriptBodiesFromArgv(exe: string, rest: readonly string[]): string[] {
-  const bodies: string[] = [];
-  const isShell = ["bash", "sh", "zsh", "dash", "ksh"].includes(exe);
-  const isNode = exe === "node" || exe === "nodejs";
-  const isInterpreter = INTERPRETER_EXES.has(exe);
-  for (let i = 0; i < rest.length; i += 1) {
-    const tok = rest[i]!;
-    if (isShell && SHELL_SCRIPT_FLAGS.has(tok) && i + 1 < rest.length) {
-      bodies.push(rest[i + 1]!);
-      i += 1;
-      continue;
-    }
-    if (isNode && NODE_EVAL_FLAGS.has(tok) && i + 1 < rest.length) {
-      // Interpreter eval bodies are unprovable as shell — force fail-closed assess.
-      bodies.push(`eval ${rest[i + 1]!}`);
-      i += 1;
-      continue;
-    }
-    if (isInterpreter && INTERPRETER_C_FLAGS.has(tok) && i + 1 < rest.length) {
-      bodies.push(`eval ${rest[i + 1]!}`);
-      i += 1;
-    }
   }
   return bodies;
 }
@@ -468,19 +366,11 @@ function expandUserHome(raw: string): string {
   if (raw.startsWith(`~${sep}`) || raw.startsWith("~/")) {
     const home = process.env.HOME;
     if (typeof home !== "string" || home.length === 0) return raw;
-    // Preserve `..` components for followComponents — never path.join-collapse.
     return appendRelativePreservingDots(home, raw.slice(2));
   }
   return raw;
 }
 
-/** Absolute path: keep root, do not collapse `..` across symlink components yet. */
-function expandAbsoluteLexical(absolute: string): string {
-  // Normalize repeated separators only; keep .. for component walk.
-  return absolute.replace(/\/{2,}/g, "/");
-}
-
-/** Append relative segments under base without collapsing `..` (followComponents owns that). */
 function appendRelativePreservingDots(base: string, rel: string): string {
   const parts = rel.split(/[/\\]/).filter((p) => p.length > 0);
   let cur = base;
@@ -490,17 +380,10 @@ function appendRelativePreservingDots(base: string, rel: string): string {
   return cur;
 }
 
-/**
- * Walk absolute path components left-to-right. When a component exists and is a
- * symlink, replace the walk cursor with its realpath before consuming `..`.
- */
 function followComponents(absolute: string): string {
   if (absolute === sep) return sep;
-  const root = absolute.startsWith(sep) ? sep : "";
   const parts = absolute.split(sep).filter((p) => p.length > 0);
-  let current = root === sep ? sep : "";
-  if (root !== sep && parts.length === 0) return physicalPathIdentity(absolute);
-
+  let current = absolute.startsWith(sep) ? sep : "";
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i]!;
     if (part === ".") continue;
@@ -511,21 +394,18 @@ function followComponents(absolute: string): string {
     }
     const next = current === sep ? `${sep}${part}` : current === "" ? part : join(current, part);
     try {
-      const st = lstatSync(next);
-      if (st.isSymbolicLink() || st.isDirectory() || st.isFile()) {
-        // realpath this node so subsequent .. operate on the real parent chain.
-        try {
-          current = realpathSync(next);
-        } catch {
-          current = next;
-        }
-      } else {
+      lstatSync(next);
+      try {
+        current = realpathSync(next);
+      } catch {
         current = next;
       }
     } catch {
-      // Missing node: rejoin remaining components lexically under current real prefix.
       const rest = parts.slice(i);
-      const prefix = current === "" ? physicalPathIdentity(process.cwd()) : physicalPathIdentity(current === sep ? sep : current);
+      const prefix =
+        current === ""
+          ? physicalPathIdentity(process.cwd())
+          : physicalPathIdentity(current === sep ? sep : current);
       return rest.reduce((acc, p) => {
         if (p === ".") return acc;
         if (p === "..") return dirname(acc);
@@ -537,103 +417,6 @@ function followComponents(absolute: string): string {
     return realpathSync(current);
   } catch {
     return physicalPathIdentity(current);
-  }
-}
-
-function splitSimpleCommands(command: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | null = null;
-  for (let i = 0; i < command.length; i += 1) {
-    const ch = command[i]!;
-    if (quote !== null) {
-      current += ch;
-      if (ch === "\\" && quote === '"' && i + 1 < command.length) {
-        current += command[++i]!;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      current += ch;
-      continue;
-    }
-    if (ch === "|" || ch === ";" || ch === "\n") {
-      push();
-      continue;
-    }
-    if (ch === "&" && command[i + 1] === "&") {
-      push();
-      i += 1;
-      continue;
-    }
-    if (ch === "|" && command[i + 1] === "|") {
-      push();
-      i += 1;
-      continue;
-    }
-    current += ch;
-  }
-  push();
-  return parts;
-
-  function push(): void {
-    const t = current.trim();
-    current = "";
-    if (t.length > 0) parts.push(t);
-  }
-}
-
-function collectMutationTargetsFromSimpleCommand(simple: string, targets: string[]): void {
-  const tokens = tokenizeShell(simple);
-  if (tokens.length === 0) return;
-
-  for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i]!;
-    if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>") {
-      const next = tokens[i + 1];
-      if (typeof next === "string" && next.length > 0 && next !== "&") targets.push(next);
-      continue;
-    }
-    // Fused redirect without space: printf X>file or 2>file
-    const fused = /^(?:.*[^>])?(>>?\|?)(.+)$/.exec(tok);
-    if (fused !== null && fused[1] !== undefined && fused[2] !== undefined && fused[2].length > 0 && tok.includes(">")) {
-      const dest = fused[2];
-      if (dest !== "&1" && dest !== "&2" && !dest.startsWith("&")) targets.push(dest);
-    }
-  }
-
-  let idx = 0;
-  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
-  if (idx >= tokens.length) return;
-  const cmd = basename(tokens[idx]!);
-  if (!MUTATION_COMMANDS.has(cmd)) return;
-  idx += 1;
-  let endFlags = false;
-  for (; idx < tokens.length; idx += 1) {
-    const tok = tokens[idx]!;
-    if (!endFlags && tok === "--") {
-      endFlags = true;
-      continue;
-    }
-    if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>" || tok === "<" || tok === "<<") {
-      idx += 1;
-      continue;
-    }
-    if (!endFlags && tok.startsWith("-") && tok !== "-") {
-      if (
-        (cmd === "mv" || cmd === "cp" || cmd === "ln" || cmd === "install") &&
-        (tok === "-t" || tok === "--target-directory") &&
-        idx + 1 < tokens.length
-      ) {
-        targets.push(tokens[idx + 1]!);
-        idx += 1;
-      }
-      continue;
-    }
-    targets.push(tok);
   }
 }
 
@@ -699,4 +482,3 @@ function tokenizeShell(command: string): string[] {
   }
   return tokens;
 }
-
