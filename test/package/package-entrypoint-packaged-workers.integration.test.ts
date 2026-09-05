@@ -42,7 +42,6 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { navigatorPrepareFixtureResponse } from "../helpers/navigator-child-fixture.ts";
 import {
   getSharedIsolatedPack,

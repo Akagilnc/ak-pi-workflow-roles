@@ -62,6 +62,22 @@ function emptyUsage(): Usage {
   };
 }
 
+function failureClassification(
+  cause: string | undefined,
+): "provider" | "child" | "unknown" {
+  if (cause === "provider") return "provider";
+  if (
+    cause === "output"
+    || cause === "timeout"
+    || cause === "activation"
+    || cause === "session"
+    || cause === "unrecognized"
+  ) {
+    return "child";
+  }
+  return "unknown";
+}
+
 function reportFromSummon(summoned: PublicSummonResult): string {
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) {
@@ -72,7 +88,7 @@ function reportFromSummon(summoned: PublicSummonResult): string {
   }
   if (outcome.kind === "failure") {
     throw Object.assign(new Error(outcome.diagnostic), {
-      evidenceChildFailure: "provider" as const,
+      evidenceChildFailure: failureClassification(outcome.cause),
     });
   }
   if (outcome.kind === "accepted") {
@@ -85,6 +101,53 @@ function reportFromSummon(summoned: PublicSummonResult): string {
   );
 }
 
+async function usageFromSummonedEvidenceChild(summoned: PublicSummonResult): Promise<Usage> {
+  const pointer = (summoned.terminal?.roleOutcome as { runPointer?: unknown } | undefined)?.runPointer;
+  const sessionFile =
+    typeof pointer === "string" && pointer.trim() !== ""
+      ? (await import("node:path")).join(pointer, "session", "session.jsonl")
+      : undefined;
+  if (sessionFile === undefined) return emptyUsage();
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const rows = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        message?: { role?: string; usage?: Usage };
+      });
+    let total = 0;
+    let input = 0;
+    let output = 0;
+    let cacheRead = 0;
+    let cacheWrite = 0;
+    for (const row of rows) {
+      if (row.type !== "message" || row.message?.role !== "assistant") continue;
+      const usage = row.message.usage;
+      if (usage === undefined) continue;
+      total += usage.totalTokens ?? 0;
+      input += usage.input ?? 0;
+      output += usage.output ?? 0;
+      cacheRead += usage.cacheRead ?? 0;
+      cacheWrite += usage.cacheWrite ?? 0;
+    }
+    if (total <= 0 && input <= 0 && output <= 0) return emptyUsage();
+    return {
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return emptyUsage();
+    throw error;
+  }
+}
+
 /** Reviewer evidence leg via the public evidence-child activation path (#675). */
 export async function executeReviewerChild(
   workspace: string,
@@ -93,6 +156,11 @@ export async function executeReviewerChild(
   options: ReviewerChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
   try {
+    if (options.signal?.aborted) {
+      throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
+        evidenceChildFailure: "child" as const,
+      });
+    }
     const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
     const pointer =
       runDirectory === undefined
@@ -123,8 +191,14 @@ export async function executeReviewerChild(
         });
       });
     const summoned = await summon(argv);
+    if (options.signal?.aborted) {
+      throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
+        evidenceChildFailure: "child" as const,
+      });
+    }
     const report = reportFromSummon(summoned);
-    return { report, usage: emptyUsage(), prompt: leg.prompt };
+    const usage = await usageFromSummonedEvidenceChild(summoned);
+    return { report, usage, prompt: leg.prompt };
   } catch (error) {
     throw projectSharedChildFailure(error);
   }

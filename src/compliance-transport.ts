@@ -157,9 +157,18 @@ async function usageFromSummonedAuditorSession(
     }
   }
   if (sessionFile === undefined) return undefined;
+  const { readFile } = await import("node:fs/promises");
+  let text: string;
   try {
-    const { readFile } = await import("node:fs/promises");
-    const rows = (await readFile(sessionFile, "utf8"))
+    text = await readFile(sessionFile, "utf8");
+  } catch (error) {
+    // Missing session is "no usage"; I/O/permission failures stay loud.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  let rows: Array<{ type?: string; message?: { role?: string; usage?: Usage } }>;
+  try {
+    rows = text
       .trim()
       .split("\n")
       .filter(Boolean)
@@ -167,33 +176,36 @@ async function usageFromSummonedAuditorSession(
         type?: string;
         message?: { role?: string; usage?: Usage };
       });
-    let total = 0;
-    let input = 0;
-    let output = 0;
-    let cacheRead = 0;
-    let cacheWrite = 0;
-    for (const row of rows) {
-      if (row.type !== "message" || row.message?.role !== "assistant") continue;
-      const usage = row.message.usage;
-      if (usage === undefined) continue;
-      total += usage.totalTokens ?? 0;
-      input += usage.input ?? 0;
-      output += usage.output ?? 0;
-      cacheRead += usage.cacheRead ?? 0;
-      cacheWrite += usage.cacheWrite ?? 0;
-    }
-    if (total <= 0 && input <= 0 && output <= 0) return undefined;
-    return {
-      input,
-      output,
-      cacheRead,
-      cacheWrite,
-      totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    };
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new Error(
+      `nested auditor session usage parse failed (${sessionFile}): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
+  let total = 0;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  for (const row of rows) {
+    if (row.type !== "message" || row.message?.role !== "assistant") continue;
+    const usage = row.message.usage;
+    if (usage === undefined) continue;
+    total += usage.totalTokens ?? 0;
+    input += usage.input ?? 0;
+    output += usage.output ?? 0;
+    cacheRead += usage.cacheRead ?? 0;
+    cacheWrite += usage.cacheWrite ?? 0;
+  }
+  if (total <= 0 && input <= 0 && output <= 0) return undefined;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
 }
 
 async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
@@ -242,13 +254,20 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         // resolveSummonHome falls back.
       }
       // Publish source-run for public auditor dossier tool registration (#675).
+      // Scoped to this summon only — never leave a cross-run env residue.
+      const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
       process.env.AK_ROLE_AUDITOR_SOURCE_RUN = sourceRunDirectory;
-      return summonPublicRole({
-        role: "auditor",
-        argv: [`卷宗指针：${sourceRunDirectory}\n${prompt}`],
-        cwd: options.context.cwd ?? process.cwd(),
-        ...(home === undefined ? {} : { home }),
-      });
+      try {
+        return await summonPublicRole({
+          role: "auditor",
+          argv: [`卷宗指针：${sourceRunDirectory}\n${prompt}`],
+          cwd: options.context.cwd ?? process.cwd(),
+          ...(home === undefined ? {} : { home }),
+        });
+      } finally {
+        if (priorSource === undefined) delete process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+        else process.env.AK_ROLE_AUDITOR_SOURCE_RUN = priorSource;
+      }
     });
   const summoned = await summon(runDirectory);
   return await projectAuditorTerminal(summoned);

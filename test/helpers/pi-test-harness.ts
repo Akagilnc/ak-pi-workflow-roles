@@ -1511,9 +1511,7 @@ export async function withInProcessPi<T>(
       "utf8",
     );
     await writeFile(join(runDirectory, "admitted-request.json"), "{}\n", "utf8");
-    const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
-    await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
-    await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
+    // #675: institutional seat page deleted — no seat-table write.
   }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,

@@ -207,7 +207,7 @@ export type OpenPiInstitutionalSessionResult = {
   readonly streamFailure: unknown;
 };
 
-export async function openPiInstitutionalSession(
+export async function openPiInProcessSession(
   options: OpenPiInstitutionalSessionOptions,
 ): Promise<OpenPiInstitutionalSessionResult> {
   const label = options.label ?? "Institutional sub-session";
@@ -836,3 +836,6 @@ export async function openPiInstitutionalSession(
     throw openError;
   }
 }
+
+/** @deprecated Prefer openPiInProcessSession — name kept for historical call sites. */
+export const openPiInstitutionalSession = openPiInProcessSession;

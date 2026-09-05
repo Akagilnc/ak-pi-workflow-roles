@@ -3578,31 +3578,19 @@ async function settleLawfulAuditorTerminalResult(
     role: "auditor",
     toolName: AUDITOR_OUTPUT_TOOL_NAME,
     nonUsableDiagnostic: "审刑院回执无显式 pass/revise/escalate",
-    // Retain any object status (including unreadable mystery) so the parent
-    // compliance transport can throw ComplianceCandidateUnreadableError with
-    // observation+candidate (#475 / #675 public auditor path).
-    tryAcceptDetails: (details) =>
-      typeof details === "object"
-      && details !== null
-      && !Array.isArray(details)
-      && Object.hasOwn(details as object, "status"),
+    // Only pass/revise/escalate are lawful releases. Unreadable mystery status
+    // fails closed with candidate retained for parent ComplianceCandidateUnreadableError.
+    tryAcceptDetails: (details) => projectLawfulAuditorOutput(details) !== undefined,
     projectAccepted: (sealed) => {
       const lawful = projectLawfulAuditorOutput(sealed.decisiveFacts);
-      if (lawful !== undefined) {
-        const accepted: LawfulAuditorRoleOutcome = {
-          kind: "accepted",
-          role: "auditor",
-          status: lawful.status,
-          decisiveFacts: auditorDecisiveFacts(lawful),
-        };
-        return accepted;
+      if (lawful === undefined) {
+        throw new Error("auditor projectAccepted requires lawful pass/revise/escalate");
       }
-      const raw = sealed.decisiveFacts as Record<string, unknown>;
       const accepted: LawfulAuditorRoleOutcome = {
         kind: "accepted",
         role: "auditor",
-        status: typeof raw.status === "string" ? raw.status : "unknown",
-        decisiveFacts: { ...raw },
+        status: lawful.status,
+        decisiveFacts: auditorDecisiveFacts(lawful),
       };
       return accepted;
     },
