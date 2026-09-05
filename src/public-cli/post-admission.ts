@@ -15,15 +15,16 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 
-import type {
-  ControlledFailureCause,
-  DurablePrincipal,
-  DurablePrincipalAuthority,
-  RoleTurnHost,
-  RoleTurnKnownFailure,
-  RoleTurnRequest,
-  RoleTurnResult,
-  SessionCustomEntryAppender,
+import {
+  ExplicitInternalActivationError,
+  type ControlledFailureCause,
+  type DurablePrincipal,
+  type DurablePrincipalAuthority,
+  type RoleTurnHost,
+  type RoleTurnKnownFailure,
+  type RoleTurnRequest,
+  type RoleTurnResult,
+  type SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import {
@@ -231,6 +232,64 @@ function presentSecondaryTerminal(terminal: TerminalResult, io: CliIo): void {
   }
 }
 
+/**
+ * Host failure fact that must not be covered when last-host write also fails.
+ * Present/absent (not value): `throw undefined` is still a host failure leaf.
+ * Returned results carry failure via knownFailure, timedOut, or nonzero exit.
+ */
+function hostFailureFactForLastHostWriteCollision(
+  turnOutcome:
+    | { readonly kind: "returned"; readonly result: RoleTurnResult }
+    | { readonly kind: "thrown"; readonly error: unknown },
+): { readonly present: false } | { readonly present: true; readonly value: unknown } {
+  if (turnOutcome.kind === "thrown") {
+    return { present: true, value: turnOutcome.error };
+  }
+  const { result } = turnOutcome;
+  if (result.knownFailure !== undefined) {
+    const failure = result.knownFailure;
+    return {
+      present: true,
+      value: new ExplicitInternalActivationError(
+        failure.diagnostic?.trim() ||
+          failure.identity?.name ||
+          "host known failure",
+        {
+          knownCause: failure.cause,
+          ...(failure.identity?.code === undefined
+            ? {}
+            : { code: failure.identity.code }),
+          ...(failure.identity?.name === undefined
+            ? {}
+            : { name: failure.identity.name }),
+        },
+      ),
+    };
+  }
+  if (result.timedOut) {
+    return {
+      present: true,
+      value: new ExplicitInternalActivationError("role run timed out", {
+        knownCause: "timeout",
+      }),
+    };
+  }
+  if (result.code !== null && result.code !== 0) {
+    const stderrLine = result.stderr
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    return {
+      present: true,
+      value: new ExplicitInternalActivationError(stderrLine || "role run failed", {
+        knownCause: "activation",
+        code: result.code,
+      }),
+    };
+  }
+  return { present: false };
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -416,21 +475,23 @@ export async function dispatchPostAdmissionTurn<
             : previousRunDirectory,
         );
       } catch (error) {
-        // Dual failure: host already threw AND last-host write failed.
+        // Dual failure: host already failed AND last-host write failed.
         // Keep both as AggregateError leaves — projection must not cover either.
-        // Single write failure (host returned): surface the write error alone.
-        const thrown =
-          turnOutcome.kind === "thrown"
-            ? new AggregateError(
-                [turnOutcome.error, error],
-                "host turn and ticket-seat last-host write failed",
-                { cause: turnOutcome.error },
-              )
-            : error;
+        // Host failure covers throw (incl. undefined), returned knownFailure,
+        // timedOut, and nonzero code. Clean return + write fail: write alone.
+        const hostFailure = hostFailureFactForLastHostWriteCollision(turnOutcome);
+        const thrown = hostFailure.present
+          ? new AggregateError(
+              [hostFailure.value, error],
+              "host turn and ticket-seat last-host write failed",
+              { cause: hostFailure.value },
+            )
+          : error;
         return (await presentControlledFailure(
           admitted,
           {
-            timedOut: false,
+            timedOut:
+              turnOutcome.kind === "returned" ? turnOutcome.result.timedOut : false,
             code: turnOutcome.kind === "returned" ? turnOutcome.result.code : null,
             stderr: turnOutcome.kind === "returned" ? turnOutcome.result.stderr : "",
             thrown,
