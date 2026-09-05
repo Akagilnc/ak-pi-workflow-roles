@@ -166,15 +166,31 @@ async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Ex
 }
 
 /**
- * Shared sealed-accepted detection for all resumable adapters (#648).
- * Ledger projection is the sole authority — not optional per-role adapter wiring.
+ * Shared sealed-acceptance redispatch disposition for resume entrypoints
+ * (#648 sealed authority; #672 / ADR 0080 single-settlement-disposition).
+ * Owns the fail-closed gate auto and manual resume previously rebuilt beside
+ * the shared sealed query: sealed → block; authority throw → block with
+ * preserved cause; otherwise allow. Callers present entry-specific terminals;
+ * they must not re-derive this judgment. Ledger projection remains the sole
+ * seal truth — this is disposition over that read, not a second state.
  */
-export async function hasSealedAcceptedProjection(
+export type SealedAcceptanceRedispatchDisposition =
+  | { readonly kind: "allow" }
+  | { readonly kind: "block"; readonly reason: "sealed-accepted" }
+  | { readonly kind: "block"; readonly reason: "authority-failed"; readonly cause: unknown };
+
+export async function sealedAcceptanceRedispatchDisposition(
   admitted: AdmittedRoleInvocation,
-): Promise<boolean> {
-  // Ledger authority must not wash read failure into "unsealed" (#648).
-  // Callers treat throw as fail-closed: preserve true cause, never redispatch.
-  return (await sealedLedgerOutcome(admitted)) !== undefined;
+): Promise<SealedAcceptanceRedispatchDisposition> {
+  try {
+    if ((await sealedLedgerOutcome(admitted)) !== undefined) {
+      return { kind: "block", reason: "sealed-accepted" };
+    }
+    return { kind: "allow" };
+  } catch (cause) {
+    // Ledger authority must not wash read failure into "unsealed" (#648).
+    return { kind: "block", reason: "authority-failed", cause };
+  }
 }
 
 async function auditEscalationLedgerOutcome(
