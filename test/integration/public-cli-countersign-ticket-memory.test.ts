@@ -9,10 +9,6 @@
  * never write the real home.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -20,121 +16,25 @@ import {
   ticketSeatMemorySessionDirectory,
 } from "../../src/ticket-seat-memory.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import {
   runPublicCountersign,
   runPublicCountersignResume,
 } from "../../src/public-cli/countersign-run.ts";
 import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-
-/** Public entry settled a terminal for this call's own run (票面：各自独立终局). */
-async function assertIndependentTerminal(input: {
-  readonly label: string;
-  readonly result: {
-    readonly admitted?: { readonly runDirectory: string; readonly runId: string };
-    readonly terminal?: TerminalResult;
-  };
-  readonly expectedRunId: string;
-}): Promise<string> {
-  assert.ok(
-    input.result.terminal,
-    `${input.label} must settle a terminal result`,
-  );
-  assert.ok(
-    input.result.admitted,
-    `${input.label} must retain its admitted run`,
-  );
-  assert.equal(input.result.admitted!.runId, input.expectedRunId);
-  // Terminal either carries runId directly, or a resume.command that names it.
-  const terminalRunId =
-    input.result.terminal!.runId ??
-    (input.result.terminal!.resume !== undefined
-      ? input.expectedRunId
-      : undefined);
-  assert.equal(
-    terminalRunId,
-    input.expectedRunId,
-    `${input.label} terminal must name this call's runId`,
-  );
-  if (input.result.terminal!.resume !== undefined) {
-    assert.ok(
-      input.result.terminal!.resume.command.includes(input.expectedRunId),
-      `${input.label} resume.command must name this call's runId`,
-    );
-  }
-  const state = await readRoleRunState(
-    input.result.admitted!.runDirectory,
-    piDurablePrincipalAuthority,
-  );
-  assert.equal(
-    state?.state,
-    "terminal",
-    `${input.label} run-state must be terminal`,
-  );
-  assert.equal(state?.runId, input.expectedRunId);
-  return input.result.admitted!.runDirectory;
-}
 import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
-import {
-  packageRoot,
-  seedGitRepository,
-} from "../helpers/pi-test-harness.ts";
-
-function seedGitProject(root: string): void {
-  seedGitRepository(root);
-  execFileSync(
-    "git",
-    ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-    { cwd: root },
-  );
-}
-
-async function withTempCountersignHome(
-  run: (ctx: { home: string; project: string; binDir: string }) => Promise<void>,
-): Promise<void> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-countersign-mem-"));
-  const project = join(home, "project");
-  const binDir = join(home, "bin");
-  await mkdir(project, { recursive: true });
-  seedGitProject(project);
-  const prevPath = process.env.PATH;
-  process.env.PATH = `${binDir}${prevPath ? `:${prevPath}` : ""}`;
-  try {
-    await run({ home, project, binDir });
-  } finally {
-    if (prevPath === undefined) delete process.env.PATH;
-    else process.env.PATH = prevPath;
-    // Imperial law: tests must not delete any directory.
-  }
-}
-
-async function installTicketFixtures(
-  binDir: string,
-  ticketNumber: number,
-): Promise<void> {
-  await installHermesFixture(binDir, {
-    resolverResponse: { assertion: "ticket", ticketNumber },
-    collectorResponse: { selections: [] },
-  });
-  await installGhFixture(binDir, {
-    issues: {
-      [ticketNumber]: {
-        body: `issue ${ticketNumber} body`,
-        comments: [],
-      },
-    },
-  });
-}
+  assertIndependentTerminal,
+  createNativeHomeTurnRecorder,
+  createPrincipalTurnRecorder,
+  installSeatTicketFixtures,
+  silentCliIo,
+  ticketSeatMemoryEnvBase,
+  withTicketSeatMemoryHome,
+} from "../helpers/ticket-seat-memory-cli-fixture.ts";
 
 test("#637 public countersign CLI: same-ticket resume, different-ticket isolation, independent runs", async () => {
-  await withTempCountersignHome(async ({ home, project, binDir }) => {
-    await installTicketFixtures(binDir, 637);
+  await withTicketSeatMemoryHome("ak-public-countersign-mem-", async ({ home, project, binDir }) => {
+    await installSeatTicketFixtures(binDir, 637);
 
     const memoryDir637 = ticketSeatMemorySessionDirectory({
       ticketNumber: 637,
@@ -149,39 +49,14 @@ test("#637 public countersign CLI: same-ticket resume, different-ticket isolatio
       home,
     });
 
-    const seen: Array<{
-      sessionFile: string;
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        const sessionFile = piDurablePrincipalAuthority.decode(
-          request.principal,
-        ).sessionFile;
-        seen.push({
-          sessionFile,
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-        });
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
+    const { seen, host } = createPrincipalTurnRecorder();
+    const io = silentCliIo();
+    const envBase = ticketSeatMemoryEnvBase({
       home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-      host: "pi" as const,
-    };
+      project,
+      host,
+      liveHost: "pi",
+    });
 
     const first = await runPublicCountersign(
       ["裁：本票 #637 是否足以开工。"],
@@ -236,7 +111,7 @@ test("#637 public countersign CLI: same-ticket resume, different-ticket isolatio
     );
 
     // Different ticket → different nest (typed principal isolation).
-    await installTicketFixtures(binDir, 700);
+    await installSeatTicketFixtures(binDir, 700);
     const third = await runPublicCountersign(
       ["裁：本票 #700 是否足以开工。"],
       { ...envBase, createRunId: () => "countersign-mem-700" },
@@ -263,8 +138,8 @@ test("#637 public countersign CLI: same-ticket resume, different-ticket isolatio
 });
 
 test("#637 public countersign: Grok native home spans failure, same-run retry, return-to-Grok", async () => {
-  await withTempCountersignHome(async ({ home, project, binDir }) => {
-    await installTicketFixtures(binDir, 637);
+  await withTicketSeatMemoryHome("ak-public-countersign-nh-", async ({ home, project, binDir }) => {
+    await installSeatTicketFixtures(binDir, 637);
 
     const memoryDir = ticketSeatMemorySessionDirectory({
       ticketNumber: 637,
@@ -273,41 +148,9 @@ test("#637 public countersign: Grok native home spans failure, same-run retry, r
       home,
     });
 
-    const seen: Array<{
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-      nativeHomeRunDirectory?: string;
-      previousHost?: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        seen.push({
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-          ...(request.nativeHomeRunDirectory === undefined
-            ? {}
-            : { nativeHomeRunDirectory: request.nativeHomeRunDirectory }),
-          ...(request.hostTransition === undefined
-            ? {}
-            : { previousHost: request.hostTransition.previousHost }),
-        });
-        return { code: 1, stderr: "controlled-stop\n", timedOut: false };
-      },
-    };
-
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
-      home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-    };
+    const { seen, host } = createNativeHomeTurnRecorder();
+    const io = silentCliIo();
+    const envBase = ticketSeatMemoryEnvBase({ home, project, host });
 
     // 1) Failure path still records Grok native-home ownership on the nest.
     const first = await runPublicCountersign(

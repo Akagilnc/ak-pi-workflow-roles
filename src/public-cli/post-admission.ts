@@ -27,9 +27,15 @@ import type {
 } from "../host-contracts.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import {
+  engineSessionMaterialFromOptions,
+  type EngineSessionMaterial,
+} from "../package-resources/engine-material.ts";
+import {
   isTicketSeatMemoryBound,
   readTicketSeatMemoryLastHost,
+  rebindAdmittedToTicketSeatMemory,
   writeTicketSeatMemoryLastHost,
+  type TicketSeatMemorySeat,
 } from "../ticket-seat-memory.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -39,6 +45,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
+  markRunAdmitted,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -694,6 +701,28 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
+ * Shared initial-call turn projection options from post-admission env
+ * (mirrors resumeTurnRequestProjectionOptions without the resume envelope).
+ */
+export function initialTurnRequestProjectionOptions(
+  env: PostAdmissionEnv,
+  continuation: RoleTurnRequest["continuation"],
+): RoleTurnRequestProjectionOptions {
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    continuation,
+  };
+}
+
+/**
  * Shared resume continuation projection (#471 / #600 / #633): seat-table
  * model/engine/timeout axes, restored correlation, and the package resume
  * envelope (message optional). Seats add only their activation projection.
@@ -722,6 +751,100 @@ export function resumeTurnRequestProjectionOptions(
       }),
     },
   };
+}
+
+/**
+ * Shared ticket-seat memory initial orchestration (#636 / #637):
+ * rebind → mark admitted → continuation kind from nest → turn projection → one-shot.
+ * Seats keep ticket bind prep, transport prompt, turn activation, adapters, and
+ * prep-failure face; only the isomorphic continuation/projection path is shared.
+ */
+export async function runPostAdmissionTicketSeatMemoryOneShot<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  seat: TicketSeatMemorySeat;
+  buildPrompt: (admitted: A, engineMaterial: EngineSessionMaterial | undefined) => string;
+  buildTurnRequest: (
+    admitted: A,
+    options: RoleTurnRequestProjectionOptions,
+  ) => RoleTurnRequest;
+  adapters: PostAdmissionAdapters<A, T>;
+  /** Seat prep before memory rebind (e.g. resolveSeatTicketBinding). */
+  beforeMemoryRebind?: (admitted: A) => Promise<void> | void;
+  /**
+   * When true, prep/rebind failures mark admitted and present controlled failure
+   * (countersign). Default: propagate.
+   */
+  settleMemoryPrepFailure?: boolean;
+  effectiveEngine?: string;
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  const {
+    admitted,
+    env,
+    io,
+    seat,
+    buildPrompt,
+    buildTurnRequest,
+    adapters,
+    beforeMemoryRebind,
+    settleMemoryPrepFailure,
+    effectiveEngine,
+  } = input;
+
+  let memory: Awaited<ReturnType<typeof rebindAdmittedToTicketSeatMemory>>;
+  try {
+    if (beforeMemoryRebind !== undefined) {
+      await beforeMemoryRebind(admitted);
+    }
+    memory = await rebindAdmittedToTicketSeatMemory({
+      admitted,
+      seat,
+      principalAuthority: env.principalAuthority,
+    });
+  } catch (error) {
+    if (settleMemoryPrepFailure === true) {
+      await markRunAdmitted(admitted, env.principalAuthority);
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted, env.principalAuthority);
+
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  const continuation = {
+    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
+    prompt: buildPrompt(admitted, engineMaterial),
+  };
+
+  return await runPostAdmissionOneShot({
+    admitted,
+    env,
+    io,
+    request: buildTurnRequest(
+      admitted,
+      initialTurnRequestProjectionOptions(env, continuation),
+    ),
+    adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
 }
 
 /**
