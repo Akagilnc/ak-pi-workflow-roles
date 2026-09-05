@@ -29,7 +29,6 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -79,9 +78,9 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-337-business-"));
-  const home = await mkdtemp(join(testTmpdir(), "analyst-337-home-"));
-  const attachDir = await mkdtemp(join(testTmpdir(), "analyst-337-attach-"));
+  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-337-business-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-337-home-"));
+  const attachDir = await mkdtemp(join(tmpdir(), "analyst-337-attach-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -101,9 +100,6 @@ async function withSweepFixture<T>(
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
-    await rm(attachDir, { recursive: true, force: true });
-    await rm(home, { recursive: true, force: true });
-    await rm(businessRepo, { recursive: true, force: true });
   }
 }
 
@@ -145,7 +141,6 @@ test("analyst public CLI sweep: one typed attach → pages+index match runAnalys
     await writeFile(attachPath, `${JSON.stringify(VALID_SWEEP_INPUT)}\n`);
 
     const oracle = await runAnalyst(VALID_SWEEP_INPUT, { home });
-    await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(

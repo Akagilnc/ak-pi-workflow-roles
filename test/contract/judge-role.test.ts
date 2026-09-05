@@ -104,7 +104,6 @@ import {
 } from "../helpers/institutional-seat-table.ts";
 import type { InstitutionalResolutionPage } from "../../src/institutional-resolution.ts";
 import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -132,7 +131,6 @@ function disposeInstitutionalRunDir(runDirectory: string): void {
   const marker = `${sep}.ak-roles${sep}`;
   const markerIdx = runDirectory.indexOf(marker);
   const homeRoot = markerIdx >= 0 ? runDirectory.slice(0, markerIdx) : dirname(runDirectory);
-  rmSync(homeRoot, { recursive: true, force: true });
 }
 async function withInstitutionalRunDir<T>(
   seats: InstitutionalResolutionPage["seats"],
@@ -195,7 +193,7 @@ async function registerInstitutionalProviderFixture(
 ): Promise<void> {
   const mock = await createMockProviderServer(faux, observers);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = mkdtempSync(join(testTmpdir(), "ak-judge-provider-"));
+  const tempAgentDir = mkdtempSync(join(tmpdir(), "ak-judge-provider-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   const providers: Record<string, unknown> = {
     [faux.provider.id]: {
@@ -221,7 +219,6 @@ async function registerInstitutionalProviderFixture(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    rmSync(tempAgentDir, { recursive: true, force: true });
   });
 }
 
@@ -2183,7 +2180,7 @@ test(
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
     const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
-    const modelRoot = await mkdtemp(join(testTmpdir(), "ak-judge-grace-model-"));
+    const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");
     await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
 
@@ -2367,7 +2364,6 @@ test(
         assert.ok(formatted.length > 0);
       });
     } finally {
-      await rm(modelRoot, { recursive: true, force: true });
     }
   },
 );

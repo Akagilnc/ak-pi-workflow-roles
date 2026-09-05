@@ -11,14 +11,13 @@ import {
   resolveAuditDossier,
   readJudgeAuditSubjects,
 } from "../../src/dossier-resolution.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 // bare-Pi absent pointer and missing-dossier path gates are covered at the
 // real auditor entry (judge-auditor-dossier.test.ts); keep only the concurrent
 // isolation contract and helper-level subject shape here.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-dossier-concurrent-"));
+  const root = await mkdtemp(join(tmpdir(), "ak-dossier-concurrent-"));
   const previous = process.env.AK_ROLE_RUN_DIR;
   try {
     const runA = join(root, "run-a");
@@ -42,7 +41,6 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;
-    await rm(root, { recursive: true, force: true });
   }
 });
 

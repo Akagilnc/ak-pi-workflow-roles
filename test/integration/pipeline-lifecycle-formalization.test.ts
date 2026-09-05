@@ -13,7 +13,6 @@ import type {
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 /**
  * #517 §5(c) acceptance: the post-admission lifecycle is host-neutral. A faux
@@ -22,7 +21,7 @@ import { testTmpdir } from "../helpers/worktree-temp.ts";
  * stages ①②④⑤ are still borne by AK, not by the substituted host.
  */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
-  const home = await mkdtemp(join(testTmpdir(), "ak-faux-host-test-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-faux-host-test-"));
   try {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -100,6 +99,5 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       "artifact must carry a structured outcome (cause)",
     );
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 });

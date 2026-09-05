@@ -17,7 +17,6 @@ import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { activationExtensionContext, packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -36,7 +35,7 @@ let conflictedTemplateRoot: string | undefined;
 let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function conflictedTemplate() {
   conflictedTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-conflict-template-"));
+    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
     conflictedTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
@@ -59,13 +58,12 @@ async function conflictedTemplate() {
 
 after(async () => {
   if (conflictedTemplateRoot === undefined) return;
-  await rm(conflictedTemplateRoot, { recursive: true, force: true });
   conflictedTemplateRoot = undefined;
 });
 
 async function materializeConflictedRepo() {
   const template = await conflictedTemplate();
-  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-session-b-"));
+  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
   execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], { stdio: "ignore" });
   git(cwd, "config", "user.name", "Merger Test");
   git(cwd, "config", "user.email", "merger@test.local");

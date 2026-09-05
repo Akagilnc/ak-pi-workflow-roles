@@ -6,7 +6,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const stampScriptPath = resolve(packageRoot, "scripts/publish-registry-stamp.sh");
 
@@ -87,7 +86,7 @@ function runStamp(options: {
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(join(testTmpdir(), "ak-publish-registry-"));
+  const root = mkdtempSync(join(tmpdir(), "ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),
@@ -159,7 +158,6 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
     // package.json must not have been stamped to the malicious identity.
     assert.equal(result.packageVersion, "0.0.0");
   } finally {
-    rmSync(result.root, { recursive: true, force: true });
   }
 });
 
@@ -176,7 +174,6 @@ test("legal missing-version publish carries next shortsha artifact identity", ()
     assert.equal(result.packageVersion, expected);
     assert.equal(result.distTagPackage, undefined);
   } finally {
-    rmSync(result.root, { recursive: true, force: true });
   }
 });
 
@@ -194,7 +191,6 @@ test("legal existing-version moves next dist-tag only", () => {
     assert.equal(result.publishTag, undefined);
     assert.equal(result.publishVersion, undefined);
   } finally {
-    rmSync(result.root, { recursive: true, force: true });
   }
 });
 
@@ -208,6 +204,5 @@ test("latest channel publishes monotonic version without shortsha suffix", () =>
     assert.equal(result.publishTag, "latest");
     assert.equal(result.packageVersion, expected);
   } finally {
-    rmSync(result.root, { recursive: true, force: true });
   }
 });

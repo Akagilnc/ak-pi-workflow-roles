@@ -9,19 +9,17 @@ import {
 } from "../../src/canonical-skill-binding.ts";
 import type { HostSkillExpansionEvidence } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const originalHome = process.env.HOME;
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(resolve(testTmpdir(), "ak-canonical-skill-"));
+  const home = await mkdtemp(resolve(tmpdir(), "ak-canonical-skill-"));
   process.env.HOME = home;
   return await withPrimaryAwareCleanup(
     () => run(home),
     async () => {
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;
-      await rm(home, { recursive: true, force: true });
     },
   );
 }
@@ -185,7 +183,6 @@ test("canonical binding fails closed for unavailable and empty Skills", async ()
       /Canonical tdd Skill is unavailable.*SKILL\.md/i,
     );
 
-    await rm(missing, { recursive: true, force: true });
     await writeConfiguredSkill(
       home,
       "tdd",

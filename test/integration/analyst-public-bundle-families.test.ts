@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 // #420 整改：自 test/contract/analyst-entry.test.ts 按性质移出（构建产物 + 起真子进程
 // 跑公开 ak-role bin，不属开发内环快档）。契约不变：公开 bundle 从单一产物可达
 // B1-B4 四个 metric family，且无 sibling family 目录。
@@ -31,7 +32,6 @@ import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts
 import { machineLedgerHome, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const BOOK = "fixture-book";
@@ -62,10 +62,10 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   // /tmp/<id>/main.js makes naive join(bin,"..","..") === "/" and host-pi link
   // attempts mkdir('/node_modules/...'). macOS os.tmpdir() is deeper and hides
   // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
-  const binDir = await mkdtemp(join(testTmpdir(), "analyst-bundle-bin-"));
+  const binDir = await mkdtemp(join(tmpdir(), "analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
-  const project = await mkdtemp(join(testTmpdir(), "analyst-bundle-cwd-"));
-  const profileHome = await mkdtemp(join(testTmpdir(), "analyst-bundle-profile-"));
+  const project = await mkdtemp(join(tmpdir(), "analyst-bundle-cwd-"));
+  const profileHome = await mkdtemp(join(tmpdir(), "analyst-bundle-profile-"));
   await withBusinessRepo(async () => {
     try {
       const previousCwd = process.cwd();
@@ -76,10 +76,6 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
         process.chdir(previousCwd);
       }
       // Prove the shipped layout has no sibling family tree next to the bin.
-      await rm(join(binDir, "analyst-metric-families"), {
-        recursive: true,
-        force: true,
-      });
 
       seedGitRepository(project);
       const bookKey = basename(project);
@@ -115,9 +111,6 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
       assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
       assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
     } finally {
-      await rm(binDir, { recursive: true, force: true });
-      await rm(project, { recursive: true, force: true });
-      await rm(profileHome, { recursive: true, force: true });
     }
   });
 });

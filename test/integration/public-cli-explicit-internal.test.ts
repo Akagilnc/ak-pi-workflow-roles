@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 /**
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
@@ -18,16 +19,14 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-explicit-internal-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
   try {
     seedGitRepository(home);
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 

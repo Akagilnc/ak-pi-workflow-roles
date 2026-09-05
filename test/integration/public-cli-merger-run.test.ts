@@ -40,7 +40,6 @@ import {
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { Type } from "typebox";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync("git", args, {
@@ -102,7 +101,7 @@ async function conflictedRepository(root: string) {
 }
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-role-table-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;
@@ -115,7 +114,6 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -493,7 +491,6 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
     for (const row of ACCEPTED_ROWS) {
       // Fresh project state per row when merger mutates the worktree.
       if (row.role === "merger") {
-        await rm(project, { recursive: true, force: true });
         await mkdir(project);
         seedGitProject(project);
       }

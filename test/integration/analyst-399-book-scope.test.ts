@@ -27,7 +27,6 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -186,13 +185,13 @@ async function withBookScopeWorld<T>(
   }) => Promise<T>,
 ): Promise<T> {
   // Each temp root is owned by a registered cleanup before the next fallible step.
-  const home = await mkdtemp(join(testTmpdir(), "analyst-399-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-399-home-"));
   let mainRoot = "";
   let worktreeParent1 = "";
   let worktreeParent2 = "";
   return withPrimaryAwareCleanup(
     async () => {
-      mainRoot = await mkdtemp(join(testTmpdir(), "analyst-399-main-"));
+      mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
       execFileSync("git", ["init"], { cwd: mainRoot });
       execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
       await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
@@ -204,8 +203,8 @@ async function withBookScopeWorld<T>(
       );
 
       // Own each parent immediately after allocation (not after both succeed).
-      worktreeParent1 = await mkdtemp(join(testTmpdir(), "analyst-399-wt1-"));
-      worktreeParent2 = await mkdtemp(join(testTmpdir(), "analyst-399-wt2-"));
+      worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
+      worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
       const worktreeRoot = join(worktreeParent1, "wt");
       const worktree2Root = join(worktreeParent2, "wt");
       execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
@@ -259,16 +258,12 @@ async function withBookScopeWorld<T>(
       return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
     },
     async () => {
-      await rm(home, { recursive: true, force: true });
     },
     async () => {
-      if (mainRoot) await rm(mainRoot, { recursive: true, force: true });
     },
     async () => {
-      if (worktreeParent1) await rm(worktreeParent1, { recursive: true, force: true });
     },
     async () => {
-      if (worktreeParent2) await rm(worktreeParent2, { recursive: true, force: true });
     },
   );
 }
@@ -387,12 +382,12 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 
 // D4
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-399-nongit-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-399-nongit-home-"));
   const previousCwd = process.cwd();
   let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      nonGit = await mkdtemp(join(testTmpdir(), "analyst-399-nongit-cwd-"));
+      nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
@@ -407,24 +402,22 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
       process.chdir(previousCwd);
     },
     async () => {
-      await rm(home, { recursive: true, force: true });
     },
     async () => {
-      if (nonGit) await rm(nonGit, { recursive: true, force: true });
     },
   );
 });
 
 // D5
 test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async () => {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-399-d5-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-399-d5-home-"));
   const previousCwd = process.cwd();
   let repoA = "";
   let repoB = "";
   await withPrimaryAwareCleanup(
     async () => {
-      repoA = await mkdtemp(join(testTmpdir(), "analyst-399-d5-a-"));
-      repoB = await mkdtemp(join(testTmpdir(), "analyst-399-d5-b-"));
+      repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
+      repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
       for (const repo of [repoA, repoB]) {
         execFileSync("git", ["init"], { cwd: repo });
         await writeFile(join(repo, "README.md"), "x\n", "utf8");
@@ -489,13 +482,10 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
       process.chdir(previousCwd);
     },
     async () => {
-      await rm(home, { recursive: true, force: true });
     },
     async () => {
-      if (repoA) await rm(repoA, { recursive: true, force: true });
     },
     async () => {
-      if (repoB) await rm(repoB, { recursive: true, force: true });
     },
   );
 });

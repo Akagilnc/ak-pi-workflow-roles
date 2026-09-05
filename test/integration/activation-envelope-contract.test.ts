@@ -57,7 +57,6 @@ import {
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -295,7 +294,7 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
 }
 
 test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
-  const root = mkdtempSync(join(testTmpdir(), "ak-book-topo-"));
+  const root = mkdtempSync(join(tmpdir(), "ak-book-topo-"));
   try {
     const main = join(root, "project-alpha");
     mkdirSync(main);
@@ -349,12 +348,11 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       else process.env.GIT_WORK_TREE = previousGitWorkTree;
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
-  const root = mkdtempSync(join(testTmpdir(), "ak-book-infra-"));
+  const root = mkdtempSync(join(tmpdir(), "ak-book-infra-"));
   try {
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
@@ -396,7 +394,6 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
       },
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -548,7 +545,6 @@ test("ledger append rejects every symlink escape vector without writing outside"
     const decoyDir = join(home, "decoy-runs", "activation", "default");
     mkdirSync(dirname(decoyDir), { recursive: true });
     // Move real tree aside then link.
-    rmSync(runsDir, { recursive: true, force: true });
     mkdirSync(decoyDir, { recursive: true });
     const decoyFile = join(decoyDir, "session.jsonl");
     writeFileSync(decoyFile, `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`);

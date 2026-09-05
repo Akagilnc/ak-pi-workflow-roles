@@ -57,7 +57,6 @@ import {
 import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -72,11 +71,10 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-judge-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
   try {
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -90,7 +88,7 @@ async function withPhysicalAliasFixture<T>(
     unlinkAlias?: (aliasRoot: string) => Promise<void>;
   },
 ): Promise<T> {
-  const physicalRoot = await mkdtemp(join(testTmpdir(), "ak-nav-subject-"));
+  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
   const aliasRoot = `${physicalRoot}-alias`;
   let aliasCreated = false;
   const mkdirWork =
@@ -121,7 +119,6 @@ async function withPhysicalAliasFixture<T>(
       }
     } finally {
       // Root removal still runs if alias unlink rejects.
-      await rm(physicalRoot, { recursive: true, force: true });
     }
   }
 }

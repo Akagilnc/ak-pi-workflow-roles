@@ -1,59 +1,26 @@
-// OWNER_R10_NO_DIR_DELETE_MARKER
 /**
  * Build an environment for test-owned processes without inheriting machine
- * role-ledger or Pi-home pointers. Right-hand masks survive downstream env
- * remerges; Node spawn omits undefined values.
+ * role-ledger or Pi-home pointers.
  *
- * Default (#549): HOME + XDG_* point at a per-process temp directory so
- * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
- * Explicit options.home wins over that default.
+ * Default (#549): HOME + XDG_* point at a per-process temp directory.
  *
- * #685 / owner 2026-09-06: default home is created under this worktree's
- * `.test-tmp/` so exit cleanup is lawful (tests may only delete inside the
- * worktree). System tmpdir / real-home paths are never deleted here.
- * #612 no-residue acceptance applies to this worktree-internal root.
+ * #685 / owner 2026-09-05 (ticket r10 = 判官 r3 option ②):
+ * temps only under system tmpdir; tests/helpers/runners/preloads never delete
+ * any directory. #612 no-residue voided on this ticket.
  *
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
-const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKTREE_TEST_TMP = join(PACKAGE_ROOT, ".test-tmp");
-
-/** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
-let defaultTestHomeCleanupRegistered = false;
-/** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
 let sharedHermesBinDir;
-
-function registerDefaultTestHomeCleanup() {
-  if (defaultTestHomeCleanupRegistered) return;
-  defaultTestHomeCleanupRegistered = true;
-  process.on("exit", () => {
-    if (defaultTestHome === undefined) return;
-    try {
-      rmSync(defaultTestHome, { recursive: true, force: true });
-    } catch (error) {
-      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-      try {
-        process.stderr.write(
-          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
-        );
-      } catch {
-        // stderr may already be closed during process teardown
-      }
-    }
-  });
-}
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
-    mkdirSync(WORKTREE_TEST_TMP, { recursive: true });
-    defaultTestHome = mkdtempSync(join(WORKTREE_TEST_TMP, "ak-roles-test-home-"));
-    registerDefaultTestHomeCleanup();
+    defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
   }
   return defaultTestHome;
 }
@@ -115,9 +82,6 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   else process.env.PATH = next.PATH;
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
-  if (next.PI_CODING_AGENT_DIR === undefined) {
-    delete process.env.PI_CODING_AGENT_DIR;
-  } else {
-    process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
-  }
+  if (next.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
 }

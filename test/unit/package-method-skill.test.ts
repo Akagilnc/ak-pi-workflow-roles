@@ -22,12 +22,11 @@ import {
 } from "../../src/package-resources/method-skill.ts";
 import { sha256Hex } from "../../src/sha256.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const originalHome = process.env.HOME;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-empty-home-method-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
   process.env.HOME = home;
   try {
     // Empty home: no ~/.agents/skills at all.
@@ -39,7 +38,6 @@ async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   } finally {
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -96,7 +94,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
 
 test("provenance without immutable upstream commit is rejected", async () => {
   await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(join(testTmpdir(), "ak-method-no-commit-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-no-commit-"));
     try {
       const packageRootTemp = join(tempRoot, "pkg");
       const methodDir = join(packageRootTemp, "resources/methods/tdd");
@@ -114,7 +112,6 @@ test("provenance without immutable upstream commit is rejected", async () => {
         /upstream\.commit/,
       );
     } finally {
-      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

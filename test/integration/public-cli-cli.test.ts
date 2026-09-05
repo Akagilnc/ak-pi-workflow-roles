@@ -32,14 +32,12 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-cli-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
   try {
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
