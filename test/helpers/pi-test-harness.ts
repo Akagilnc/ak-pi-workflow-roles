@@ -1081,11 +1081,12 @@ export interface InProcessPiOptions {
    */
   credentials?: CredentialStore;
   /**
-   * #675 offline nested public summons: inject pass at the summonOfficer/summonAuditor
-   * seams (not env short-circuits). "pass" (default) arms typed pass injects for the
-   * session lifetime; "none" leaves hooks untouched so the caller can install its own.
+   * #675 offline nested public summons: arm real nested pi children with the shared
+   * officer-pass faux provider via AK_ROLE_NESTED_EXTRA_PI_ARGS (summonPublicRole stays
+   * on the public path — no setTest* short-circuit). "provider" (default) arms it;
+   * "none" leaves env untouched so the caller owns nested provider / hooks.
    */
-  nestedSummonInject?: "pass" | "none";
+  nestedSummonInject?: "provider" | "none";
 }
 
 export interface InProcessPiFixture {
@@ -1482,42 +1483,21 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  const restores: Array<() => void> = [];
-  if (options.nestedSummonInject !== "none") {
-    const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
-    const { setTestAuditorSummon } = await import("../../src/compliance-transport.ts");
-    restores.push(
-      setTestGateOfficerSummon(async (officer) => ({
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: officer,
-            status: "pass",
-            decisiveFacts: { status: "pass", findings: [] },
-          },
-          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-          artifacts: [],
-          runId: "inprocess-gate-pass",
-        },
-      })),
+  // #675: nested public summons use the real activation path. Default arms a nested
+  // faux provider via env so officer/auditor LLM I/O is scripted without short-circuiting
+  // summonPublicRole / summonGateOfficer.
+  const priorNestedExtra = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
+  let nestedEnvArmed = false;
+  if (
+    options.nestedSummonInject !== "none"
+    && (priorNestedExtra === undefined || priorNestedExtra.trim() === "")
+  ) {
+    const nestedProvider = resolve(
+      packageRoot,
+      "test/fixtures/nested-public-officer-pass-provider.ts",
     );
-    restores.push(
-      setTestAuditorSummon(async () => ({
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "auditor",
-            status: "pass",
-            decisiveFacts: { status: "pass" },
-          },
-          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-          artifacts: [],
-          runId: "inprocess-audit-pass",
-        },
-      })),
-    );
+    process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify(["-e", nestedProvider]);
+    nestedEnvArmed = true;
   }
   try {
     for (const [name, value] of Object.entries(options.flags)) {
@@ -1543,8 +1523,20 @@ export async function withInProcessPi<T>(
         });
       }
     } finally {
+      // #675: nested public summons / navigator grace (10s) may still settle after
+      // the scenario returns; emit shutdown and drain before dispose.
+      try {
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      } catch {
+        // best-effort
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
       session.dispose();
-      for (const restore of restores.reverse()) restore();
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      if (nestedEnvArmed) {
+        if (priorNestedExtra === undefined) delete process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
+        else process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = priorNestedExtra;
+      }
     }
   }
 }

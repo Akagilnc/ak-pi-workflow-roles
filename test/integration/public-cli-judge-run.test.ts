@@ -214,6 +214,12 @@ test(
                 ...options.env,
                 PI_OFFLINE: "1",
                 AK_AUDIT_UNKNOWN_STATUS: "1",
+                // #675: nested public auditor via dedicated fixture + mystery mode.
+                AK_NESTED_AUDIT_MODE: "mystery",
+                AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
+                  "-e",
+                  resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
+                ]),
               },
               timeoutMs: options.timeoutMs ?? 90_000,
             });
@@ -239,19 +245,14 @@ test(
       assert.equal(outcome.role, "judge");
       // Unreadable compliance is infrastructure/output failure, not a judgment status (#475).
       assert.equal(outcome.cause, "output");
-      const secondary = outcome.decisiveFacts.secondaryEvidence as Record<string, unknown> | undefined;
-      assert.ok(secondary !== undefined && typeof secondary === "object");
-      assert.equal(secondary.kind, "role_infrastructure_failure");
-      assert.equal(secondary.source, "shared-role-lifecycle");
-      assert.equal(secondary.reasonCode, "host_failure");
-      assert.equal(secondary.exitCode, 1);
-      // #675 public auditor may surface nested terminal facts; retain observation when present.
-      if (secondary.observation !== undefined) {
-        assert.deepEqual(secondary.observation, { kind: "object-status-unreadable", status: "unknown" });
-      }
-      if (secondary.candidate !== undefined) {
-        assert.deepEqual(secondary.candidate, { status: "mystery", retained: "raw auditor candidate" });
-      }
+      assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
+      });
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDir = join(
@@ -286,10 +287,14 @@ test(
       assert.equal(errorBody.kind, "error");
       assert.equal(errorBody.role, "judge");
       assert.equal(errorBody.cause, "output");
-      assert.equal(errorBody.details?.kind, "role_infrastructure_failure");
-      assert.equal(errorBody.details?.source, "shared-role-lifecycle");
-      assert.equal(errorBody.details?.reasonCode, "host_failure");
-      assert.equal(errorBody.details?.exitCode, 1);
+      assert.deepEqual(errorBody.details, {
+        kind: "role_infrastructure_failure",
+        source: "shared-role-lifecycle",
+        reasonCode: "host_failure",
+        observation: { kind: "object-status-unreadable", status: "unknown" },
+        candidate: { status: "mystery", retained: "raw auditor candidate" },
+        exitCode: 1,
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }

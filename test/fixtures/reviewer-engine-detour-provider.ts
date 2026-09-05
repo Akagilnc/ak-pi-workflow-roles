@@ -4,6 +4,8 @@
  * per axis, then emit the existing axis report text from detour stdout.
  * Parent still submits typed ak_reviewer_output. Zero production hooks.
  */
+import { appendFileSync, readFileSync } from "node:fs";
+
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -20,6 +22,33 @@ import {
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
+
+/** Cross-process axis completion ledger for nested public evidence-child (#675). */
+function axisLedgerPath(): string | undefined {
+  const path = process.env.AK_REVIEW_AXIS_LEDGER;
+  return typeof path === "string" && path.trim() !== "" ? path : undefined;
+}
+
+function recordAxisComplete(axis: "standards" | "spec"): void {
+  const path = axisLedgerPath();
+  if (path === undefined) return;
+  appendFileSync(path, `${axis}\n`, "utf8");
+}
+
+function completedAxes(): Set<string> {
+  const path = axisLedgerPath();
+  if (path === undefined) return new Set();
+  try {
+    return new Set(
+      readFileSync(path, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 const CANNED_LABOR = "canned-reviewer-engine-labor-378";
 
@@ -115,6 +144,7 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
           ? `Standards finding count: 0. engine-labor=${labor.trim() || "none"}`
           : `Spec: fixed target satisfies the stated behavior. engine-labor=${labor.trim() || "none"}`;
       if (names.includes(EVIDENCE_CHILD_OUTPUT_TOOL_NAME)) {
+        recordAxisComplete(axis);
         return fauxAssistantMessage(
           fauxToolCall(
             EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
@@ -124,13 +154,19 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
           { stopReason: "toolUse" },
         );
       }
+      recordAxisComplete(axis);
       return fauxAssistantMessage(report);
     }
 
     if (names.includes(REVIEWER_OUTPUT_TOOL_NAME)) {
-      // #675: axes run in nested public evidence-child processes; parent fixture
-      // cannot observe their in-memory turns. Detour labor is asserted from child
-      // session files by the acceptance test.
+      // #675: axes complete in nested public evidence-child processes; parent reads
+      // the cross-process axis ledger before typed output (#378 dual-axis gate).
+      const seen = completedAxes();
+      if (!seen.has("standards") || !seen.has("spec")) {
+        throw new Error(
+          `parent output before both evidence-child axes; seen=${[...seen].join(",") || "none"}`,
+        );
+      }
       return fauxAssistantMessage(
         fauxToolCall(
           REVIEWER_OUTPUT_TOOL_NAME,

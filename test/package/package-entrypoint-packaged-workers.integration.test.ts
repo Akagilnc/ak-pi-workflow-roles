@@ -112,49 +112,77 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         await writeFile(auditorSoulPath, original, "utf8");
       }
 
-      // Compliance entry: installed judge-auditor module has its own compliance-transport
-      // instance — arm the installed hook, not the workspace one.
-      const compliance = await installed("src/compliance-transport.ts");
-      let summons = 0;
-      compliance.setTestAuditorSummon(async () => {
-        summons += 1;
-        return {
-          exitCode: 0,
-          terminal: {
-            roleOutcome: {
-              kind: "accepted",
-              role: "auditor",
-              status: "pass",
-              decisiveFacts: { status: "pass" },
-            },
-            navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-            artifacts: [],
-            runId: "test-auditor-package",
-          },
-        };
+      // #675: installed judge-auditor → real public auditor summon (nested faux provider).
+      const judge = await installed("src/judge-auditor.ts");
+      const runDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        "consumer",
+        "runs",
+        "01a06ff1-0000-7000-8000-00000000audt@judge",
+      );
+      await mkdir(resolve(runDirectory, "session"), { recursive: true });
+      await writeFile(
+        resolve(runDirectory, "run-state.json"),
+        `${JSON.stringify({
+          runId: "01a06ff1-0000-7000-8000-00000000audt",
+          role: "judge",
+          state: "running",
+          bookKey: "consumer",
+          projectRoot: installedRoot,
+          sessionDirectory: resolve(runDirectory, "session"),
+          sessionFile: resolve(runDirectory, "session/session.jsonl"),
+          runDirectory,
+          admittedRequestPath: resolve(runDirectory, "admitted-request.json"),
+          principalWire: { kind: "pi", sessionFile: resolve(runDirectory, "session/session.jsonl") },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n", "utf8");
+      const sm = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
+      sm.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
+      sm.appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
+        api: "openai-responses",
+        provider: "test",
+        model: "test",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "toolUse",
+        timestamp: Date.now(),
       });
+      const nestedProvider = resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts");
+      const priorNested = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
+      const priorAgent = process.env.PI_CODING_AGENT_DIR;
+      const priorModel = process.env.AK_ROLE_NESTED_MODEL;
+      const agentDir = resolve(home, ".pi", "agent");
+      await mkdir(agentDir, { recursive: true });
+      // Seed nested faux models so public auditor summon can select a model offline.
+      const { fauxProvider } = await import("@earendil-works/pi-ai");
+      const { seedAgentDirModelsJsonFromFaux } = await import("../helpers/pi-test-harness.ts");
+      const nestedFaux = fauxProvider({
+        api: "ak-nested-officer-pass",
+        provider: "ak-nested-officer-pass",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const seeded = await seedAgentDirModelsJsonFromFaux(nestedFaux, agentDir);
+      process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify(["-e", nestedProvider]);
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.AK_ROLE_NESTED_MODEL = "ak-nested-officer-pass/faux-1";
+      process.env.HOME = home;
       try {
-        const judge = await installed("src/judge-auditor.ts");
-        const runDirectory = resolve(installedRoot, "fixture-run");
-        await mkdir(resolve(runDirectory, "session"), { recursive: true });
-        const sm = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
-        sm.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
-        sm.appendMessage({
-          role: "assistant",
-          content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
-          api: "openai-responses",
-          provider: "test",
-          model: "test",
-          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-          stopReason: "toolUse",
-          timestamp: Date.now(),
-        });
         const context = { cwd: installedRoot, sessionManager: sm } as any;
         const decision = await judge.createPiJudgeAuditor()({ context });
         assert.equal(decision.status, "pass");
-        assert.equal(summons, 1);
       } finally {
-        compliance.setTestAuditorSummon(undefined);
+        await seeded.close();
+        if (priorNested === undefined) delete process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
+        else process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = priorNested;
+        if (priorAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = priorAgent;
+        if (priorModel === undefined) delete process.env.AK_ROLE_NESTED_MODEL;
+        else process.env.AK_ROLE_NESTED_MODEL = priorModel;
       }
       });
     },
@@ -404,47 +432,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 
 test("packaged judge escalation emits one typed human decision", async () => {
   const manifest = await loadRawPackageManifest();
-  const { setTestAuditorSummon } = await import("../../src/compliance-transport.ts");
-  const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
-  const restoreGate = setTestGateOfficerSummon(async (officer) => ({
-    exitCode: 0,
-    terminal: {
-      roleOutcome: {
-        kind: "accepted",
-        role: officer,
-        status: "pass",
-        decisiveFacts: { status: "pass", findings: [] },
-      },
-      navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-      artifacts: [],
-      runId: "test-packaged-judge-gate",
-    },
-  }));
-  let auditHits = 0;
-  const restoreAudit = setTestAuditorSummon(async () => {
-    auditHits += 1;
-    return {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: "auditor",
-          status: "escalate",
-          decisiveFacts: {
-            status: "escalate",
-            conflicts: ["Soul authority conflicts with controlling authority"],
-            decisionGate: {
-              question: "Which authority governs this verdict?",
-              options: ["Soul", "Controlling authority"],
-            },
-          },
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-packaged-judge-escalate",
-      },
-    };
-  });
+  // #675: real public auditor summon with nested faux escalate mode (no setTest* short-circuit).
+  const priorAuditMode = process.env.AK_NESTED_AUDIT_MODE;
+  process.env.AK_NESTED_AUDIT_MODE = "escalate";
   try {
   await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
@@ -466,8 +456,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
         mode: "print",
         flags: { "ak-role": "judge" },
         noTools: "builtin",
-        // Caller owns auditor escalate inject below.
-        nestedSummonInject: "none",
+        // Default nestedSummonInject arms real nested public path + officer-pass provider;
+        // AK_NESTED_AUDIT_MODE=escalate scripts the public auditor decision.
       }, async ({ session, sessionManager }) => {
         const escalateRespond = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
@@ -500,7 +490,6 @@ test("packaged judge escalation emits one typed human decision", async () => {
           throw new Error("packaged Judge escalation tool result is missing");
         }
         const toolResult = result.message;
-        assert.equal(auditHits, 1, `auditor inject hits=${auditHits} details=${JSON.stringify(toolResult.details)}`);
         assert.equal(toolResult.isError, false, JSON.stringify(toolResult.details));
         // #575 sole-final barrier: execute projects a pending-round-closure candidate;
         // audit escalation face + delivered judge verdict arrive on the typed closure (ADR 0055).
@@ -534,8 +523,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
     },
   );
   } finally {
-    restoreAudit();
-    restoreGate();
+    if (priorAuditMode === undefined) delete process.env.AK_NESTED_AUDIT_MODE;
+    else process.env.AK_NESTED_AUDIT_MODE = priorAuditMode;
   }
 });
 
