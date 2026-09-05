@@ -3,7 +3,14 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -65,16 +72,25 @@ function readCurrentSession(sessionDir: string): string {
 
 /**
  * Exclusive first-publisher claim for the nest's current-session pointer.
- * EEXIST means another creator already published — caller reopens the winner.
- * Every other native failure stays fatal (failure honesty).
+ * Body is fully written to a temp path first, then published with link (atomic
+ * directory entry). Plain wx writeFile leaves an empty inode readable between
+ * open and write — concurrent losers then parse truncated JSON. link EEXIST
+ * means another creator already published — caller reopens the winner.
+ * Every other native failure stays fatal (failure honesty). No wait/retry loop.
  */
 function tryClaimCurrentSession(
   sessionDir: string,
   sessionFile: string,
 ): "claimed" | "lost-to-concurrent-publisher" {
   const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
+  const tmp = join(
+    sessionDir,
+    `.${CURRENT_SESSION_LEDGER}.${process.pid}.${Date.now()}.tmp`,
+  );
+  writeFileSync(tmp, `${JSON.stringify({ sessionFile })}
+`);
   try {
-    writeFileSync(ledger, `${JSON.stringify({ sessionFile })}\n`, { flag: "wx" });
+    linkSync(tmp, ledger);
     return "claimed";
   } catch (error) {
     if (nativeErrnoCode(error) === "EEXIST") {
@@ -84,6 +100,12 @@ function tryClaimCurrentSession(
       `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
       { cause: error },
     );
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Temp residue is not the published claim; ignore best-effort cleanup failure.
+    }
   }
 }
 
