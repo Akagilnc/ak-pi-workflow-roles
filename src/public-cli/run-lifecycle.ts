@@ -36,7 +36,6 @@ import {
   engineSessionMaterialFromOptions,
   type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
-import { THINKING_LEVELS } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
@@ -1136,8 +1135,7 @@ async function loadResumableRunRecord(
         model = {
           provider: rec.provider,
           model: rec.model,
-          ...(typeof rec.thinking === "string" &&
-          THINKING_LEVELS.has(rec.thinking as PublicThinkingLevel)
+          ...(typeof rec.thinking === "string"
             ? { thinking: rec.thinking as PublicThinkingLevel }
             : {}),
         };

@@ -237,7 +237,7 @@ export async function openPiInstitutionalSession(
       ? childRegistry.find(selection.provider, selection.model)
       : undefined;
 
-    const withTypedReason = (error: Error, reason: "auth" | "model" | "thinking"): Error =>
+    const withTypedReason = (error: Error, reason: "auth" | "model"): Error =>
       Object.assign(error, { reason });
 
     // Existing Navigator/model contract (pre-#590): unknown provider or model is
@@ -254,13 +254,15 @@ export async function openPiInstitutionalSession(
     const fallbackApi = providerDefaultModel?.api
       ?? (childProvider as any)?.api
       ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
+    // Fallback model facts come from the provider surface only — never derive
+    // reasoning (or any capability) from the thinking string (#683 pass-through).
     const modelToUse = foundModel ?? {
       id: selection.model,
       name: selection.model,
       api: fallbackApi as any,
       provider: selection.provider,
       baseUrl: providerDefaultModel?.baseUrl ?? "",
-      reasoning: selection.thinking !== undefined && selection.thinking !== "off",
+      reasoning: providerDefaultModel?.reasoning ?? false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
@@ -631,15 +633,15 @@ export async function openPiInstitutionalSession(
       }
     }
 
-    // 7. Create AgentSession
-    // Existing Navigator contract: requested thinking must stick after open. Pi
-    // clamps unsupported levels; if max was requested and not applied, fail as
-    // typed unavailable/thinking (pre-#590 attendance setModel check).
-    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
+    // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
+    // omits thinkingLevel (Pi default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent defaults.
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: requestedThinking as any,
+      ...(options.selection.thinking === undefined
+        ? {}
+        : { thinkingLevel: options.selection.thinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -649,15 +651,6 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
-      session.dispose();
-      throw withTypedReason(
-        new Error(
-          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`,
-        ),
-        "thinking",
-      );
-    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();

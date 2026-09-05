@@ -131,8 +131,13 @@ test("persistent model edits are immediate and have no fallback", async () => {
     assert.equal(await readNavigatorModelSetting(path), "provider/two");
     assert.equal(Date.now() - started < 5000, true);
     await writeFile(path, JSON.stringify({ model: "provider/one:backup" }));
-    const invalid = await readNavigatorModelSetting(path);
-    assert.throws(() => parseNavigatorModelSetting(invalid));
+    const opaqueSuffix = await readNavigatorModelSetting(path);
+    // Suffix is opaque pass-through — no whitelist reject at parse.
+    assert.deepEqual(parseNavigatorModelSetting(opaqueSuffix), {
+      provider: "provider",
+      model: "one",
+      thinkingLevel: "backup",
+    });
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -732,12 +737,12 @@ test("status-specific route candidates outrank generics regardless of declaratio
   assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.candidate.id, reviewerStatuses[0]!.id);
 });
 
-test("resumed setModel and thinking failures preserve typed source and cause", async () => {
+test("resumed setModel session failures preserve typed source and cause", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-resumed-cause-"));
   try {
     const setting = join(root, "model.json");
+    // Thinking stick/availability re-check is gone (#683); only session setModel failures remain typed here.
     const cases = [
-      { name: "thinking", secondModel: "provider/model:max", source: "thinking" as const, fail: "thinking" as const },
       { name: "session", secondModel: "provider/model", source: "session" as const, fail: "session" as const },
     ] as const;
     for (const scenario of cases) {

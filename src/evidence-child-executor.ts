@@ -975,7 +975,7 @@ export function createNativeNavigatorSessionFactory(
   return async ({ context, subject, modelSettingPath, tool }) => {
     const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
     let selection = resolved.selection;
-    let thinkingLevel = resolved.thinkingLevel;
+    let thinkingLevel: string | undefined = resolved.thinkingLevel;
     let configuredLabel = resolved.configuredLabel;
 
     const { createRecordSession } = await import("./archivist-record-entry.ts");
@@ -1117,7 +1117,7 @@ export function createNativeNavigatorSessionFactory(
         }
       },
       entries: () => sessionManager.getEntries(),
-      setModel: async (next, nextThinking) => {
+      setModel: async (next) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
           nextParsed = parseNavigatorModelSetting(next);
@@ -1133,16 +1133,11 @@ export function createNativeNavigatorSessionFactory(
             `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
           );
         }
-        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
-          throw new NavigatorUnavailableError(
-            "thinking",
-            `Navigator thinking level ${nextThinking} is unavailable for ${next}`,
-          );
-        }
+        // Thinking is opaque pass-through; no stick/availability re-check.
         selection = {
           provider: nextParsed.provider,
           model: nextParsed.model,
-          thinking: nextParsed.thinkingLevel,
+          ...(nextParsed.thinkingLevel === undefined ? {} : { thinking: nextParsed.thinkingLevel }),
         };
         thinkingLevel = nextParsed.thinkingLevel;
         configuredLabel = next;

@@ -35,6 +35,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { publicStartupCandidates } from "../../src/public-cli/registry.ts";
 import {
   loadNavigatorWorkContext,
   resolveNavigatorAuthorityMaterial,
@@ -250,9 +251,9 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.deepEqual(events[2].route, revised.candidates[0]!.route);
     assert.deepEqual(harness.modelSettings, [
-      { model: "provider/one", thinkingLevel: "off" },
-      { model: "provider/two", thinkingLevel: "off" },
-      { model: "provider/three", thinkingLevel: "off" },
+      { model: "provider/one" },
+      { model: "provider/two" },
+      { model: "provider/three" },
     ]);
     assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
   } catch (error) {
@@ -411,8 +412,12 @@ test("navigator open failures classify typed reason/status/code, not Error.messa
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
   assert.deepEqual(parseNavigatorModelSetting("openai-codex/gpt-5.6-luna:max"), { provider: "openai-codex", model: "gpt-5.6-luna", thinkingLevel: "max" });
-  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
-  assert.throws(() => parseNavigatorModelSetting("provider/model:backup"));
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:medium"), { provider: "provider", model: "model", thinkingLevel: "medium" });
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:xhigh"), { provider: "provider", model: "model", thinkingLevel: "xhigh" });
+  // Bare provider/model omits thinkingLevel — no invented default.
+  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model" });
+  // Suffix is opaque pass-through; no whitelist reject.
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:backup"), { provider: "provider", model: "model", thinkingLevel: "backup" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
@@ -467,7 +472,8 @@ test("host-neutral native factory opens without parent modelRegistry and reports
         tool: createNavigatorPrepareTool(() => {}),
       });
       try {
-        assert.equal(session.getThinkingLevel?.(), "off");
+        // Bare setting omits thinking — no invented "off".
+        assert.equal(session.getThinkingLevel?.(), undefined);
       } finally {
         await session.dispose();
       }
@@ -573,6 +579,55 @@ test("host-neutral native factory prefers institutional-resolution navigator sea
       try {
         assert.equal(session.getThinkingLevel?.(), "max");
         await session.setModel?.(`${model.provider}/${model.id}:max`, "max");
+      } finally {
+        await session.dispose();
+      }
+    });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
+  }
+  await cleanupTempDir(root);
+});
+
+test("native factory passes seat-table thinking through to createAgentSession (medium stays medium)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-seat-thinking-passthrough-"));
+  try {
+    seedGitRepository(root);
+    const bookKey = basename(root);
+    const runDirectory = join(root, ".ak-roles", "books", bookKey, "runs", "seat-thinking");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const seatThinking = publicStartupCandidates("navigator")[0]!.thinking!;
+    assert.equal(seatThinking, "medium");
+    const faux = fauxProvider({ provider: "nav-seat-thinking", api: "openai-completions" });
+    const model = faux.getModel();
+    // medium is a native Pi level when the model declares reasoning (no max map required).
+    Object.assign(model, { reasoning: true });
+    await writeFile(
+      join(runDirectory, "institutional-resolution.json"),
+      `${JSON.stringify({
+        version: 1,
+        seats: {
+          navigator: { provider: model.provider, model: model.id, thinking: seatThinking },
+        },
+      }, null, 2)}\n`,
+    );
+    await withInstitutionalProviderFixture(faux, async () => {
+      const session = await createNativeNavigatorSessionFactory()({
+        context: hostContextFor(root, join(runDirectory, "session", "session.jsonl")),
+        subject: join(runDirectory, "session"),
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      try {
+        // Bookkeeping mirrors the seat value we passed into createAgentSession.
+        assert.equal(session.getThinkingLevel?.(), seatThinking);
+        // Pi records thinking_level_change from createAgentSession({ thinkingLevel }).
+        const thinkingEntry = session.entries().find((entry) => {
+          return typeof entry === "object"
+            && entry !== null
+            && (entry as { type?: unknown }).type === "thinking_level_change";
+        }) as { thinkingLevel?: string } | undefined;
+        assert.equal(thinkingEntry?.thinkingLevel, seatThinking);
       } finally {
         await session.dispose();
       }
