@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
   loadCanonicalSkillBinding,
@@ -13,7 +13,7 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 const originalHome = process.env.HOME;
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(resolve(testTmpdir(), "ak-canonical-skill-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-canonical-skill-"));
   process.env.HOME = home;
   return await withPrimaryAwareCleanup(
     () => run(home),

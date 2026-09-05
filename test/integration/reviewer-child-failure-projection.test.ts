@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { AgentSession, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -40,7 +40,7 @@ function evidenceChildContext(cwd: string, faux: ReturnType<typeof fauxProvider>
 }
 
 test("aborted evidence without remote testimony projects unknown, not child", async () => {
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-sp1-aborted-"));
+  const cwd = await mkdtemp(worktreeTempPrefix("ak-sp1-aborted-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
   try {
@@ -73,7 +73,7 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
   const previousBaseUrl = process.env.OPENAI_BASE_URL;
   process.env.OPENAI_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "http://127.0.0.1:1";
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-sp1-cleanup-"));
+  const cwd = await mkdtemp(worktreeTempPrefix("ak-sp1-cleanup-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
   let subscribes = 0;

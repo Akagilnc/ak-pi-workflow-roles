@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import type {
   AssistantMessage,
@@ -80,7 +80,7 @@ function auditContext(runDirectory?: string): ExtensionContext {
 }
 
 test("Pi judge auditor preserves authentication failures", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "ak-judge-auth-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-judge-auth-"));
   const runDirectory = join(root, "run");
   const agentDir = join(root, "agent");
   await mkdir(runDirectory);

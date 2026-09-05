@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Reader face for publisher durable terminal artifacts.
  * T10: parent-directory unique error.<uuid>.json must bind body.runId to the
@@ -14,7 +14,7 @@ import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 async function withTempRunsRoot<T>(
   scenario: (runsRoot: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(testTmpdir(), "ak-run-terminal-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-run-terminal-"));
   try {
     const runsRoot = join(root, "runs");
     await mkdir(runsRoot, { recursive: true });

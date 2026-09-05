@@ -1,14 +1,14 @@
 /**
  * #549 HOME redirect + #685 worktree-internal default home with exit cleanup.
- * Owner 2026-09-06: may only delete inside this worktree; default home under .test-tmp/;
+ * Owner 2026-09-06: may only delete inside this worktree; default home is a
+ * self-owned sibling root under the worktree (no shared .test-tmp parent);
  * #612: process exit removes the default home so the worktree returns to pre-run state.
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKTREE_TEST_TMP = join(PACKAGE_ROOT, ".test-tmp");
 
 let defaultTestHome;
 let defaultTestHomeCleanupRegistered = false;
@@ -23,11 +23,6 @@ function registerDefaultTestHomeCleanup() {
     if (defaultTestHome === undefined) return;
     try {
       rmSync(defaultTestHome, { recursive: true, force: true });
-      try {
-        rmdirSync(WORKTREE_TEST_TMP);
-      } catch {
-        // parent still holds other self-created fixtures or never empty — leave it
-      }
     } catch (error) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
       try {
@@ -46,8 +41,8 @@ function registerDefaultTestHomeCleanup() {
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
-    mkdirSync(WORKTREE_TEST_TMP, { recursive: true });
-    defaultTestHome = mkdtempSync(join(WORKTREE_TEST_TMP, "ak-roles-test-home-"));
+    // Self-owned sibling root — no shared parent other processes try to rmdir.
+    defaultTestHome = mkdtempSync(join(PACKAGE_ROOT, ".test-tmp-ak-roles-test-home-"));
     registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;

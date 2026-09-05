@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
  * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
@@ -27,7 +27,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-gleaner-left-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-gleaner-left-"));
   try {
     return await scenario(home);
   } finally {

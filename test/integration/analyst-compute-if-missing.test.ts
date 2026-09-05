@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #338 analyst on-demand retrieval — compute-if-missing (owner 2026-08-14).
  *
@@ -123,7 +123,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-338-business-"));
+  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-338-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -143,7 +143,7 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-338-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-338-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

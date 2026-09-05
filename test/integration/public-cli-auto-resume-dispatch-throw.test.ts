@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Owner 2026-08-23 (immediate order, no separate ticket): a dispatch that exits
  * by throwing must not bypass the auto-resume retry mechanism.
@@ -23,7 +23,7 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(testTmpdir(),"ak-dispatch-throw-"));
+  const home=await mkdtemp(worktreeTempPrefix("ak-dispatch-throw-"));
   return await fn(home)
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}

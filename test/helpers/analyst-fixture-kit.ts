@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { testTmpdir } from "./worktree-temp.ts";
+import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +23,7 @@ export function gitPorcelain(cwd: string): string {
 }
 
 export async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-business-"));
+  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -48,7 +48,7 @@ export async function withBusinessRepo<T>(fn: (repo: string, porcelainBefore: st
  * Callers pass the supplied `home` explicitly to analyst APIs or `env.home`.
  */
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

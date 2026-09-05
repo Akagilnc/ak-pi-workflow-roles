@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { testTmpdir } from "./worktree-temp.ts";
+import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { join } from "node:path";
 
 import {
@@ -24,7 +24,7 @@ export async function withTempHome<T>(
   options: { prefix?: string } = {},
 ): Promise<T> {
   const home = await mkdtemp(
-    join(testTmpdir(), options.prefix ?? "ak-public-cli-fail-"),
+    worktreeTempPrefix(options.prefix ?? "ak-public-cli-fail-"),
   );
   try {
     return await scenario(home);

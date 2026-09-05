@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #633 abolish one-shot — collector/doctor/notary/inspector resume through the
  * public resume entry: same session principal reopened, each seat settles its
@@ -50,7 +50,7 @@ import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-resume-four-seats-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-resume-four-seats-"));
   try {
     return await scenario(home);
   } finally {

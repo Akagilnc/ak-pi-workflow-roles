@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 package-owned method Skill seam — empty home, no network, exact provenance.
  */
@@ -26,7 +26,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 const originalHome = process.env.HOME;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-empty-home-method-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-empty-home-method-"));
   process.env.HOME = home;
   try {
     // Empty home: no ~/.agents/skills at all.
@@ -94,7 +94,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
 
 test("provenance without immutable upstream commit is rejected", async () => {
   await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(join(testTmpdir(), "ak-method-no-commit-"));
+    const tempRoot = await mkdtemp(worktreeTempPrefix("ak-method-no-commit-"));
     try {
       const packageRootTemp = join(tempRoot, "pkg");
       const methodDir = join(packageRootTemp, "resources/methods/tdd");

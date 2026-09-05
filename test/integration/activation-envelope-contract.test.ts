@@ -52,7 +52,7 @@ import {
   readAcceptedActivationFacts,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
@@ -293,7 +293,7 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
 }
 
 test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
-  const root = mkdtempSync(join(testTmpdir(), "ak-book-topo-"));
+  const root = mkdtempSync(worktreeTempPrefix("ak-book-topo-"));
   try {
     const main = join(root, "project-alpha");
     mkdirSync(main);
@@ -352,7 +352,7 @@ test("book key follows git common-dir host basename across worktrees, rename, an
 });
 
 test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
-  const root = mkdtempSync(join(testTmpdir(), "ak-book-infra-"));
+  const root = mkdtempSync(worktreeTempPrefix("ak-book-infra-"));
   try {
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
@@ -559,4 +559,3 @@ test("ledger append rejects every symlink escape vector without writing outside"
     assert.notEqual(realSession, decoyFile);
   });
 });
-

@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { rmSync } from "node:fs";
 import { resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { promisify } from "node:util";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
-  getSharedIsolatedPack,
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
+  packIsolatedPackage,
 } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
@@ -36,6 +35,7 @@ const HOST_PEERS = [
 
 interface ExtractedPack {
   root: string;
+  packDestination: string;
   packageJson: {
     name: string;
     license?: string;
@@ -49,10 +49,16 @@ interface ExtractedPack {
   paths: string[];
 }
 
+/**
+ * One-shot pack owned by this file: pack destination + extract root are
+ * self-owned sibling fixtures; cleaned after assertions (and on extract failure).
+ * No cross-process cache / lock / ready protocol (#685 C4).
+ */
 async function extractPackedArtifact(): Promise<ExtractedPack> {
-  const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-meta-"));
+  const packDestination = await mkdtemp(worktreeTempPrefix("ak-pack-dest-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-pack-meta-"));
   try {
+    const pack = await packIsolatedPackage(packDestination);
     await execFileAsync("tar", ["-xzf", pack.tarball, "-C", root]);
     const packageJson = JSON.parse(
       await readFile(resolve(root, "package/package.json"), "utf8"),
@@ -64,28 +70,50 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
     );
     return {
       root,
+      packDestination,
       packageJson,
       licenseText,
       thirdPartyNoticeText,
       paths: pack.files.map((file) => file.path),
     };
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
-    throw error;
+    const failures: unknown[] = [error];
+    for (const path of [root, packDestination]) {
+      try {
+        await rm(path, { recursive: true, force: true });
+      } catch (cleanupError) {
+        failures.push(cleanupError);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    throw new AggregateError(failures, "pack extract failed and cleanup failed", {
+      cause: error,
+    });
+  }
+}
+
+async function disposeExtracted(fixture: ExtractedPack): Promise<void> {
+  const failures: unknown[] = [];
+  for (const path of [fixture.root, fixture.packDestination]) {
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "npm-identity pack fixture cleanup failed");
   }
 }
 
 /**
  * #420 整改：元数据断言全部落在一次解包的只读不可变产物上（解包 8 次 → 1 次，
- * 不触「独立契约塞共享可变状态」禁令）。进程退出时清理唯一 worktree 自建根。
+ * 不触「独立契约塞共享可变状态」禁令）。本文件拥有 pack 临时根完整生命周期。
  */
 const extracted = await extractPackedArtifact();
-process.on("exit", () => {
-  try {
-    rmSync(extracted.root, { recursive: true, force: true });
-  } catch {
-    // Best-effort temp cleanup; never mask test results.
-  }
+after(async () => {
+  await disposeExtracted(extracted);
 });
 
 /**

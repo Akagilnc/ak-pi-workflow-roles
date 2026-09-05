@@ -45,10 +45,10 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 test("Navigator preparation overlaps settlement, waits for the same call, and presents one typed event", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-attendance-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-attendance-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -90,7 +90,7 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
 });
 
 test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-rejected-prepare-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-rejected-prepare-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -109,7 +109,7 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
 });
 
 test("a duplicate Navigator prepare batch cannot publish its first provisional recommendation", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-duplicate-prepare-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-duplicate-prepare-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -145,7 +145,7 @@ test("a duplicate Navigator prepare batch cannot publish its first provisional r
 });
 
 test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-rejected-exhaustion-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-rejected-exhaustion-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -167,7 +167,7 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
 });
 
 test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-prepare-transport-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-prepare-transport-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -185,7 +185,7 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
 });
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-help-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-help-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -215,7 +215,7 @@ test("live help changes the next hint without a static template or fabricated ta
 });
 
 test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-route-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-route-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/one" }));
@@ -259,7 +259,7 @@ test("unchanged routes are omitted after a native-session route entry, while cha
 });
 
 test("typed owner-decision and role-infrastructure outcomes emit affirmative no-advice", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-no-advice-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-no-advice-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -297,7 +297,7 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
 });
 
 test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
-  const root = await mkdtemp(join(testTmpdir(), "navigator-unavailable-"));
+  const root = await mkdtemp(worktreeTempPrefix("navigator-unavailable-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));

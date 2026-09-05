@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 整改移档（自 test/integration/activation-envelope-contract.test.ts 与
 // test/integration/activation-reconciliation.test.ts）：纯进程内模块逻辑按性质
 // 归位快档；stdin-parked 真子进程条仍留 integration。契约断言一字不减。
@@ -92,12 +92,12 @@ test("resolved ledger home rejects relative process home before filesystem write
     );
   }
 
-  const absoluteHome = resolve(testTmpdir(), "ak-ledger-abs-home");
+  const absoluteHome = worktreeTempPrefix("ak-ledger-abs-home");
   const ledgerHome = resolveActivationLedgerHome(absoluteHome);
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 
-  const root = mkdtempSync(join(testTmpdir(), "ak-ledger-rel-home-"));
+  const root = mkdtempSync(worktreeTempPrefix("ak-ledger-rel-home-"));
   try {
     const relativeLedgerHome = "relative-ledger-home";
     assert.equal(isAbsolute(relativeLedgerHome), false);

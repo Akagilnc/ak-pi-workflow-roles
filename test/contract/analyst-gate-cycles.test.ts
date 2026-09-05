@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #446 analyst gate-cycle metric family — real-entry tracers only.
  *
@@ -237,7 +237,7 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-gate-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-gate-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

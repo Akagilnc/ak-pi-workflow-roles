@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -22,8 +21,8 @@ import {
 } from "./test-agent-dir-guard.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { testTmpdir, WORKTREE_TEST_TMP } from "./worktree-temp.ts";
+import { fileURLToPath } from "node:url";
+import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { promisify } from "node:util";
 
 import {
@@ -185,7 +184,7 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-mat-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-pack-mat-"));
   try {
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
@@ -209,236 +208,6 @@ export async function packIsolatedPackage(
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}
-
-export interface ConstructionProvenance {
-  /** `git rev-parse HEAD` at fixture build time. */
-  head: string;
-  /** Fingerprint of HEAD + worktree dirty paths + content hashes of dirty paths. */
-  fingerprint: string;
-  builtAt: string;
-}
-
-/**
- * Provenance for the current construction HEAD. Dirty worktrees hash dirty
- * file contents so the shared fixture never reuses a stale artifact.
- */
-export function constructionProvenance(): ConstructionProvenance {
-  const head = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-  }).trim();
-  const status = execFileSync(
-    "git",
-    ["-C", packageRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    { encoding: "buffer" },
-  ).toString("utf8");
-  const hash = createHash("sha256").update(head).update("\0");
-  if (status.length > 0) {
-    hash.update(status);
-    for (const entry of status.split("\0")) {
-      if (!entry) continue;
-      // porcelain -z: XY SPACE path, or rename "R  old\0new"
-      const pathPart = entry.slice(3);
-      if (!pathPart) continue;
-      const abs = resolve(packageRoot, pathPart);
-      if (!existsSync(abs)) {
-        hash.update("missing:").update(pathPart);
-        continue;
-      }
-      try {
-        hash.update(pathPart).update("\0");
-        hash.update(execFileSync("git", ["-C", packageRoot, "hash-object", abs]));
-      } catch {
-        hash.update("unreadable:").update(pathPart);
-      }
-    }
-  }
-  return {
-    head,
-    fingerprint: hash.digest("hex").slice(0, 24),
-    builtAt: new Date().toISOString(),
-  };
-}
-
-export interface SharedPackFixture extends IsolatedPackResult {
-  provenance: ConstructionProvenance;
-  cacheDir: string;
-}
-
-const FIXTURE_CACHE_ROOT = resolve(
-  testTmpdir(),
-  "ak-pi-workflow-roles-cold-fixtures",
-);
-
-let fixtureCacheCleanupRegistered = false;
-function registerFixtureCacheCleanup(): void {
-  if (fixtureCacheCleanupRegistered) return;
-  fixtureCacheCleanupRegistered = true;
-  process.on("exit", () => {
-    try {
-      rmSync(FIXTURE_CACHE_ROOT, { recursive: true, force: true });
-      try {
-        rmdirSync(WORKTREE_TEST_TMP);
-      } catch {
-        // other fixtures may still live under .test-tmp
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-      try {
-        process.stderr.write(
-          `[pi-test-harness] failed to remove pack fixture cache ${FIXTURE_CACHE_ROOT}: ${detail}\n`,
-        );
-      } catch {
-        // stderr may already be closed
-      }
-      if (typeof process.exitCode !== "number" || process.exitCode === 0) {
-        process.exitCode = 1;
-      }
-    }
-  });
-}
-
-async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
-  const started = Date.now();
-  while (true) {
-    try {
-      await mkdir(lockDir);
-      return async () => {
-        await rm(lockDir, { recursive: true, force: true });
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() - started > timeoutMs) {
-        throw new Error(`timed out waiting for fixture lock at ${lockDir}`);
-      }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-    }
-  }
-}
-
-async function waitForReady(
-  readyPath: string,
-  lockDir: string,
-  timeoutMs = 300_000,
-): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started <= timeoutMs) {
-    if (existsSync(readyPath)) return true;
-    if (!existsSync(lockDir)) {
-      // Builder crashed without ready marker — caller may rebuild.
-      return false;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-  }
-  throw new Error(`timed out waiting for fixture readiness at ${readyPath}`);
-}
-
-let sharedPackMemo: Promise<SharedPackFixture> | undefined;
-
-/**
- * Build or reuse one isolated pack for the current construction HEAD.
- * Cross-process safe via a fingerprint-keyed cache under worktree .test-tmp (#685).
- */
-export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
-  registerFixtureCacheCleanup();
-  sharedPackMemo ??= (async () => {
-    const provenance = constructionProvenance();
-    const cacheDir = resolve(FIXTURE_CACHE_ROOT, provenance.fingerprint, "pack");
-    const readyPath = resolve(cacheDir, "ready.json");
-    const metaPath = resolve(cacheDir, "meta.json");
-    const lockDir = resolve(cacheDir, ".lock");
-
-    await mkdir(cacheDir, { recursive: true });
-
-    const loadReady = async (): Promise<SharedPackFixture | undefined> => {
-      if (!existsSync(readyPath) || !existsSync(metaPath)) return undefined;
-      const meta = JSON.parse(await readFile(metaPath, "utf8")) as {
-        filename: string;
-        files: Array<{ path: string }>;
-        provenance: ConstructionProvenance;
-      };
-      const tarball = resolve(cacheDir, meta.filename);
-      if (!existsSync(tarball)) return undefined;
-      return {
-        root: cacheDir,
-        tarball,
-        filename: meta.filename,
-        files: meta.files,
-        provenance: meta.provenance,
-        cacheDir,
-      };
-    };
-
-    const existing = await loadReady();
-    if (existing) return existing;
-
-    if (await waitForReady(readyPath, lockDir)) {
-      const ready = await loadReady();
-      if (ready) return ready;
-    }
-
-    const release = await acquireDirLock(lockDir);
-    try {
-      const raced = await loadReady();
-      if (raced) return raced;
-
-      const packDestination = cacheDir;
-      const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
-      try {
-        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
-        const { stdout } = await execFileAsync(
-          "npm",
-          ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false" } },
-        );
-        const jsonStart = stdout.indexOf("[");
-        if (jsonStart < 0) throw new Error(`npm pack did not emit JSON: ${stdout}`);
-        const pack = JSON.parse(stdout.slice(jsonStart)) as Array<{
-          filename: string;
-          files: Array<{ path: string }>;
-        }>;
-        const entry = pack[0]!;
-        const builtProvenance = constructionProvenance();
-        await writeFile(
-          metaPath,
-          JSON.stringify(
-            {
-              filename: entry.filename,
-              files: entry.files,
-              provenance: builtProvenance,
-            },
-            null,
-            2,
-          ),
-        );
-        await writeFile(
-          readyPath,
-          JSON.stringify(
-            {
-              head: builtProvenance.head,
-              fingerprint: builtProvenance.fingerprint,
-              builtAt: builtProvenance.builtAt,
-            },
-            null,
-            2,
-          ),
-        );
-        return {
-          root: cacheDir,
-          tarball: resolve(cacheDir, entry.filename),
-          filename: entry.filename,
-          files: entry.files,
-          provenance: builtProvenance,
-          cacheDir,
-        };
-      } finally {
-        await rm(materialRoot, { recursive: true, force: true });
-      }
-    } finally {
-      await release();
-    }
-  })();
-  return sharedPackMemo;
 }
 
 export interface RawPackageManifest {
@@ -497,7 +266,7 @@ export async function withHermeticHome<T>(
   return await withProcessGlobalLock(async () => {
     // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
     const home = await mkdtemp(
-      resolve(testTmpdir(), options.prefix ?? "ak-pi-test-"),
+      worktreeTempPrefix(options.prefix ?? "ak-pi-test-"),
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
@@ -571,7 +340,7 @@ export function createTempPackageHomeLedger(input: {
   sessionFile: string;
   dispose(): void;
 } {
-  const home = mkdtempSync(join(testTmpdir(), input.prefix));
+  const home = mkdtempSync(worktreeTempPrefix(input.prefix));
   const bookKey = basename(home);
   const ledgerHome = machineLedgerHome(home);
   const runDirectory = join(
@@ -986,7 +755,7 @@ export async function withInstitutionalProviderFixture<T>(
 ): Promise<T> {
   const mock = await createMockProviderServer(faux);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(join(testTmpdir(), "ak-institutional-agent-"));
+  const tempAgentDir = await mkdtemp(worktreeTempPrefix("ak-institutional-agent-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");

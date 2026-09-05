@@ -3,7 +3,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { connectGrokAcpStdio, controlledGrokChildEnv, prepareControlledGrokHome, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
 
@@ -13,7 +13,7 @@ const auth = join(homedir(), ".grok", "auth.json");
 /** Bare live seam: ACP resume/runtime controls cannot be credibly simulated. */
 test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async (t) => {
   try { await Promise.all([access(binary), access(auth)]); } catch { t.skip("authenticated Grok unavailable"); return; }
-  const home = await mkdtemp(join(testTmpdir(), "ak-grok-acp-live-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-grok-acp-live-"));
   const connections: GrokAcpConnection[] = [];
   const open = async (options: { toolset?: string; onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void } = {}) => {
     const connection = await connectGrokAcpStdio({

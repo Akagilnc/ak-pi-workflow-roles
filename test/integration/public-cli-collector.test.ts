@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -45,7 +45,7 @@ function receipt() {
 }
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
-  const home = await mkdtemp(join(testTmpdir(), "collector-groups-"));
+  const home = await mkdtemp(worktreeTempPrefix("collector-groups-"));
   try {
     const project = join(home, "project");
     await mkdir(project);

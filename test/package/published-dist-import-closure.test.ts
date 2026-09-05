@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #603: published non-bundle dist graph must stay closed under relative imports.
  * After untracking committed dist, prepack rebuild is the sole inventory — every
@@ -95,7 +95,7 @@ async function missingRelativeImports(distRoot: string): Promise<
 test(
   "fresh-build published dist relative-import graph is closed",
   async () => {
-    const root = await mkdtemp(resolve(testTmpdir(), "ak-dist-closure-"));
+    const root = await mkdtemp(worktreeTempPrefix("ak-dist-closure-"));
     try {
       await materializePackageTree(root, { nodeModules: "symlink" });
       await execFileAsync("npm", ["run", "build"], {

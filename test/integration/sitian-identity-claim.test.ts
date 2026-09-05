@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #648 — same-identity concurrent writers must not duplicate canonical rows.
  * One platform-neutral two-process mainline: real appendSitianRecord entry →
@@ -41,7 +41,7 @@ async function settleSpawnedChild(child: ChildProcess): Promise<void> {
 async function withHermeticLedgerRoot<T>(
   run: (ctx: { home: string; cwd: string }) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(testTmpdir(), "sitian-identity-claim-"));
+  const root = await mkdtemp(worktreeTempPrefix("sitian-identity-claim-"));
   return withPrimaryAwareCleanup(
     async () => {
       const home = join(root, "home");

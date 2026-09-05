@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #326 analyst-B2 — two-bucket full partition + action board tracer.
  *
@@ -161,7 +161,7 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-b2-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-b2-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

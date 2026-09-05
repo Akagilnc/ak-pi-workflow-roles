@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
  *
@@ -117,7 +117,7 @@ const CASES: readonly InstructionSeatCase[] = [
 ];
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-instruction-seat-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-instruction-seat-"));
   try {
     return await scenario(home);
   } finally {

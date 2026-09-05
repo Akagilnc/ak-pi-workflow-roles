@@ -1,5 +1,5 @@
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -31,7 +31,7 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(testTmpdir(),"ak-422-"));
+  const home=await mkdtemp(worktreeTempPrefix("ak-422-"));
   return await fn(home)
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}

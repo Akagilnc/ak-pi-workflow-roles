@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { promisify } from "node:util";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
@@ -16,10 +16,12 @@ async function git(root: string, ...args: string[]): Promise<string> {
 }
 
 /** One seeded repo template; cases cp -R into independent mkdtemps. */
+let seededTemplateRoot: string | undefined;
 let seededTemplateMemo: Promise<string> | undefined;
 async function seededTemplate(): Promise<string> {
   seededTemplateMemo ??= (async () => {
-    const root = await mkdtemp(join(testTmpdir(), "reviewer-pin-template-"));
+    const root = await mkdtemp(worktreeTempPrefix("reviewer-pin-template-"));
+    seededTemplateRoot = root;
     await git(root, "init");
     await git(root, "config", "maintenance.auto", "false");
     await git(root, "config", "gc.auto", "0");
@@ -33,9 +35,16 @@ async function seededTemplate(): Promise<string> {
   return seededTemplateMemo;
 }
 
+after(async () => {
+  if (seededTemplateRoot === undefined) return;
+  const root = seededTemplateRoot;
+  seededTemplateRoot = undefined;
+  await rm(root, { recursive: true, force: true });
+});
+
 async function materializeSeededRepo(prefix: string): Promise<string> {
   const template = await seededTemplate();
-  const root = await mkdtemp(join(testTmpdir(), prefix));
+  const root = await mkdtemp(worktreeTempPrefix(prefix));
   await cp(template, root, { recursive: true });
   return root;
 }
@@ -71,11 +80,13 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const withAliases = await createReviewerPinnedGitReader(root);
     await assert.rejects(withAliases.resolve("same"), /base revision is ambiguous across pinned refs/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /base revision syntax is invalid or uses a forbidden revision form/);
-  } finally { /* #685 */ }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
-  const root = await mkdtemp(join(testTmpdir(), "reviewer-sha256-"));
+  const root = await mkdtemp(worktreeTempPrefix("reviewer-sha256-"));
   try {
     try { await git(root, "init", "--object-format=sha256"); }
     catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
@@ -94,7 +105,9 @@ test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", asyn
     assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
-  } finally { /* #685 */ }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
@@ -155,11 +168,13 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     await git(root, "update-ref", "HEAD", chain[0]!);
     const ambiguousReader = await createReviewerPinnedGitReader(root);
     await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
-  } finally { /* #685 */ }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
-  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-"));
+  const temporary = await mkdtemp(worktreeTempPrefix("reviewer-root-"));
   const root = join(temporary, "repository");
   const nested = join(root, "nested", "directory");
   const linked = join(temporary, "linked-repository");
@@ -171,17 +186,26 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
     const canonicalRoot = await realpath(root);
     assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
     assert.equal((await createReviewerPinnedGitReader(join(linked, "nested"))).pin.repositoryRoot, canonicalRoot);
-  } finally { /* #685 */ }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("pinning rejects non-repositories and bare repositories", async () => {
-  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-reject-"));
+  const temporary = await mkdtemp(worktreeTempPrefix("reviewer-root-reject-"));
+  const nonRepo = join(temporary, "non-repo");
   const bare = join(temporary, "bare.git");
   try {
-    await assert.rejects(createReviewerPinnedGitReader(temporary));
+    await mkdir(nonRepo, { recursive: true });
+    // Worktree-local fixture sits under the package git tree; plant an invalid
+    // .git file so discovery cannot walk up to the monorepo (#685 C4).
+    await writeFile(join(nonRepo, ".git"), "not-a-git-repository\n");
+    await assert.rejects(createReviewerPinnedGitReader(nonRepo));
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
-  } finally { /* #685 */ }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("shared ref snapshot helper canonicalizes refs immutably", () => {
@@ -242,11 +266,13 @@ test("pinned reader: origin/commit messages/readPinnedText for Spec self-fetch",
     assert.equal(await reader.readPinnedText("../escape"), undefined);
 
     // Non-absence Git failure (repo dir gone) must keep true cause — not pretend unavailable/missing.
+    // Barrier .git file: without it, discovery walks into the monorepo under this worktree.
     await rename(join(root, ".git"), join(root, ".git-hidden"));
+    await writeFile(join(root, ".git"), "not-a-git-repository\n");
     await assert.rejects(() => reader.originRepository(), /git process failed/);
     await assert.rejects(() => reader.readPinnedText("docs/adr/0001-x.md"), /git process failed/);
   } finally {
-    /* #685 */
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -257,7 +283,7 @@ test("pinned reader: execGit pins LC_ALL=C so soft-degrade classifiers stay Engl
   await git(root, "add", ".");
   await git(root, "commit", "-m", "adr");
 
-  const shimDir = await mkdtemp(join(testTmpdir(), "reviewer-git-lc-shim-"));
+  const shimDir = await mkdtemp(worktreeTempPrefix("reviewer-git-lc-shim-"));
   const lcLog = join(shimDir, "lc_all.log");
   const realGit = (await exec("which", ["git"])).stdout.trim();
   assert.ok(realGit.length > 0);
@@ -302,5 +328,7 @@ test("pinned reader: execGit pins LC_ALL=C so soft-degrade classifiers stay Engl
     else process.env.LANG = previousLang;
     if (previousLcMessages === undefined) delete process.env.LC_MESSAGES;
     else process.env.LC_MESSAGES = previousLcMessages;
+    await rm(root, { recursive: true, force: true });
+    await rm(shimDir, { recursive: true, force: true });
   }
 });

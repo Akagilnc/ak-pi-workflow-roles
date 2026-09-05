@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const HOST_HOME = userInfo().homedir;
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -20,7 +20,7 @@ const PROCESS_ENV_MODULE = join(REPO_ROOT, "scripts/test-process-env.mjs");
 
 /** AC5: explicit options.home wins over default and over env.HOME. */
 test("isolatedTestProcessEnv: options.home wins over default and env.HOME", () => {
-  const custom = mkdtempSync(join(testTmpdir(), "ak-549-explicit-home-"));
+  const custom = mkdtempSync(worktreeTempPrefix("ak-549-explicit-home-"));
   try {
     const env = isolatedTestProcessEnv({
       env: { ...process.env, HOME: HOST_HOME },
@@ -68,7 +68,7 @@ process.stdout.write(env.HOME);
 
 /** Explicit options.home is caller-owned — process exit must not delete it. */
 test("isolatedTestProcessEnv: explicit options.home is not deleted on process exit", () => {
-  const custom = mkdtempSync(join(testTmpdir(), "ak-612-explicit-survive-"));
+  const custom = mkdtempSync(worktreeTempPrefix("ak-612-explicit-survive-"));
   try {
     const child = spawnSync(
       process.execPath,

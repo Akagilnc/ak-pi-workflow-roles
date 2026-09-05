@@ -1,7 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -52,7 +52,7 @@ import {
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-reviewer-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-reviewer-"));
   try {
     return await scenario(home);
   } finally {

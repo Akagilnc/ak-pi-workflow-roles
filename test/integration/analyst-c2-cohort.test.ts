@@ -1,4 +1,4 @@
-import { testTmpdir } from "../helpers/worktree-temp.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #330 analyst-C2 — cohort contrast output tracer.
  *
@@ -119,7 +119,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-c2-business-"));
+  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-c2-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -139,7 +139,7 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-c2-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-c2-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
