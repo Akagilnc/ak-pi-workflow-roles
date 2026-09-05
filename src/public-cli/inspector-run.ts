@@ -93,13 +93,29 @@ export async function runPublicInspector(
 
   // #635 seat self-ticket then #636 ticket+seat memory principal (before admitted mark).
   await resolveSeatTicketBinding(admitted, env);
-  await rebindAdmittedToTicketSeatMemory({
+  const memory = await rebindAdmittedToTicketSeatMemory({
     admitted,
     seat: "inspector",
     principalAuthority: env.principalAuthority,
-    home: env.home,
   });
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  // Same ticket nest already present → native host resume (not a fresh initial).
+  // Prompt stays the officer transport; only continuation kind flips (#636 / ADR 0079).
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  const continuation =
+    memory?.resumed === true
+      ? {
+          kind: "resume" as const,
+          prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+        }
+      : {
+          kind: "initial" as const,
+          prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+        };
 
   const turnRequest = buildInspectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
@@ -111,16 +127,7 @@ export async function runPublicInspector(
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildInspectorTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
-    },
+    continuation,
   });
 
   return await runPostAdmissionOneShot({

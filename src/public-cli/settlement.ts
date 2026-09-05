@@ -940,10 +940,23 @@ async function loadBoundAuditorVolumes(
       if (!isRecord(header)) continue;
       // Ticket-seat continuous memory keeps the first parent's header.parentSession;
       // binding.parent.sessionFile is the per-summons authority (#636).
-      const bindingEntries = entries.filter(
-        (entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-      );
-      for (const bindingEntry of bindingEntries.length > 0 ? bindingEntries : [undefined]) {
+      // Each binding owns only its interval — never whole-volume provider/compliance.
+      const bindingIndexes: number[] = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        if (entry?.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) {
+          bindingIndexes.push(i);
+        }
+      }
+      const bindingPasses: Array<{ entry: SessionEntry | undefined; start: number; end: number }> =
+        bindingIndexes.length > 0
+          ? bindingIndexes.map((start, idx) => ({
+              entry: entries[start],
+              start,
+              end: idx + 1 < bindingIndexes.length ? bindingIndexes[idx + 1]! : entries.length,
+            }))
+          : [{ entry: undefined, start: 0, end: entries.length }];
+      for (const { entry: bindingEntry, start, end } of bindingPasses) {
         const bindingParent =
           bindingEntry !== undefined &&
           isRecord(bindingEntry.data) &&
@@ -973,12 +986,12 @@ async function loadBoundAuditorVolumes(
         }
         if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
         valid.push({
-          entries,
+          entries: entries.slice(start, end),
           parentId,
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // One match per file is enough for legacy single-decision volumes.
+        // One matching summons interval is enough for the current parent attempt.
         break;
       }
     }
@@ -2315,13 +2328,8 @@ async function withOptionalGateProjection<
     )
   ) return base;
 
-  const runDirectory = gateContext.runDirectory ?? join(sessionDirectory, "..");
-  const parentSessionFile =
-    gateContext.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
-    runDirectory,
-    parentSessionFile,
-  });
+  // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
   return gate === undefined ? base : { ...base, gate };
 }
 

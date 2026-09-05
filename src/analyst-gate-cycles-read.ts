@@ -91,17 +91,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Typed parent-attempt id from ak_auditor_parent_attempt_binding — durable invocation association. */
-function extractAttemptEntryId(rows: readonly LedgerSessionRow[]): string | undefined {
-  for (const row of rows) {
-    if (row.type !== "custom" || row.customType !== AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) continue;
-    if (!isRecord(row.data) || !isRecord(row.data.parent)) continue;
-    const id = row.data.parent.attemptEntryId;
-    if (typeof id === "string" && id.length > 0) return id;
-  }
-  return undefined;
+function isParentAttemptBindingRow(row: LedgerSessionRow): boolean {
+  return row.type === "custom" && row.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE;
 }
 
+/**
+ * One summons' record interval inside a continuous ticket-seat volume (#636):
+ * from the nearest preceding parent-attempt binding through the row before the
+ * next binding (or EOF). Time / status projection must not span sibling summons.
+ */
+function intervalRowsForGateCall(
+  rows: readonly LedgerSessionRow[],
+  callRowIndex: number,
+): readonly LedgerSessionRow[] {
+  let start = 0;
+  for (let i = callRowIndex - 1; i >= 0; i -= 1) {
+    if (isParentAttemptBindingRow(rows[i]!)) {
+      start = i;
+      break;
+    }
+  }
+  let end = rows.length;
+  for (let i = callRowIndex + 1; i < rows.length; i += 1) {
+    if (isParentAttemptBindingRow(rows[i]!)) {
+      end = i;
+      break;
+    }
+  }
+  return rows.slice(start, end);
+}
 
 /** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */
 function isMissingDirectoryError(error: unknown): boolean {
@@ -228,9 +246,7 @@ function nearestAttemptBindingBefore(
 ): { readonly attemptEntryId?: string; readonly parentSessionFile?: string } {
   for (let i = beforeIndex - 1; i >= 0; i -= 1) {
     const row = rows[i]!;
-    if (row.type !== "custom" || row.customType !== AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) {
-      continue;
-    }
+    if (!isParentAttemptBindingRow(row)) continue;
     if (!isRecord(row.data) || !isRecord(row.data.parent)) continue;
     const id = row.data.parent.attemptEntryId;
     const sessionFile = row.data.parent.sessionFile;
@@ -280,9 +296,14 @@ function extractAllAcceptedGateToolCalls(
 function projectAcceptedGateCall(
   filePath: string,
   rows: readonly LedgerSessionRow[],
-  call: GateToolCall & { readonly attemptEntryId?: string; readonly parentSessionFile?: string },
+  call: GateToolCall & {
+    readonly rowIndex: number;
+    readonly attemptEntryId?: string;
+    readonly parentSessionFile?: string;
+  },
 ): ClassifiedVolume | undefined {
-  const span = requireAcceptedGateSpan(rows, filePath);
+  // Continuous memory volumes carry many summons; span only this binding's interval.
+  const span = requireAcceptedGateSpan(intervalRowsForGateCall(rows, call.rowIndex), filePath);
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
   const findingsCount = findings.length;

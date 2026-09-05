@@ -203,6 +203,11 @@ export type NewDurablePrincipalRequest = {
 /** Host authority for issuing, checking, and temporarily decoding durable principals. */
 export interface DurablePrincipalAuthority {
   issue(request: NewDurablePrincipalRequest): DurablePrincipal;
+  /**
+   * Host-owned seal of already-placed coordinates into a durable principal wire
+   * object. Public layers must not forge opaque principal shapes (#636).
+   */
+  seal(coordinates: DurablePrincipalCoordinates): DurablePrincipal;
   isAvailable(principal: DurablePrincipal): Promise<boolean>;
   decode(principal: unknown): DurablePrincipalCoordinates;
 }
