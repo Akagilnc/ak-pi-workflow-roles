@@ -120,7 +120,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
         await attendanceModule.writeNavigatorModelSetting("provider/one:max", modelSettingPath);
         assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/one:max");
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/one:backup" }), "utf8");
-        assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /:max|thinking suffix/);
+        assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /thinking level|thinking suffix/);
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
         const events: Array<{ command?: string; disposition?: string; unavailableReason?: string }> = [];
         const prepareRequests: string[] = [];
