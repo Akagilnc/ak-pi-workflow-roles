@@ -160,6 +160,10 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
       "ticketNumber" in turn.activation ? turn.activation.ticketNumber : undefined,
       undefined,
     );
+
+    // #632: private countersign ticket transport flag is gone (was write-only).
+    const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
+    assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 
   assert.throws(

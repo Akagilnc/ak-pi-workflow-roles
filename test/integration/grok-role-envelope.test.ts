@@ -69,16 +69,11 @@ test("Grok projection maps public activations onto the shared envelope", () => {
   assert.equal(projectGrokActivationFlags({ activation: activations[1]! } as RoleTurnRequest).get("ak-fixer-prerequisites"), "/prereqs");
   assert.equal(projectGrokActivationFlags({ activation: activations[3]! } as RoleTurnRequest).get("ak-review-authority-refs"), JSON.stringify(["issue:1"]));
   assert.equal(projectGrokActivationFlags({ activation: activations[4]! } as RoleTurnRequest).get("ak-collector-request-manifest"), "/manifest");
+  // countersign ticketNumber is activation-only — no private transport flag (#632).
   assert.equal(
-    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).get(
+    projectGrokActivationFlags({ activation: activations[8]! } as RoleTurnRequest).has(
       "ak-countersign-ticket-number",
     ),
-    "582",
-  );
-  assert.equal(
-    projectGrokActivationFlags({
-      activation: { role: "countersign" },
-    } as RoleTurnRequest).has("ak-countersign-ticket-number"),
     false,
   );
   assert.equal(
@@ -126,6 +121,47 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok opening materials inject soul exactly once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ak-grok-soul-once-"));
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_RUN_DIR;
+  try {
+    const socketPath = join(root, "mcp.sock");
+    // Synthetic marker only — proves once-injection without locking packaged soul prose.
+    // Production bug was: envelope preloaded the same loadSoul bytes, then before_agent_start
+    // appended them again under <judge_soul>. Mirror that shape with a synthetic double-path.
+    const marker = "AK_SOUL_ONCE_MARKER_632";
+    // loadSoul trims; keep the fixture already trimmed so expected body is exact.
+    const soul = `synthetic-judge-soul\n${marker}`;
+    const prepared = await prepareGrokRoleEnvelope({
+      request: {
+        principal: {}, activation: { role: "judge" }, methods: [],
+        continuation: { kind: "initial", prompt: "decide" },
+        model: { provider: "xai", model: "grok-4.6" }, cwd: process.cwd(), home: root,
+        agentDir: join(root, "agent"), runDirectory: grokRunDirectory(root, "soul-once"),
+      } as RoleTurnRequest,
+      socketPath,
+      dependencies: {
+        loadJudgeSoul: async () => soul,
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: async () => {},
+      },
+    });
+    try {
+      const body = prepared.systemPrompt.body;
+      const occurrences = body.split(marker).length - 1;
+      assert.equal(occurrences, 1, `synthetic soul marker must appear once, saw ${occurrences}`);
+      // Empty methods + single before_agent_start inject → exact tagged body (no preloaded bundle).
+      assert.equal(body, `\n\n<judge_soul>\n${soul}\n</judge_soul>`);
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     await rm(root, { recursive: true, force: true });
   }
 });
