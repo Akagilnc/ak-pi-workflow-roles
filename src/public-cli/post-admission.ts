@@ -296,14 +296,23 @@ function withLastHostWriteConcurrentFailure(
   };
 }
 
+/**
+ * Presence envelope for a caught last-host write failure.
+ * Own-key presence is distinct from the caught value: `throw undefined` must stay a
+ * real failure fact (same rule as settlement thrown own-key), never a missing-write sentinel.
+ */
+type LastHostWriteFailure = { readonly error: unknown };
+
 /** Keep primary throw identity; attach last-host write as a real AggregateError leaf. */
 function withOptionalLastHostWriteThrow(
   primary: unknown,
-  writeError: unknown | undefined,
+  writeFailure: LastHostWriteFailure | undefined,
   message: string,
 ): unknown {
-  if (writeError === undefined) return primary;
-  return new AggregateError([primary, writeError], message, { cause: primary });
+  if (writeFailure === undefined) return primary;
+  return new AggregateError([primary, writeFailure.error], message, {
+    cause: primary,
+  });
 }
 
 export async function dispatchPostAdmissionTurn<
@@ -475,7 +484,8 @@ export async function dispatchPostAdmissionTurn<
     // last-host write failure is pending secondary evidence only — never forks settlement.
     // Thrown dual: AggregateError leaves. Returned dual: same shared settle/resolve chain,
     // write leaf attached at the single present boundary (ADR 0080 single-settlement-disposition).
-    let lastHostWriteError: unknown | undefined;
+    // Presence is the envelope, not the caught value — `throw undefined` stays a failure fact.
+    let lastHostWriteFailure: LastHostWriteFailure | undefined;
     const hostEngaged =
       turnOutcome.kind === "returned" || openedNativeHomeRunDirectory !== undefined;
     if (
@@ -495,7 +505,7 @@ export async function dispatchPostAdmissionTurn<
             : previousRunDirectory,
         );
       } catch (error) {
-        lastHostWriteError = error;
+        lastHostWriteFailure = { error };
       }
     }
 
@@ -510,7 +520,7 @@ export async function dispatchPostAdmissionTurn<
           stderr: "",
           thrown: withOptionalLastHostWriteThrow(
             turnOutcome.error,
-            lastHostWriteError,
+            lastHostWriteFailure,
             "host turn and ticket-seat last-host write failed",
           ),
         },
@@ -545,7 +555,7 @@ export async function dispatchPostAdmissionTurn<
           stderr: result.stderr,
           thrown: withOptionalLastHostWriteThrow(
             error,
-            lastHostWriteError,
+            lastHostWriteFailure,
             "settlement and ticket-seat last-host write failed",
           ),
         },
@@ -555,15 +565,16 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
-      if (lastHostWriteError !== undefined) {
+      if (lastHostWriteFailure !== undefined) {
         // Lawful host terminal — last-host write is the sole public failure.
+        // thrown key is always set so `throw undefined` stays own-key present.
         return (await presentControlledFailure(
           admitted,
           {
             timedOut: result.timedOut,
             code: result.code,
             stderr: result.stderr,
-            thrown: lastHostWriteError,
+            thrown: lastHostWriteFailure.error,
           },
           adapters,
           env.principalAuthority,
@@ -607,9 +618,12 @@ export async function dispatchPostAdmissionTurn<
     };
     return (await presentControlledFailure(
       admitted,
-      lastHostWriteError === undefined
+      lastHostWriteFailure === undefined
         ? hostFailureInput
-        : withLastHostWriteConcurrentFailure(hostFailureInput, lastHostWriteError),
+        : withLastHostWriteConcurrentFailure(
+            hostFailureInput,
+            lastHostWriteFailure.error,
+          ),
       adapters,
       env.principalAuthority,
       io,
