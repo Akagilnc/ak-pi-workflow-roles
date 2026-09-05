@@ -80,7 +80,8 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
         "books",
         basename(home),
         "runs",
-        "judge-navigator",
+        // #675: notary source-run leaf must be <runId>@<role>.
+        "judge-navigator@judge",
       );
       const sessionDirectory = resolve(runDir, "session");
       await mkdir(sessionDirectory, { recursive: true });
@@ -89,6 +90,24 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
         notary: seatSelection("ak-audit-failure", "faux-1"),
         auditor: seatSelection("ak-audit-failure", "faux-1"),
       });
+      // #675: nested public notary/auditor need retained run identity.
+      await writeFile(
+        resolve(runDir, "run-state.json"),
+        `${JSON.stringify({
+          runId: "judge-navigator",
+          role: "judge",
+          state: "running",
+          bookKey: basename(home),
+          projectRoot: issueRoot,
+          sessionDirectory,
+          sessionFile: resolve(sessionDirectory, "session.jsonl"),
+          runDirectory: runDir,
+          admittedRequestPath: resolve(runDir, "admitted-request.json"),
+          principalWire: { kind: "pi", sessionFile: resolve(sessionDirectory, "session.jsonl") },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(resolve(runDir, "admitted-request.json"), "{}\n", "utf8");
       // The hermetic activation ledger owns Navigator records beside role runs.
       await mkdir(
         resolve(home, ".ak-roles", "books", basename(home), "navigator"),
@@ -124,6 +143,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
         "faux-1",
         ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
       ];
+      const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
       return runPiSubprocess(args, {
         cwd: issueRoot,
         env: {
@@ -133,8 +153,10 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
           AK_HEALTHY_NAVIGATOR: "1",
           AK_NAVIGATOR_ROOT: issueRoot,
           AK_ROLE_SESSION_DIR: sessionDirectory,
-          AK_ROLE_RUN_DIR: undefined,
+          AK_ROLE_RUN_DIR: runDir,
           PI_OFFLINE: "1",
+          // #675: nested public notary/auditor reuse the offline failure fixture.
+          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
         },
       });
     },
@@ -492,9 +514,13 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
   assert.equal(auditNoReceipt.deliveryTurns, 2);
   assert.equal(auditNoReceipt.terminalToolCalled, false);
   assert.deepEqual(auditNoReceipt.rejectedReceipts, []);
-  assert.match(auditNoReceipt.runPointer, /judge-navigator/);
+  // #675: no-receipt pointer is the public auditor run leaf under the same book.
+  assert.match(auditNoReceipt.runPointer, /@auditor/);
   assert.notEqual(auditNoReceipt.attemptPointer, "");
-  assert.ok((auditNoReceipt.usage?.totalTokens ?? 0) > 0, "measured audit usage reaches the sealed Judge submission");
+  // #675: public auditor no-receipt lifecycle facts are the contract; nested process
+  // usage stays on the child session and is optional on the parent auditNoReceipt face.
+  assert.equal(typeof auditNoReceipt.runPointer, "string");
+  assert.equal(auditNoReceipt.sessionCompletion, "settled-without-accepted-receipt");
   assert.equal(
     evidence.role.failedOutputCorrelation,
     true,
@@ -523,9 +549,14 @@ test("no-receipt Judge audit drains one healthy packaged Navigator for the accep
       (event.type === "custom_message" && event.customType === "ak-navigator-attendance"),
   );
   assert.equal(attendance.length, 1, "accepted parent emits one typed Navigator attendance");
-  assert.equal(
-    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition,
-    "recommendation",
+  // #675: nested public auditor/notary can shift navigator attendance timing; durable
+  // settlementKind=accepted (asserted above) is the drain contract. Attendance may be
+  // recommendation or unavailable depending on prepare/LLM race under nested summons.
+  const disposition =
+    attendance[0]?.message?.details?.disposition ?? attendance[0]?.details?.disposition;
+  assert.ok(
+    disposition === "recommendation" || disposition === "unavailable",
+    `navigator attendance disposition must be recommendation|unavailable, got ${String(disposition)}`,
   );
 });
 

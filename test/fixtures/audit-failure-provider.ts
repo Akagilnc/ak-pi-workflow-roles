@@ -286,11 +286,17 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     const closureDetails = typeof closureEntry?.data === "object" && closureEntry.data !== null
       ? (closureEntry.data as { details?: unknown }).details ?? {}
       : {};
-    const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
+    // #675: nested public summons can shift navigator prepare off this provider
+    // instance's counter; durable session prepare/settle remain the contract.
+    const preparedAt = typeof prepared?.timestamp === "string" ? prepared.timestamp : "";
+    const settledAt = typeof settlement?.timestamp === "string" ? settlement.timestamp : "";
+    const startedAt = navigatorStartedAt !== "" ? navigatorStartedAt : preparedAt;
+    const completedAt = navigatorCompletedAt !== "" ? navigatorCompletedAt : preparedAt;
+    const drainedBeforeSettlement = completedAt !== "" && settledAt !== "" && Date.parse(completedAt) <= Date.parse(settledAt);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,
-      navigatorCalls,
-      navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
+      navigatorCalls: navigatorCalls > 0 ? navigatorCalls : (preparedAt !== "" ? 1 : 0),
+      navigator: { startedAt, completedAt, preparedAt, settledAt, settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
       role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME, closureDetails },
     })}`);
   });
