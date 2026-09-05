@@ -123,8 +123,9 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
 
     assert.deepEqual(await host.executeTurn(localRequest), { code: 0, stderr: "", timedOut: false });
     assert.deepEqual(calls.map(([method]) => method), ["initialize", "session/new", "session/prompt", "session/close"]);
-    // Default fixture role is judge: canDeny does not install the Fixer-only seatbelt.
-    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
+    // #692: canDeny installs FS boundary for every role; Fixer-only seatbelt stays off for judge.
+    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
+    await readFile(join(home, "hooks", "ak-fs-boundary.json"), "utf8");
     await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
     assert.deepEqual(calls[1], ["session/new", {
       cwd: "/work",
@@ -136,7 +137,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
   }
 });
 
-test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
+test("grok host installs FS boundary for all roles and Fixer seatbelt when host can deny", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-fixer-deny-"));
   try {
     const localRequest = turnRequest({
@@ -164,7 +165,8 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
     });
     assert.equal((await host.executeTurn(localRequest)).code, 0);
     assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
-    // Presence of the hook file is the external hang signal; do not lock matcher text.
+    // Fixer gets both #692 FS boundary and ADR 0008 literal seatbelt.
+    await readFile(join(home, "hooks", "ak-fs-boundary.json"), "utf8");
     await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -696,7 +698,7 @@ test("grok host enters session/new when inspect akActive is empty but prepared M
   // External packageRoot is injected at prepare, not via Grok-native inspect paths.
   const root = await mkdtemp(join(tmpdir(), "ak-grok-external-mcp-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const methods: string[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -749,7 +751,7 @@ test("grok host rejects ak-config-missing only when prepared MCP servers are abs
 test("grok host keeps session/close failure loud after typed round acceptance", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-close-boom-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const connection: GrokAcpConnection = {
       async request(method) {
         if (method === "initialize") return canDenyInitializeMeta();

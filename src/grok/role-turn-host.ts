@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { installGrokPreToolUseDeny } from "./bash-seatbelt.ts";
+import { AK_FS_BOUNDARY_HOOK_FILES, installGrokFsBoundaryHook } from "./fs-boundary-hook.ts";
 
 /** ACP v1 surface used by the Grok adapter. Protocol details stay in this module. */
 export interface GrokAcpConnection {
@@ -255,12 +256,28 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             && hookCapability.blockingEvents.includes("pre_tool_use")
             && Array.isArray(hookCapability.decisions)
             && hookCapability.decisions.includes("deny");
-          // ADR 0008: seatbelt hangs only on the activated Fixer. Capability alone
-          // is not an installed belt, and review seats (ADR 0064) must stay unnarrowed.
+          // ADR 0008: Fixer literal seatbelt hangs only on activated Fixer.
+          // #692: FS boundary PreToolUse installs for every role when host can deny
+          // (Grok native Bash/edit/write never hit the Pi tool_call envelope).
           let preToolUseDeny = false;
-          if (canDeny && request.activation.role === "fixer") {
-            await installGrokPreToolUseDeny(request.home);
-            preToolUseDeny = true;
+          if (canDeny) {
+            try {
+              await installGrokFsBoundaryHook({
+                controlledHome: request.home,
+                workspaceRoot: request.cwd,
+              });
+              preToolUseDeny = true;
+              if (request.activation.role === "fixer") {
+                await installGrokPreToolUseDeny(request.home);
+              }
+            } catch (error) {
+              // Controlled home must be writable for hook install; surface as activation failure.
+              return failure(
+                "activation",
+                "GrokFsBoundaryHookInstall",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
           }
           await config.recordCapabilities(request, { nativeToolNarrowing: false, preToolUseDeny });
           const modelState = initializeMeta?.modelState;
@@ -660,6 +677,9 @@ export function classifyGrokInspection(
 /** AK Fixer PreToolUse seatbelt files written under controlled GROK_HOME/hooks. */
 export const AK_BASH_SEATBELT_HOOK_FILES = ["ak-bash-seatbelt.json", "ak-bash-seatbelt.mjs"] as const;
 
+/** #692 FS boundary PreToolUse files under controlled GROK_HOME/hooks (all roles). */
+export { AK_FS_BOUNDARY_HOOK_FILES };
+
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
@@ -695,10 +715,10 @@ export async function assertControlledGrokAuthIsNotSymlink(authPath: string): Pr
   }
 }
 
-/** Remove AK seatbelt hook residue while leaving sessions/ intact (#594 F1). */
+/** Remove AK seatbelt + #692 FS boundary hook residue while leaving sessions/ intact (#594 F1). */
 export async function scrubAkBashSeatbeltHooks(controlledHome: string): Promise<void> {
   const hooksDir = join(controlledHome, "hooks");
-  for (const name of AK_BASH_SEATBELT_HOOK_FILES) {
+  for (const name of [...AK_BASH_SEATBELT_HOOK_FILES, ...AK_FS_BOUNDARY_HOOK_FILES]) {
     await rm(join(hooksDir, name), { force: true });
   }
 }
