@@ -101,7 +101,7 @@ function intervalRowsForGateCall(
   rows: readonly LedgerSessionRow[],
   callRowIndex: number,
 ): readonly LedgerSessionRow[] {
-  return intervalRowsAroundAnchor(rows, callRowIndex, isParentAttemptBindingRow);
+  return intervalRowsAroundAnchor(rows, callRowIndex, isParentAttemptBindingRow).rows;
 }
 
 /** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */

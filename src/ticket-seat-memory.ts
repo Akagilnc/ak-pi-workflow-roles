@@ -7,9 +7,8 @@
  * (analyst/settlement/invocation) cannot fold pi-coding-agent into main.js.
  * Open-session loads createRecordSessionOpen via runtime-constructed import.
  */
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -47,37 +46,6 @@ export function ticketSeatRunBindingRunId(row: LedgerSessionRow): string | undef
   }
   const runId = (row.data as { runId?: unknown }).runId;
   return typeof runId === "string" && runId.length > 0 ? runId : undefined;
-}
-
-/**
- * Append one run-binding marker onto the shared ticket-seat volume.
- * Path-only write (no SessionManager) so public-bin cold paths stay clean.
- */
-async function appendTicketSeatRunBinding(
-  sessionFile: string,
-  runId: string,
-): Promise<void> {
-  let parentId: string | null = null;
-  try {
-    const text = await readFile(sessionFile, "utf8");
-    for (const line of text.trim().split("\n").filter(Boolean)) {
-      const entry = JSON.parse(line) as { id?: unknown; type?: unknown };
-      if (typeof entry.id === "string" && entry.type !== "session") parentId = entry.id;
-    }
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-    // Empty/new volume — binding is the first content row after any header write.
-  }
-  const data: TicketSeatRunBinding = { version: 1, runId };
-  const line = `${JSON.stringify({
-    type: "custom",
-    customType: TICKET_SEAT_RUN_BINDING_ENTRY_TYPE,
-    data,
-    id: randomUUID(),
-    parentId,
-    timestamp: new Date().toISOString(),
-  })}\n`;
-  await appendFile(sessionFile, line, "utf8");
 }
 
 type CreateRecordSessionOpen = typeof import("./archivist-record-entry.ts").createRecordSessionOpen;
@@ -302,6 +270,11 @@ export async function openTicketSeatMemoryCoordinates(input: {
   readonly seat: TicketSeatMemorySeat;
   readonly cwd: string;
   readonly ledgerAnchorSessionFile: string;
+  /**
+   * When set, append the per-run binding via the already-opened manager
+   * (no parallel path-only custom-entry writer).
+   */
+  readonly runId?: string;
 }): Promise<DurablePrincipalCoordinates & { readonly resumed: boolean }> {
   const createRecordSessionOpen = await loadCreateRecordSessionOpen();
   const opened = createRecordSessionOpen({
@@ -312,6 +285,12 @@ export async function openTicketSeatMemoryCoordinates(input: {
       getSessionFile: () => input.ledgerAnchorSessionFile,
     },
   });
+  // Durable per-run boundary on the shared main volume before any turn writes.
+  // Reuse SessionManager.appendCustomEntry — id/parent/timestamp/flush owned there.
+  if (input.runId !== undefined) {
+    const data: TicketSeatRunBinding = { version: 1, runId: input.runId };
+    opened.session.appendCustomEntry(TICKET_SEAT_RUN_BINDING_ENTRY_TYPE, data);
+  }
   const sessionFile = opened.session.getSessionFile();
   const sessionDirectory = opened.session.getSessionDir();
   if (typeof sessionFile !== "string" || sessionFile.length === 0) {
@@ -363,14 +342,13 @@ export async function rebindAdmittedToTicketSeatMemory(input: {
     seat: input.seat,
     cwd: input.admitted.projectRoot,
     ledgerAnchorSessionFile: anchor.sessionFile,
+    // Analyst attributes frame/model/tool to this binding interval only (#636 D).
+    runId: input.admitted.runId,
   });
   const coordinates: DurablePrincipalCoordinates = {
     sessionDirectory: opened.sessionDirectory,
     sessionFile: opened.sessionFile,
   };
-  // Durable per-run boundary on the shared main volume before any turn writes.
-  // Analyst attributes frame/model/tool to this binding interval only (#636 D).
-  await appendTicketSeatRunBinding(coordinates.sessionFile, input.admitted.runId);
   const principal = input.principalAuthority.seal(coordinates);
   // Validate round-trip through the host authority.
   input.principalAuthority.decode(principal);

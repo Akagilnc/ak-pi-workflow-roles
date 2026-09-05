@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
+import type { AnalystB2FrameBucketsActionsSection } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystLegWallClockSection } from "../../src/analyst-metric-families/leg-wall-clock.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
@@ -546,17 +547,24 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
         timestamp: at,
         data: { version: 1, runId },
       });
-    const activity = (id: string, at: string, model: string, toolId: string) =>
+    // Non-zero tool span so B2 retains the tool action (zero-width clips drop).
+    const activity = (
+      id: string,
+      startedAt: string,
+      endedAt: string,
+      model: string,
+      toolId: string,
+    ) =>
       [
         JSON.stringify({
           type: "message",
           id: `${id}-asst`,
           parentId: null,
-          timestamp: at,
+          timestamp: startedAt,
           message: {
             role: "assistant",
             model,
-            timestamp: at,
+            timestamp: startedAt,
             content: [{ type: "toolCall", id: toolId, name: "read", arguments: {} }],
           },
         }),
@@ -564,12 +572,12 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
           type: "message",
           id: `${id}-res`,
           parentId: `${id}-asst`,
-          timestamp: at,
+          timestamp: endedAt,
           message: {
             role: "toolResult",
             toolCallId: toolId,
             toolName: "read",
-            timestamp: at,
+            timestamp: endedAt,
             isError: false,
             content: [{ type: "text", text: "ok" }],
           },
@@ -589,9 +597,9 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
           cwd: ISSUE_PROJECT_ROOT,
         }),
         binding(runA, "bind-a", "2026-09-03T00:00:00.000Z"),
-        activity("a", "2026-09-03T00:00:01.000Z", "model-a", "call_a"),
+        activity("a", "2026-09-03T00:00:00.000Z", "2026-09-03T00:00:01.000Z", "model-a", "call_a"),
         binding(runB, "bind-b", "2026-09-03T00:01:00.000Z"),
-        activity("b", "2026-09-03T00:01:02.000Z", "model-b", "call_b"),
+        activity("b", "2026-09-03T00:01:00.000Z", "2026-09-03T00:01:02.000Z", "model-b", "call_b"),
       ].join("\n") + "\n",
       "utf8",
     );
@@ -626,29 +634,67 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
     await seedRun(runA, "inspector");
     await seedRun(runB, "inspector");
 
+    function issueSurfaces(page: AnalystIssueMetricsPage): {
+      wall: AnalystLegWallClockSection;
+      b2: AnalystB2FrameBucketsActionsSection;
+    } {
+      const bag = page as AnalystIssueMetricsPage & {
+        readonly legWallClock?: AnalystLegWallClockSection;
+        readonly b2FrameBucketsActions?: AnalystB2FrameBucketsActionsSection;
+      };
+      assert.ok(bag.legWallClock, "leg wall-clock section must be present");
+      assert.ok(bag.b2FrameBucketsActions, "B2 section must be present");
+      return { wall: bag.legWallClock, b2: bag.b2FrameBucketsActions };
+    }
+
+    function assertRunFacts(
+      page: AnalystIssueMetricsPage,
+      label: string,
+    ): void {
+      const { wall, b2 } = issueSurfaces(page);
+      const wallA = wall.ranking.find((row) => row.runId === runA);
+      const wallB = wall.ranking.find((row) => row.runId === runB);
+      assert.ok(wallA, `${label}: run A must remain readable with binding interval`);
+      assert.ok(wallB, `${label}: run B must remain readable with binding interval`);
+      assert.equal(wallA.wallMs, 1_000, `${label}: run A owns only its 1s interval`);
+      assert.equal(wallB.wallMs, 2_000, `${label}: run B owns only its 2s interval`);
+      assert.equal(
+        page.unreadable.some((row) => row.runId === runA || row.runId === runB),
+        false,
+        `${label}: closed A/B intervals must not be unreadable`,
+      );
+      const b2A = b2.runs.find((row) => row.runId === runA);
+      const b2B = b2.runs.find((row) => row.runId === runB);
+      assert.ok(b2A, `${label}: run A B2 metrics retained`);
+      assert.ok(b2B, `${label}: run B B2 metrics retained`);
+      assert.equal(b2A.wallMs, 1_000, `${label}: run A B2 wall`);
+      assert.equal(b2B.wallMs, 2_000, `${label}: run B B2 wall`);
+      const toolA = b2A.actions.find(
+        (action) => action.kind === "tool" && action.toolCallId === "call_a",
+      );
+      const toolB = b2B.actions.find(
+        (action) => action.kind === "tool" && action.toolCallId === "call_b",
+      );
+      assert.ok(toolA && toolA.kind === "tool", `${label}: run A tool interval retained`);
+      assert.ok(toolB && toolB.kind === "tool", `${label}: run B tool interval retained`);
+      assert.equal(toolA.toolName, "read");
+      assert.equal(toolB.toolName, "read");
+    }
+
     const first = await runAnalyst(
       { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
       { home },
     );
-    const wall = (first.page as AnalystIssueMetricsPage & {
-      readonly legWallClock?: AnalystLegWallClockSection;
-    }).legWallClock;
-    assert.ok(wall, "leg wall-clock section must be present");
-    const wallA = wall.ranking.find((row) => row.runId === runA);
-    const wallB = wall.ranking.find((row) => row.runId === runB);
-    assert.ok(wallA, "run A must remain readable with binding interval");
-    assert.ok(wallB, "run B must remain readable with binding interval");
-    assert.equal(wallA.wallMs, 1_000, "run A owns only its 1s interval");
-    assert.equal(wallB.wallMs, 2_000, "run B owns only its 2s interval");
+    assertRunFacts(first.page, "initial");
 
     // Two later continuations append onto the shared volume — prior run facts must not move.
     await appendFile(
       sharedSession,
       [
         binding("019ff636-0003-7000-8000-0000000000c3", "bind-c", "2026-09-03T00:02:00.000Z"),
-        activity("c", "2026-09-03T00:02:05.000Z", "model-c", "call_c"),
+        activity("c", "2026-09-03T00:02:00.000Z", "2026-09-03T00:02:05.000Z", "model-c", "call_c"),
         binding("019ff636-0004-7000-8000-0000000000d4", "bind-d", "2026-09-03T00:03:00.000Z"),
-        activity("d", "2026-09-03T00:03:09.000Z", "model-d", "call_d"),
+        activity("d", "2026-09-03T00:03:00.000Z", "2026-09-03T00:03:09.000Z", "model-d", "call_d"),
       ].join("\n") + "\n",
       "utf8",
     );
@@ -657,16 +703,30 @@ test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame
       { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
       { home },
     );
-    const wall2 = (second.page as AnalystIssueMetricsPage & {
-      readonly legWallClock?: AnalystLegWallClockSection;
-    }).legWallClock;
-    assert.ok(wall2, "leg wall-clock section must remain after continuations");
-    const wallA2 = wall2.ranking.find((row) => row.runId === runA);
-    const wallB2 = wall2.ranking.find((row) => row.runId === runB);
-    assert.ok(wallA2);
-    assert.ok(wallB2);
-    assert.equal(wallA2.wallMs, 1_000, "run A wall must not change after later continuations");
-    assert.equal(wallB2.wallMs, 2_000, "run B wall must not change after later continuations");
+    assertRunFacts(second.page, "after continuations");
+
+    // Later-run damage on the shared volume must not erase closed A/B intervals.
+    await appendFile(sharedSession, "{broken\n", "utf8");
+
+    const third = await runAnalyst(
+      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { home },
+    );
+    assertRunFacts(third.page, "after later-run damage");
+
+    // Typed model face: closed intervals keep their session models after damage.
+    const models = await runAnalyst(
+      { mode: "model-groups", projectRoots: [ISSUE_PROJECT_ROOT] },
+      { home },
+    );
+    const groupKeys = new Set(models.page.groups.map((group) => group.rawGroupKey));
+    assert.equal(groupKeys.has("model-a"), true, "run A model retained after later-run damage");
+    assert.equal(groupKeys.has("model-b"), true, "run B model retained after later-run damage");
+    assert.equal(
+      models.page.unreadable.some((row) => row.runId === runA || row.runId === runB),
+      false,
+      "model-groups must not list closed A/B as unreadable after later-run damage",
+    );
   });
 });
 
