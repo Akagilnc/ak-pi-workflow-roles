@@ -444,6 +444,12 @@ export type CliResult = {
   exitCode: number;
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
+  /**
+   * Effective seats from `ak-role roles` (programmatic/tests).
+   * Presentation (`renderRoles`) is unfrozen — consumers read this typed product
+   * (ADR 0052), never TSV labels/layout.
+   */
+  seats?: readonly EffectiveSeat[];
   hostFailure?: HostSelectionFailure;
   /** Typed #556 fact from public resume/dispatch when a dead holder lock was unlinked. */
   staleWriterLeaseReclaimed?: true;
@@ -1163,7 +1169,7 @@ export async function runAkRole(
         invocationFromParsed(parsed),
       );
       io.stdout(renderRoles(seats));
-      return { exitCode: 0 };
+      return { exitCode: 0, seats };
     }
 
     if (parsed.command === "config") {

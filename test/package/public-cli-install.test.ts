@@ -23,16 +23,9 @@ import {
   withHermeticHome,
   type PiManagedInstall,
 } from "../helpers/pi-test-harness.ts";
-import {
-  listRolesForDisplay,
-  loadCredentialProviders,
-  loadPublicCliConfig,
-  resolveEffectiveSeat,
-} from "../../src/public-cli/config.ts";
-import {
-  PUBLIC_CALLABLE_ROLES,
-  PUBLIC_CONFIGURABLE_SEATS,
-} from "../../src/public-cli/registry.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { loadCredentialProviders } from "../../src/public-cli/config.ts";
+import { PUBLIC_CONFIGURABLE_SEATS } from "../../src/public-cli/registry.ts";
 import { runPublicCliSubprocess as runAkRoleBin } from "../helpers/public-cli-subprocess.ts";
 import { TEST_PI_VERSION_BRANCH } from "../helpers/test-process-fixtures.ts";
 
@@ -163,24 +156,35 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       "utf8",
     );
 
-    const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
+    // Installed bin smoke: real entry exits 0 after pi install.
+    const rolesBin = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
     });
-    assert.equal(roles.localTimeout, false, roles.stderr);
-    assert.equal(roles.code, 0, roles.stderr);
-    // Typed seat projection (ADR 0052) — do not bite roles TSV presentation.
+    assert.equal(rolesBin.localTimeout, false, rolesBin.stderr);
+    assert.equal(rolesBin.code, 0, rolesBin.stderr);
+    // Seat/source/model from public CLI typed product (CliResult.seats) — ADR 0052;
+    // never bite renderRoles TSV. Same home/agentDir/credentials the bin used.
     const credentials = await loadCredentialProviders(piAgentDir);
-    const projected = listRolesForDisplay(await loadPublicCliConfig(home), credentials);
+    const roles = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      agentDir: piAgentDir,
+      credentials,
+      io: { stdout() {}, stderr() {} },
+    });
+    assert.equal(roles.exitCode, 0);
+    assert.ok(roles.seats, "roles CLI product must carry typed seats");
     assert.deepEqual(
-      projected.map((row) => row.seat),
+      roles.seats.map((row) => row.seat),
       [...PUBLIC_CONFIGURABLE_SEATS],
     );
     assert.equal(
-      (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("auditor"),
+      roles.seats.some((row) => (row.seat as string) === "auditor"),
       false,
+      "CLI seats product must not enumerate auditor",
     );
-    const navigatorSeat = projected.find((row) => row.seat === "navigator");
+    const navigatorSeat = roles.seats.find((row) => row.seat === "navigator");
     assert.ok(navigatorSeat, "navigator must enumerate as a configurable seat");
     assert.equal(navigatorSeat.source, "startup");
 
@@ -201,17 +205,26 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       { home, agentDir: piAgentDir },
     );
     assert.equal(set.code, 0, set.stderr);
-    const again = await runAkRoleBin(installed.akRoleBin, ["roles"], {
+    const againBin = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
       env: {
         // xai credential absent → persistent still wins for coder
       },
     });
-    assert.equal(again.code, 0, again.stderr);
+    assert.equal(againBin.code, 0, againBin.stderr);
     const againCredentials = await loadCredentialProviders(piAgentDir);
-    const againConfig = await loadPublicCliConfig(home);
-    const coderPersistent = resolveEffectiveSeat(againConfig, "coder", againCredentials);
+    const again = await runAkRole(["roles"], {
+      packageRoot,
+      home,
+      agentDir: piAgentDir,
+      credentials: againCredentials,
+      io: { stdout() {}, stderr() {} },
+    });
+    assert.equal(again.exitCode, 0);
+    assert.ok(again.seats);
+    const coderPersistent = again.seats.find((row) => row.seat === "coder");
+    assert.ok(coderPersistent);
     assert.equal(coderPersistent.source, "persistent");
     assert.deepEqual(coderPersistent.selection, {
       provider: "xai",
@@ -220,18 +233,26 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     });
 
     const before = await readFile(configPath, "utf8");
-    const overridden = await runAkRoleBin(
+    const overriddenBin = await runAkRoleBin(
       installed.akRoleBin,
       ["roles", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "high"],
       { home, agentDir: piAgentDir },
     );
-    assert.equal(overridden.code, 0, overridden.stderr);
-    const coderInvocation = resolveEffectiveSeat(
-      againConfig,
-      "coder",
-      againCredentials,
-      { model: "openai-codex/gpt-5.6-luna", thinking: "high" },
+    assert.equal(overriddenBin.code, 0, overriddenBin.stderr);
+    const overridden = await runAkRole(
+      ["roles", "--model", "openai-codex/gpt-5.6-luna", "--thinking", "high"],
+      {
+        packageRoot,
+        home,
+        agentDir: piAgentDir,
+        credentials: againCredentials,
+        io: { stdout() {}, stderr() {} },
+      },
     );
+    assert.equal(overridden.exitCode, 0);
+    assert.ok(overridden.seats);
+    const coderInvocation = overridden.seats.find((row) => row.seat === "coder");
+    assert.ok(coderInvocation);
     assert.equal(coderInvocation.source, "invocation");
     assert.deepEqual(coderInvocation.selection, {
       provider: "openai-codex",
