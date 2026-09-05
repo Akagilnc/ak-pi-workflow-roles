@@ -34,6 +34,7 @@ import {
 } from "./tool-execution-observation.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
+import { assessRoleToolFsBoundary } from "./role-tool-fs-boundary.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -1440,6 +1441,19 @@ export function createRoleRuntimeExtension(
     });
     roleHost.on("tool_execution_end", async (event, ctx) => {
       await observe(() => observationFace.onEnd(event), ctx);
+    });
+
+    // #692: one FS boundary at the shared-envelope tool seam (bash/edit/write).
+    // Ordinary violation → block this call + typed error; run continues.
+    // Detour violations are enforced inside the detour tool (ADR 0071 stop).
+    roleHost.on("tool_call", (event, ctx) => {
+      const violation = assessRoleToolFsBoundary({
+        toolName: event.toolName,
+        toolInput: event.input,
+        cwd: ctx.cwd,
+      });
+      if (violation === undefined) return;
+      return { block: true as const, reason: violation.reason };
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.

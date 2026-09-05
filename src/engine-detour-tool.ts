@@ -15,6 +15,7 @@ import {
   isEngineDetourFailure,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
+import { assessDetourArgvFsBoundary } from "./role-tool-fs-boundary.ts";
 
 const engineDetourArgsSchema = Type.Object(
   {
@@ -89,7 +90,15 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
+      // #692: detour child subject to the same FS boundary; violation = detour failure
+      // (ADR 0071 — typed fail and stop the whole run; no seat fallback).
+      const boundary = assessDetourArgvFsBoundary({ argv, cwd: ctx.cwd });
+      if (boundary !== undefined) {
+        input.fail(new Error(boundary.reason), toolCallId, ctx);
+      }
+
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
+
       try {
         result = await runEngineDetourOnce({
           argv,
