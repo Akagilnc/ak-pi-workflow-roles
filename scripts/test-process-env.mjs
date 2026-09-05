@@ -16,6 +16,8 @@ let sharedHermesBinDir;
 function registerDefaultTestHomeCleanup() {
   if (defaultTestHomeCleanupRegistered) return;
   defaultTestHomeCleanupRegistered = true;
+  // #612 / failure-honesty: cleanup failure must not exit green. exit listeners
+  // cannot block termination; mark a non-zero exitCode and land the cause on stderr.
   process.on("exit", () => {
     if (defaultTestHome === undefined) return;
     try {
@@ -23,8 +25,15 @@ function registerDefaultTestHomeCleanup() {
     } catch (error) {
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
       try {
-        process.stderr.write(`[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`);
-      } catch {}
+        process.stderr.write(
+          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
+        );
+      } catch {
+        // stderr may already be closed during process teardown
+      }
+      if (typeof process.exitCode !== "number" || process.exitCode === 0) {
+        process.exitCode = 1;
+      }
     }
   });
 }
