@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
+  pathContainedIn,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -24,8 +25,10 @@ import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
+  intervalRowsForMatchingBinding,
   LedgerSessionJsonlError,
   readLedgerSessionJsonl,
+  type LedgerSessionRow,
   type SessionToolInterval,
 } from "./ledger-session-read.ts";
 import {
@@ -43,6 +46,11 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
+import {
+  isTicketSeatRunBindingRow,
+  resolveTicketSeatMemoryNestDirectories,
+  ticketSeatRunBindingRunId,
+} from "./ticket-seat-memory.ts";
 
 export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 
@@ -201,6 +209,103 @@ async function resolveSessionFile(
   return join(runDirectory, "session", "session.jsonl");
 }
 
+/**
+ * Attribute session rows to one run (#636 D).
+ * Private run volumes (session under runDirectory) keep the whole file.
+ * Shared ticket-seat main volumes must carry this run's binding interval;
+ * whole-volume stats would let later continuations pollute earlier runs.
+ * Unbounded external volumes stay honest missing — never silent full ownership.
+ *
+ * `closed` on shared intervals: a later binding ended ownership before EOF of
+ * the provided rows. On damaged-prefix recovery, only closed intervals keep
+ * full frame/model/tool facts — open intervals may have lost rows to the bad line.
+ * Private volumes are never closed against a prefix (the whole file is this run).
+ */
+function attributeSessionRowsForRun(input: {
+  readonly rows: readonly LedgerSessionRow[];
+  readonly sessionFile: string;
+  readonly runDirectory: string;
+  readonly runId: string;
+}):
+  | {
+      readonly kind: "attributed";
+      readonly rows: readonly LedgerSessionRow[];
+      readonly closed: boolean;
+    }
+  | { readonly kind: "missing-boundary"; readonly reason: string } {
+  if (pathContainedIn(input.runDirectory, input.sessionFile)) {
+    return { kind: "attributed", rows: input.rows, closed: false };
+  }
+  const interval = intervalRowsForMatchingBinding(
+    input.rows,
+    isTicketSeatRunBindingRow,
+    (row) => ticketSeatRunBindingRunId(row) === input.runId,
+  );
+  if (interval === undefined) {
+    return {
+      kind: "missing-boundary",
+      reason:
+        "shared session volume has no ticket-seat run binding for this run",
+    };
+  }
+  return { kind: "attributed", rows: interval.rows, closed: interval.closed };
+}
+
+/**
+ * Admit frame span (and partial edges) from already-attributed session rows.
+ * Shared by the clean parse path and closed-interval damage recovery.
+ */
+function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
+  readonly frameSpan?: AnalystRunFrameSpan;
+  readonly missingReason?: string;
+  readonly partialFirstFrameAt: AnalystFirstFrameAt;
+  readonly partialLastFrameAt: AnalystOptionalTimestamp;
+  readonly models: readonly string[];
+} {
+  const models = extractSessionModelSequence(rows);
+  const span = extractSessionTimestampSpan(rows);
+  let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
+  let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
+  if (span.startedAt === undefined || span.endedAt === undefined) {
+    if (span.startedAt !== undefined) {
+      partialFirstFrameAt = { status: "present", at: span.startedAt };
+    }
+    if (span.endedAt !== undefined) {
+      partialLastFrameAt = { status: "present", at: span.endedAt };
+    }
+    return {
+      models,
+      partialFirstFrameAt,
+      partialLastFrameAt,
+      missingReason: "session timeline has no usable timestamps",
+    };
+  }
+  const startedMs = Date.parse(span.startedAt);
+  const endedMs = Date.parse(span.endedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+    return {
+      models,
+      partialFirstFrameAt: { status: "present", at: span.startedAt },
+      partialLastFrameAt: { status: "present", at: span.endedAt },
+      missingReason: "session timeline timestamps are not parseable instants",
+    };
+  }
+  if (endedMs < startedMs) {
+    return {
+      models,
+      partialFirstFrameAt: { status: "present", at: span.startedAt },
+      partialLastFrameAt: { status: "present", at: span.endedAt },
+      missingReason: "session timeline end is earlier than start",
+    };
+  }
+  return {
+    models,
+    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt },
+    partialFirstFrameAt: { status: "present", at: span.startedAt },
+    partialLastFrameAt: { status: "present", at: span.endedAt },
+  };
+}
+
 /** Session first/last usable timestamps retained for B-wave wall-clock kernels. */
 export type AnalystRunFrameSpan = {
   readonly startedAt: string;
@@ -277,55 +382,67 @@ async function classifyScopedRun(input: {
   let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
   let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
 
-  // 1) session timeline
+  // 1) session timeline — shared ticket-seat volumes slice to this run's binding.
+  // Damage after a closed binding interval must not erase that run's full facts.
   const sessionFile = await resolveSessionFile(input.runDirectory);
-  let rows: Awaited<ReturnType<typeof readLedgerSessionJsonl>> | undefined;
-  try {
-    rows = await readLedgerSessionJsonl(sessionFile);
-    models = extractSessionModelSequence(rows);
-    const span = extractSessionTimestampSpan(rows);
-    if (span.startedAt === undefined || span.endedAt === undefined) {
+  let rows: readonly LedgerSessionRow[] | undefined;
+  const admitAttributed = (
+    attributedRows: readonly LedgerSessionRow[],
+  ): void => {
+    rows = attributedRows;
+    const admitted = admitFrameSpanFromRows(attributedRows);
+    models = admitted.models;
+    partialFirstFrameAt = admitted.partialFirstFrameAt;
+    partialLastFrameAt = admitted.partialLastFrameAt;
+    if (admitted.frameSpan !== undefined) {
+      frameSpan = admitted.frameSpan;
+    } else if (admitted.missingReason !== undefined) {
       missingSources.push("session-timeline");
-      reasons.push("session timeline has no usable timestamps");
-      // Span incomplete, but any usable timestamp remains a typed partial fact.
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-      }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
+      reasons.push(admitted.missingReason);
+    }
+  };
+  try {
+    const rawRows = await readLedgerSessionJsonl(sessionFile);
+    const attributed = attributeSessionRowsForRun({
+      rows: rawRows,
+      sessionFile,
+      runDirectory: input.runDirectory,
+      runId: input.runId,
+    });
+    if (attributed.kind === "missing-boundary") {
+      missingSources.push("session-timeline");
+      reasons.push(attributed.reason);
     } else {
-      // frameSpan gate: both edges must parse and end must not precede start.
-      // Damaged spans stay page-local unreadable — never throw or emit negative/NaN wallMs.
-      const startedMs = Date.parse(span.startedAt);
-      const endedMs = Date.parse(span.endedAt);
-      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
-        missingSources.push("session-timeline");
-        reasons.push("session timeline timestamps are not parseable instants");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      } else if (endedMs < startedMs) {
-        missingSources.push("session-timeline");
-        reasons.push("session timeline end is earlier than start");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      } else {
-        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
-      }
+      admitAttributed(attributed.rows);
     }
   } catch (error) {
-    missingSources.push("session-timeline");
-    reasons.push(errorText(error));
-    // Single parse kernel: recover first/last frame and models from rows read before the loud line.
+    // Single parse kernel: attribute the prefix, then decide by binding closure.
+    // Closed shared interval → full frame/model/tool (damage belongs to a later run).
+    // Open interval / private volume / missing boundary → honest missing + partial edges.
     if (error instanceof LedgerSessionJsonlError) {
-      const span = extractSessionTimestampSpan(error.prefixRows);
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
+      const attributed = attributeSessionRowsForRun({
+        rows: error.prefixRows,
+        sessionFile,
+        runDirectory: input.runDirectory,
+        runId: input.runId,
+      });
+      if (attributed.kind === "attributed" && attributed.closed) {
+        admitAttributed(attributed.rows);
+      } else if (attributed.kind === "attributed") {
+        missingSources.push("session-timeline");
+        reasons.push(errorText(error));
+        const admitted = admitFrameSpanFromRows(attributed.rows);
+        models = admitted.models;
+        partialFirstFrameAt = admitted.partialFirstFrameAt;
+        partialLastFrameAt = admitted.partialLastFrameAt;
+      } else {
+        missingSources.push("session-timeline");
+        reasons.push(errorText(error));
+        // missing-boundary on damaged prefix: no partial ownership of sibling runs.
       }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
-      models = extractSessionModelSequence(error.prefixRows);
+    } else {
+      missingSources.push("session-timeline");
+      reasons.push(errorText(error));
     }
   }
 
@@ -399,11 +516,21 @@ async function classifyScopedRun(input: {
   // Nested auditor-roles gate pairs stay inside the sole scan (families must
   // not readdir this tree again). Missing directory → []. Damaged discovered
   // nested JSONL is page-local unreadable — never silently under-count rounds.
+  // #636: ticket-seat memory nests via sole discovery helper.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
-    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
+    const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+      runDirectory: input.runDirectory,
+      seats: ["inspector", "notary"],
+    });
+    const directories = [
       join(input.runDirectory, "session", "auditor-roles"),
-    );
+      ...memoryNests,
+    ];
+    const parentSessionFile = join(input.runDirectory, "session", "session.jsonl");
+    gateCycles = await readAnalystGateCyclesFromAuditorRoles(directories, {
+      parentSessionFile,
+    });
   } catch (error) {
     return {
       kind: "unreadable",

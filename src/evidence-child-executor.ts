@@ -26,6 +26,12 @@ import {
 } from "./compliance-transport.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { sitianReport } from "./sitian-facade.ts";
+import {
+  isTicketSeatMemorySeat,
+  readRunTicketNumber,
+  ticketSeatMemorySubject,
+  TICKET_SEAT_MEMORY_KIND,
+} from "./ticket-seat-memory.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -564,9 +570,16 @@ export async function executeAuditorChild(
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+    // #636: ticket+seat subject resumes the same nest (navigator subject path); no ticket → fresh nest.
+    const ticketNumber = await readRunTicketNumber(runDirectory);
+    const memorySubject =
+      ticketNumber !== undefined && isTicketSeatMemorySeat(seat)
+        ? ticketSeatMemorySubject(ticketNumber, seat)
+        : undefined;
     const auditorSessionManager: SessionManager = createRecordSession({
       cwd,
-      kind: "auditor-roles",
+      kind: TICKET_SEAT_MEMORY_KIND,
+      ...(memorySubject === undefined ? {} : { subject: memorySubject }),
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 
