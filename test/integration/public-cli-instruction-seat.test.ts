@@ -60,6 +60,33 @@ const CASES: readonly InstructionSeatCase[] = [
     },
   },
   {
+    role: "gatekeeper",
+    runId: "01a0gate00-0000-7000-8000-00000000063a",
+    instruction: "审：将作监完成侧交卷该派谁？",
+    toolName: GATEKEEPER_OUTPUT_TOOL,
+    details: {
+      status: "dispatch",
+      officer: "inspector",
+      reason: "worker completion → inspector",
+      findings: [],
+    },
+    expectedStatus: "dispatch",
+    assertDecisiveFacts: (facts) => {
+      assert.equal(
+        facts !== null && typeof facts === "object" && "status" in facts
+          ? (facts as { status: unknown }).status
+          : undefined,
+        "dispatch",
+      );
+      assert.equal(
+        facts !== null && typeof facts === "object" && "officer" in facts
+          ? (facts as { officer: unknown }).officer
+          : undefined,
+        "inspector",
+      );
+    },
+  },
+  {
     role: "navigator",
     runId: "01a0navi00-0000-7000-8000-000000000639",
     instruction: "刚完成 coder apply 收敛，下一步？",

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -28,7 +28,9 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
+import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
+  argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
@@ -158,11 +160,9 @@ test("countersign --ticket admits and projects activation.ticketNumber onto turn
     assert.ok(turn.activation.role === "countersign");
     assert.equal(turn.activation.ticketNumber, 582);
 
-    // Pi adapter output contract: structured argv carries the admitted binding.
+    // ticketNumber stays on activation; no private role transport flag (#632).
     const piArgv = buildPiTurnExtraArgs(turn, piDurablePrincipalAuthority);
-    const flagAt = piArgv.indexOf("--ak-countersign-ticket-number");
-    assert.ok(flagAt >= 0);
-    assert.equal(piArgv[flagAt + 1], "582");
+    assert.equal(piArgv.includes("--ak-countersign-ticket-number"), false);
   });
 });
 
@@ -217,7 +217,31 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: scriptedCountersignSession(receipt),
+            piRunner: async (args, options) => {
+              const outcome = await scriptedCountersignSession(receipt)(args, options);
+              // #634: scriptedTerminatingToolSession writes only the countersign
+              // terminating receipt — it never opens a real pi role activation that
+              // would summon Notary. Seed the direct officer volume the production
+              // gate would leave, so Terminal projection still asserts typed seats.
+              if (receipt.countersignStatus === "converged") {
+                const sessionFile = argvFlagValue(args, "--session");
+                assert.ok(sessionFile);
+                const auditorDir = join(dirname(sessionFile), "auditor-roles");
+                await mkdir(auditorDir, { recursive: true });
+                await writeFile(
+                  join(auditorDir, "o01_notary.jsonl"),
+                  gateToolSessionJsonl({
+                    id: "direct-notary",
+                    startedAt: "2026-09-04T00:00:00.000Z",
+                    endedAt: "2026-09-04T00:00:10.000Z",
+                    toolName: "ak_notary_output",
+                    args: { status: "pass", findings: [] },
+                  }),
+                  "utf8",
+                );
+              }
+              return outcome;
+            },
           }),
         },
       );
@@ -242,6 +266,10 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       }
       if (receipt.countersignStatus === "converged") {
         assert.equal(facts.note, receipt.note);
+        assert.ok(result.terminal.gate);
+        assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
+        assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+        assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
       }
       const coords = issuePiDurablePrincipalCoordinates({
         cwd: project,

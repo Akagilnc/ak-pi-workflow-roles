@@ -34,7 +34,6 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
-  isV1ResumableFailure,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
@@ -115,8 +114,6 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  hasLawfulTerminalResult?: (admitted: A, authority: DurablePrincipalAuthority) => Promise<boolean>;
-  isResumableRole?: boolean;
   beforeDispatch?: (admitted: A) => Promise<void> | void;
 };
 
@@ -190,19 +187,13 @@ export async function presentControlledFailure<
     ...(session === undefined ? {} : { session }),
   });
 
+  // #665 / #416: resume hint is seat-uniform — principal available && typed 429 → show.
+  // Do not fork the public terminal face on per-seat hasLawful / isResumableRole (ADR 0040).
   let resumable = false;
   const typedHttp429 = resumeObservation.typedHttp429;
-  if (adapters.isResumableRole === true && admitted.principal !== undefined) {
+  if (admitted.principal !== undefined) {
     const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
-    const hasLawful = adapters.hasLawfulTerminalResult !== undefined
-      ? await adapters.hasLawfulTerminalResult(admitted, authority)
-      : false;
-    resumable =
-      sessionPrincipalAvailable &&
-      isV1ResumableFailure({
-        hasLawfulTerminalResult: hasLawful,
-        ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-      });
+    resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
   }
 
   if (resumable && typedHttp429 !== undefined) {
