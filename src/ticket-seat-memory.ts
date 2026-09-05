@@ -1,5 +1,5 @@
 /**
- * #636 ticket+seat logical memory principal for officer seats.
+ * #636/#637 ticket+seat logical memory principal for officer + countersign seats.
  * Reuses archivist subject-keyed createRecordSession resume (navigator path);
  * no parallel continuation machine, no length/round thresholds.
  *
@@ -69,8 +69,13 @@ async function loadCreateRecordSessionOpen(): Promise<CreateRecordSessionOpen> {
 /** Record kind for officer ticket-seat memory nests (subject-keyed resume). */
 export const TICKET_SEAT_MEMORY_KIND = "auditor-roles" as const;
 
-/** Seats that continue a ticket-keyed memory principal (#636). */
-export const TICKET_SEAT_MEMORY_SEATS = ["inspector", "notary", "auditor"] as const;
+/** Seats that continue a ticket-keyed memory principal (#636 / #637). */
+export const TICKET_SEAT_MEMORY_SEATS = [
+  "inspector",
+  "notary",
+  "auditor",
+  "countersign",
+] as const;
 
 export type TicketSeatMemorySeat = (typeof TICKET_SEAT_MEMORY_SEATS)[number];
 
