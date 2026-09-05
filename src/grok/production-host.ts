@@ -281,8 +281,9 @@ async function recordGrokCapabilities(
 /**
  * Which run directory owns GROK_HOME for this turn (#636 / ADR 0077).
  * Same-host ticket-seat resume reopens the prior native home; otherwise the live run.
+ * Private to the production host — not a test seam.
  */
-export function resolveProductionGrokIsolationRunDirectory(
+function resolveProductionGrokIsolationRunDirectory(
   request: Pick<RoleTurnRequest, "runDirectory" | "continuation" | "nativeHomeRunDirectory">,
 ): string {
   if (

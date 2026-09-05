@@ -16,7 +16,6 @@ import {
   bindProductionGrokIsolation,
   NO_PRODUCTION_GROK_PRIMARY_FAILURE,
   openProductionGrokHome,
-  resolveProductionGrokIsolationRunDirectory,
   settleProductionGrokHomeCleanup,
   withProductionGrokIsolation,
 } from "../../src/grok/production-host.ts";
@@ -266,36 +265,5 @@ test("settleProductionGrokHomeCleanup aggregates undefined primary with cleanup 
       && error.errors[0] === undefined
       && error.errors[1] instanceof Error
       && error.cause === undefined,
-  );
-});
-
-test("#636 same-host resume reopens prior run grok-home; initial stays on live run", () => {
-  const liveRun = "/books/run-live";
-  const priorRun = "/books/run-prior";
-  assert.equal(
-    resolveProductionGrokIsolationRunDirectory({
-      runDirectory: liveRun,
-      continuation: { kind: "resume", prompt: "x" },
-      nativeHomeRunDirectory: priorRun,
-    }),
-    priorRun,
-    "resume + prior native home must reopen the prior run",
-  );
-  assert.equal(
-    resolveProductionGrokIsolationRunDirectory({
-      runDirectory: liveRun,
-      continuation: { kind: "initial", prompt: "x" },
-      nativeHomeRunDirectory: priorRun,
-    }),
-    liveRun,
-    "initial must not borrow a prior native home",
-  );
-  assert.equal(
-    resolveProductionGrokIsolationRunDirectory({
-      runDirectory: liveRun,
-      continuation: { kind: "resume", prompt: "x" },
-    }),
-    liveRun,
-    "resume without prior native home isolates under the live run",
   );
 });
