@@ -6,11 +6,9 @@
  * (stale extension ctx). Kept as shortest packaged tracers; no true-run handoff yet.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -18,56 +16,25 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import {
-  defineTool,
-  parseSkillBlock,
-  SessionManager,
-  stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
-  FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
-  FIXER_PHASES,
-  fixerPrerequisitesSchema,
-  parseFixerPrerequisites,
-  validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
-  MERGER_INPUT_FLAG,
-  MERGER_OUTPUT_TOOL_NAME,
-  ROLE_FLAG,
-  TOOL_EXECUTION_UPDATE_HEARTBEAT,
-  toolExecutionObservationRecordSchema,
-  WORKFLOW_ROLES,
-  type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { Value } from "typebox/value";
-import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
-import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
-  getSharedIsolatedPack,
   loadRawPackageManifest,
   packageRoot,
-  type RawPackageManifest,
   resolvePackageEntrypoint,
   runNodeSubprocess,
-  runPiSubprocess,
-  machineLedgerHome,
   withActivationHome,
-  withHermeticHome,
   withAgentDirProviderFixture,
   withInProcessPi,
-  withColdInstalledPackage,
-  writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
 
 import {

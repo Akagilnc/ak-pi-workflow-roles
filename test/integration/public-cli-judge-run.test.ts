@@ -452,54 +452,26 @@ async function traceJudgeInfrastructureFailure(input: {
   }
 }
 
-/** #475: audited-role materials + Gate unusable submission — one parameterized harness. */
-for (const scenario of [
-  {
-    name: "missing-dossier",
-    runId: "run-e2e-judge-missing-dossier-001",
-    poisonRunDir: true,
-    expectDetails: {
-      observation: { kind: "missing-dossier" },
-      candidate: null,
-    },
+/**
+ * #475 / #685: one public-entry failure-evidence tracer through real Pi.
+ * Observation-kind matrix (missing-dossier / missing-subject / notary stage) stays
+ * at judge-auditor-dossier + unit/dossier-resolution — not three real-Pi replays.
+ */
+test(
+  "ak-role Judge public failure-evidence tracer: missing-subject",
+  { timeout: 120_000 },
+  async () => {
+    await traceJudgeInfrastructureFailure({
+      name: "missing-subject",
+      runId: "run-e2e-judge-missing-subject-001",
+      childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
+      expectDetails: {
+        observation: { kind: "missing-subject", subject: "candidate-verdict" },
+        candidate: null,
+      },
+    });
   },
-  {
-    name: "missing-subject",
-    runId: "run-e2e-judge-missing-subject-001",
-    childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
-    expectDetails: {
-      observation: { kind: "missing-subject", subject: "candidate-verdict" },
-      candidate: null,
-    },
-  },
-  {
-    name: "notary-no-pass",
-    runId: "run-e2e-judge-gate-notary-001",
-    childEnv: { AK_GATE_MODE: "notary-no-pass" },
-    expectGateAbsent: true,
-    expectDetails: {
-      stage: "notary",
-      submission: { status: "ok-enough" },
-    },
-  },
-] as const) {
-  test(
-    `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
-    { timeout: 120_000 },
-    async () => {
-      await traceJudgeInfrastructureFailure({
-        name: scenario.name,
-        runId: scenario.runId,
-        expectDetails: scenario.expectDetails,
-        ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
-        ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
-        ...("expectGateAbsent" in scenario
-          ? { expectGateAbsent: scenario.expectGateAbsent }
-          : {}),
-      });
-    },
-  );
-}
+);
 
 test(
   "ak-role judge reaches Judge gate and settles Terminal with registry command",
