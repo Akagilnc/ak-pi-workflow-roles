@@ -1,8 +1,7 @@
 /**
  * #319 Batch 2 (M2): Doctor-unique deep chain only
  * (fresh Pi process + installed extension → one audited output).
- * #685: all-role cold-matrix culled. Install surface owns public-cli-install (heavy);
- * Doctor-unique deep chain stays this file (heavy).
+ * #685: Doctor-unique deep chain (heavy). All-role cold smoke + update: public-cli-cold-matrix (heavy).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

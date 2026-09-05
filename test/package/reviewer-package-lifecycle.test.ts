@@ -3,7 +3,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 /**
  * #319 Batch 2 (M2): Reviewer-unique deep chain only
  * (public ak-role Reviewer → Judge; #495 S6 dropped reviewer-side auditor).
- * #685: all-role cold-matrix culled; install surface tracer is public-cli-install (heavy).
+ * #685: all-role cold smoke + update live in public-cli-cold-matrix (heavy).
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";

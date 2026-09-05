@@ -247,7 +247,7 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
  * from the former packaged-workers structure test (Doctor/Merger/Navigator
  * sources, compiled dist modules, packets, and the closed fixer-repair.json
  * negative); internal flag/schema shapes stay deleted (behavior lives in the
- * public-cli-install / ordinary public-cli-* argv tracers, schema passthrough in
+ * public-cli-install / public-cli-cold-matrix argv tracers, schema passthrough in
  * contract/fixer-prerequisite-contract).
  */
 test("packed artifact ships the release inventory: souls, methods, runtime entrypoints, packets", async () => {

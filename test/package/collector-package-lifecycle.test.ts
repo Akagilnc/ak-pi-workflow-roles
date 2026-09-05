@@ -1,7 +1,7 @@
 /**
  * #319 Batch 2 (M2): Collector-unique deep chain only
  * (cold-installed default gh transport → accepted receipt).
- * #685: all-role cold-matrix culled; install surface tracer is public-cli-install (heavy).
+ * #685: all-role cold smoke + update live in public-cli-cold-matrix (heavy).
  */
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
