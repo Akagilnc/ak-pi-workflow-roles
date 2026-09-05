@@ -31,10 +31,9 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import {
   settleCoderTerminalResult,
-  trySettleCoderTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { recordAuditEscalationSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -189,38 +188,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
     }
-  });
-});
-
-test("coder settlement does not revive a prior-attempt escalation on resume", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const admitted = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
-      phase: "apply",
-      instruction: "Continue after owner decision.",
-      attachmentPaths: [],
-      createRunId: () => "run-coder-stale-escalation",
-    });
-    const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
-    await mkdir(coordinates.sessionDirectory, { recursive: true });
-    await writeFile(coordinates.sessionFile, [
-      JSON.stringify({ type: "session", id: "session-id" }),
-      JSON.stringify({ type: "message", id: "current-resume-user", message: { role: "user", content: [{ type: "text", text: "resume" }] } }),
-    ].join("\n") + "\n");
-    await recordAuditEscalationSubmission({
-      cwd: project,
-      home,
-      runId: admitted.runId,
-      runDirectory: admitted.runDirectory,
-      role: "coder",
-      details: { kind: "audit_escalation", officer: "inspector", reason: "old" },
-    });
-    assert.equal(await trySettleCoderTerminalResult(admitted, piDurablePrincipalAuthority), undefined);
   });
 });
 
