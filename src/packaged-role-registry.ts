@@ -31,10 +31,17 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/gate-output-guide.md",
 ] as const;
 
-/** Public 审刑院 materials (#675) — one soul, no caller-identity branch. */
+/**
+ * Public 审刑院 materials (#675).
+ * Same ordinary-call assembly whether nested or direct: role souls carry the
+ * audit criteria (judge.md / doctor.md), not a thin auditor.md substitute.
+ * auditor.md keeps 审刑院 identity only; criteria live in the role souls.
+ */
 export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/auditor.md",
+  "souls/judge.md",
+  "souls/doctor.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
 ] as const;

@@ -287,6 +287,11 @@ export type HostGatekeeperActions = {
   failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge for any structured submission non-pass. */
   bindSubmissionNonPass(toolCallId: string, result: HostSubmissionNonPass): void;
+  /** Offline tracers only — same seam as runGatekeeper options.summonOfficer. */
+  summonOfficer?: (
+    officer: "inspector" | "notary",
+    sourceRunDirectory: string,
+  ) => Promise<unknown>;
 };
 
 export type HostSkillExpansionEvidence = Readonly<{

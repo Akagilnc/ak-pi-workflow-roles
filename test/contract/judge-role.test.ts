@@ -28,8 +28,9 @@ import {
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   setTestGateOfficerSummon,
+  type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import { setTestAuditorSummon } from "../../src/compliance-transport.ts";
+import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
   createNavigatorAttendance,
@@ -149,8 +150,8 @@ afterEach(() => {
   }
   // Drop any leftover env binding between tests (owned dirs already popped above).
   delete process.env.AK_ROLE_RUN_DIR;
+  defaultGateSummon = undefined;
   setTestGateOfficerSummon(undefined);
-  setTestAuditorSummon(undefined);
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
   while (institutionalProviderCleanups.length > 0) {
@@ -316,14 +317,26 @@ function extensionHarness(
 }
 
 /** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
+/** Offline gate summon for this file — threaded via hostActions, not globalThis. */
+let defaultGateSummon: GateOfficerSummon | undefined;
+
 function testHostActions(
   fail: (error: unknown) => never = (error): never => {
     throw error instanceof Error ? error : new Error(String(error));
   },
+  summonOfficer?: GateOfficerSummon,
 ): HostGatekeeperActions {
   return {
     failInfrastructure(error) { fail(error); },
     bindSubmissionNonPass() {},
+    // Resolve at call time so per-test defaultGateSummon assignments apply.
+    async summonOfficer(officer, sourceRunDirectory) {
+      const summon = summonOfficer ?? defaultGateSummon;
+      if (summon === undefined) {
+        throw new Error("test gate summon not armed");
+      }
+      return summon(officer, sourceRunDirectory);
+    },
   };
 }
 
@@ -393,8 +406,9 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
-  // #675: offline gate path injects public-summon results (no institutional child).
-  setTestGateOfficerSummon(async (officer) => passingOfficerSummon(officer));
+  // #675: offline gate path injects public-summon results (hostActions + deep-activation mirror).
+  defaultGateSummon = async (officer) => passingOfficerSummon(officer);
+  setTestGateOfficerSummon(defaultGateSummon);
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
@@ -498,11 +512,12 @@ async function workerCompletionGatekeeperHarness(options: {
     ...Array.from({ length: passingRuns }, (_, i) => passingOfficerSummon(officer)),
   ];
   let callCount = 0;
-  setTestGateOfficerSummon(async () => {
+  defaultGateSummon = async () => {
     const next = queue[callCount++];
     if (next === undefined) throw new Error("gate summon queue exhausted");
     return next;
-  });
+  };
+  setTestGateOfficerSummon(defaultGateSummon);
   return {
     context(id: string, toolName: string) {
       installInstitutionalRunDir(parentInheritedSeats(model));
@@ -1461,8 +1476,8 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
-    // #675: offline gate summons inject public terminal results.
-    setTestGateOfficerSummon(async (officer) => ({
+    // #675: offline gate summons inject public terminal results via hostActions.
+    defaultGateSummon = async (officer) => ({
       exitCode: 0,
       terminal: {
         roleOutcome: {
@@ -1475,7 +1490,8 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
         artifacts: [],
         runId: "test-gk-bounce",
       },
-    }));
+    });
+    setTestGateOfficerSummon(defaultGateSummon);
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
     installInstitutionalRunDir(parentInheritedSeats(model));
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
@@ -1731,10 +1747,11 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
   {
     const tool = await startCoder();
     const officers: string[] = [];
-    setTestGateOfficerSummon(async (officer) => {
+    defaultGateSummon = async (officer) => {
       officers.push(officer);
       return passingOfficerSummon(officer);
-    });
+    };
+    setTestGateOfficerSummon(defaultGateSummon);
     const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
     const model = faux.getModel();
     const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
@@ -1752,7 +1769,7 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
   }
   {
     const tool = await startCoder();
-    setTestGateOfficerSummon(async () => ({
+    defaultGateSummon = async () => ({
       exitCode: 1,
       terminal: {
         roleOutcome: {
@@ -1766,7 +1783,8 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
         artifacts: [],
         runId: "test-auth-fail",
       },
-    }));
+    });
+    setTestGateOfficerSummon(defaultGateSummon);
     const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
     const model = faux.getModel();
     const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
@@ -1808,7 +1826,8 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
     const model = faux.getModel();
     // #675: completed submissions summon Inspector via public path; inject pass.
-    setTestGateOfficerSummon(async (officer) => passingOfficerSummon(officer));
+    defaultGateSummon = async (officer) => passingOfficerSummon(officer);
+    setTestGateOfficerSummon(defaultGateSummon);
     const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
     const runtime = createCoderRoleRuntime(
       piHostAdapter.host,
@@ -2696,7 +2715,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         // #675: compliance summons public auditor; offline injects the decision terminal.
         const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
           auditCalls += 1;
-          setTestAuditorSummon(async () => ({
+          const summonAuditor: AuditorSummon = async () => ({
             exitCode: 0,
             terminal: {
               roleOutcome: {
@@ -2709,8 +2728,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
               artifacts: [],
               runId: "test-auditor",
             },
-          }));
-          const piOptions = { ...options, context: toPiContext(options.context) };
+          });
+          const piOptions = {
+            ...options,
+            context: toPiContext(options.context),
+            summonAuditor,
+          };
           return (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
         };
         let runtime: any;

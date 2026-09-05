@@ -346,13 +346,11 @@ test("advice command derives phase token from registry metadata for every packag
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
-    // Registry output tools are contract-owned. Navigator route targets exclude
-    // nested summon seats (auditor / evidence-child) that stay public (#675).
+    // Registry output tools are contract-owned. Every public role is a lawful
+    // navigator route target (#675 — no nested-only seat exclusions).
     assert.deepEqual(
       NAVIGATOR_TARGETS.map(({ role }) => role),
-      PACKAGED_ROLE_REGISTRY.map(({ role }) => role).filter(
-        (role) => role !== "auditor" && role !== "evidence-child",
-      ),
+      PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
     );
     assert.deepEqual(
       PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),

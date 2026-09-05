@@ -152,23 +152,35 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         timestamp: Date.now(),
       });
       const nestedProvider = resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts");
-      const priorNested = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
       const priorAgent = process.env.PI_CODING_AGENT_DIR;
-      const priorModel = process.env.AK_ROLE_NESTED_MODEL;
       const agentDir = resolve(home, ".pi", "agent");
       await mkdir(agentDir, { recursive: true });
       // Seed nested faux models so public auditor summon can select a model offline.
       const { fauxProvider } = await import("@earendil-works/pi-ai");
       const { seedAgentDirModelsJsonFromFaux } = await import("../helpers/pi-test-harness.ts");
+      const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
       const nestedFaux = fauxProvider({
         api: "ak-nested-officer-pass",
         provider: "ak-nested-officer-pass",
         tokenSize: { min: 1000, max: 1000 },
       });
       const seeded = await seedAgentDirModelsJsonFromFaux(nestedFaux, agentDir);
-      process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify(["-e", nestedProvider]);
+      const seat = { provider: "ak-nested-officer-pass", model: "faux-1" };
+      await savePublicCliConfig({
+        seats: {
+          auditor: seat,
+          notary: seat,
+          inspector: seat,
+        },
+      }, home);
+      // Home-local fixture arms nested -e provider (dual-module safe; no env protocol).
+      await mkdir(resolve(home, ".ak-roles"), { recursive: true });
+      await writeFile(
+        resolve(home, ".ak-roles", ".summon-extra-pi-args.json"),
+        JSON.stringify(["-e", nestedProvider]),
+        "utf8",
+      );
       process.env.PI_CODING_AGENT_DIR = agentDir;
-      process.env.AK_ROLE_NESTED_MODEL = "ak-nested-officer-pass/faux-1";
       process.env.HOME = home;
       try {
         const context = { cwd: installedRoot, sessionManager: sm } as any;
@@ -176,12 +188,8 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         assert.equal(decision.status, "pass");
       } finally {
         await seeded.close();
-        if (priorNested === undefined) delete process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
-        else process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS = priorNested;
         if (priorAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = priorAgent;
-        if (priorModel === undefined) delete process.env.AK_ROLE_NESTED_MODEL;
-        else process.env.AK_ROLE_NESTED_MODEL = priorModel;
       }
       });
     },
@@ -314,28 +322,35 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
               }],
             }), { stopReason: "toolUse" });
           }
-          if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+          if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
             auditContext = context;
             // Snapshot the mock HTTP headers that just arrived for this child turn.
             auditChildRequestHeaders = latestChildRequestHeaders;
+            const auditTool = names.includes("ak_auditor_output")
+              ? "ak_auditor_output"
+              : SOUL_AUDIT_TOOL_NAME;
             return fauxAssistantMessage(
               fauxToolCall(
-                SOUL_AUDIT_TOOL_NAME,
+                auditTool,
                 { status: "pass", violations: [], conflicts: [], decisionGate: null },
                 { id: "audit-pass" },
               ),
               { stopReason: "toolUse" },
             );
           }
-          judgeContext = context;
-          return fauxAssistantMessage(
-            fauxToolCall(
-              JUDGE_OUTPUT_TOOL_NAME,
-              { judgeStatus: "converged" },
-              { id: "accepted-judge" },
-            ),
-            { stopReason: "toolUse" },
-          );
+          // Only the parent judge turn owns judgeContext — nested seats must not overwrite.
+          if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+            judgeContext = context;
+            return fauxAssistantMessage(
+              fauxToolCall(
+                JUDGE_OUTPUT_TOOL_NAME,
+                { judgeStatus: "converged" },
+                { id: "accepted-judge" },
+              ),
+              { stopReason: "toolUse" },
+            );
+          }
+          return fauxAssistantMessage([], { stopReason: "stop" });
         };
         faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
@@ -464,6 +479,9 @@ test("packaged judge escalation emits one typed human decision", async () => {
           if (officerPass !== undefined) return officerPass;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
+          }
+          if (!names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+            return fauxAssistantMessage([], { stopReason: "stop" });
           }
           return fauxAssistantMessage(
             fauxToolCall(

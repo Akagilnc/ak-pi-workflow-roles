@@ -1,8 +1,7 @@
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
-  createComplianceDecisionTool,
   runComplianceAudit,
+  type AuditorSummon,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import {
@@ -17,16 +16,14 @@ export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
 export type DoctorAuditOptions = {
   context: HostContext;
   signal?: AbortSignal;
+  /** Same seam as runComplianceAudit options — offline tracers only. */
+  summonAuditor?: AuditorSummon;
 };
 
-const tool = createComplianceDecisionTool(
-  DOCTOR_AUDIT_TOOL_NAME,
-  "提交 typed pass/revise/escalate 决议（太医署审刑）。",
-);
-
 /**
- * Doctor auditor: zero hand-delivered materials.
- * Candidate testimony must already be on the parent-session books.
+ * Doctor compliance via the public auditor activation path (#675).
+ * Materials/soul/tool owned by the public auditor seat — same assembly as a
+ * direct `ak-role auditor` call (doctor.md included there).
  */
 export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -36,13 +33,12 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
-      tool,
-      systemPrompt: await loadAuditorSoul("doctor"),
-      roleLabel: "Doctor Soul compliance audit",
-      invalidDecisionLabel: "invalid Doctor audit decision",
       context: options.context,
-      ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
+      ...(auditorRunDirectory(options.context) === undefined
+        ? {}
+        : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),
     });
   };
 }

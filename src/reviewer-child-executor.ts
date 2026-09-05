@@ -7,22 +7,6 @@ import type { Usage } from "@earendil-works/pi-ai";
 
 export type EvidenceChildSummon = (argv: readonly string[]) => Promise<PublicSummonResult>;
 
-const TEST_EVIDENCE_CHILD_SUMMON = Symbol.for("ak-roles.test-evidence-child-summon");
-
-/** Install or clear the offline evidence-child summon hook (tests only). */
-export function setTestEvidenceChildSummon(summon: EvidenceChildSummon | undefined): () => void {
-  const slot = globalThis as Record<symbol, EvidenceChildSummon | undefined>;
-  const previous = slot[TEST_EVIDENCE_CHILD_SUMMON];
-  slot[TEST_EVIDENCE_CHILD_SUMMON] = summon;
-  return () => {
-    slot[TEST_EVIDENCE_CHILD_SUMMON] = previous;
-  };
-}
-
-function testEvidenceChildSummon(): EvidenceChildSummon | undefined {
-  return (globalThis as Record<symbol, EvidenceChildSummon | undefined>)[TEST_EVIDENCE_CHILD_SUMMON];
-}
-
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   credentialScratchParent?: string;
@@ -49,17 +33,6 @@ export function projectSharedChildFailure(error: unknown): unknown {
     }
   }
   return error;
-}
-
-function emptyUsage(): Usage {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
 }
 
 function failureClassification(
@@ -93,21 +66,16 @@ function reportFromSummon(summoned: PublicSummonResult): string {
   }
   if (outcome.kind === "accepted") {
     const report = outcome.decisiveFacts.report;
-    if (typeof report === "string" && report.trim() !== "") return report;
+    // Shape-unreadable report is a child output problem — not a parent abort trigger.
+    // Keep the empty/non-string face so settlement/重交 can handle it; only throw when
+    // the terminal itself is unusable (no accepted outcome).
+    if (typeof report === "string") return report;
+    return "";
   }
   throw Object.assign(
     new Error("Evidence-child public summon returned no report body"),
     { evidenceChildFailure: "child" as const },
   );
-}
-
-async function usageFromSummonedEvidenceChild(summoned: PublicSummonResult): Promise<Usage> {
-  const pointer = (summoned.terminal?.roleOutcome as { runPointer?: unknown } | undefined)?.runPointer;
-  if (typeof pointer !== "string" || pointer.trim() === "") return emptyUsage();
-  const { join } = await import("node:path");
-  const sessionFile = join(pointer, "session", "session.jsonl");
-  const { readAssistantUsageFromSessionFile } = await import("./session-assistant-usage.ts");
-  return (await readAssistantUsageFromSessionFile(sessionFile)) ?? emptyUsage();
 }
 
 /** Reviewer evidence leg via the public evidence-child activation path (#675). */
@@ -131,7 +99,6 @@ export async function executeReviewerChild(
     const argv = [`${String(leg.prompt)}${pointer}`];
     const summon =
       options.summonEvidenceChild
-      ?? testEvidenceChildSummon()
       ?? (async (nextArgv: readonly string[]) => {
         const { summonPublicRole } = await import("./public-role-summons.ts");
         // Parent run home owns nested public seats; leg workspace cwd is a bare worktree.
@@ -156,7 +123,15 @@ export async function executeReviewerChild(
       });
     }
     const report = reportFromSummon(summoned);
-    const usage = await usageFromSummonedEvidenceChild(summoned);
+    const { usageFromPublicSummon } = await import("./session-assistant-usage.ts");
+    // Real session usage when present; no session → token-zero without inventing cost.
+    const usage = (await usageFromPublicSummon(summoned)) ?? ({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+    } as Usage);
     return { report, usage, prompt: leg.prompt };
   } catch (error) {
     throw projectSharedChildFailure(error);

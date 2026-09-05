@@ -39,11 +39,18 @@ export type PublicSummonRequest = {
   readonly io?: CliIo;
   readonly credentials?: CredentialProviders;
   readonly agentDir?: string;
+  /**
+   * Optional Pi argv forwarded to the role-turn host (same face as public CLI
+   * seat extraPiArgs). Callers pass explicitly — no process.env test protocol.
+   */
+  readonly extraPiArgs?: readonly string[];
 };
 
 export type PublicSummonResult = {
   readonly exitCode: number;
   readonly terminal?: TerminalResult;
+  /** Independent officer/role run directory (正本); parent books pointer only. */
+  readonly runDirectory?: string;
   /** Offline diagnostics from nested CLI (structural rejection text). */
   readonly stderr?: string;
 };
@@ -123,31 +130,19 @@ async function resolveSummonHome(options: PublicSummonRequest): Promise<string> 
   return packageMachineHome();
 }
 
+/** Seat axes only — no parent-env fallback (#675 / #617 DK-3). */
 function projectSeatEngine(seat: EffectiveSeat): { engine?: string } {
-  const raw = process.env.AK_ROLE_ENGINE;
-  const fromEnv =
-    typeof raw === "string" && raw.trim() !== "" ? raw.trim() : undefined;
-  const engine = seat.engine ?? fromEnv;
-  return engine === undefined ? {} : { engine };
+  return seat.engine === undefined ? {} : { engine: seat.engine };
 }
 
 function projectSeatHost(seat: EffectiveSeat): { host?: string } {
   return seat.host === undefined ? {} : { host: seat.host };
 }
 
-/** Nested seats with empty startup candidates inherit the live parent model (#675). */
-async function projectSeatModel(
+function projectSeatModel(
   seat: EffectiveSeat,
-): Promise<{ model?: import("./public-cli/config.ts").SeatModelConfig }> {
-  if (seat.selection !== undefined) return { model: seat.selection };
-  const raw = process.env.AK_ROLE_NESTED_MODEL;
-  if (typeof raw !== "string" || raw.trim() === "") return {};
-  const { parseModelSpec } = await import("./public-cli/config.ts");
-  try {
-    return { model: parseModelSpec(raw) };
-  } catch {
-    return {};
-  }
+): { model?: import("./public-cli/config.ts").SeatModelConfig } {
+  return seat.selection === undefined ? {} : { model: seat.selection };
 }
 
 async function createSummonEnv(options: {
@@ -158,6 +153,7 @@ async function createSummonEnv(options: {
   readonly packageRoot: string;
   readonly credentials: CredentialProviders;
   readonly seat: EffectiveSeat;
+  readonly extraPiArgs?: readonly string[];
 }) {
   const [{ piDurablePrincipalAuthority }, { appendPiSessionCustomEntry, createPiRoleTurnHost }] =
     await Promise.all([
@@ -165,19 +161,7 @@ async function createSummonEnv(options: {
       import("./pi/role-turn-host.ts"),
     ]);
   const principalAuthority = piDurablePrincipalAuthority;
-  const nestedExtraRaw = process.env.AK_ROLE_NESTED_EXTRA_PI_ARGS;
-  let nestedExtraPiArgs: readonly string[] | undefined;
-  if (typeof nestedExtraRaw === "string" && nestedExtraRaw.trim() !== "") {
-    try {
-      const parsed = JSON.parse(nestedExtraRaw) as unknown;
-      if (Array.isArray(parsed) && parsed.every((part) => typeof part === "string")) {
-        nestedExtraPiArgs = parsed;
-      }
-    } catch {
-      // ignore malformed offline env
-    }
-  }
-  process.env[AK_ROLE_PACKAGE_ROOT_ENV] = options.packageRoot;
+  // package root is request-scoped only — never leave process.env residue (#675).
   const piRecords = {
     async recordLaunchedPiIdentity(runDirectory: string, identity: unknown) {
       const { recordLaunchedPiIdentity } = await import("./public-cli/invocation.ts");
@@ -192,10 +176,27 @@ async function createSummonEnv(options: {
       return observeLaunchedRolePackageIdentity(root, roleEntry);
     },
   } as const;
+  // Request field wins. Else optional home-local fixture (tests write under temp
+  // HOME; production never creates it) — dual-module safe without process.env protocol.
+  let extraPiArgs = options.extraPiArgs;
+  if (extraPiArgs === undefined || extraPiArgs.length === 0) {
+    const fixturePath = join(options.home, ".ak-roles", ".summon-extra-pi-args.json");
+    if (existsSync(fixturePath)) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const parsed = JSON.parse(readFileSync(fixturePath, "utf8")) as unknown;
+        if (Array.isArray(parsed) && parsed.every((part) => typeof part === "string")) {
+          extraPiArgs = parsed;
+        }
+      } catch {
+        // malformed fixture — ignore
+      }
+    }
+  }
   const piHost = createPiRoleTurnHost({
     packageRoot: options.packageRoot,
     principalAuthority,
-    ...(nestedExtraPiArgs === undefined ? {} : { extraPiArgs: nestedExtraPiArgs }),
+    ...(extraPiArgs === undefined || extraPiArgs.length === 0 ? {} : { extraPiArgs }),
     ...piRecords,
   });
   // Same host axis table as public CLI (#617 DK-3 / #675): seat.host selects the adapter.
@@ -229,7 +230,7 @@ async function createSummonEnv(options: {
     roleTurnHost,
     cwd: options.cwd,
     credentials: options.credentials,
-    ...(await projectSeatModel(options.seat)),
+    ...projectSeatModel(options.seat),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
   };
@@ -265,11 +266,16 @@ export async function summonPublicRole(
     packageRoot,
     credentials,
     seat,
+    ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
   });
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
 
-  let result: { exitCode: number; terminal?: TerminalResult };
+  let result: {
+    exitCode: number;
+    terminal?: TerminalResult;
+    admitted?: { readonly runDirectory?: string };
+  };
   switch (options.role) {
     case "notary": {
       const [{ runPublicNotary }, { parseNotaryArgv }] = await Promise.all([
@@ -346,9 +352,13 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
+  const runDirectory = result.admitted?.runDirectory;
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+    ...(typeof runDirectory === "string" && runDirectory.trim() !== ""
+      ? { runDirectory }
+      : {}),
     ...(stderr === undefined || stderr === "" ? {} : { stderr }),
   };
 }

@@ -93,35 +93,20 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 
 export type AuditorSummon = (sourceRunDirectory: string) => Promise<PublicSummonResult>;
 
-/** Offline-test hook key — globalThis so extension/test share one inject (no dual-module). */
-const TEST_AUDITOR_SUMMON = Symbol.for("ak-roles.test-auditor-summon");
+/** Offline options-bag mirror for deep activation paths that cannot thread summonAuditor. */
+let offlineAuditorSummon: AuditorSummon | undefined;
 
-/**
- * Install or clear the offline auditor summon hook (tests only).
- * Returns a restore function that puts back the previous hook.
- */
 export function setTestAuditorSummon(summon: AuditorSummon | undefined): () => void {
-  const slot = globalThis as Record<symbol, AuditorSummon | undefined>;
-  const previous = slot[TEST_AUDITOR_SUMMON];
-  slot[TEST_AUDITOR_SUMMON] = summon;
+  const previous = offlineAuditorSummon;
+  offlineAuditorSummon = summon;
   return () => {
-    slot[TEST_AUDITOR_SUMMON] = previous;
+    offlineAuditorSummon = previous;
   };
 }
 
-function testAuditorSummon(): AuditorSummon | undefined {
-  return (globalThis as Record<symbol, AuditorSummon | undefined>)[TEST_AUDITOR_SUMMON];
-}
-
 export type RunComplianceAuditOptions = {
-  /** @deprecated retained for call-site compatibility; public auditor owns its tool. */
-  tool?: ReturnType<typeof createComplianceDecisionTool>;
-  /** @deprecated retained for call-site compatibility; public auditor owns its soul. */
-  systemPrompt?: string;
   /** @deprecated Fixer-lane hand-delivery only (#242 retires). Prefer omitting for zero-projection auditors. */
   serializedInput?: string;
-  roleLabel?: string;
-  invalidDecisionLabel?: string;
   context: HostContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
@@ -135,19 +120,8 @@ export type RunComplianceAuditOptions = {
 
 /** Sum nested public auditor session usage onto the parent no-receipt face (#675). */
 async function usageFromSummonedAuditorSession(summoned: PublicSummonResult): Promise<Usage | undefined> {
-  let sessionFile = summoned.terminal?.artifacts
-    ?.map((a) => (a as { path?: string }).path)
-    .find((p): p is string => typeof p === "string" && p.endsWith("session.jsonl"));
-  if (sessionFile === undefined) {
-    const pointer = (summoned.terminal?.roleOutcome as { runPointer?: unknown } | undefined)?.runPointer;
-    if (typeof pointer === "string" && pointer.trim() !== "") {
-      const { join } = await import("node:path");
-      sessionFile = join(pointer, "session", "session.jsonl");
-    }
-  }
-  if (sessionFile === undefined) return undefined;
-  const { readAssistantUsageFromSessionFile } = await import("./session-assistant-usage.ts");
-  return readAssistantUsageFromSessionFile(sessionFile);
+  const { usageFromPublicSummon } = await import("./session-assistant-usage.ts");
+  return usageFromPublicSummon(summoned);
 }
 
 async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
@@ -215,7 +189,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   const summon =
     options.summonAuditor
-    ?? testAuditorSummon()
+    ?? offlineAuditorSummon
     ?? (async (sourceRunDirectory: string) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
