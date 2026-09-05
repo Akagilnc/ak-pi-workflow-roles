@@ -3,9 +3,9 @@
  * Extracted verbatim from public-cli-failure-settlement.test.ts — no behavior change.
  */
 import assert from "node:assert/strict";
-import { testTmpdir } from "./worktree-temp.ts";
+import { rmWorktreeDir, testTmpdir } from "./worktree-temp.ts";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -29,7 +29,7 @@ export async function withTempHome<T>(
   try {
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rmWorktreeDir(home);
   }
 }
 

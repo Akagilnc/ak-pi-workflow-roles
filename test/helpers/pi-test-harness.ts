@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -10,7 +10,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -20,7 +19,7 @@ import {
   realMachineAgentDir,
   realMachineHome,
 } from "./test-agent-dir-guard.ts";
-import { testTmpdir } from "./worktree-temp.ts";
+import { rmWorktreeDir, rmWorktreeDirSync, testTmpdir } from "./worktree-temp.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -207,7 +206,7 @@ export async function packIsolatedPackage(
       files: entry.files,
     };
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rmWorktreeDir(root);
   }
 }
 
@@ -276,7 +275,7 @@ async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() 
     try {
       await mkdir(lockDir);
       return async () => {
-        await rm(lockDir, { recursive: true, force: true });
+        await rmWorktreeDir(lockDir);
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -403,7 +402,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
           cacheDir,
         };
       } finally {
-        await rm(materialRoot, { recursive: true, force: true });
+        await rmWorktreeDir(materialRoot);
       }
     } finally {
       await release();
@@ -494,7 +493,7 @@ export async function withHermeticHome<T>(
       else process.env.PI_OFFLINE = previousOffline;
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      await rm(home, { recursive: true, force: true });
+      await rmWorktreeDir(home);
     }
   });
 }
@@ -563,7 +562,7 @@ export function createTempPackageHomeLedger(input: {
     sessionDirectory,
     sessionFile,
     dispose() {
-      rmSync(home, { recursive: true, force: true });
+      rmWorktreeDirSync(home);
     },
   };
 }
@@ -996,7 +995,7 @@ export async function withInstitutionalProviderFixture<T>(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rm(tempAgentDir, { recursive: true, force: true });
+    await rmWorktreeDir(tempAgentDir);
   }
 }
 

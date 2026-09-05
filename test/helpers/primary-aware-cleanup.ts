@@ -1,5 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { testTmpdir } from "./worktree-temp.ts";
+import { mkdtemp } from "node:fs/promises";
+import { rmWorktreeDir, testTmpdir } from "./worktree-temp.ts";
 import { join } from "node:path";
 
 /**
@@ -63,7 +63,7 @@ export async function withTempRoot<T>(
   return withPrimaryAwareCleanup(
     () => body(root),
     async () => {
-      await rm(root, { recursive: true, force: true });
+      await rmWorktreeDir(root);
     },
   );
 }
