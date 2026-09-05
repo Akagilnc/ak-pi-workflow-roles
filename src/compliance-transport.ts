@@ -223,6 +223,37 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
+    // Preserve sealed candidate on the failure channel (#475 / #675): parent Judge
+    // secondaryEvidence needs observation+candidate, not a bare diagnostic string.
+    const facts = outcome.decisiveFacts as Record<string, unknown> | undefined;
+    const secondary =
+      facts !== undefined
+      && typeof facts.secondaryEvidence === "object"
+      && facts.secondaryEvidence !== null
+        ? (facts.secondaryEvidence as Record<string, unknown>)
+        : undefined;
+    const candidate =
+      facts !== undefined && Object.hasOwn(facts, "candidate")
+        ? facts.candidate
+        : secondary !== undefined && Object.hasOwn(secondary, "candidate")
+          ? secondary.candidate
+          : undefined;
+    if (candidate !== undefined) {
+      const status =
+        typeof candidate === "object"
+        && candidate !== null
+        && !Array.isArray(candidate)
+        && Object.hasOwn(candidate as object, "status")
+          ? (candidate as { status: unknown }).status
+          : undefined;
+      throw new ComplianceCandidateUnreadableError(
+        {
+          kind: "object-status-unreadable",
+          status: status === undefined ? "missing" : "unknown",
+        },
+        candidate,
+      );
+    }
     throw new Error(outcome.diagnostic);
   }
   if (outcome.kind === "accepted") {
