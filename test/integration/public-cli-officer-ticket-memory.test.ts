@@ -595,17 +595,19 @@ test("#636 public notary: Grok native home spans failure, same-run retry, return
       runDirectory: seen[0]!.runDirectory,
     });
 
-    // 5) Return to Grok reopens the same native home (not the Pi run).
-    await runPublicNotary(
-      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-4" },
+    // 5) Old Grok run retry after Pi intermediate — last-host (pi) owns host,
+    // not the stale per-run invocation mark still recorded as grok-build.
+    // Also the return-to-Grok path: reopen the established native home, not the Pi run.
+    await runPublicNotaryResume(
+      { runId: "notary-nh-2" },
+      { ...envBase, host: "grok-build" },
       io,
-      parseNotaryArgv,
     );
     assert.equal(seen.length, 5);
     assert.equal(seen[4]!.kind, "resume");
-    assert.equal(seen[4]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
     assert.equal(seen[4]!.previousHost, "pi");
+    assert.equal(seen[4]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[4]!.runDirectory, seen[1]!.runDirectory);
     const afterReturn = await readTicketSeatMemoryLastHost(memoryDir);
     assert.deepEqual(afterReturn, {
       host: "grok-build",

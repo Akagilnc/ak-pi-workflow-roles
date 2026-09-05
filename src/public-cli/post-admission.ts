@@ -283,17 +283,16 @@ export async function dispatchPostAdmissionTurn<
     });
     let turnRequest: RoleTurnRequest;
     try {
-      // Invocation host is this run's prior mark; last-host is the nest-wide ownership fact.
-      // Always read last-host when bound — same-run retry still needs the Grok native home.
-      previousHost = await readInvocationHost(admitted.runDirectory);
+      // Ticket-seat host authority lives on the nest last-host page only.
+      // Per-run invocation.host must not override: old-run retry after a cross-host
+      // intermediate would otherwise keep the stale run host and drop the transition.
+      // Non-ticket-seat paths still read the per-run invocation mark (#617).
       if (ticketSeatMemoryBound && principalCoordinates !== undefined) {
         const lastHost = await readTicketSeatMemoryLastHost(
           principalCoordinates.sessionDirectory,
         );
         if (lastHost !== undefined) {
-          if (previousHost === undefined) {
-            previousHost = lastHost.host;
-          }
+          previousHost = lastHost.host;
           // runDirectory on last-host is the established Grok native isolation run when present
           // (preserved across non-Grok hosts so return-to-Grok can reopen it).
           if (
@@ -309,6 +308,8 @@ export async function dispatchPostAdmissionTurn<
             }
           }
         }
+      } else {
+        previousHost = await readInvocationHost(admitted.runDirectory);
       }
       const hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
