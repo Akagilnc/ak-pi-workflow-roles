@@ -632,10 +632,11 @@ export async function openPiInstitutionalSession(
     }
 
     // 7. Create AgentSession
-    // Existing Navigator contract: requested thinking must stick after open. Pi
-    // clamps unsupported levels; if max was requested and not applied, fail as
-    // typed unavailable/thinking (pre-#590 attendance setModel check).
-    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
+    // Pass seat/selection thinking through as Pi createAgentSession understands it
+    // (off/minimal/low/medium/high/xhigh/max). Absent selection defaults to off
+    // (explicit, not Pi settings default). Pi clamps unsupported levels; if the
+    // requested level does not stick, fail as typed unavailable/thinking.
+    const requestedThinking = options.selection.thinking ?? "off";
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
@@ -649,11 +650,11 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
+    if (session.thinkingLevel !== requestedThinking) {
       session.dispose();
       throw withTypedReason(
         new Error(
-          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`,
+          `${label} thinking level ${requestedThinking} is unavailable for ${selection.provider}/${selection.model}`,
         ),
         "thinking",
       );

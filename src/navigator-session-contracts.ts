@@ -162,7 +162,7 @@ export type NavigatorPreparationSession = {
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   providerFailure?(): NavigatorProviderFailureFact | undefined;
-  setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
+  setModel?(model: string, thinkingLevel: string): Promise<void>;
   getThinkingLevel?(): string;
   recordPointer(): string;
   dispose(): void | Promise<void>;
@@ -201,25 +201,36 @@ export async function writeNavigatorModelSetting(model: string, path = navigator
   await writeFile(path, `${JSON.stringify({ model: normalized })}\n`, "utf8");
 }
 
+/** Pi createAgentSession thinking levels (0.84.x). */
+const NAVIGATOR_THINKING_LEVELS = new Set([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
 export function parseNavigatorModelSetting(value: string): {
   provider: string;
   model: string;
-  thinkingLevel: "off" | "max";
+  thinkingLevel: string;
 } {
   const slash = value.indexOf("/");
   if (slash <= 0 || slash === value.length - 1) {
-    throw new Error("Navigator model setting must be provider/model[:max]");
+    throw new Error("Navigator model setting must be provider/model[:thinking]");
   }
   const provider = value.slice(0, slash);
   const modelWithThinking = value.slice(slash + 1);
   const colon = modelWithThinking.lastIndexOf(":");
   const suffix = colon < 0 ? undefined : modelWithThinking.slice(colon + 1);
-  if (suffix !== undefined && suffix !== "max") {
-    throw new Error("Navigator model setting must use :max or omit the thinking suffix");
+  if (suffix !== undefined && !NAVIGATOR_THINKING_LEVELS.has(suffix)) {
+    throw new Error("Navigator model setting must use a Pi thinking level or omit the thinking suffix");
   }
   const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
   if (model === "") throw new Error("Navigator model setting must include a model");
-  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
+  return { provider, model, thinkingLevel: suffix ?? "off" };
 }
 
 /**
@@ -230,19 +241,21 @@ export async function resolveNavigatorSeatSelection(
   context: HostContext,
   modelSettingPath: string | undefined,
   defaultModelSettingPath: string,
-): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
+): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: string }> {
   const runDirectory = auditorRunDirectory(context);
   if (runDirectory !== undefined) {
     try {
       const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
-      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
+      const thinkingLevel = selection.thinking ?? "off";
       return {
         selection: {
           provider: selection.provider,
           model: selection.model,
           ...(selection.thinking === undefined ? {} : { thinking: selection.thinking }),
         },
-        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
+        configuredLabel: selection.thinking === undefined
+          ? `${selection.provider}/${selection.model}`
+          : `${selection.provider}/${selection.model}:${selection.thinking}`,
         thinkingLevel,
       };
     } catch (error) {
