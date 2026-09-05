@@ -20,7 +20,6 @@ import {
   INSPECTOR_OUTPUT_TOOL,
   NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 
 export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<void> {
   const faux = fauxProvider({
@@ -44,12 +43,6 @@ export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<vo
             reason: "fixture advice",
           }],
         }),
-        { stopReason: "toolUse" },
-      );
-    }
-    if (toolNames.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }),
         { stopReason: "toolUse" },
       );
     }

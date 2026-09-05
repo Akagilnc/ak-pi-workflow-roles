@@ -46,7 +46,6 @@ import {
   WORKFLOW_ROLES,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -76,14 +75,8 @@ import {
   runOrdinaryNavigatorObservation,
 } from "../helpers/package-entrypoint-fixtures.ts";
 
-/** In-file judge-draft province scripting (not a shared auto-pass). */
-function scriptJudgeProvincePass(names: readonly string[]) {
-  if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-    return fauxAssistantMessage(
-      fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-      { stopReason: "toolUse" },
-    );
-  }
+/** In-file judge direct-notary scripting (not a shared auto-pass). */
+function scriptJudgeDirectNotaryPass(names: readonly string[]) {
   if (names.includes(NOTARY_OUTPUT_TOOL)) {
     return fauxAssistantMessage(
       fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),
@@ -159,7 +152,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       let navigatorPrompt = "";
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
-        const province = scriptJudgeProvincePass(names);
+        const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
@@ -339,7 +332,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
           let promptFinished = false;
           const response = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
-            const province = scriptJudgeProvincePass(names);
+            const province = scriptJudgeDirectNotaryPass(names);
             if (province !== undefined) return province;
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               navigatorCalls += 1;
@@ -439,7 +432,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
       let roleOutputs = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
-        const province = scriptJudgeProvincePass(names);
+        const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
@@ -544,7 +537,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
-              const province = scriptJudgeProvincePass(names);
+              const province = scriptJudgeDirectNotaryPass(names);
               if (province !== undefined) return province;
               if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
                 if (streamFailure) {
@@ -632,7 +625,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       let navigatorPreparation = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
-        const province = scriptJudgeProvincePass(names);
+        const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           const fixer = navigatorPreparation++ === 1;
@@ -794,7 +787,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
         await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
         const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
-          const province = scriptJudgeProvincePass(names);
+          const province = scriptJudgeDirectNotaryPass(names);
           if (province !== undefined) return province;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
@@ -873,7 +866,6 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
         import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
-        import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "./src/package-contracts/gatekeeper-output.ts";
         import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi, withAgentDirProviderFixture } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
@@ -885,9 +877,6 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         await writeNavigatorModelSetting(model.provider + "/" + model.id, agentDir + "/navigator-model.json");
         const response = (context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
-          if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-            return fauxAssistantMessage(fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }), { stopReason: "toolUse" });
-          }
           if (names.includes(NOTARY_OUTPUT_TOOL)) {
             return fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }), { stopReason: "toolUse" });
           }

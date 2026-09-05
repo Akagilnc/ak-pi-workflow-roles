@@ -19,8 +19,7 @@ import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
+import { INSPECTOR_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
@@ -787,40 +786,38 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
       await writeInstitutionalSeatTable(work, {
         gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
         inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
+        notary: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
       });
+      const officerTool = row.role === "judge" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
       let rejectionObservedByModel = false;
-      faux.setResponses([
-        fauxAssistantMessage(
-          [
-            fauxToolCall(row.tool, row.outputArgs, { id: "output" }),
-            fauxToolCall("read", { path: "x" }, { id: "sibling" }),
-          ],
+      const retry = async (context: any) => {
+        rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
+        return fauxAssistantMessage(
+          [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
           { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-1" }),
-          { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-1" }),
-          { stopReason: "toolUse" },
-        ),
-        async (context: any) => {
-          rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
-          return fauxAssistantMessage(
-            [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
-            { stopReason: "toolUse" },
-          );
-        },
-        fauxAssistantMessage(
-          fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "inspector" }, { id: "gate-2" }),
-          { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage(
-          fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }, { id: "inspect-2" }),
-          { stopReason: "toolUse" },
-        ),
-      ] as any);
+        );
+      };
+      const initial = fauxAssistantMessage(
+        [
+          fauxToolCall(row.tool, row.outputArgs, { id: "output" }),
+          fauxToolCall("read", { path: "x" }, { id: "sibling" }),
+        ],
+        { stopReason: "toolUse" },
+      );
+      faux.setResponses((row.role === "judge"
+        ? [
+            initial,
+            fauxAssistantMessage(
+              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-1" }),
+              { stopReason: "toolUse" },
+            ),
+            retry,
+            fauxAssistantMessage(
+              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-2" }),
+              { stopReason: "toolUse" },
+            ),
+          ]
+        : [initial, retry]) as any);
       try {
         await withInProcessPi(
         {

@@ -24,7 +24,6 @@ import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry
 import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/gatekeeper-role.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -86,7 +85,7 @@ async function runJudgeWithEngine(input: {
   if (input.engine !== undefined) {
     argv.splice(1, 0, "--engine", input.engine);
   }
-  // Child institutional sessions (gatekeeper province → notary officer →
+  // Child institutional sessions (direct notary officer →
   // judge compliance audit) build their own ModelRuntime that reads
   // `<PI_CODING_AGENT_DIR>/models.json` (= role agentDir in the pi subprocess).
   // Register the fixture provider there over a mock SSE server so the real
@@ -98,16 +97,10 @@ async function runJudgeWithEngine(input: {
   });
   // The real pi subprocess resolves the fixture provider through models.json for
   // BOTH the parent session and the institutional children (#518), so the mock
-  // must serve the full scripted flow (navigator → gatekeeper → notary → soul →
+  // must serve the full scripted flow (navigator → direct notary → soul →
   // detour → judge output), not just the child seats.
   const childResponse = (context: any) => {
     const names = context.tools?.map((tool: any) => tool.name) ?? [];
-    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-        { stopReason: "toolUse" },
-      );
-    }
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),

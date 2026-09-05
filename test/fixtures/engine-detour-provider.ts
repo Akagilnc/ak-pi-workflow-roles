@@ -18,7 +18,6 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
-import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 /** Fake engine body that exits 0 yet signals an upstream failure (#541 code0 gap). */
@@ -79,13 +78,7 @@ export default function fixture(pi: ExtensionAPI): void {
   });
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    // Scripted Gatekeeper → Notary pass before auditor (officer choice is fixture, not oracle).
-    if (names.includes(GATEKEEPER_OUTPUT_TOOL)) {
-      return fauxAssistantMessage(
-        fauxToolCall(GATEKEEPER_OUTPUT_TOOL, { status: "dispatch", officer: "notary" }),
-        { stopReason: "toolUse" },
-      );
-    }
+    // Scripted direct Notary pass before auditor (officer choice is fixture, not oracle).
     if (names.includes(NOTARY_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }),

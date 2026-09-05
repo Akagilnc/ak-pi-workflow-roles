@@ -47,7 +47,7 @@ Seat and Gate-officer configuration:
 ```bash
 ak-role config set judge <provider/model[:thinking]>
 ak-role config set navigator <provider/model[:thinking]>
-# Gate officers (automatic on submission; direct commands available)
+# Gate officers (direct summons on DONE submissions; province remains independently callable)
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
@@ -67,7 +67,7 @@ For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer 
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned ([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)). Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
 
-Gate submission gate: on completing-side submissions the package may spawn the Gate province before the run settles (`gatekeeper` dispatching `inspector` or `notary`); bounce means rewrite-and-resubmit in that same session, not role failure; `planned` / `refused` / `unfinished` skip the province; read gate history from the typed gate section of the receipt, never from session prose. Pointers: [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md), [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md). A labor-engine detour that fails to spawn, exits nonzero, or produces no usable output stops the run through the existing infrastructure-failure path with the original cause visible ([ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)).
+Gate submission gate: on DONE-side submissions (`completed` / `partially_completed`) the package summons the subject officer directly (`inspector` for worker completion; `notary` for judge draft / countersign verdict) — it does not spawn a Gatekeeper child to choose the seat; bounce means rewrite-and-resubmit in that same session, not role failure; `planned` / `refused` / `unfinished` skip the officer summons and settle; `ak-role gatekeeper` remains available for independent province dispatch/pass; read gate history from the typed gate section of the receipt, never from session prose. Pointers: [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md), [ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md), [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md). A labor-engine detour that fails to spawn, exits nonzero, or produces no usable output stops the run through the existing infrastructure-failure path with the original cause visible ([ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)).
 
 ## Call the roles
 
