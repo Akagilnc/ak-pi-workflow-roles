@@ -40,7 +40,6 @@ import {
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot, runPiSubprocess, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
-import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
@@ -783,11 +782,6 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         tokenSize: { min: 1000, max: 1000 },
       });
       const seededModels = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-      await writeInstitutionalSeatTable(work, {
-        gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-        inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-        notary: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-      });
       const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
       setTestGateOfficerSummon(async (officer) => ({
         exitCode: 0,

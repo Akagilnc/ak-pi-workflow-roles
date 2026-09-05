@@ -29,7 +29,6 @@ import {
   withHermeticHome,
   withInstitutionalProviderFixture,
 } from "../helpers/pi-test-harness.ts";
-import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   withTempHome,
@@ -50,9 +49,6 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     seedGitProject(project);
     const runDirectory = join(project, "run");
     await mkdir(runDirectory, { recursive: true });
-    await writeInstitutionalSeatTable(runDirectory, {
-      auditor: seatSelection("openai-codex", "faux-1"),
-    });
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(argv[role](project), {
       packageRoot, home, cwd: project, io,

@@ -178,29 +178,55 @@ async function createSummonEnv(options: {
     }
   }
   process.env[AK_ROLE_PACKAGE_ROOT_ENV] = options.packageRoot;
+  const piRecords = {
+    async recordLaunchedPiIdentity(runDirectory: string, identity: unknown) {
+      const { recordLaunchedPiIdentity } = await import("./public-cli/invocation.ts");
+      return recordLaunchedPiIdentity(runDirectory, identity as never);
+    },
+    async recordLaunchedRolePackageIdentity(runDirectory: string, identity: unknown) {
+      const { recordLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
+      return recordLaunchedRolePackageIdentity(runDirectory, identity as never);
+    },
+    async observeLaunchedRolePackageIdentity(root: string, roleEntry: string) {
+      const { observeLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
+      return observeLaunchedRolePackageIdentity(root, roleEntry);
+    },
+  } as const;
+  const piHost = createPiRoleTurnHost({
+    packageRoot: options.packageRoot,
+    principalAuthority,
+    ...(nestedExtraPiArgs === undefined ? {} : { extraPiArgs: nestedExtraPiArgs }),
+    ...piRecords,
+  });
+  // Same host axis table as public CLI (#617 DK-3 / #675): seat.host selects the adapter.
+  const hostName = options.seat.host ?? "pi";
+  let roleTurnHost = piHost;
+  if (hostName === "grok-build") {
+    const { loadProductionGrokHostFactory } = await import("./public-cli/load-production-grok-host.ts");
+    let hostPromise: Promise<typeof piHost> | undefined;
+    roleTurnHost = {
+      executeTurn: async (request) => {
+        hostPromise ??= loadProductionGrokHostFactory(options.packageRoot).then((create) =>
+          create({
+            packageRoot: options.packageRoot,
+            principalAuthority,
+          }),
+        );
+        return (await hostPromise).executeTurn(request);
+      },
+    };
+  } else if (hostName !== "pi") {
+    throw new Error(
+      `public role summons host unregistered: host=${hostName} seat=${options.role}`,
+    );
+  }
   return {
     home: options.home,
     principalAuthority,
     agentDir: options.agentDir,
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: options.packageRoot,
-    roleTurnHost: createPiRoleTurnHost({
-      packageRoot: options.packageRoot,
-      principalAuthority,
-      ...(nestedExtraPiArgs === undefined ? {} : { extraPiArgs: nestedExtraPiArgs }),
-      async recordLaunchedPiIdentity(runDirectory, identity) {
-        const { recordLaunchedPiIdentity } = await import("./public-cli/invocation.ts");
-        return recordLaunchedPiIdentity(runDirectory, identity);
-      },
-      async recordLaunchedRolePackageIdentity(runDirectory, identity) {
-        const { recordLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
-        return recordLaunchedRolePackageIdentity(runDirectory, identity);
-      },
-      async observeLaunchedRolePackageIdentity(root, roleEntry) {
-        const { observeLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
-        return observeLaunchedRolePackageIdentity(root, roleEntry);
-      },
-    }),
+    roleTurnHost,
     cwd: options.cwd,
     credentials: options.credentials,
     ...(await projectSeatModel(options.seat)),
@@ -338,12 +364,9 @@ export async function summonGateOfficer(options: {
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
-    try {
-      const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
-      home = homeFromRunDirectory(options.sourceRunDirectory);
-    } catch {
-      // Fall through to summonPublicRole home resolution.
-    }
+    const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
+    // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
+    home = homeFromRunDirectory(options.sourceRunDirectory);
   }
   if (options.officer === "notary") {
     return summonPublicRole({

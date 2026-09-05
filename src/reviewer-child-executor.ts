@@ -103,49 +103,11 @@ function reportFromSummon(summoned: PublicSummonResult): string {
 
 async function usageFromSummonedEvidenceChild(summoned: PublicSummonResult): Promise<Usage> {
   const pointer = (summoned.terminal?.roleOutcome as { runPointer?: unknown } | undefined)?.runPointer;
-  const sessionFile =
-    typeof pointer === "string" && pointer.trim() !== ""
-      ? (await import("node:path")).join(pointer, "session", "session.jsonl")
-      : undefined;
-  if (sessionFile === undefined) return emptyUsage();
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const rows = (await readFile(sessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        message?: { role?: string; usage?: Usage };
-      });
-    let total = 0;
-    let input = 0;
-    let output = 0;
-    let cacheRead = 0;
-    let cacheWrite = 0;
-    for (const row of rows) {
-      if (row.type !== "message" || row.message?.role !== "assistant") continue;
-      const usage = row.message.usage;
-      if (usage === undefined) continue;
-      total += usage.totalTokens ?? 0;
-      input += usage.input ?? 0;
-      output += usage.output ?? 0;
-      cacheRead += usage.cacheRead ?? 0;
-      cacheWrite += usage.cacheWrite ?? 0;
-    }
-    if (total <= 0 && input <= 0 && output <= 0) return emptyUsage();
-    return {
-      input,
-      output,
-      cacheRead,
-      cacheWrite,
-      totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return emptyUsage();
-    throw error;
-  }
+  if (typeof pointer !== "string" || pointer.trim() === "") return emptyUsage();
+  const { join } = await import("node:path");
+  const sessionFile = join(pointer, "session", "session.jsonl");
+  const { readAssistantUsageFromSessionFile } = await import("./session-assistant-usage.ts");
+  return (await readAssistantUsageFromSessionFile(sessionFile)) ?? emptyUsage();
 }
 
 /** Reviewer evidence leg via the public evidence-child activation path (#675). */
@@ -175,12 +137,9 @@ export async function executeReviewerChild(
         // Parent run home owns nested public seats; leg workspace cwd is a bare worktree.
         let home: string | undefined;
         if (runDirectory !== undefined) {
-          try {
-            const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
-            home = homeFromRunDirectory(runDirectory);
-          } catch {
-            // resolveSummonHome falls back from cwd/package machine home.
-          }
+          const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
+          // Hard path resolve: fail loud — no packageMachineHome fallback (#604 / #675).
+          home = homeFromRunDirectory(runDirectory);
         }
         return summonPublicRole({
           role: "evidence-child",
