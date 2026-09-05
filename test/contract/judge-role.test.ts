@@ -16,7 +16,6 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
@@ -823,10 +822,14 @@ test("focused Judge controller registers output without narrowing host tools", a
     "edit",
     "arbitrary_sibling",
   ]);
+  let soulLoads = 0;
   const runtime = createJudgeRoleRuntime(
     createPiRoleHostAdapter(harness.pi as ExtensionAPI).host,
     {
-      loadSoul: async () => "  JUDGE LAW  ",
+      loadSoul: async () => {
+        soulLoads += 1;
+        return "  JUDGE LAW  ";
+      },
       auditSoulCompliance: async () => ({ status: "pass" }),
     },
     testHostActions(),
@@ -834,10 +837,21 @@ test("focused Judge controller registers output without narrowing host tools", a
 
   await runtime.activate();
 
+  // Tool surface + soul load seam (empty soul rejects at activate).
   assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]);
   assert.deepEqual(harness.activeToolSets, []);
-  // before_agent_start is registered; soul/presentation bytes are not locked (#685 C3).
-  assert.equal(harness.handlers.has("before_agent_start"), true);
+  assert.equal(soulLoads, 1);
+  await assert.rejects(
+    createJudgeRoleRuntime(
+      createPiRoleHostAdapter(extensionHarness(undefined).pi as ExtensionAPI).host,
+      {
+        loadSoul: async () => "   ",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      },
+      testHostActions(),
+    ).activate(),
+    /Judge soul is empty/,
+  );
 });
 
 test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and prompt envelopes", async () => {
@@ -860,9 +874,8 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
   assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
   assert.deepEqual([...fixer.tools.keys()], [FIXER_OUTPUT_TOOL_NAME]);
-  assert.ok(fixer.handlers.has("before_agent_start"));
+  // Fixer has no interactive input rewrite; Coder does.
   assert.equal(fixer.handlers.has("input"), false);
-  // Packet/prereq are load seams, not prompt presentation locks (#685 C3).
   const fixerTool = fixer.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(fixerTool);
   assert.deepEqual(
@@ -890,8 +903,14 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
   assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-task", "ak-coder-phase"]));
   await coderRuntime.activate();
   assert.deepEqual([...coder.tools.keys()], [CODER_OUTPUT_TOOL_NAME]);
-  assert.ok(coder.handlers.has("before_agent_start"));
   assert.ok(coder.handlers.has("input"));
+  assert.deepEqual(
+    await coder.handlers.get("input")?.({
+      text: "Plan the slice.",
+      source: "interactive",
+    }, {}),
+    { action: "continue" },
+  );
 });
 
 test("named Judge and worker tools preserve schema leaves and receipts", async () => {
@@ -988,32 +1007,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
   }
 });
 
-test("production audit transcript is derived from session books entries", () => {
-  const assignment = "OWNER ASSIGNMENT: adjudicate issue 205";
-  const empty = SessionManager.inMemory();
-  const emptyTranscript = productionTranscriptFromContext({
-    sessionManager: empty,
-  } as unknown as ExtensionContext);
-
-  const sessionManager = SessionManager.inMemory();
-  sessionManager.appendMessage({
-    role: "user",
-    content: assignment,
-    timestamp: Date.now(),
-  });
-  const transcript = productionTranscriptFromContext({
-    sessionManager,
-  } as unknown as ExtensionContext);
-
-  // Session books entry count is the real seam; transcript serialize wording is not locked (#685 C3).
-  assert.equal(empty.getEntries().length, 0);
-  assert.equal(sessionManager.getEntries().length, 1);
-  // Keep the production function exercised so regressions that throw still fail.
-  assert.ok(emptyTranscript !== undefined);
-  assert.ok(transcript !== undefined);
-});
-
-test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
+test("judge role accepts a soul-compliant verdict through audit", async () => {
   let auditCalls = 0;
   const { harness, tool } = await startJudge(async () => {
     auditCalls += 1;
@@ -1021,7 +1015,6 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   });
 
   assert.ok(harness.flags.has("ak-role"));
-  assert.equal(harness.handlers.has("before_agent_start"), true);
 
   const verdict: JudgeVerdict = { judgeStatus: "converged" };
   const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }]));
@@ -1235,6 +1228,7 @@ test("coder plan loads its task without construction skill and returns planned",
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
+  // Plan phase seams: task path load, no construction skill bind, input continues, typed planned receipt.
   assert.deepEqual(loadedTasks, ["/materials/task.md"]);
   assert.equal(bindingLoads, 0);
   assert.deepEqual(
@@ -1244,8 +1238,6 @@ test("coder plan loads its task without construction skill and returns planned",
     ),
     { action: "continue" },
   );
-  // Plan phase: task load + input continue; skill body presentation not locked (#685 C3).
-  assert.equal(harness.handlers.has("before_agent_start"), true);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
@@ -1967,7 +1959,6 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       );
     });
     assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
-    assert.equal(harness.handlers.has("before_agent_start"), true);
   }
 });
 
@@ -2089,10 +2080,10 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
 
-  // Packet load seam + tool registration; packet presentation bytes not locked (#685 C3).
+  // Packet path load + fixer tool surface (not judge); refused receipt is typed output.
   assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
-  assert.equal(harness.handlers.has("before_agent_start"), true);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
+  assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
