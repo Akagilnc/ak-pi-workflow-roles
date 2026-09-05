@@ -3,28 +3,21 @@
  * Packaged workers: judge/coder/fixer gates via in-process packaged entry (#685).
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
   type Context,
-  createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import {
-  defineTool,
   parseSkillBlock,
-  SessionManager,
   stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -34,24 +27,17 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
-  TOOL_EXECUTION_UPDATE_HEARTBEAT,
-  toolExecutionObservationRecordSchema,
-  type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { navigatorPrepareFixtureResponse } from "../helpers/navigator-child-fixture.ts";
 import {
   loadRawPackageManifest,
   packageRoot,
-  type RawPackageManifest,
-  resolvePackageEntrypoint,
   seedAgentDirModelsJsonFromFaux,
   withActivationHome,
   withAgentDirProviderFixture,
   withInProcessPi,
-  writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
 
 import {
