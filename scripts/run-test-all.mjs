@@ -3,8 +3,9 @@
 // Discovers test/{unit,contract,integration,package}/**/*.test.ts, partitions
 // any remaining heavyweight entries into a concurrency=2 child, and runs
 // ordinary files first under default Node file parallelism.
-// #685: heavy manifest emptied — real-host Pi/install cases culled per
-// quality-law (真宿主以真跑为证); empty heavy skips the second child.
+// #685: real-host Pi/install cases culled per quality-law (真宿主以真跑为证).
+// Remaining heavy entries need concurrency=2 isolation (withInProcessPi multi-
+// second packaged sessions flake under ordinary file-parallelism).
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
@@ -12,7 +13,12 @@ import { join, relative } from "node:path";
 
 import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 
-const HEAVYWEIGHT_MANIFEST = Object.freeze([]);
+const HEAVYWEIGHT_MANIFEST = Object.freeze([
+  // #685: packaged Navigator withInProcessPi multi-case file — ordinary
+  // file-parallelism surfaces stale extension ctx / async activity failures;
+  // concurrency=2 isolation. Real Pi/cross-process legs already culled.
+  "test/package/package-entrypoint-navigator.integration.test.ts",
+]);
 
 const TIERS = Object.freeze([
   "unit",
