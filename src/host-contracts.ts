@@ -115,7 +115,7 @@ export type RoleTurnActivation =
     }
   | {
       readonly role: "countersign";
-      /** Admitted ticket binding for Notary inner-gate material (ADR 0075). */
+      /** Admitted ticket on activation/admission/invocation (diarist; no private role flag). */
       readonly ticketNumber?: number;
     }
   | {
@@ -275,7 +275,6 @@ export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, hand
 
 type HostGatekeeperSubject = {
   readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
-  readonly material: string;
 };
 /** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
 type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
