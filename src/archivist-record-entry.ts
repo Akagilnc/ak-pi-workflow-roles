@@ -3,7 +3,6 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -16,9 +15,11 @@ import {
   errorText,
   pathContainedIn,
   physicallyContainedIn,
-  resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
+import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
+
+export { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
@@ -75,31 +76,6 @@ export type CreateRecordSessionOptions = {
 
 /** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
-
-/**
- * Sole subject-keyed nest path under the ledger book (ADR 0048 / 0065).
- * Callers must not re-hash subject or re-join book/kind/digest themselves.
- */
-export function subjectKeyedRecordDirectory(input: {
-  readonly cwd: string;
-  readonly kind: string;
-  readonly subject: string;
-  /** Parent session file — home path-derives from it when present. */
-  readonly parentSessionFile?: string;
-  /** Explicit process home when no parent file is available (discovery-only). */
-  readonly home?: string;
-}): string {
-  const ledgerHome =
-    input.parentSessionFile !== undefined && input.parentSessionFile.length > 0
-      ? resolveActivationLedgerHomeForPath(input.parentSessionFile)
-      : resolveActivationLedgerHome(input.home);
-  const digest = createHash("sha256").update(input.subject).digest("hex").slice(0, 32);
-  return join(
-    activationBookDirectory(ledgerHome, resolveBookKeyFromGit(input.cwd)),
-    input.kind,
-    digest,
-  );
-}
 
 /**
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
