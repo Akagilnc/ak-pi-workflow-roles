@@ -5,8 +5,6 @@
  * with gate-province dispatch; this module is the direct command face.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
@@ -16,15 +14,14 @@ import {
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
 import {
-  runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
+  runPostAdmissionTicketSeatMemoryOneShot,
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
   loadResumableInspectorRun,
-  markRunAdmitted,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -92,43 +89,18 @@ export async function runPublicInspector(
   }
 
   // #635 seat self-ticket then #636 ticket+seat memory principal (before admitted mark).
-  await resolveSeatTicketBinding(admitted, env);
-  const memory = await rebindAdmittedToTicketSeatMemory({
-    admitted,
-    seat: "inspector",
-    principalAuthority: env.principalAuthority,
-  });
-  await markRunAdmitted(admitted, env.principalAuthority);
-
-  // Same ticket nest already present → native host resume (not a fresh initial).
-  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
-  const engineMaterial = engineSessionMaterialFromOptions({
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    packageRoot: env.packageRoot,
-  });
-  const continuation = {
-    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
-    prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
-  };
-
-  const turnRequest = buildInspectorTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation,
-  });
-
-  return await runPostAdmissionOneShot({
+  // Same ticket nest already present → native host resume; prompt stays officer transport.
+  return await runPostAdmissionTicketSeatMemoryOneShot({
     admitted,
     env,
     io,
-    request: turnRequest,
+    seat: "inspector",
+    beforeMemoryRebind: async () => {
+      await resolveSeatTicketBinding(admitted, env);
+    },
+    buildPrompt: (bound, engineMaterial) =>
+      buildInspectorTransportPrompt(bound, engineMaterial),
+    buildTurnRequest: buildInspectorTurnRequest,
     adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
