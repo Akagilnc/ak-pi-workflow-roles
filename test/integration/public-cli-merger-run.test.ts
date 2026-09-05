@@ -782,21 +782,7 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         tokenSize: { min: 1000, max: 1000 },
       });
       const seededModels = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-      const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
-      setTestGateOfficerSummon(async (officer) => ({
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: officer,
-            status: "pass",
-            decisiveFacts: { status: "pass", findings: [] },
-          },
-          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-          artifacts: [],
-          runId: "test-singleton-gate",
-        },
-      }));
+      // #675: gate officer pass via nested public path + seat seed (no setTest hook).
       const officerTool = row.role === "judge" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
       let rejectionObservedByModel = false;
       const retry = async (context: any) => {
@@ -865,7 +851,6 @@ test("Pi real-entry singleton table rejects non-sole-final for packaged roles", 
         },
         );
       } finally {
-        setTestGateOfficerSummon(undefined);
         await seededModels.close();
       }
     });

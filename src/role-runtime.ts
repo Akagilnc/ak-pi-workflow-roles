@@ -628,6 +628,11 @@ export type RoleRuntimeDependencies = {
   auditSoulCompliance(
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
+  /** Offline tracers only — same seam as runGatekeeper options.summonOfficer. */
+  summonGateOfficer?(
+    officer: "inspector" | "notary",
+    sourceRunDirectory: string,
+  ): Promise<unknown>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -1294,6 +1299,11 @@ export function createRoleRuntimeExtension(
       bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
+      ...(dependencies.summonGateOfficer === undefined
+        ? {}
+        : {
+            summonOfficer: dependencies.summonGateOfficer as import("./gatekeeper-role.ts").GateOfficerSummon,
+          }),
     };
     const judge = createJudgeRoleRuntime(
       roleHost,

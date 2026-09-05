@@ -321,26 +321,6 @@ test("cold-installed live help follows the loaded extension and changes on the n
           );
           lifecycle.push({ label, event, ...(timestamps === undefined ? {} : { timestamps }) });
         };
-        const { setTestGateOfficerSummon } = await import("../../src/gatekeeper-role.ts");
-        const { setTestAuditorSummon } = await import("../../src/compliance-transport.ts");
-        const restoreGate = setTestGateOfficerSummon(async (officer) => ({
-          exitCode: 0,
-          terminal: {
-            roleOutcome: { kind: "accepted", role: officer, status: "pass", decisiveFacts: { status: "pass", findings: [] } },
-            navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-            artifacts: [],
-            runId: "cold-help-gate",
-          },
-        }));
-        const restoreAudit = setTestAuditorSummon(async () => ({
-          exitCode: 0,
-          terminal: {
-            roleOutcome: { kind: "accepted", role: "auditor", status: "pass", decisiveFacts: { status: "pass" } },
-            navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-            artifacts: [],
-            runId: "cold-help-audit",
-          },
-        }));
         try {
           await invoke("default-luna-max");
           await installedNavigator.writeNavigatorModelSetting("openai-codex/gpt-5.6-luna", configuredPath);
@@ -350,8 +330,6 @@ test("cold-installed live help follows the loaded extension and changes on the n
           await installedNavigator.writeNavigatorModelSetting("missing/provider", configuredPath);
           await invoke("unsupported-no-fallback");
         } finally {
-          restoreAudit();
-          restoreGate();
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
         assert.deepEqual(modelRequests, [

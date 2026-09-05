@@ -66,11 +66,12 @@ function reportFromSummon(summoned: PublicSummonResult): string {
   }
   if (outcome.kind === "accepted") {
     const report = outcome.decisiveFacts.report;
-    // Shape-unreadable report is a child output problem — not a parent abort trigger.
-    // Keep the empty/non-string face so settlement/重交 can handle it; only throw when
-    // the terminal itself is unusable (no accepted outcome).
-    if (typeof report === "string") return report;
-    return "";
+    // Unreadable report shape is a child output failure — not a successful empty leg.
+    if (typeof report === "string" && report.trim() !== "") return report;
+    throw Object.assign(
+      new Error("Evidence-child public summon returned unreadable report body"),
+      { evidenceChildFailure: "child" as const },
+    );
   }
   throw Object.assign(
     new Error("Evidence-child public summon returned no report body"),

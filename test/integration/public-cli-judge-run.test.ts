@@ -218,11 +218,7 @@ test(
                 AK_AUDIT_UNKNOWN_STATUS: "1",
                 // #675: nested public auditor via dedicated fixture + mystery mode.
                 AK_NESTED_AUDIT_MODE: "mystery",
-                AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
-                  "-e",
-                  resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
-                ]),
-              },
+                                },
               timeoutMs: options.timeoutMs ?? 90_000,
             });
             return {

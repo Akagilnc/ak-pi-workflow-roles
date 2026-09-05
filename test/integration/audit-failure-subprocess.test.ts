@@ -150,11 +150,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
           // #675: nested public notary/auditor use dedicated officer-pass fixture;
           // Nested auditor malformed prose → no-receipt on the public path.
           AK_NESTED_AUDIT_MODE: "malformed-prose",
-          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
-            "-e",
-            resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
-          ]),
-        },
+                    },
       });
     },
   );

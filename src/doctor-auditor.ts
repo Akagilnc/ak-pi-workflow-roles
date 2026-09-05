@@ -1,8 +1,8 @@
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import {
   runComplianceAudit,
-  type AuditorSummon,
   type ComplianceDecision,
+  type ComplianceRoleSummon,
 } from "./compliance-transport.ts";
 import {
   readDoctorAuditSubjects,
@@ -17,13 +17,12 @@ export type DoctorAuditOptions = {
   context: HostContext;
   signal?: AbortSignal;
   /** Same seam as runComplianceAudit options — offline tracers only. */
-  summonAuditor?: AuditorSummon;
+  summonRole?: ComplianceRoleSummon;
 };
 
 /**
- * Doctor compliance via the public auditor activation path (#675).
- * Materials/soul/tool owned by the public auditor seat — same assembly as a
- * direct `ak-role auditor` call (doctor.md included there).
+ * Doctor compliance via the public doctor activation path (#675).
+ * Same materials as direct `ak-role doctor` (doctor.md) — not an auditor substitute.
  */
 export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -33,12 +32,13 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
+      line: "doctor",
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined
         ? {}
         : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),
+      ...(options.summonRole === undefined ? {} : { summonRole: options.summonRole }),
     });
   };
 }
