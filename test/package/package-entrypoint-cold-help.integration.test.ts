@@ -354,7 +354,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
           restoreGate();
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // #675 nested public path may add one rebind prepare on the same configured model.
+        // #675 nested public path may add rebind prepares on the same configured model.
         // Unsupported config must still never fall back to a different model id.
         assert.ok(
           modelRequests.length >= 3 && modelRequests.length <= 8,

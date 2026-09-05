@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -56,7 +56,7 @@ async function runPackagedTracer(marker: string): Promise<{
       const bin = join(fixture, "node_modules", ".bin", "ak-role");
       // cp preserves the shared fixture's absolute npm symlink; restore npm's
       // relative link so this invocation executes its private cold-install copy.
-      await rm(bin);
+      await unlink(bin);
       await symlink("../@akagilnc/pi-workflow-roles/dist/public-cli/main.js", bin);
       assert.equal(
         await realpath(bin),
@@ -120,7 +120,7 @@ async function runPackagedTracer(marker: string): Promise<{
       return { runDirectory, installedRoot, trace };
     });
   } finally {
-    await rm(home, { recursive: true, force: true });
+    // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
   }
 }
 

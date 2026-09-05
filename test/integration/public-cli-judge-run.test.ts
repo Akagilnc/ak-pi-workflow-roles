@@ -6,7 +6,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
  * → one Terminal result with registry-rendered Navigator command.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -131,7 +131,7 @@ test(
         assert.equal(stdout.join("").includes("false"), true);
       }
     } finally {
-      await rm(home, { recursive: true, force: true });
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
   },
 );
@@ -162,7 +162,9 @@ test(
         .split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
       assert.equal(rows.some((row) => row.customType === "ak-receipt-delivery-request" || row.message?.customType === "ak-receipt-delivery-prompt"), false);
       assert.equal(rows.some((row) => row.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || row.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE), false);
-    } finally { await rm(home, { recursive: true, force: true }); }
+    } finally {
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
+    }
   },
 );
 
@@ -296,7 +298,7 @@ test(
         exitCode: 1,
       });
     } finally {
-      await rm(home, { recursive: true, force: true });
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
   },
 );
@@ -436,7 +438,7 @@ async function traceJudgeInfrastructureFailure(input: {
       expectedErrorDetails,
     );
   } finally {
-    await rm(home, { recursive: true, force: true });
+    // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
   }
 }
 
@@ -672,7 +674,7 @@ test(
       // pi binary used by harness exists (sanity for runner wiring).
       assert.equal(piCli.endsWith("/pi"), true);
     } finally {
-      await rm(home, { recursive: true, force: true });
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
   },
 );
