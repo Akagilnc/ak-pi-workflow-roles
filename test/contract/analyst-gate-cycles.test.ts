@@ -5,12 +5,13 @@
  * - runAnalyst issue page → gateCycles (historical + current officer faces,
  *   zero-round siblings, rejected/missing terminal receipt, damaged JSONL)
  * - runAnalyst cohort → gateCyclesByOfficer fold from ensured pages
+ * - #636 D: shared ticket-seat main volume → per-run frame span via run binding
  *
  * Oracles are hand values from fixture volumes (typed status / span / findings
  * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,7 +20,9 @@ import { fileURLToPath } from "node:url";
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
+import type { AnalystLegWallClockSection } from "../../src/analyst-metric-families/leg-wall-clock.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { TICKET_SEAT_RUN_BINDING_ENTRY_TYPE } from "../../src/ticket-seat-memory.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -519,6 +522,151 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
         { status: "pass", officerWallMs: 2_000, findingsCount: 0 },
       ],
     );
+  });
+});
+
+test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame span after continuations", async () => {
+  await withTempHome(async (home) => {
+    // #636 D: two inspector runs share one main sessionFile. Whole-volume read
+    // would give both the cumulative wall and double-count activity; binding
+    // intervals must keep each run's frame span stable across later appends.
+    const runA = "019ff636-0001-7000-8000-0000000000a1";
+    const runB = "019ff636-0002-7000-8000-0000000000b2";
+    const bookRuns = join(home, ".ak-roles", "books", BOOK, "runs");
+    const sharedDir = join(home, ".ak-roles", "books", BOOK, "auditor-roles", "ticket-seat-636-inspector");
+    const sharedSession = join(sharedDir, "session.jsonl");
+    await mkdir(sharedDir, { recursive: true });
+
+    const binding = (runId: string, id: string, at: string) =>
+      JSON.stringify({
+        type: "custom",
+        customType: TICKET_SEAT_RUN_BINDING_ENTRY_TYPE,
+        id,
+        parentId: null,
+        timestamp: at,
+        data: { version: 1, runId },
+      });
+    const activity = (id: string, at: string, model: string, toolId: string) =>
+      [
+        JSON.stringify({
+          type: "message",
+          id: `${id}-asst`,
+          parentId: null,
+          timestamp: at,
+          message: {
+            role: "assistant",
+            model,
+            timestamp: at,
+            content: [{ type: "toolCall", id: toolId, name: "read", arguments: {} }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: `${id}-res`,
+          parentId: `${id}-asst`,
+          timestamp: at,
+          message: {
+            role: "toolResult",
+            toolCallId: toolId,
+            toolName: "read",
+            timestamp: at,
+            isError: false,
+            content: [{ type: "text", text: "ok" }],
+          },
+        }),
+      ].join("\n");
+
+    // Run A: 1s wall (00:00 → 00:01). Run B: 2s wall (01:00 → 01:02).
+    // Cumulative whole-volume wall would be ~62s for both.
+    await writeFile(
+      sharedSession,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "shared-inspector",
+          timestamp: "2026-09-03T00:00:00.000Z",
+          cwd: ISSUE_PROJECT_ROOT,
+        }),
+        binding(runA, "bind-a", "2026-09-03T00:00:00.000Z"),
+        activity("a", "2026-09-03T00:00:01.000Z", "model-a", "call_a"),
+        binding(runB, "bind-b", "2026-09-03T00:01:00.000Z"),
+        activity("b", "2026-09-03T00:01:02.000Z", "model-b", "call_b"),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    async function seedRun(runId: string, role: string): Promise<void> {
+      const runDir = join(bookRuns, `${runId}@${role}`);
+      await mkdir(join(runDir, "artifacts"), { recursive: true });
+      await mkdir(join(runDir, "session"), { recursive: true });
+      await writeFile(
+        join(runDir, "invocation.json"),
+        `${JSON.stringify({
+          role,
+          runId,
+          bookKey: BOOK,
+          projectRoot: ISSUE_PROJECT_ROOT,
+          sessionDirectory: sharedDir,
+          sessionFile: sharedSession,
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "artifacts", "report.json"),
+        `${JSON.stringify({
+          role,
+          runId,
+          outcome: { kind: "accepted", role, status: "completed", decisiveFacts: {} },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+    }
+
+    await seedRun(runA, "inspector");
+    await seedRun(runB, "inspector");
+
+    const first = await runAnalyst(
+      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { home },
+    );
+    const wall = (first.page as AnalystIssueMetricsPage & {
+      readonly legWallClock?: AnalystLegWallClockSection;
+    }).legWallClock;
+    assert.ok(wall, "leg wall-clock section must be present");
+    const wallA = wall.ranking.find((row) => row.runId === runA);
+    const wallB = wall.ranking.find((row) => row.runId === runB);
+    assert.ok(wallA, "run A must remain readable with binding interval");
+    assert.ok(wallB, "run B must remain readable with binding interval");
+    assert.equal(wallA.wallMs, 1_000, "run A owns only its 1s interval");
+    assert.equal(wallB.wallMs, 2_000, "run B owns only its 2s interval");
+
+    // Two later continuations append onto the shared volume — prior run facts must not move.
+    await appendFile(
+      sharedSession,
+      [
+        binding("019ff636-0003-7000-8000-0000000000c3", "bind-c", "2026-09-03T00:02:00.000Z"),
+        activity("c", "2026-09-03T00:02:05.000Z", "model-c", "call_c"),
+        binding("019ff636-0004-7000-8000-0000000000d4", "bind-d", "2026-09-03T00:03:00.000Z"),
+        activity("d", "2026-09-03T00:03:09.000Z", "model-d", "call_d"),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const second = await runAnalyst(
+      { mode: "issue", projectRoot: ISSUE_PROJECT_ROOT },
+      { home },
+    );
+    const wall2 = (second.page as AnalystIssueMetricsPage & {
+      readonly legWallClock?: AnalystLegWallClockSection;
+    }).legWallClock;
+    assert.ok(wall2, "leg wall-clock section must remain after continuations");
+    const wallA2 = wall2.ranking.find((row) => row.runId === runA);
+    const wallB2 = wall2.ranking.find((row) => row.runId === runB);
+    assert.ok(wallA2);
+    assert.ok(wallB2);
+    assert.equal(wallA2.wallMs, 1_000, "run A wall must not change after later continuations");
+    assert.equal(wallB2.wallMs, 2_000, "run B wall must not change after later continuations");
   });
 });
 

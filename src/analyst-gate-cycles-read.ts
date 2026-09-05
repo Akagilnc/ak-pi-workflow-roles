@@ -33,6 +33,7 @@ import {
 } from "./compliance-transport.ts";
 import {
   extractSessionTimestampSpan,
+  intervalRowsAroundAnchor,
   readLedgerSessionJsonl,
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
@@ -95,30 +96,12 @@ function isParentAttemptBindingRow(row: LedgerSessionRow): boolean {
   return row.type === "custom" && row.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE;
 }
 
-/**
- * One summons' record interval inside a continuous ticket-seat volume (#636):
- * from the nearest preceding parent-attempt binding through the row before the
- * next binding (or EOF). Time / status projection must not span sibling summons.
- */
+/** One summons' interval via shared #636 binding-slice (parent-attempt markers). */
 function intervalRowsForGateCall(
   rows: readonly LedgerSessionRow[],
   callRowIndex: number,
 ): readonly LedgerSessionRow[] {
-  let start = 0;
-  for (let i = callRowIndex - 1; i >= 0; i -= 1) {
-    if (isParentAttemptBindingRow(rows[i]!)) {
-      start = i;
-      break;
-    }
-  }
-  let end = rows.length;
-  for (let i = callRowIndex + 1; i < rows.length; i += 1) {
-    if (isParentAttemptBindingRow(rows[i]!)) {
-      end = i;
-      break;
-    }
-  }
-  return rows.slice(start, end);
+  return intervalRowsAroundAnchor(rows, callRowIndex, isParentAttemptBindingRow);
 }
 
 /** Only true absence (ENOENT). ENOTDIR is damaged topology — must stay loud. */

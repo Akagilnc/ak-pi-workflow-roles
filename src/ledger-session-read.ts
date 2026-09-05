@@ -258,3 +258,49 @@ export function extractSessionToolIntervals(
       : { ...base, endedAt: interval.endedAt };
   });
 }
+
+/**
+ * One binding-owned interval inside a continuous volume (#636):
+ * from the nearest preceding binding at-or-before `anchorIndex` through the
+ * row before the next binding (or EOF). Gate/settlement/analyst share this
+ * slice — do not fork a second interval scan.
+ */
+export function intervalRowsAroundAnchor(
+  rows: readonly LedgerSessionRow[],
+  anchorIndex: number,
+  isBindingRow: (row: LedgerSessionRow) => boolean,
+): readonly LedgerSessionRow[] {
+  let start = 0;
+  for (let i = anchorIndex; i >= 0; i -= 1) {
+    if (isBindingRow(rows[i]!)) {
+      start = i;
+      break;
+    }
+  }
+  let end = rows.length;
+  for (let i = Math.max(anchorIndex, start) + 1; i < rows.length; i += 1) {
+    if (isBindingRow(rows[i]!)) {
+      end = i;
+      break;
+    }
+  }
+  return rows.slice(start, end);
+}
+
+/**
+ * Interval owned by the first binding row that satisfies `matches`.
+ * `undefined` when the volume carries no matching binding — callers must not
+ * silently treat the whole continuous volume as that owner.
+ */
+export function intervalRowsForMatchingBinding(
+  rows: readonly LedgerSessionRow[],
+  isBindingRow: (row: LedgerSessionRow) => boolean,
+  matches: (row: LedgerSessionRow) => boolean,
+): readonly LedgerSessionRow[] | undefined {
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!;
+    if (!isBindingRow(row) || !matches(row)) continue;
+    return intervalRowsAroundAnchor(rows, i, isBindingRow);
+  }
+  return undefined;
+}
