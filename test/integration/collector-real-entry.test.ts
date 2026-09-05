@@ -600,3 +600,125 @@ test("#676 D6 non-OPEN request bounces without latching fatal so materials can s
   assert.equal(result.receipt.groups.flatMap((group: any) => group.findings).length, 1);
   assert.deepEqual(result.receipt.requestAttempts, []);
 });
+
+test("#676 D6 non-OPEN request after eligibility cutoff still bounces correctable and seals", async () => {
+  const collectorClock = (() => {
+    let elapsed = 0;
+    return {
+      wallNow: () => new Date(Date.parse("2026-01-01T00:00:00Z") + elapsed),
+      monoNow: () => elapsed,
+      sleep: async (ms: number) => { elapsed += ms; },
+      jumpPastCutoff() { elapsed = 16 * 60 * 1000; },
+    };
+  })();
+  const result = await withActivationHome({ prefix: "ak-collector-nonopen-cutoff-" }, async ({ agentDir, home }) => {
+    const manifest = resolve(home, "requests.json");
+    await writeFile(manifest, JSON.stringify({ requests: [{ id: "codex", body: "Please review." }] }));
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-1", state: "MERGED" }),
+      reviews: [],
+      issueComments: [botIssueComment({ id: 9101, userLogin: "coderabbitai[bot]", userId: 136622811, body: "keep me after cutoff" })],
+      reviewComments: [],
+    });
+    const faux = fauxProvider({ api: "collector-nonopen-cutoff", provider: "collector-nonopen-cutoff", tokenSize: { min: 1000, max: 1000 } });
+    faux.setResponses([
+      (context: any) => {
+        // Observation itself finishes at/after cutoff (online finding scenario).
+        collectorClock.jumpPastCutoff();
+        return observeOnce;
+      },
+      (context: any) => {
+        const observed = [...context.messages].reverse().find((message: any) => message.role === "toolResult");
+        return fauxAssistantMessage(
+          fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "codex", snapshotId: observed.details.snapshotId }, { id: "request-after-cutoff" }),
+          { stopReason: "toolUse" },
+        );
+      },
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return outputCall({
+          findings: [{ evidenceId: target.evidenceId, summary: "kept after cutoff", category: "kept" }],
+          unfinishedReasons: ["request skipped: PR MERGED"],
+        }, "output-after-cutoff-bounce");
+      },
+    ] as any);
+    let receipt: any;
+    let entries: any[] = [];
+    await withInProcessPi({
+      activationLedgerSession: true, home, cwd: home, agentDir, faux, modelsPath: null,
+      extensionFactories: [createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "judge", loadCollectorSoul: async () => soul, createCollectorTransport: () => transport, createCollectorClock: () => collectorClock, auditSoulCompliance: async () => ({ status: "pass" }) })],
+      noExtensions: true, systemPrompt: "BASE", mode: "print", noTools: "builtin",
+      flags: { "ak-role": "collector", "ak-collector-repo": "acme/widgets", "ak-collector-pr": "1", "ak-collector-request-manifest": manifest },
+    }, async ({ session, sessionManager }) => {
+      await session.prompt("start");
+      entries = [...sessionManager.getEntries()] as any[];
+      const headerId = sessionManager.getHeader?.()?.id;
+      assert.ok(headerId);
+      const sealed = await readSealedSubmission(home, headerId, home);
+      assert.ok(sealed, "materials must seal after non-OPEN bounce past cutoff");
+      receipt = sealed.decisiveFacts;
+    });
+    return { receipt, transport, entries };
+  });
+  const bounced = result.entries.filter((entry: any) =>
+    entry.type === "message" &&
+    entry.message.role === "toolResult" &&
+    entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
+    entry.message.isError === true
+  );
+  assert.equal(bounced.length, 1, "non-OPEN after cutoff must bounce, not latch fatal");
+  assert.equal(result.transport.calls.create, 0, "no POST after cutoff non-OPEN");
+  assert.ok(result.receipt);
+  assert.equal(result.receipt.prState, "MERGED");
+  assert.deepEqual(result.receipt.requestAttempts, []);
+  assert.deepEqual(result.receipt.unfinishedReasons, ["request skipped: PR MERGED"]);
+  const findings = result.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].summary, "kept after cutoff");
+});
+
+test("#676 C empty category is not pure-shape-rejected; summary/unfinished pass; unknown evidence still fails bind", async () => {
+  // Former pure-shape gate rejected empty category; runtime now passes it through and keeps summary.
+  const shaped = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9201, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return outputCall({
+          findings: [{ evidenceId: target.evidenceId, category: "", summary: "bound-summary" }],
+          unfinishedReasons: ["partial bot unfinished"],
+        }, "output-empty-category");
+      },
+    ],
+  });
+  assert.ok(shaped.receipt, "empty category must not reject sealing materials");
+  const findings = shaped.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].summary, "bound-summary");
+  assert.equal(findings[0].category, "");
+  assert.deepEqual(shaped.receipt.unfinishedReasons, ["partial bot unfinished"]);
+
+  // Unknown evidenceId remains a binding failure (not washed into empty findings).
+  const unknown = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9202, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      outputCall({ findings: [{ evidenceId: "missing-evidence-id-0000", summary: "should bounce" }] }, "output-unknown"),
+      outputCall({}, "output-retry-empty"),
+    ],
+  });
+  const bounced = unknown.entries.filter((entry: any) =>
+    entry.type === "message" &&
+    entry.message.role === "toolResult" &&
+    entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
+    entry.message.isError === true
+  );
+  assert.ok(bounced.length >= 1, "unknown evidenceId must bounce as binding failure");
+  assert.ok(unknown.receipt, "retry without bad pointer seals");
+  assert.equal(unknown.receipt.groups.flatMap((group: any) => group.findings).length, 0);
+});
+

@@ -72,6 +72,7 @@ export type CollectorReceipt = {
   finalSnapshotId: string;
   targetHead: string;
   groups: CollectorIdentityGroup[];
+  unfinishedReasons?: string[];
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorEvidenceRecord[];
@@ -99,6 +100,8 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     materials: records(safeGet(group, "materials")),
     findings: records(safeGet(group, "findings")),
   }));
+  const unfinishedRaw = safeGet(value, "unfinishedReasons");
+  const unfinishedReasons = strings(unfinishedRaw);
   return {
     host: safeGet(value, "host") as "github.com",
     repository: safeGet(value, "repository") as string,
@@ -111,6 +114,7 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     finalSnapshotId: safeGet(value, "finalSnapshotId") as string,
     targetHead: safeGet(value, "targetHead") as string,
     groups,
+    ...(unfinishedReasons.length > 0 ? { unfinishedReasons } : {}),
     requestAttempts: records(safeGet(value, "requestAttempts")) as unknown as CollectorRequestAttempt[],
     snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
       snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),

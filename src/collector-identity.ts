@@ -21,7 +21,10 @@ export type CollectorMaterialRef = {
 export type CollectorFinding = {
   identity: GitHubMachineIdentity | null;
   source: CollectorMaterialRef;
+  /** Short classification label; not the finding summary. */
   category?: string;
+  /** Finding summary for the caller; not a body transcription. */
+  summary?: string;
   pointer: {
     repository: string;
     prNumber: number;
@@ -30,6 +33,8 @@ export type CollectorFinding = {
     authorLogin?: string;
     kind: CollectorMaterialRef["kind"];
     authoritativeTime?: string | null;
+    /** Corresponding commit when the evidence carries one. */
+    commitOid?: string | null;
   };
 };
 
@@ -121,9 +126,9 @@ export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
 }
 
 /**
- * #641 chain①: any malformed findings submission is a model misuse the model
- * can correct and resubmit — a branded correctable rejection on every supported
- * engine, never a round infrastructure failure.
+ * Evidence-binding failure for a finding pointer that resolves to the wrong kind
+ * of stored record, lacks a GitHub locator, or has no identity group — not a
+ * free-shape gate on the submission envelope.
  */
 export class CollectorFindingsValidationError extends CorrectableSubmissionError {
   constructor(message: string) {
@@ -144,11 +149,11 @@ export class CollectorNonOpenRequestError extends CorrectableSubmissionError {
 }
 
 /**
- * #641 chain①: turn model-submitted finding pointer refs into receipt findings.
- * Each pointer must resolve to a stored text-bearing evidence record; the
- * machine locator is enriched from the same record so receipt and volume agree
- * (指针可解析、开卷相符) by construction. Throws branded correctable
- * (non-fatal, model-visible) errors for unresolvable or mis-typed findings.
+ * #641 chain① / #676: turn model-submitted finding pointer refs into receipt findings.
+ * Binds resolvable evidence references only — no pure shape rejection of the
+ * candidate envelope. Unknown refs, wrong kinds, missing GitHub locator, and
+ * missing identity group stay as binding failures. Category is optional label;
+ * summary is optional finding abstract; commitOid is enriched from the record.
  */
 export function enrichCollectorFindings(input: {
   candidate: unknown;
@@ -159,24 +164,16 @@ export function enrichCollectorFindings(input: {
   prNumber: number;
 }): void {
   const candidate = input.candidate;
-  if (candidate === undefined || candidate === null) return;
-  if (typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new CollectorFindingsValidationError("通进司交件参数必须为对象");
+  if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return;
   }
   const rawFindings = (candidate as { findings?: unknown }).findings;
-  if (rawFindings === undefined) return;
-  if (!Array.isArray(rawFindings)) {
-    throw new CollectorFindingsValidationError("通进司 findings 必须为数组");
-  }
+  if (!Array.isArray(rawFindings)) return;
   const byEvidenceId = new Map(input.records.map((record) => [record.evidenceId, record]));
   for (const raw of rawFindings) {
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new CollectorFindingsValidationError("通进司 finding 必须为对象");
-    }
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
     const evidenceId = (raw as { evidenceId?: unknown }).evidenceId;
-    if (typeof evidenceId !== "string" || evidenceId.length === 0) {
-      throw new CollectorFindingsValidationError("通进司 finding 缺少可解析的 evidenceId 指针");
-    }
+    if (typeof evidenceId !== "string" || evidenceId.length === 0) continue;
     const record = byEvidenceId.get(evidenceId);
     if (record === undefined) {
       throw new CollectorUnknownEvidenceError(evidenceId);
@@ -187,15 +184,13 @@ export function enrichCollectorFindings(input: {
     if (record.githubId === undefined) {
       throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 缺少 GitHub id`);
     }
-    const category = (raw as { category?: unknown }).category;
-    if (category !== undefined && (typeof category !== "string" || category.trim().length === 0)) {
-      throw new CollectorFindingsValidationError("通进司 finding category 必须为非空字符串");
-    }
     const identity = record.machineIdentity ?? null;
     const group = input.groups.find((candidateGroup) => identityKey(candidateGroup.identity) === identityKey(identity));
     if (group === undefined) {
       throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
     }
+    const category = (raw as { category?: unknown }).category;
+    const summary = (raw as { summary?: unknown }).summary;
     group.findings.push({
       identity,
       source: {
@@ -204,7 +199,8 @@ export function enrichCollectorFindings(input: {
         evidenceId: record.evidenceId,
         headRelation: headRelationFor(record, input.targetHead),
       },
-      ...(category === undefined ? {} : { category: category.trim() }),
+      ...(typeof category === "string" ? { category } : {}),
+      ...(typeof summary === "string" ? { summary } : {}),
       pointer: {
         repository: input.repository,
         prNumber: input.prNumber,
@@ -213,7 +209,22 @@ export function enrichCollectorFindings(input: {
         ...(record.authorLogin === undefined ? {} : { authorLogin: record.authorLogin }),
         kind: record.kind,
         authoritativeTime: record.authoritativeTime ?? null,
+        ...(record.commitOid === undefined ? {} : { commitOid: record.commitOid }),
       },
     });
   }
+}
+
+/**
+ * #676 D6: optional unfinished reasons from the model submission, passed through
+ * when present as strings. No shape gate — non-strings are skipped.
+ */
+export function extractCollectorUnfinishedReasons(candidate: unknown): string[] | undefined {
+  if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return undefined;
+  }
+  const raw = (candidate as { unfinishedReasons?: unknown }).unfinishedReasons;
+  if (!Array.isArray(raw)) return undefined;
+  const reasons = raw.filter((item): item is string => typeof item === "string");
+  return reasons.length > 0 ? reasons : undefined;
 }

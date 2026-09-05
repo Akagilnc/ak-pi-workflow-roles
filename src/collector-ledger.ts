@@ -876,10 +876,6 @@ export function createCollectorLedger(
       if (activationTime === undefined || deadlineTime === undefined) {
         throw latchFatal("通进司请求需要激活");
       }
-      if (pastCutoff(clock)) {
-        finalObservationRequired = true;
-        throw latchFatal("通进司请求不在资格截止前");
-      }
       if (ledger.unresolvedTransportFailure) {
         throw latchFatal("通进司请求时存在未恢复的传输失败");
       }
@@ -897,8 +893,12 @@ export function createCollectorLedger(
         throw new Error("通进司请求要求最新完整快照");
       }
       if (snapshot.prState !== "OPEN") {
-        // #676 D6: non-OPEN keeps materials; bounce request without latching fatal.
+        // #676 D6: non-OPEN keeps materials; bounce before cutoff fatal so post-deadline materials still seal.
         throw new CollectorNonOpenRequestError(snapshot.prState);
+      }
+      if (pastCutoff(clock)) {
+        finalObservationRequired = true;
+        throw latchFatal("通进司请求不在资格截止前");
       }
 
       const { body, marker } = buildCollectorRequestBody({

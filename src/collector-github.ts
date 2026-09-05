@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
+import { parseCollectorPrNumber } from "./collector-config.ts";
+
 export type GitHubPullRequest = {
   number: number;
   state: string;
@@ -197,6 +199,97 @@ function parseJson(text: string, label: string): unknown {
   } catch (error) {
     throw new Error(`GitHub ${label} returned malformed JSON`, { cause: error });
   }
+}
+
+/**
+ * Shared PR-list payload parse for admission target lookup (#676 D1/D7).
+ * Every entry must carry a positive safe-integer number — malformed items fail
+ * the response (do not skip then claim uniqueness).
+ */
+export function parsePullRequestNumberList(raw: unknown, label: string): number[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`GitHub ${label} payload is not a list`);
+  }
+  const numbers: number[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) {
+      throw new Error(`GitHub ${label} payload contains a non-object pull request entry`);
+    }
+    try {
+      numbers.push(parseCollectorPrNumber(item["number"]));
+    } catch (error) {
+      throw new Error(`GitHub ${label} payload contains an invalid pull request number`, {
+        cause: error,
+      });
+    }
+  }
+  return numbers;
+}
+
+/**
+ * Online PR association by head owner:ref (state=all). Caller supplies the real
+ * head owner from branch context — never assume base repository owner is the fork head.
+ * Transport/HTTP/JSON failures throw with true cause (not target-ambiguity wash).
+ */
+export async function listPullRequestNumbersByHead(
+  runner: GhApiRunner,
+  input: {
+    readonly owner: string;
+    readonly repo: string;
+    readonly headOwner: string;
+    readonly headRef: string;
+    readonly signal?: AbortSignal;
+  },
+): Promise<number[]> {
+  const head = `${input.headOwner}:${input.headRef}`;
+  const path =
+    `/repos/${input.owner}/${input.repo}/pulls?head=${encodeURIComponent(head)}&state=all&per_page=100`;
+  const response = await runner(
+    ["api", "--hostname", "github.com", "--include", "-X", "GET", path],
+    input.signal === undefined ? {} : { signal: input.signal },
+  );
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`GitHub ${path} failed with HTTP ${response.status}`, {
+      cause: {
+        endpoint: path,
+        status: response.status,
+        headers: response.headers,
+        body: response.bodyText,
+      },
+    });
+  }
+  return parsePullRequestNumberList(parseJson(response.bodyText, path), path);
+}
+
+/**
+ * Online PR association for a commit SHA (fork-safe; works when the commit is on the PR).
+ * Transport/HTTP/JSON failures throw with true cause.
+ */
+export async function listPullRequestNumbersByCommit(
+  runner: GhApiRunner,
+  input: {
+    readonly owner: string;
+    readonly repo: string;
+    readonly commitSha: string;
+    readonly signal?: AbortSignal;
+  },
+): Promise<number[]> {
+  const path = `/repos/${input.owner}/${input.repo}/commits/${encodeURIComponent(input.commitSha)}/pulls`;
+  const response = await runner(
+    ["api", "--hostname", "github.com", "--include", "-X", "GET", path],
+    input.signal === undefined ? {} : { signal: input.signal },
+  );
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`GitHub ${path} failed with HTTP ${response.status}`, {
+      cause: {
+        endpoint: path,
+        status: response.status,
+        headers: response.headers,
+        body: response.bodyText,
+      },
+    });
+  }
+  return parsePullRequestNumberList(parseJson(response.bodyText, path), path);
 }
 
 let commentFailureEvidence = 0;
