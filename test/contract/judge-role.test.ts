@@ -29,7 +29,7 @@ import {
   GatekeeperDecisionError,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import type { ComplianceRoleSummon } from "../../src/compliance-transport.ts";
+import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
   createNavigatorAttendance,
@@ -2735,15 +2735,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         // #675: compliance summons public auditor; offline injects the decision terminal.
         const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
           auditCalls += 1;
-          const summonRole: ComplianceRoleSummon = async () => ({
+          const summonAuditor: AuditorSummon = async () => ({
             exitCode: 0,
             terminal: {
               roleOutcome: {
                 kind: "accepted",
-                role: role === "judge" ? "judge" : "doctor",
-                status: selectedDecision.status === "pass" ? (role === "judge" ? "converged" : "completed")
-                  : selectedDecision.status === "revise" ? (role === "judge" ? "continue" : "refused")
-                  : selectedDecision.status,
+                role: "auditor",
+                status: selectedDecision.status,
                 decisiveFacts: selectedDecision as Record<string, unknown>,
               },
               navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -2754,7 +2752,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           const piOptions = {
             ...options,
             context: toPiContext(options.context),
-            summonRole,
+            summonAuditor,
           };
           return (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
         };

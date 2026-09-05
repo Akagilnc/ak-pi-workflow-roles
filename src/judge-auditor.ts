@@ -1,7 +1,7 @@
 import {
   runComplianceAudit,
+  type AuditorSummon,
   type ComplianceDecision,
-  type ComplianceRoleSummon,
 } from "./compliance-transport.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import {
@@ -18,12 +18,13 @@ export type JudgeAuditOptions = {
   context: HostContext;
   signal?: AbortSignal;
   /** Same seam as runComplianceAudit options — offline tracers only. */
-  summonRole?: ComplianceRoleSummon;
+  summonAuditor?: AuditorSummon;
 };
 
 /**
- * Judge compliance via the public judge activation path (#675).
- * Same materials as direct `ak-role judge` (judge.md) — not an auditor substitute.
+ * Judge compliance via public auditor activation (#675 / ADR 0062).
+ * 审刑院 is an independent role — not a re-summon of judge (no self-audit recursion).
+ * Auditor materials = direct `ak-role auditor` assembly (auditor.md).
  */
 export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -33,13 +34,12 @@ export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
-      line: "judge",
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined
         ? {}
         : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.summonRole === undefined ? {} : { summonRole: options.summonRole }),
+      ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),
     });
   };
 }

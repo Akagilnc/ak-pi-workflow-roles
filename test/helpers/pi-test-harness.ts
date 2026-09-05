@@ -1527,58 +1527,7 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  // #675: nested public summons use the real activation path. Seed nested seats
-  // from the parent faux model onto the temp HOME only when harness owns that home
-  // (options.home set by withActivationHome / withHermeticHome). Restore prior
-  // config on exit — never leave seats rewritten.
-  let nestedConfigRestore: (() => Promise<void>) | undefined;
-  // Prefer explicit options.home; else hermetic process HOME from withActivationHome.
-  const nestedHome =
-    options.home
-    ?? (typeof process.env.HOME === "string" && process.env.HOME.trim() !== ""
-      ? process.env.HOME
-      : undefined);
-  if (options.nestedSummonInject !== "none" && nestedHome !== undefined) {
-    try {
-      const { savePublicCliConfig, loadPublicCliConfig, publicCliConfigPath } =
-        await import("../../src/public-cli/config.ts");
-      const { readFile, writeFile, rm } = await import("node:fs/promises");
-      const configPath = publicCliConfigPath(nestedHome);
-      let priorRaw: string | undefined;
-      try {
-        priorRaw = await readFile(configPath, "utf8");
-      } catch {
-        priorRaw = undefined;
-      }
-      const existing = await loadPublicCliConfig(nestedHome).catch(() => ({ seats: {} as Record<string, unknown> }));
-      const seat = {
-        provider: model.provider,
-        model: model.id ?? (model as { model?: string }).model ?? "faux-1",
-      };
-      await savePublicCliConfig({
-        ...existing,
-        seats: {
-          ...existing.seats,
-          judge: seat,
-          doctor: seat,
-          notary: seat,
-          inspector: seat,
-          auditor: seat,
-          "evidence-child": seat,
-          gatekeeper: seat,
-        },
-      }, nestedHome);
-      nestedConfigRestore = async () => {
-        if (priorRaw === undefined) {
-          await rm(configPath, { force: true }).catch(() => {});
-        } else {
-          await writeFile(configPath, priorRaw, "utf8");
-        }
-      };
-    } catch {
-      // seat seed best-effort
-    }
-  }
+  // #675: nested summons use production public path; no harness seat rewrite / env protocol.
   try {
     for (const [name, value] of Object.entries(options.flags)) {
       session.extensionRunner.setFlagValue(name, value);
@@ -1609,9 +1558,6 @@ export async function withInProcessPi<T>(
         // best-effort shutdown before dispose
       }
       session.dispose();
-      if (nestedConfigRestore !== undefined) {
-        await nestedConfigRestore().catch(() => {});
-      }
     }
   }
 }
