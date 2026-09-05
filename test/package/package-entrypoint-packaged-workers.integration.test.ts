@@ -1,7 +1,6 @@
 /**
  * #319 Batch 4 (R1): thematic split from package-entrypoint.integration.test.ts.
- * Packaged workers: pack contents, auditors, judge/coder/fixer gates
- * All split files remain on the heavy serial manifest (庭定『先拆且全留 heavy』).
+ * Packaged workers: judge/coder/fixer gates via in-process packaged entry (#685).
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -42,24 +41,16 @@ import {
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { navigatorPrepareFixtureResponse } from "../helpers/navigator-child-fixture.ts";
 import {
-  getSharedIsolatedPack,
   loadRawPackageManifest,
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
-  runNodeSubprocess,
-  runPiSubprocess,
-  machineLedgerHome,
   seedAgentDirModelsJsonFromFaux,
   withActivationHome,
   withAgentDirProviderFixture,
-  withHermeticHome,
   withInProcessPi,
-  withInstitutionalProviderFixture,
-  withColdInstalledPackage,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
 
@@ -81,137 +72,6 @@ function scriptOfficerPass(names: readonly string[], officer: "notary" | "inspec
   );
 }
 
-
-test("cold-installed package audits active auditor seats from editable Souls", async () => {
-  await withActivationHome(
-    { prefix: "ak-auditor-package-" },
-    async ({ home }) => {
-      await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
-      const [judge, doctor] = await Promise.all([
-        installed("src/judge-auditor.ts"),
-        installed("src/doctor-auditor.ts"),
-      ]);
-
-      const faux = fauxProvider({ provider: "installed-auditor", api: "openai-responses" });
-      const context = {
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-        sessionManager: SessionManager.inMemory(),
-      } as any;
-      // Judge/doctor auditors take zero hand-delivered materials (#233).
-      // Fixer (#242) / Reviewer (#495 S6) LLM auditors retired — active auditor seats only.
-      // Seed the real run record shape; the locator binds from the parent record,
-      // never from an environment-variable convention.
-      const runDirectory = resolve(installedRoot, "fixture-run");
-      await mkdir(resolve(runDirectory, "session"), { recursive: true });
-      await mkdir(resolve(runDirectory, "attachments"));
-      await mkdir(resolve(runDirectory, "artifacts"));
-      await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n");
-      await writeInstitutionalSeatTable(runDirectory, {
-        auditor: seatSelection("installed-auditor", "installed-auditor"),
-      });
-      context.sessionManager = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
-      context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
-      context.sessionManager.appendMessage({
-        role: "assistant",
-        content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
-        api: "openai-responses", provider: "test", model: "test",
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-        stopReason: "toolUse", timestamp: Date.now(),
-      });
-      context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
-      const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: () => judge.createPiJudgeAuditor()({ context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: () => doctor.createPiDoctorAuditor()({ context }) },
-      ] as const;
-      // #470: judge = constitution + soul + audit-law + quality-law; doctor omits audit-law.
-      // #495 S6: reviewer auditor roster retired.
-      const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
-      const installedAuditLaw = await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8");
-      const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
-      const expectedAuditorPrompt = async (name: string, soulPath: string) => {
-        const soul = await readFile(soulPath, "utf8");
-        // Child session appends cwd (process default when context.cwd is unset).
-        const cwdSuffix = `\nCurrent working directory: ${process.cwd()}`;
-        if (name === "doctor") {
-          return `${installedConstitution}\n\n${soul}${cwdSuffix}`;
-        }
-        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}${cwdSuffix}`;
-      };
-      const run = async (role: (typeof roles)[number]) => {
-        let calls = 0;
-        let prompt = "";
-        faux.setResponses([
-          // faux resolveResponse(step, context, streamOptions, state, requestModel) — context first.
-          (context: any) => {
-            calls += 1;
-            prompt = context.systemPrompt ?? "";
-            const locator = context.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
-            assert.ok(locator, `${role.name} must expose the shared dossier locator`);
-            return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-          },
-        ]);
-        // #518 S3: auditor child resolves auth from models.json, not ambient getProvider.
-        await withInstitutionalProviderFixture(faux, () => role.run());
-        assert.equal(calls, 1, `${role.name} audit must make one decision call`);
-        assert.equal(
-          prompt,
-          await expectedAuditorPrompt(role.name, role.soulPath),
-          `${role.name} must load constitution + installed Soul on this call`,
-        );
-        return prompt;
-      };
-
-      for (const role of roles) await run(role);
-
-      const editedSoul = "EDITED JUDGE SOUL\n";
-      const judgeSoul = roles[0].soulPath;
-      const originalJudgeSoul = await readFile(judgeSoul, "utf8");
-      await writeFile(judgeSoul, editedSoul, "utf8");
-      try {
-        const edited = await run(roles[0]);
-        assert.equal(
-          edited,
-          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}\nCurrent working directory: ${process.cwd()}`,
-        );
-        for (const role of roles.slice(1)) {
-          const unchanged = await run(role);
-          assert.equal(unchanged, await expectedAuditorPrompt(role.name, role.soulPath));
-          assert.equal(unchanged.includes(editedSoul), false);
-        }
-      } finally {
-        await writeFile(judgeSoul, originalJudgeSoul, "utf8");
-      }
-
-      for (const role of roles) {
-        const original = await readFile(role.soulPath, "utf8");
-        await rm(role.soulPath, { force: true });
-        try {
-          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
-        } finally {
-          await writeFile(role.soulPath, original, "utf8");
-        }
-
-        await writeFile(role.soulPath, " \n", "utf8");
-        await assert.rejects(role.run(), new RegExp(`${role.name} auditor Soul is blank`));
-
-        await rm(role.soulPath, { force: true });
-        await mkdir(role.soulPath);
-        try {
-          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
-        } finally {
-          await rm(role.soulPath, { recursive: true, force: true });
-          await writeFile(role.soulPath, original, "utf8");
-        }
-      }
-      });
-    },
-  );
-});
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();

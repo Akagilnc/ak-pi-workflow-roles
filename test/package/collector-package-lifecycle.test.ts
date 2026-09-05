@@ -1,7 +1,7 @@
 /**
  * #319 Batch 2 (M2): Collector-unique deep chain only
  * (cold-installed default gh transport → accepted receipt).
- * All-role cold smoke lives in public-cli-cold-matrix.test.ts.
+ * #685: all-role cold smoke culled; Collector contracts stay on public-cli-collector ordinary tracers.
  */
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
