@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
+  pathContainedIn,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -24,8 +25,10 @@ import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
+  intervalRowsForMatchingBinding,
   LedgerSessionJsonlError,
   readLedgerSessionJsonl,
+  type LedgerSessionRow,
   type SessionToolInterval,
 } from "./ledger-session-read.ts";
 import {
@@ -44,7 +47,9 @@ import {
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
 import {
+  isTicketSeatRunBindingRow,
   resolveTicketSeatMemoryNestDirectories,
+  ticketSeatRunBindingRunId,
 } from "./ticket-seat-memory.ts";
 
 export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
@@ -204,6 +209,39 @@ async function resolveSessionFile(
   return join(runDirectory, "session", "session.jsonl");
 }
 
+/**
+ * Attribute session rows to one run (#636 D).
+ * Private run volumes (session under runDirectory) keep the whole file.
+ * Shared ticket-seat main volumes must carry this run's binding interval;
+ * whole-volume stats would let later continuations pollute earlier runs.
+ * Unbounded external volumes stay honest missing — never silent full ownership.
+ */
+function attributeSessionRowsForRun(input: {
+  readonly rows: readonly LedgerSessionRow[];
+  readonly sessionFile: string;
+  readonly runDirectory: string;
+  readonly runId: string;
+}):
+  | { readonly kind: "attributed"; readonly rows: readonly LedgerSessionRow[] }
+  | { readonly kind: "missing-boundary"; readonly reason: string } {
+  if (pathContainedIn(input.runDirectory, input.sessionFile)) {
+    return { kind: "attributed", rows: input.rows };
+  }
+  const interval = intervalRowsForMatchingBinding(
+    input.rows,
+    isTicketSeatRunBindingRow,
+    (row) => ticketSeatRunBindingRunId(row) === input.runId,
+  );
+  if (interval === undefined) {
+    return {
+      kind: "missing-boundary",
+      reason:
+        "shared session volume has no ticket-seat run binding for this run",
+    };
+  }
+  return { kind: "attributed", rows: interval };
+}
+
 /** Session first/last usable timestamps retained for B-wave wall-clock kernels. */
 export type AnalystRunFrameSpan = {
   readonly startedAt: string;
@@ -280,55 +318,77 @@ async function classifyScopedRun(input: {
   let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
   let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
 
-  // 1) session timeline
+  // 1) session timeline — shared ticket-seat volumes slice to this run's binding.
   const sessionFile = await resolveSessionFile(input.runDirectory);
-  let rows: Awaited<ReturnType<typeof readLedgerSessionJsonl>> | undefined;
+  let rows: readonly LedgerSessionRow[] | undefined;
   try {
-    rows = await readLedgerSessionJsonl(sessionFile);
-    models = extractSessionModelSequence(rows);
-    const span = extractSessionTimestampSpan(rows);
-    if (span.startedAt === undefined || span.endedAt === undefined) {
+    const rawRows = await readLedgerSessionJsonl(sessionFile);
+    const attributed = attributeSessionRowsForRun({
+      rows: rawRows,
+      sessionFile,
+      runDirectory: input.runDirectory,
+      runId: input.runId,
+    });
+    if (attributed.kind === "missing-boundary") {
       missingSources.push("session-timeline");
-      reasons.push("session timeline has no usable timestamps");
-      // Span incomplete, but any usable timestamp remains a typed partial fact.
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-      }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
+      reasons.push(attributed.reason);
     } else {
-      // frameSpan gate: both edges must parse and end must not precede start.
-      // Damaged spans stay page-local unreadable — never throw or emit negative/NaN wallMs.
-      const startedMs = Date.parse(span.startedAt);
-      const endedMs = Date.parse(span.endedAt);
-      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+      rows = attributed.rows;
+      models = extractSessionModelSequence(rows);
+      const span = extractSessionTimestampSpan(rows);
+      if (span.startedAt === undefined || span.endedAt === undefined) {
         missingSources.push("session-timeline");
-        reasons.push("session timeline timestamps are not parseable instants");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      } else if (endedMs < startedMs) {
-        missingSources.push("session-timeline");
-        reasons.push("session timeline end is earlier than start");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
+        reasons.push("session timeline has no usable timestamps");
+        // Span incomplete, but any usable timestamp remains a typed partial fact.
+        if (span.startedAt !== undefined) {
+          partialFirstFrameAt = { status: "present", at: span.startedAt };
+        }
+        if (span.endedAt !== undefined) {
+          partialLastFrameAt = { status: "present", at: span.endedAt };
+        }
       } else {
-        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+        // frameSpan gate: both edges must parse and end must not precede start.
+        // Damaged spans stay page-local unreadable — never throw or emit negative/NaN wallMs.
+        const startedMs = Date.parse(span.startedAt);
+        const endedMs = Date.parse(span.endedAt);
+        if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+          missingSources.push("session-timeline");
+          reasons.push("session timeline timestamps are not parseable instants");
+          partialFirstFrameAt = { status: "present", at: span.startedAt };
+          partialLastFrameAt = { status: "present", at: span.endedAt };
+        } else if (endedMs < startedMs) {
+          missingSources.push("session-timeline");
+          reasons.push("session timeline end is earlier than start");
+          partialFirstFrameAt = { status: "present", at: span.startedAt };
+          partialLastFrameAt = { status: "present", at: span.endedAt };
+        } else {
+          frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
+        }
       }
     }
   } catch (error) {
     missingSources.push("session-timeline");
     reasons.push(errorText(error));
-    // Single parse kernel: recover first/last frame and models from rows read before the loud line.
+    // Single parse kernel: recover first/last frame and models from rows read before the loud line,
+    // still clipped to this run's binding interval on shared volumes.
     if (error instanceof LedgerSessionJsonlError) {
-      const span = extractSessionTimestampSpan(error.prefixRows);
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
+      const attributed = attributeSessionRowsForRun({
+        rows: error.prefixRows,
+        sessionFile,
+        runDirectory: input.runDirectory,
+        runId: input.runId,
+      });
+      if (attributed.kind === "attributed") {
+        const span = extractSessionTimestampSpan(attributed.rows);
+        if (span.startedAt !== undefined) {
+          partialFirstFrameAt = { status: "present", at: span.startedAt };
+        }
+        if (span.endedAt !== undefined) {
+          partialLastFrameAt = { status: "present", at: span.endedAt };
+        }
+        models = extractSessionModelSequence(attributed.rows);
       }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
-      models = extractSessionModelSequence(error.prefixRows);
+      // missing-boundary on damaged prefix: no partial ownership of sibling runs.
     }
   }
 
