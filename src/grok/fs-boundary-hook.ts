@@ -1,186 +1,150 @@
 /**
  * Grok PreToolUse hook for #692 FS boundary (all roles).
- * Mirrors shared-envelope assessRoleToolFsBoundary for Bash/edit/write on the
- * Grok native tool surface (Pi tool_call does not see Grok-native tools).
+ * One authority: thin runner imports assessRoleToolFsBoundary from the package
+ * module (no duplicated path logic). Launched with node --import tsx.
  */
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { physicalPathIdentity } from "../activation-ledger-topology.ts";
-import {
-  ROLE_TOOL_FS_BOUNDARY_CODE,
-  roleToolFsBoundaryDenyReason,
-} from "../role-tool-fs-boundary.ts";
+import { ROLE_TOOL_FS_BOUNDARY_CODE } from "../role-tool-fs-boundary.ts";
 
 export const AK_FS_BOUNDARY_HOOK_FILES = [
   "ak-fs-boundary.json",
   "ak-fs-boundary.mjs",
 ] as const;
 
+const BOUNDARY_MODULE = fileURLToPath(
+  new URL("../role-tool-fs-boundary.ts", import.meta.url),
+);
+
 /**
- * Render a standalone PreToolUse hook that denies bash/edit/write outside W/T.
- * Roots are baked at install time (workspace = role cwd, temp = process tmpdir).
+ * Thin ESM runner: stdin event → shared assessRoleToolFsBoundary → decision JSON.
+ * Must be launched with `node --import <tsx>` so the .ts authority module loads.
  */
 export function renderGrokFsBoundaryHookScript(input: {
   readonly workspaceRoot: string;
   readonly tempRoot: string;
+  readonly boundaryModuleUrl: string;
 }): string {
   const workspace = physicalPathIdentity(input.workspaceRoot);
   const temp = physicalPathIdentity(input.tempRoot);
-  // Inline a minimal copy of the boundary decision so the hook process does not
-  // import package modules (Grok hook runner is a bare node -e style spawn).
   return `#!/usr/bin/env node
-const { lstatSync, realpathSync } = require("node:fs");
-const { dirname, isAbsolute, join, basename, sep } = require("node:path");
-const WORKSPACE = ${JSON.stringify(workspace)};
-const TEMP = ${JSON.stringify(temp)};
+import { assessRoleToolFsBoundary } from ${JSON.stringify(input.boundaryModuleUrl)};
+
+const ROOTS = Object.freeze({
+  workspaceRoot: ${JSON.stringify(workspace)},
+  tempRoot: ${JSON.stringify(temp)},
+});
 const CODE = ${JSON.stringify(ROLE_TOOL_FS_BOUNDARY_CODE)};
 
-function pathContainedIn(root, candidate) {
-  const rel = require("node:path").relative(root, candidate);
-  return rel !== "" && rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
+function deny(reason) {
+  return { decision: "deny", reason };
 }
-function physicalIdentity(path) {
-  const absolute = require("node:path").resolve(path);
-  const missing = [];
-  let cursor = absolute;
-  for (;;) {
-    try { return missing.length === 0 ? realpathSync(cursor) : join(realpathSync(cursor), ...missing); }
-    catch (e) {
-      if (!e || e.code !== "ENOENT") return absolute;
-      const parent = dirname(cursor);
-      if (parent === cursor) return absolute;
-      missing.unshift(basename(cursor));
-      cursor = parent;
-    }
-  }
+function allow() {
+  return { decision: "allow" };
 }
-function within(candidate) {
-  const id = physicalIdentity(candidate);
-  return id === WORKSPACE || id === TEMP || pathContainedIn(WORKSPACE, id) || pathContainedIn(TEMP, id);
-}
-function followComponents(absolute) {
-  if (absolute === sep) return sep;
-  const parts = absolute.split(sep).filter(Boolean);
-  let current = absolute.startsWith(sep) ? sep : "";
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (part === ".") continue;
-    if (part === "..") { current = current === sep || current === "" ? current : dirname(current); if (current === "") current = sep; continue; }
-    const next = current === sep ? sep + part : current === "" ? part : join(current, part);
-    try {
-      lstatSync(next);
-      try { current = realpathSync(next); } catch { current = next; }
-    } catch {
-      const rest = parts.slice(i);
-      const prefix = current === "" ? physicalIdentity(process.cwd()) : physicalIdentity(current === sep ? sep : current);
-      return rest.reduce((acc, p) => p === "." ? acc : p === ".." ? dirname(acc) : join(acc, p), prefix === sep && rest.length ? sep : prefix);
-    }
-  }
-  try { return realpathSync(current); } catch { return physicalIdentity(current); }
-}
-function resolveMutation(raw, cwd) {
-  let expanded = raw;
-  if (raw === "~") expanded = process.env.HOME || raw;
-  else if (raw.startsWith("~" + sep) || raw.startsWith("~/")) expanded = join(process.env.HOME || "", raw.slice(2));
-  const absolute = isAbsolute(expanded) ? expanded.replace(/\\/{2,}/g, "/") : (() => {
-    const base = physicalIdentity(cwd);
-    return expanded.split(/[/\\\\]/).filter(Boolean).reduce((acc, p) => p === "." ? acc : p === ".." ? dirname(acc) : join(acc, p), base);
-  })();
-  return followComponents(absolute);
-}
-const MUTATION = new Set(["rm","rmdir","unlink","mv","cp","ln","install","truncate","dd","touch","mkdir","tee","shred","chmod","chown","chgrp"]);
-const UNPROVABLE = /\\b(?:eval|source|exec)\\b|\\b(?:find|xargs)\\b.*(?:-delete|-exec\\b|-fprint)|\\b(?:python|python3|ruby|perl|php|lua)\\b.*\\s-c\\b|\\bnode(?:js)?\\b.*\\s(?:-e|--eval|-p)\\b|\\bcd\\b/i;
 
-function deny(toolName, paths) {
-  const shown = paths.length === 0 ? "(unprovable or outside path)" : paths.join(", ");
-  return { decision: "deny", reason: "角色工具文件系统边界：" + toolName + " 不得删改工作区与临时目录之外的路径（" + CODE + "）：" + shown };
+function toolNameOf(event) {
+  const raw = event?.toolName ?? event?.tool ?? "";
+  const name = String(raw);
+  if (/^(Bash|bash|run_terminal_command)$/i.test(name)) return "bash";
+  if (/^(Write|write)$/i.test(name)) return "write";
+  if (/^(Edit|edit)$/i.test(name)) return "edit";
+  return name;
 }
-function allow() { return { decision: "allow" }; }
 
-function assessBash(command, cwd) {
-  if (UNPROVABLE.test(command)) return deny("bash", []);
-  // redirects
-  const targets = [];
-  const redir = /(?:^|[\\s\\d])>>?\\s*(\\S+)/g;
-  let m;
-  while ((m = redir.exec(command))) targets.push(m[1].replace(/^['"]|['"]$/g, ""));
-  const words = command.match(/(?:[^\\s"']+|"[^"]*"|'[^']*')+/g) || [];
-  for (let i = 0; i < words.length; i++) {
-    let w = words[i].replace(/^['"]|['"]$/g, "");
-    if (MUTATION.has(basename(w))) {
-      for (let j = i + 1; j < words.length; j++) {
-        let t = words[j].replace(/^['"]|['"]$/g, "");
-        if (t === "--") continue;
-        if (t.startsWith("-") && t !== "-") continue;
-        if (t === ">" || t === ">>") { j++; continue; }
-        targets.push(t);
-      }
-      break;
-    }
+function toolInputOf(event, toolName) {
+  const input = event?.toolInput;
+  if (input === null || typeof input !== "object") return {};
+  if (toolName === "bash") {
+    const command = typeof input.command === "string" ? input.command
+      : typeof input.cmd === "string" ? input.cmd : undefined;
+    return command === undefined ? {} : { command };
   }
-  if (targets.length === 0 && !/(?:^|[\\s\\d])>>?/.test(command) && !words.some(w => MUTATION.has(basename(w.replace(/^['"]|['"]$/g, ""))))) {
-    return allow();
-  }
-  if (targets.length === 0) return deny("bash", []);
-  const outside = [];
-  for (const t of targets) {
-    const r = resolveMutation(t, cwd);
-    if (!within(r)) outside.push(r);
-  }
-  return outside.length ? deny("bash", outside) : allow();
+  const path = typeof input.path === "string" ? input.path
+    : typeof input.file_path === "string" ? input.file_path : undefined;
+  return path === undefined ? {} : { path };
 }
 
 let raw = "";
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (c) => { raw += c; });
+process.stdin.on("data", (chunk) => { raw += chunk; });
 process.stdin.on("end", () => {
-  let event = {};
-  try { event = JSON.parse(raw); } catch { /* fail-open on malformed host payload */ }
-  const name = event && typeof event === "object" ? (event.toolName || event.tool || "") : "";
-  const input = event && typeof event === "object" ? event.toolInput : undefined;
-  const cwd = event && typeof event === "object" && typeof event.cwd === "string" ? event.cwd : process.cwd();
-  let decision = allow();
-  const tool = String(name);
-  if (/^(Bash|bash|run_terminal_command)$/i.test(tool)) {
-    const command = input && typeof input === "object" && typeof input.command === "string" ? input.command
-      : input && typeof input === "object" && typeof input.cmd === "string" ? input.cmd : undefined;
-    if (typeof command === "string") decision = assessBash(command, cwd);
-  } else if (/^(Write|write|Edit|edit)$/i.test(tool)) {
-    const path = input && typeof input === "object" && typeof input.path === "string" ? input.path
-      : input && typeof input === "object" && typeof input.file_path === "string" ? input.file_path : undefined;
-    if (typeof path === "string" && path.length > 0) {
-      const r = resolveMutation(path, cwd);
-      decision = within(r) ? allow() : deny(tool.toLowerCase(), [r]);
-    }
+  let event;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    process.stdout.write(JSON.stringify(deny(
+      "角色工具文件系统边界：malformed PreToolUse payload（" + CODE + "）",
+    )));
+    return;
   }
-  process.stdout.write(JSON.stringify(decision));
+  if (event === null || typeof event !== "object") {
+    process.stdout.write(JSON.stringify(deny(
+      "角色工具文件系统边界：invalid PreToolUse event（" + CODE + "）",
+    )));
+    return;
+  }
+  const toolName = toolNameOf(event);
+  if (toolName !== "bash" && toolName !== "edit" && toolName !== "write") {
+    process.stdout.write(JSON.stringify(allow()));
+    return;
+  }
+  const cwd = typeof event.cwd === "string" && event.cwd.length > 0
+    ? event.cwd
+    : process.cwd();
+  const violation = assessRoleToolFsBoundary({
+    toolName,
+    toolInput: toolInputOf(event, toolName),
+    cwd,
+    roots: ROOTS,
+  });
+  process.stdout.write(JSON.stringify(
+    violation === undefined ? allow() : deny(violation.reason),
+  ));
 });
 `;
 }
 
+function resolveTsxLoader(): string | undefined {
+  try {
+    return createRequire(import.meta.url).resolve("tsx/esm");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Install #692 FS boundary PreToolUse hook into controlled GROK_HOME.
- * Installed for every role when the host supports pre_tool_use deny.
+ * Runner imports the package boundary module (single authority).
  */
 export async function installGrokFsBoundaryHook(input: {
   readonly controlledHome: string;
   readonly workspaceRoot: string;
   readonly tempRoot?: string;
+  readonly boundaryModulePath?: string;
 }): Promise<void> {
   const hooksDir = join(input.controlledHome, "hooks");
   await mkdir(hooksDir, { recursive: true });
-  const scriptName = "ak-fs-boundary.mjs";
-  const scriptPath = join(hooksDir, scriptName);
+  const scriptPath = join(hooksDir, "ak-fs-boundary.mjs");
+  const boundaryPath = input.boundaryModulePath ?? BOUNDARY_MODULE;
   await writeFile(
     scriptPath,
     renderGrokFsBoundaryHookScript({
       workspaceRoot: input.workspaceRoot,
       tempRoot: input.tempRoot ?? tmpdir(),
+      boundaryModuleUrl: pathToFileURL(boundaryPath).href,
     }),
     { mode: 0o755 },
   );
+  const tsxLoader = resolveTsxLoader();
+  const command = tsxLoader === undefined
+    ? `${process.execPath} --import tsx ${JSON.stringify(scriptPath)}`
+    : `${process.execPath} --import ${JSON.stringify(tsxLoader)} ${JSON.stringify(scriptPath)}`;
   await writeFile(
     join(hooksDir, "ak-fs-boundary.json"),
     `${JSON.stringify({
@@ -188,20 +152,10 @@ export async function installGrokFsBoundaryHook(input: {
         PreToolUse: [
           {
             matcher: "Bash|run_terminal_command|Write|Edit|write|edit",
-            hooks: [
-              {
-                type: "command",
-                command: `${process.execPath} ${JSON.stringify(scriptPath)}`,
-                timeout: 5,
-              },
-            ],
+            hooks: [{ type: "command", command, timeout: 10 }],
           },
         ],
       },
     }, null, 2)}\n`,
   );
-}
-
-export function fsBoundaryDenyReasonForTest(toolName: string, paths: string[]): string {
-  return roleToolFsBoundaryDenyReason(toolName, paths);
 }

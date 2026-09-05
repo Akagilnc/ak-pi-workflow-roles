@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -173,7 +173,7 @@ test("grok host installs FS boundary for all roles and Fixer seatbelt when host 
   }
 });
 
-test("grok host records preToolUseDeny false when the host cannot deny", async () => {
+test("grok host fails closed when the host cannot deny PreToolUse (#692 FS boundary)", async () => {
   const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
   try {
     const localRequest = turnRequest({
@@ -188,7 +188,10 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
       recordCapabilities: async (_request, declaration) => { capabilities.push(declaration); },
       connect: async () => ({
         async request(method) {
-          if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } } };
+          // Intentional: host cannot deny PreToolUse.
+          if (method === "initialize") {
+            return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.5" }] } } };
+          }
           if (method === "session/new") return { sessionId: "s1" };
           if (method === "session/prompt") return { stopReason: "end_turn" };
           return {};
@@ -199,9 +202,11 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
       inspect: async () => ({ privateActive: [], akActive: ["ak_fixer_output"] }),
       prepare: prepareWithLayout(async () => ({ accepted: true })),
     });
-    assert.equal((await host.executeTurn(localRequest)).code, 0);
-    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
-    await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
+    const result = await host.executeTurn(localRequest);
+    assert.equal(result.code, null);
+    assert.equal(result.knownFailure?.identity?.name, "GrokFsBoundaryUnavailable");
+    assert.deepEqual(capabilities, []);
+    await assert.rejects(readFile(join(home, "hooks", "ak-fs-boundary.json")));
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -209,53 +214,70 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
 
 
 test("grok resume reuses native ACP session via session/load when an ACP binding exists", async () => {
-  // Fully mocked ACP binding: pure-memory proof on a fixed virtual path, no host resources.
-  const runDirectory = "/run/rebind";
-  const sessionCalls: Array<[string, unknown]> = [];
-  const host = createGrokRoleTurnHost({
-    sessionIdentity: {
-      async load() { return "bound-s1"; },
-      async bind() {},
-      resolveSessionFile: sessionIdentity.resolveSessionFile,
-    },
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method, params) {
-        sessionCalls.push([method, params]);
-        if (method === "session/load") return { sessionId: "bound-s1" };
-        return method === "session/prompt" ? { stopReason: "end_turn" } : {};
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-resume-"));
+  try {
+    const runDirectory = join(home, "run");
+    const sessionCalls: Array<[string, unknown]> = [];
+    const host = createGrokRoleTurnHost({
+      sessionIdentity: {
+        async load() { return "bound-s1"; },
+        async bind() {},
+        resolveSessionFile: sessionIdentity.resolveSessionFile,
       },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: prepareWithLayout(async () => ({ accepted: true })),
-  });
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method, params) {
+          sessionCalls.push([method, params]);
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/load") return { sessionId: "bound-s1" };
+          return method === "session/prompt" ? { stopReason: "end_turn" } : {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: prepareWithLayout(async () => ({ accepted: true })),
+    });
 
-  const result = await host.executeTurn(turnRequest({
-    runDirectory,
-    continuation: { kind: "resume", prompt: "again" },
-  }));
-  assert.equal(result.code, 0);
-  const loaded = sessionCalls.find(([m]) => m === "session/load");
-  assert.deepEqual(loaded, ["session/load", {
-    sessionId: "bound-s1",
-    cwd: "/work",
-    mcpServers: [{}],
-    _meta: { systemPromptOverride: "law", yoloMode: false },
-  }]);
+    const result = await host.executeTurn(turnRequest({
+      runDirectory,
+      home,
+      agentDir: join(home, "agent"),
+      continuation: { kind: "resume", prompt: "again" },
+    }));
+    assert.equal(result.code, 0);
+    const loaded = sessionCalls.find(([m]) => m === "session/load");
+    assert.deepEqual(loaded, ["session/load", {
+      sessionId: "bound-s1",
+      cwd: "/work",
+      mcpServers: [{}],
+      _meta: { systemPromptOverride: "law", yoloMode: false },
+    }]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-non-xai-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run"), home: join(root, "home"), agentDir: join(root, "agent") });
+    const homeDir = join(root, "home");
+    await mkdir(homeDir, { recursive: true });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: homeDir, agentDir: join(root, "agent") });
     const host = createGrokRoleTurnHost({
       sessionIdentity,
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
-          if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "gpt-5.6-sol" }] } } };
+          if (method === "initialize") {
+            return {
+              agentCapabilities: { loadSession: true },
+              _meta: {
+                modelState: { availableModels: [{ modelId: "gpt-5.6-sol" }] },
+                "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
+              },
+            };
+          }
           if (method === "session/new") return { sessionId: "s-non-xai" };
           if (method === "session/prompt") return { stopReason: "end_turn" };
           return {};
@@ -279,38 +301,57 @@ test("grok host does not reject a non-xai provider before ACP capabilities", asy
 });
 
 test("grok host rejects a model absent from typed ACP capabilities", async () => {
-  let prompted = false;
-  const host = createGrokRoleTurnHost({
-    sessionIdentity,
-    recordCapabilities: async () => {},
-    connect: async () => ({
-      async request(method) {
-        if (method === "initialize") return { _meta: { modelState: { availableModels: [{ modelId: "grok-4.6" }] } } };
-        prompted = true;
-        return {};
-      },
-      notify() {},
-      async close() {},
-    }),
-    inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
-    prepare: async () => prepared(async () => ({ accepted: true })),
-  });
+  const home = await mkdtemp(join(tmpdir(), "ak-grok-model-miss-"));
+  try {
+    let prompted = false;
+    const host = createGrokRoleTurnHost({
+      sessionIdentity,
+      recordCapabilities: async () => {},
+      connect: async () => ({
+        async request(method) {
+          if (method === "initialize") {
+            return {
+              agentCapabilities: { loadSession: true },
+              _meta: {
+                // Available set does not include the requested model.
+                modelState: { availableModels: [{ modelId: "grok-4.6" }] },
+                "x.ai/hooks": { blockingEvents: ["pre_tool_use"], decisions: ["deny"] },
+              },
+            };
+          }
+          prompted = true;
+          return {};
+        },
+        notify() {},
+        async close() {},
+      }),
+      inspect: async () => ({ privateActive: [], akActive: ["ak_judge_output"] }),
+      prepare: async () => prepared(async () => ({ accepted: true })),
+    });
 
-  assert.deepEqual(await host.executeTurn(request), {
-    code: null, stderr: "", timedOut: false,
-    knownFailure: {
-      cause: "activation",
-      identity: { name: "GrokHostModelMismatch", code: "host-model-mismatch" },
-      details: { provider: "xai", model: "grok-4.5" },
-    },
-  });
-  assert.equal(prompted, false);
+    assert.deepEqual(await host.executeTurn(turnRequest({
+      runDirectory: join(home, "run"),
+      home,
+      agentDir: join(home, "agent"),
+      model: { provider: "xai", model: "grok-4.5" },
+    })), {
+      code: null, stderr: "", timedOut: false,
+      knownFailure: {
+        cause: "activation",
+        identity: { name: "GrokHostModelMismatch", code: "host-model-mismatch" },
+        details: { provider: "xai", model: "grok-4.5" },
+      },
+    });
+    assert.equal(prompted, false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-serial-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let firstStarted!: () => void;
@@ -322,6 +363,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: `s${++session}` };
           if (method === "session/prompt") {
             promptCount++;
@@ -355,7 +397,7 @@ test("grok host serializes concurrent ACP prompts", async () => {
 test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-refusal-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const calls: string[] = [];
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -363,6 +405,7 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
       connect: async () => ({
         async request(method) {
           calls.push(method);
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "refused" };
           if (method === "session/prompt") return { stopReason: "refusal" };
           return {};
@@ -386,7 +429,7 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-retry-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const prompts: unknown[] = [];
     let rounds = 0;
     const host = createGrokRoleTurnHost({
@@ -394,6 +437,7 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method, params) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "retry-session" };
           if (method === "session/prompt") { prompts.push(params); return { stopReason: "end_turn" }; }
           return {};
@@ -419,7 +463,7 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
 test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-abort-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const cancels: unknown[] = [];
     const closes: string[] = [];
     const abort = new AbortController();
@@ -437,6 +481,7 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "abort-session" };
           if (method === "session/prompt") return promptHang;
           return {};
@@ -477,7 +522,7 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
 test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-preabort-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const promptCalls: unknown[] = [];
     const knownFailure = {
       cause: "output" as const,
@@ -489,6 +534,7 @@ test("grok host does not send session/prompt when abortSignal is already aborted
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method, params) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "pre-aborted-session" };
           if (method === "session/prompt") {
             promptCalls.push(params);
@@ -519,7 +565,7 @@ test("grok host does not send session/prompt when abortSignal is already aborted
 test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-drain-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const abort = new AbortController();
     const knownFailure = {
       cause: "output" as const,
@@ -537,6 +583,7 @@ test("grok host drains late in-flight prompt rejection after abort wins race", a
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "drain-session" };
           if (method === "session/prompt") {
             promptStarted();
@@ -571,7 +618,7 @@ test("grok host drains late in-flight prompt rejection after abort wins race", a
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
   const root = await mkdtemp(join(tmpdir(), "ak-grok-nosub-"));
   try {
-    const local = turnRequest({ runDirectory: join(root, "run") });
+    const local = turnRequest({ runDirectory: join(root, "run"), home: root, agentDir: join(root, "agent") });
     const cancels: unknown[] = [];
     const knownFailure = {
       cause: "output",
@@ -582,6 +629,7 @@ test("grok host reports typed round closure failure instead of accepting no subm
       recordCapabilities: async () => {},
       connect: async () => ({
         async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
           if (method === "session/new") return { sessionId: "s1" };
           return {};
         },
