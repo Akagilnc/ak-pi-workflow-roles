@@ -267,12 +267,14 @@ export async function dispatchPostAdmissionTurn<
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
     // #636 ticket-seat memory: one last-host page owns both last host and Grok native-home run.
-    // Ownership is recorded after the host returns a turn result (returned failure / retry /
-    // return-to-Grok). Pre-open throws must not claim host or native-home facts.
+    // Open is not turn return/throw: production Grok notes the open fact at bind success;
+    // last-host records when the host returned a result OR when native home actually opened.
+    // Pre-open throws claim nothing; post-open throws retain the opened run.
     // Side effects are gated by explicit ticket+seat binding — never by directory-outside-run guessing.
     let previousHost: string | undefined;
     let previousRunDirectory: string | undefined;
     let nativeHomeRunDirectory: string | undefined;
+    let openedNativeHomeRunDirectory: string | undefined;
     const liveHost = env.host;
     const principalCoordinates =
       admitted.principal === undefined
@@ -329,6 +331,15 @@ export async function dispatchPostAdmissionTurn<
       if (nativeHomeRunDirectory !== undefined) {
         turnRequest = { ...turnRequest, nativeHomeRunDirectory };
       }
+      // Capture the actual Grok open event from production isolation (bind success).
+      if (ticketSeatMemoryBound) {
+        turnRequest = {
+          ...turnRequest,
+          noteNativeHomeOpened: (runDirectory) => {
+            openedNativeHomeRunDirectory = runDirectory;
+          },
+        };
+      }
     } catch (error) {
       // last-host / prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return (await presentControlledFailure(
@@ -368,30 +379,28 @@ export async function dispatchPostAdmissionTurn<
       }
     }
 
-    let result: RoleTurnResult;
+    // Turn outcome and open fact are separate events. Discriminate throw value undefined.
+    let turnOutcome:
+      | { readonly kind: "returned"; readonly result: RoleTurnResult }
+      | { readonly kind: "thrown"; readonly error: unknown };
     try {
-      result = await env.roleTurnHost.executeTurn(turnRequest);
+      turnOutcome = {
+        kind: "returned",
+        result: await env.roleTurnHost.executeTurn(turnRequest),
+      };
     } catch (error) {
-      // Host threw without a turn result (e.g. Grok pre-native-open). last-host is
-      // owned only after the host has the turn — do not claim host/native-home yet.
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
+      turnOutcome = { kind: "thrown", error };
     }
 
-    // last-host authority: host returned a turn result (lawful or controlled failure).
-    // Grok: isolation run actually used. Non-Grok: preserve established Grok native home.
-    // Spans returned failure / same-run retry / return-to-Grok — not pre-open throws.
+    // last-host authority: host returned a turn result OR native home actually opened.
+    // Grok open fact comes from production bind (noteNativeHomeOpened), not from return/throw.
+    // Mock hosts that return without opening still record via the returned path.
+    // Pre-open throws: neither → no claim. Post-open throws: open fact → retain.
+    // Spans returned failure / same-run retry / return-to-Grok / post-open body+cleanup throws.
+    const hostEngaged =
+      turnOutcome.kind === "returned" || openedNativeHomeRunDirectory !== undefined;
     if (
+      hostEngaged &&
       liveHost !== undefined &&
       principalCoordinates !== undefined &&
       ticketSeatMemoryBound
@@ -401,7 +410,9 @@ export async function dispatchPostAdmissionTurn<
           principalCoordinates.sessionDirectory,
           liveHost,
           liveHost === "grok-build"
-            ? (nativeHomeRunDirectory ?? admitted.runDirectory)
+            ? (openedNativeHomeRunDirectory ??
+                nativeHomeRunDirectory ??
+                admitted.runDirectory)
             : previousRunDirectory,
         );
       } catch (error) {
@@ -409,8 +420,8 @@ export async function dispatchPostAdmissionTurn<
           admitted,
           {
             timedOut: false,
-            code: result.code,
-            stderr: result.stderr,
+            code: turnOutcome.kind === "returned" ? turnOutcome.result.code : null,
+            stderr: turnOutcome.kind === "returned" ? turnOutcome.result.stderr : "",
             thrown: error,
           },
           adapters,
@@ -419,6 +430,25 @@ export async function dispatchPostAdmissionTurn<
         )) as { exitCode: number; admitted: A; terminal: T };
       }
     }
+
+    if (turnOutcome.kind === "thrown") {
+      // Preserve original throw/cause (pre-open or post-open). last-host already
+      // retained open fact above when bind had succeeded.
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: turnOutcome.error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+
+    const result = turnOutcome.result;
 
     try {
       await writeFile(

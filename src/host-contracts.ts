@@ -172,6 +172,12 @@ export type RoleTurnRequest = {
    * Absent → isolate under runDirectory. Never a cross-host byte handoff.
    */
   readonly nativeHomeRunDirectory?: string;
+  /**
+   * Production Grok isolation notes the actual open event here after bind succeeds
+   * (#636). Open is not the same event as turn return/throw — post-admission uses
+   * this fact for last-host ownership instead of inferring open from the turn outcome.
+   */
+  readonly noteNativeHomeOpened?: (runDirectory: string) => void;
 };
 
 /** Turn result — only fields upper layers currently consume. */
