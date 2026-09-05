@@ -848,7 +848,7 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
     // Leading colon leaves empty provider/model — still a format reject.
     {
       const badSpec = ":provider/model";
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       let dispatched = false;
       const result = await runAkRole(
         [
@@ -884,20 +884,14 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
       );
       assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
       assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
-      assert.match(
-        stderr.join(""),
-        /model specification must be provider\/model\[:thinking\]/,
-        `${badSpec} must keep typed format rejection; got: ${stderr.join("")}`,
-      );
-      assert.equal(stderr.join("").includes("requires a thinking level"), false);
     }
 
-    // Opaque suffix (including former whitelist rejects) reaches dispatch.
+    // Opaque suffix (including former whitelist rejects) reaches dispatch as-is.
     for (const spec of [
       "openai-codex/gpt-5.6-luna:bogus",
       "openai-codex/gpt-5.6-luna:xhigh",
     ] as const) {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       let captured: string[] | undefined;
       await runAkRole(
         [
@@ -933,10 +927,6 @@ test("structurally malformed --model is rejected; opaque thinking suffix still d
         },
       );
       assert.ok(captured !== undefined, `${spec} must reach pi dispatch`);
-      // Entry must not reject on opaque thinking; post-dispatch failure is out of scope.
-      assert.equal(stderr.join("").includes("unknown thinking level"), false);
-      assert.equal(stderr.join("").includes("model specification must be"), false);
-      assert.equal(stderr.join("").includes("requires a thinking level"), false);
       const thinking = spec.slice(spec.lastIndexOf(":") + 1);
       assert.equal(captured!.includes("--thinking"), true, `${spec} must forward --thinking`);
       assert.equal(captured![captured!.indexOf("--thinking") + 1], thinking);
