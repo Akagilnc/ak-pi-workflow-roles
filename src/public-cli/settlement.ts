@@ -462,6 +462,7 @@ function classifyThrownFailureLeaf(error: unknown): ControlledFailure {
       cause: error.knownCause,
       diagnostic: error.message || error.name || "unrecognized exception",
       identity,
+      ...(error.details === undefined ? {} : { details: error.details }),
     };
   }
   if (error instanceof Error) {
