@@ -21,7 +21,6 @@ import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dis
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -836,115 +835,8 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
     },
   );
 });
-test("#307 navigator institutional: durable archivist session + typed 503 observation", async () => {
-  // Host-neutral factory (#590): institutional open over the real OpenAI-completions HTTP
-  // path. Fetch records the structured 503 Response; archivist JSONL and the run typed
-  // HTTP sink must both receive this attempt's status and payload.
-  await withHermeticHome({ prefix: "nav-raw-307-" }, async ({ home }) => {
-    const previousRun = process.env.AK_ROLE_RUN_DIR;
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runDir = join(home, "run");
-    const subject = join(project, "session-nav-raw");
-    await mkdir(runDir, { recursive: true });
-    const setting = join(home, "navigator-model.json");
-    // #604: parent principal under home/.ak-roles so navigator/archivist path-derive
-    // never falls through to real books/proj.
-    const bookKey = resolveBookKeyFromGit(project);
-    const parentSessionFile = persistActivationSessionFile({
-      home,
-      bookKey,
-      name: "nav-raw-parent",
-      cwd: project,
-    });
-    const parentSessionDir = dirname(parentSessionFile);
-    try {
-      process.env.AK_ROLE_RUN_DIR = runDir;
-      const faux = fauxProvider({ provider: "nav-http-307", api: "openai-completions" });
-      const model = faux.getModel();
-      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      faux.setResponses([
-        Object.assign(
-          fauxAssistantMessage("", { stopReason: "error", errorMessage: "upstream 503 body" }),
-          { statusCode: 503, status: 503, body: "{\"err\":\"navigator-raw\"}", code: "remote_503", errno: -54 },
-        ),
-      ]);
-      await withInstitutionalProviderFixture(faux, async () => {
-        const hostContext = {
-          cwd: project,
-          mode: "print" as const,
-          model: undefined,
-          sessionManager: {
-            getLeafEntry: () => undefined,
-            getLeafId: () => null,
-            getEntries: () => [],
-            getSessionDir: () => parentSessionDir,
-            getSessionFile: () => parentSessionFile,
-          },
-          abort() {},
-        };
-        const session = await createNativeNavigatorSessionFactory()({
-          context: hostContext,
-          subject,
-          modelSettingPath: setting,
-          tool: createNavigatorPrepareTool(() => {}),
-        });
-        try {
-          await session.setModel?.(`${model.provider}/${model.id}`, "off");
-          await assert.rejects(
-            () => session.prompt("navigator raw"),
-            (error: unknown) =>
-              error instanceof NavigatorUnavailableError
-              && error.unavailableSource === "transport"
-              && error.unavailableCause === "transport",
-          );
-          assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
-        } finally {
-          await session.dispose();
-        }
-        const diskFile = createRecordSession({
-          cwd: project,
-          kind: "navigator",
-          subject,
-          parent: {
-            getSessionFile: () => parentSessionFile,
-          },
-        }).getSessionFile();
-        assert.ok(diskFile, "navigator session must persist a session file via archivist entry");
-        const diskEntries = (await readFile(diskFile, "utf8"))
-          .trim()
-          .split("\n")
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as {
-            type?: string;
-            message?: {
-              role?: string;
-              errorMessage?: string;
-              statusCode?: number;
-              body?: unknown;
-              code?: unknown;
-              errno?: unknown;
-            };
-          });
-        const assistant = [...diskEntries].reverse().find(
-          (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
-        );
-        assert.equal(assistant?.message?.statusCode, 503);
-        assert.equal(assistant?.message?.body, "{\"err\":\"navigator-raw\"}");
-        assert.equal(assistant?.message?.code, "remote_503");
-        assert.equal(assistant?.message?.errno, -54);
-        assert.deepEqual(await readLatestTypedProviderHttpObservation(runDir), {
-          httpStatus: 503,
-          provider: "nav-http-307",
-        });
-      });
-    } finally {
-      if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-      else process.env.AK_ROLE_RUN_DIR = previousRun;
-    }
-  });
-});
+// #685: navigator institutional createAgentSession + archivist disk case culled — host surface.
+// Typed HTTP observation for aborted/SDK paths below stay on non-navigator seams.
 test("#307 aborted raw: session aborted stop projects held payload into error.json", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj-aborted-raw");
