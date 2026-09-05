@@ -95,13 +95,29 @@ export async function runPublicNotary(
 
   // #636: ticket from source-run → continue ticket+seat memory principal across runs.
   // Rebind before admitted mark so run-state session paths name the memory principal.
-  await rebindAdmittedToTicketSeatMemory({
+  // Existing nest → continuation.kind=resume so real hosts reopen native volume (Grok
+  // session/load; Pi/Grok hostTransition path handoff). Same-ticket rebind alone is not resume.
+  const memory = await rebindAdmittedToTicketSeatMemory({
     admitted,
     seat: "notary",
     principalAuthority: env.principalAuthority,
-    home: env.home,
   });
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  const continuation =
+    memory?.resumed === true
+      ? {
+          kind: "resume" as const,
+          prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+        }
+      : {
+          kind: "initial" as const,
+          prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+        };
 
   const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
@@ -113,10 +129,7 @@ export async function runPublicNotary(
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildNotaryTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
-    },
+    continuation,
   });
 
   return await runPostAdmissionOneShot({

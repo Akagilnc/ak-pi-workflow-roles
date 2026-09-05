@@ -13,6 +13,7 @@ test("Grok ACP session binding persists through the durable-principal authority"
     const principal = {};
     const durable: DurablePrincipalAuthority = {
       issue: () => principal,
+      seal: () => principal,
       async isAvailable() { return true; },
       decode(value) {
         assert.equal(value, principal);

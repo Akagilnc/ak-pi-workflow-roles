@@ -469,6 +469,59 @@ test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume kee
   });
 });
 
+test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps per-summons wall", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    // One continuous ticket-seat volume: summons A (1s wall) then B (2s wall).
+    // Whole-volume span would report ~62s for both (judge r1 probe); interval read must not.
+    const partA = gateToolSessionJsonl({
+      id: "summons-a",
+      startedAt: "2026-09-03T00:00:00.000Z",
+      endedAt: "2026-09-03T00:00:01.000Z",
+      toolName: "ak_inspector_output",
+      args: { status: "bounce", findings: ["a-only"] },
+      attemptEntryId: "attempt-a",
+    });
+    const partB = gateToolSessionJsonl({
+      id: "summons-b",
+      startedAt: "2026-09-03T00:01:00.000Z",
+      endedAt: "2026-09-03T00:01:02.000Z",
+      toolName: "ak_inspector_output",
+      args: { status: "pass", findings: [] },
+      attemptEntryId: "attempt-b",
+      includeHeader: false,
+    });
+    await writeFile(
+      join(auditorDir, "continuous-inspector.jsonl"),
+      `${partA}${partB}`,
+      "utf8",
+    );
+
+    const result = await runAnalyst(
+      {
+        mode: "issue",
+        projectRoot: ISSUE_PROJECT_ROOT,
+      },
+      { home },
+    );
+    const leg = gateSection(result.page).legs.find((row) => row.runId === GATE_JUDGE_RUN);
+    assert.ok(leg, "continuous multi-binding volume must remain readable");
+    assert.equal(leg.roundCount, 2);
+    assert.deepEqual(
+      leg.rounds.map((round) => ({
+        status: round.status,
+        officerWallMs: round.officerWallMs,
+        findingsCount: round.findingsCount,
+      })),
+      [
+        { status: "bounce", officerWallMs: 1_000, findingsCount: 1 },
+        { status: "pass", officerWallMs: 2_000, findingsCount: 0 },
+      ],
+    );
+  });
+});
+
 test("analyst gate-cycles via runAnalyst: rejected volume missing timestamps is omitted", async () => {
   await withTempHome(async (home) => {
     const auditorDir = judgeAuditorDir(home);
