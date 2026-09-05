@@ -78,7 +78,8 @@ async function withTempGit<T>(
   try {
     return await fn(root, home);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // home owns the nested repo root; reclaim the outer owned root.
+    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -409,4 +410,3 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
     });
   });
 });
-

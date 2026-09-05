@@ -200,8 +200,10 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       assert.deepEqual(restored.legs.map((leg) => leg.runId), [RUN_ID]);
     },
     async () => {
+      await rm(home, { recursive: true, force: true });
     },
     async () => {
+      if (repoParent !== "") await rm(repoParent, { recursive: true, force: true });
     },
   );
 });

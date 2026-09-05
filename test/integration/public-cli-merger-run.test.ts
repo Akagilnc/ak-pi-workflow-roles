@@ -114,6 +114,7 @@ async function withSharedHome<T>(run: (home: string, project: string) => Promise
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
+    await rm(home, { recursive: true, force: true });
   }
 }
 

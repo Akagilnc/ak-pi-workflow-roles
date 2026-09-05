@@ -85,7 +85,8 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     assert.equal(body.realHome, REAL_PASSWD_HOME);
     assert.equal(body.preserved, REAL_PASSWD_HOME);
   } finally {
-    rmSync(profileHome, { recursive: true, force: true });
+    // Own the outer spaced root (preload copy + profile home live under it).
+    rmSync(spacedRoot, { recursive: true, force: true });
   }
 });
 

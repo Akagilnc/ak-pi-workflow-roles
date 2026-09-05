@@ -24,7 +24,8 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   const home=await mkdtemp(worktreeTempPrefix("ak-416-"));
-  return await fn(home)
+  try { return await fn(home); }
+  finally { await rm(home,{recursive:true,force:true}); }
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","416@test.local"],{cwd:root});execFileSync("git",["config","user.name","416"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}

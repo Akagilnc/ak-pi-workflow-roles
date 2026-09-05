@@ -48,6 +48,7 @@ test("Reviewer workspace ignores a sibling ref created after pin read", async ()
     await owner.dispose(batch.workspaces[0]!);
   } finally {
     await owner.shutdown();
+    await rm(fixture.root, { recursive: true, force: true });
   }
 });
 
@@ -67,5 +68,6 @@ test("Reviewer workspace rejects a changed target HEAD", async () => {
     );
   } finally {
     await owner.shutdown();
+    await rm(fixture.root, { recursive: true, force: true });
   }
 });

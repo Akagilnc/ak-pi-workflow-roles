@@ -50,6 +50,7 @@ async function withHermeticLedgerRoot<T>(
       return await run({ home, cwd });
     },
     async () => {
+      await rm(root, { recursive: true, force: true });
     },
   );
 }

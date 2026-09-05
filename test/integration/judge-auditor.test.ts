@@ -121,5 +121,6 @@ test("Pi judge auditor preserves authentication failures", async () => {
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -31,7 +31,11 @@ const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtempFs(worktreeTempPrefix("ak-public-cli-parsers-"));
-  return await scenario(home);
+  try {
+    return await scenario(home);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 function seedGitProject(root: string): void {

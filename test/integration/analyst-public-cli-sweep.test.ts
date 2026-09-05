@@ -100,7 +100,9 @@ async function withSweepFixture<T>(
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
+    await rm(businessRepo, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
+    await rm(attachDir, { recursive: true, force: true });
   }
 }
 

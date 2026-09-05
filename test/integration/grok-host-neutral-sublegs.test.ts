@@ -101,6 +101,7 @@ async function withGrokRoot<T>(run: (ctx: {
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
   }
 }
 

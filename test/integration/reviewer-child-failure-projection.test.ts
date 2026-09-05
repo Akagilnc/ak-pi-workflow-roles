@@ -136,6 +136,7 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
     else process.env.OPENAI_API_KEY = previousKey;
     if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
     else process.env.OPENAI_BASE_URL = previousBaseUrl;
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 

@@ -121,6 +121,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
     if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -151,16 +152,16 @@ test("Grok opening materials inject soul exactly once", async () => {
       },
     });
     try {
+      // Once-injection: loadSoul return appears once in opening materials (no double preload).
+      // Do not lock the soul tag template presentation (#685 C3).
       const body = prepared.systemPrompt.body;
-      const occurrences = body.split(marker).length - 1;
-      assert.equal(occurrences, 1, `synthetic soul marker must appear once, saw ${occurrences}`);
-      // Empty methods + single before_agent_start inject → exact tagged body (no preloaded bundle).
-      assert.equal(body, `\n\n<judge_soul>\n${soul}\n</judge_soul>`);
+      assert.equal(body.split(marker).length - 1, 1);
     } finally {
       await prepared.dispose?.();
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -208,6 +209,7 @@ test("Grok dispose closes MCP server even when session_shutdown rejects", async 
     });
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -254,13 +256,12 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
       assert.equal(prepared.prompt, "/skill:tdd decide");
       // Coder agent-start carries no typed reading materials on this path.
       assert.deepEqual(prepared.systemPrompt.materials, []);
-      assert.equal(typeof prepared.systemPrompt.body, "string");
-      assert.ok(prepared.systemPrompt.body.length > 0);
     } finally {
       await prepared.dispose?.();
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -314,6 +315,7 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
     process.exitCode = priorExitCode;
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -394,6 +396,7 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
     process.exitCode = priorExitCode;
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -455,6 +458,7 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
     process.exitCode = priorExitCode;
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -514,6 +518,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -709,6 +714,7 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -784,6 +790,7 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -847,6 +854,7 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
     }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -935,6 +943,7 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -1036,6 +1045,7 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
     process.exitCode = priorExitCode;
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -1084,6 +1094,7 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
   } finally {
     if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -1197,6 +1208,7 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
     } finally {
       if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
       if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      await rm(root, { recursive: true, force: true });
     }
   } finally {
     process.exitCode = priorExitCode;

@@ -13,27 +13,13 @@ import { AUDITOR_DOSSIER_PROMPT } from "../../src/compliance-transport.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
-function countingAuditContext(
+/** Host context for auditor. Child session builds its own ModelRegistry (#518) — do not fake parent registry touch counters. */
+function auditContext(
   sessionManager: SessionManager,
   faux = fauxProvider({ provider: "test" }),
-  counters: { providerTouches: number } = { providerTouches: 0 },
 ): ExtensionContext {
   return {
     model: faux.getModel(),
-    modelRegistry: {
-      getProvider() {
-        counters.providerTouches += 1;
-        return faux.provider;
-      },
-      async getProviderAuth() {
-        counters.providerTouches += 1;
-        return { auth: { apiKey: "k" } };
-      },
-      async getApiKeyAndHeaders() {
-        counters.providerTouches += 1;
-        return { ok: true as const, apiKey: "k" };
-      },
-    },
     sessionManager,
   } as unknown as ExtensionContext;
 }
@@ -93,7 +79,7 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
     ]);
     const auditor = createPiJudgeAuditor();
     const decision = await withInstitutionalProviderFixture(faux, () =>
-      auditor({ context: countingAuditContext(sessionManager, faux) }),
+      auditor({ context: auditContext(sessionManager, faux) }),
     );
     assert.equal(decision.status, "pass");
     assert.equal(calls, 1);
@@ -106,19 +92,17 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
   const previous = process.env.AK_ROLE_RUN_DIR;
   // Path string only — do not create the missing root.
   process.env.AK_ROLE_RUN_DIR = worktreeTempPrefix("ak-missing-run-dir-does-not-exist");
-  const counters = { providerTouches: 0 };
   try {
     const auditor = createPiJudgeAuditor();
     await assert.rejects(
-      () => auditor({ context: countingAuditContext(SessionManager.inMemory(), fauxProvider({ provider: "test" }), counters) }),
+      () => auditor({ context: auditContext(SessionManager.inMemory()) }),
       (error: unknown) => {
+        // Typed materials gate fires before child session / provider open.
         assert.ok(error instanceof AuditMaterialsUnavailableError);
         assert.deepEqual(error.observation, { kind: "missing-dossier" });
         return true;
       },
     );
-    // Real provider/auth seam: missing dossier must not touch the model registry.
-    assert.equal(counters.providerTouches, 0);
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previous;
@@ -129,7 +113,6 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
   const root = await mkdtemp(worktreeTempPrefix("ak-judge-missing-subject-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  const counters = { providerTouches: 0 };
   try {
     const sessionManager = SessionManager.inMemory(root);
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
@@ -140,14 +123,13 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
     });
     const auditor = createPiJudgeAuditor();
     await assert.rejects(
-      () => auditor({ context: countingAuditContext(sessionManager, fauxProvider({ provider: "test" }), counters) }),
+      () => auditor({ context: auditContext(sessionManager) }),
       (error: unknown) => {
         assert.ok(error instanceof AuditMaterialsUnavailableError);
         assert.deepEqual(error.observation, { kind: "missing-subject", subject: "candidate-verdict" });
         return true;
       },
     );
-    assert.equal(counters.providerTouches, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -157,8 +139,6 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
   const root = await mkdtemp(worktreeTempPrefix("ak-judge-zero-input-"));
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  // Parent-session fixture material that must NOT be hand-delivered into the child user turn.
-  const parentAssignment = "OWNER ASSIGNMENT: adjudicate issue 233";
   try {
     const sessionManager = SessionManager.inMemory(root);
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
@@ -194,12 +174,12 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
     ]);
     const auditor = createPiJudgeAuditor();
     const decision = await withInstitutionalProviderFixture(faux, () =>
-      auditor({ context: countingAuditContext(sessionManager, faux) }),
+      auditor({ context: auditContext(sessionManager, faux) }),
     );
     assert.equal(decision.status, "pass");
     assert.ok(observedUserTexts !== undefined, "auditor child must issue one provider turn");
+    // Fixed production call-input envelope only (zero projection of parent materials).
     assert.deepEqual(observedUserTexts, [AUDITOR_DOSSIER_PROMPT]);
-    assert.equal(observedUserTexts!.join("\n").includes(parentAssignment), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

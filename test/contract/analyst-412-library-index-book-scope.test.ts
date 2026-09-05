@@ -262,5 +262,7 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
     ]);
   } finally {
     process.chdir(previousCwd);
+    await rm(home, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
   }
 });

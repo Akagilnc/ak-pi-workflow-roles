@@ -89,5 +89,6 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
     await configured.close();
   } finally {
     await Promise.allSettled(connections.map((connection) => connection.close()));
+    await rm(home, { recursive: true, force: true });
   }
 });

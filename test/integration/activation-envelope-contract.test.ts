@@ -347,7 +347,7 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       else process.env.GIT_WORK_TREE = previousGitWorkTree;
     }
   } finally {
-    /* outside worktree: leave for OS */
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -394,7 +394,7 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
       },
     );
   } finally {
-    /* outside worktree: leave for OS */
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

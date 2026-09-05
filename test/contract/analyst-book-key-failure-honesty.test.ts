@@ -47,6 +47,7 @@ test("resolveAnalystBookKey: git executable unavailable stays loud ENOENT, never
     );
   } finally {
     process.env.PATH = realPath;
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -55,12 +56,9 @@ test("resolveAnalystBookKey: existing plain non-git directory keeps the establis
   // nonzero with its own "not a git repository" diagnostic — a *confirmed*
   // no-repo verdict at the single classification owner — so the legitimate
   // `root:<identity>` fallback applies exactly as adjudicated in r4.
-  const dir = mkdtempSync(worktreeTempPrefix("analyst-book-key-"));
-  try {
-    assert.equal(resolveAnalystBookKey(dir), `root:${physicalPathIdentity(dir)}`);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  // Must live outside this git worktree; /tmp isolation root is not deleted (r12/r6).
+  const dir = mkdtempSync(join("/tmp", "analyst-book-key-nongit-"));
+  assert.equal(resolveAnalystBookKey(dir), `root:${physicalPathIdentity(dir)}`);
 });
 
 test("resolveAnalystBookKey: dubious-ownership exit 128 stays loud with its real cause, never a root: key (#413 r2 U5)", () => {
@@ -101,5 +99,7 @@ test("resolveAnalystBookKey: dubious-ownership exit 128 stays loud with its real
     );
   } finally {
     process.env.PATH = realPath;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(bin, { recursive: true, force: true });
   }
 });

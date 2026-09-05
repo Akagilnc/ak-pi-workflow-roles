@@ -1,4 +1,3 @@
-import { tmpdir } from "node:os";
 // #420 整改：自 test/contract/analyst-entry.test.ts 按性质移出（构建产物 + 起真子进程
 // 跑公开 ak-role bin，不属开发内环快档）。契约不变：公开 bundle 从单一产物可达
 // B1-B4 四个 metric family，且无 sibling family 目录。
@@ -8,6 +7,7 @@ import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import type {
   AnalystAcceptanceSuccessReworkSection,
@@ -58,12 +58,11 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  // System tmpdir isolation (outside worktree): shallow bin path must not resolve
-  // into the package tree or /. r12 forbids external deletes — create-and-abandon.
-  const binDir = await mkdtemp(join(tmpdir(), "analyst-bundle-bin-"));
+  // Worktree-owned sibling roots: shallow bin path still outside package source tree.
+  const binDir = await mkdtemp(worktreeTempPrefix("analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
-  const project = await mkdtemp(join(tmpdir(), "analyst-bundle-cwd-"));
-  const profileHome = await mkdtemp(join(tmpdir(), "analyst-bundle-profile-"));
+  const project = await mkdtemp(worktreeTempPrefix("analyst-bundle-cwd-"));
+  const profileHome = await mkdtemp(worktreeTempPrefix("analyst-bundle-profile-"));
   await withBusinessRepo(async () => {
     try {
       const previousCwd = process.cwd();
@@ -109,7 +108,9 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
       assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
       assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
     } finally {
+      await rm(binDir, { recursive: true, force: true });
       await rm(project, { recursive: true, force: true });
+      await rm(profileHome, { recursive: true, force: true });
     }
   });
 });

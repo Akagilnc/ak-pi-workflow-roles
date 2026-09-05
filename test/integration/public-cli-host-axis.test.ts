@@ -30,7 +30,11 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 
 async function homeTest(fn: (home: string) => Promise<void>) {
   const home = await mkdtemp(worktreeTempPrefix("ak-host-axis-"));
-  await fn(home)
+  try {
+    await fn(home);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });

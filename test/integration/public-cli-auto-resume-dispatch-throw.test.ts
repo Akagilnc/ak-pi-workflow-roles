@@ -24,7 +24,8 @@ import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   const home=await mkdtemp(worktreeTempPrefix("ak-dispatch-throw-"));
-  return await fn(home)
+  try { return await fn(home); }
+  finally { await rm(home,{recursive:true,force:true}); }
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 

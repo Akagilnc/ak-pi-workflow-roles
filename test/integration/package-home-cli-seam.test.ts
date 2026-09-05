@@ -33,6 +33,7 @@ test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async 
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
+    rmSync(fakeTmpHome, { recursive: true, force: true });
   }
 });
 

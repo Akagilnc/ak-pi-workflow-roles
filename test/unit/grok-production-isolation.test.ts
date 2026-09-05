@@ -19,6 +19,7 @@ import {
   withProductionGrokIsolation,
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 /** Path whose auth.json rm fails — cleanup-failure oracle (errno is platform-local). */
@@ -46,22 +47,15 @@ async function withGrokFixtureRoots<T>(
 ): Promise<T> {
   const operatorHome = await seedOperatorHome();
   const runDirectory = await seedRunDirectory();
-  try {
-    return await run({ operatorHome, runDirectory });
-  } finally {
-    const failures: unknown[] = [];
-    for (const path of [operatorHome, runDirectory]) {
-      try {
-        await rm(path, { recursive: true, force: true });
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, "grok fixture cleanup failed");
-    }
-  }
+  return withPrimaryAwareCleanup(
+    () => run({ operatorHome, runDirectory }),
+    async () => {
+      await rm(operatorHome, { recursive: true, force: true });
+    },
+    async () => {
+      await rm(runDirectory, { recursive: true, force: true });
+    },
+  );
 }
 
 test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home under runDirectory", async () => {

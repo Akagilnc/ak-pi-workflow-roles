@@ -56,6 +56,7 @@ async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
+    await rm(home, { recursive: true, force: true });
   }
 }
 

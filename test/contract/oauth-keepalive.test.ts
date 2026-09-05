@@ -268,11 +268,11 @@ test(
   },
 );
 
-test("#351 error path: refresh rejection emits one warning with provider + error class; interval continues", async () => {
-  const warnings: string[] = [];
+test("#351 error path: refresh rejection emits one warning; interval continues", async () => {
+  let warningCount = 0;
   const originalWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
+  console.warn = (..._args: unknown[]) => {
+    warningCount += 1;
   };
 
   try {
@@ -296,13 +296,12 @@ test("#351 error path: refresh rejection emits one warning with provider + error
 
     await fireTick(ticks, 0);
     assert.equal(attempts, 1);
-    assert.equal(warnings.length, 1, "exactly one warning per failed tick/provider");
-    assert.equal(typeof warnings[0], "string");
+    assert.equal(warningCount, 1, "exactly one warning per failed tick/provider");
 
     // Interval still alive — next tick retries (no circuit breaker).
     await fireTick(ticks, 0);
     assert.equal(attempts, 2);
-    assert.equal(warnings.length, 2);
+    assert.equal(warningCount, 2);
 
     keepalive.stop();
     assert.equal(ticks.length, 0);
@@ -312,12 +311,11 @@ test("#351 error path: refresh rejection emits one warning with provider + error
 });
 
 test("#351 dual surface: ui.notify + console both available → exactly one visible warning", async () => {
-  const consoleWarnings: string[] = [];
-  const notifications: string[] = [];
+  let consoleWarningCount = 0;
   const notificationTypes: Array<string | undefined> = [];
   const originalWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
-    consoleWarnings.push(args.map(String).join(" "));
+  console.warn = (..._args: unknown[]) => {
+    consoleWarningCount += 1;
   };
 
   try {
@@ -338,8 +336,7 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
         },
       },
       ui: {
-        notify(message, type) {
-          notifications.push(message);
+        notify(_message, type) {
           notificationTypes.push(type);
         },
       },
@@ -347,11 +344,10 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
 
     await fireTick(ticks, 0);
     assert.equal(attempts, 1);
-    assert.equal(notifications.length, 1, "ui.notify must receive exactly one warning");
+    assert.equal(notificationTypes.length, 1, "ui.notify must receive exactly one warning");
     assert.equal(notificationTypes[0], "warning");
-    assert.equal(typeof notifications[0], "string");
     assert.equal(
-      consoleWarnings.length,
+      consoleWarningCount,
       0,
       "must not also console.warn when ui.notify is available",
     );
@@ -359,8 +355,8 @@ test("#351 dual surface: ui.notify + console both available → exactly one visi
     // No immediate retry / no circuit breaker — next natural tick tries again.
     await fireTick(ticks, 0);
     assert.equal(attempts, 2);
-    assert.equal(notifications.length, 2);
-    assert.equal(consoleWarnings.length, 0);
+    assert.equal(notificationTypes.length, 2);
+    assert.equal(consoleWarningCount, 0);
 
     keepalive.stop();
   } finally {
@@ -401,8 +397,8 @@ test("#351 notify throw: falls back once to console.warn with provider/class and
 
     await fireTick(ticks, 0);
     assert.equal(consoleArgs.length, 1, "exactly one console fallback when notify throws");
-    const [text, cause] = consoleArgs[0]!;
-    assert.equal(typeof text, "string");
+    // Route/cause identity only — do not lock warning presentation text (#685 C3).
+    const cause = consoleArgs[0]![1];
     assert.equal(cause, notifyBoom, "fallback must carry the notify throw cause");
 
     keepalive.stop();
