@@ -96,9 +96,8 @@ ak-role doctor --issue 115 "Diagnose this retained case."
 # 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
 ak-role merger --project /path/to/worktree "Reconcile the active merge."
 
-# 符宝郎——文书核验一份留存 source run；可选 --ticket 调起居录
+# 符宝郎——文书核验一份留存 source run；票号从 source-run admitted form 继承
 ak-role notary --source-run <runId@role|path>
-ak-role notary --source-run <runId@role|path> --ticket 582
 
 # 察院——直调复杂度与测试质量两轴
 ak-role inspector --attach ./change.patch "Review this material."
@@ -109,8 +108,8 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 # 游奕使——直调路线建议（有序的下一步角色候选）；自动出席不变
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
-# 给事中——票庭五问；可选 --ticket（起居郎流水线前序工序按票刷新起居录）
-ak-role countersign --ticket 582 --attach ./ticket.md "裁：本票是否足以开工。"
+# 给事中——票庭五问；票号经由 instruction 识别
+ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction
 ak-role gleaner-left --base main

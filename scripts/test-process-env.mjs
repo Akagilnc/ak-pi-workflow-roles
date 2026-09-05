@@ -13,13 +13,15 @@
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 /** Per-process default temp HOME for this test run (Scope 1). Not exported. */
 let defaultTestHome;
 let defaultTestHomeCleanupRegistered = false;
+/** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
+let sharedHermesBinDir;
 
 function registerDefaultTestHomeCleanup() {
   if (defaultTestHomeCleanupRegistered) return;
@@ -57,6 +59,42 @@ function redirectHomeEnv(env, home) {
   env.XDG_CACHE_HOME = join(home, ".cache");
 }
 
+/**
+ * Default hermes stub matching installHermesFixture resolver default
+ * (`{"assertion":"true-unbound"}`). Seat self-ticket (#635) makes hermes a
+ * four-seat runtime dependency; CI/Pi-only dispatch surfaces get this stub on
+ * PATH once per process. Tests that need a different face still prepend their
+ * own installHermesFixture bin ahead of this entry.
+ */
+function ensureSharedHermesFixtureBin() {
+  if (sharedHermesBinDir !== undefined) return sharedHermesBinDir;
+  const home = defaultIsolatedTestHome();
+  sharedHermesBinDir = join(home, ".ak-test-path-bin");
+  mkdirSync(sharedHermesBinDir, { recursive: true });
+  const hermesPath = join(sharedHermesBinDir, "hermes");
+  writeFileSync(
+    hermesPath,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ assertion: "true-unbound" }));
+process.exit(0);
+`,
+    "utf8",
+  );
+  chmodSync(hermesPath, 0o755);
+  return sharedHermesBinDir;
+}
+
+function withSharedHermesOnPath(env) {
+  // PATH omitted → leave omitted so spawn keeps Node platform-default lookup
+  // (explicit-internal PI_BINARY=bash case). Only decorate an already-present PATH.
+  if (env.PATH === undefined) return;
+  const bin = ensureSharedHermesFixtureBin();
+  const prior = env.PATH;
+  // Keep an existing leading installHermesFixture bin ahead of the shared stub.
+  if (prior.split(delimiter).includes(bin)) return;
+  env.PATH = prior.length > 0 ? `${bin}${delimiter}${prior}` : bin;
+}
+
 export function isolatedTestProcessEnv(options = {}) {
   const env = {
     ...(options.env ?? process.env),
@@ -67,6 +105,7 @@ export function isolatedTestProcessEnv(options = {}) {
     options.home !== undefined ? options.home : defaultIsolatedTestHome();
   redirectHomeEnv(env, home);
   if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
+  withSharedHermesOnPath(env);
   return env;
 }
 
@@ -82,6 +121,8 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   process.env.XDG_CONFIG_HOME = next.XDG_CONFIG_HOME;
   process.env.XDG_DATA_HOME = next.XDG_DATA_HOME;
   process.env.XDG_CACHE_HOME = next.XDG_CACHE_HOME;
+  if (next.PATH === undefined) delete process.env.PATH;
+  else process.env.PATH = next.PATH;
 
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
