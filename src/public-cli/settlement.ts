@@ -357,6 +357,22 @@ export function formatFailureStderrDiagnostic(failure: ControlledFailure): strin
   return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 
+/**
+ * #676 B: one cause face for public stderr — Error.message, else object JSON with
+ * status/body/headers when present, else String. Never wash objects to [object Object].
+ */
+export function formatErrorCauseDetail(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "object" && cause !== null) {
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return String(cause);
+    }
+  }
+  return String(cause);
+}
+
 /** Pre-admission structural rejection: stderr only, no run, no Terminal. Cause retained when present. */
 export function presentStructuralRejection(
   error: { message: string; cause?: unknown },
@@ -365,7 +381,7 @@ export function presentStructuralRejection(
   let message = error.message;
   const cause = error.cause;
   if (cause !== undefined) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = formatErrorCauseDetail(cause);
     if (detail.trim().length > 0) {
       message = `${message}; cause: ${detail}`;
     }

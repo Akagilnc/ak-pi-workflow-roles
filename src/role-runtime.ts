@@ -43,6 +43,7 @@ import {
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_TRANSPORT_FLAGS,
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
@@ -903,6 +904,10 @@ export function createRoleRuntimeExtension(
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    // Collector transport flags: shared envelope owns registration (ADR 0018 / #676 E).
+    for (const flag of COLLECTOR_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 

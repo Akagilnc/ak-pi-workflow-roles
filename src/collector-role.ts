@@ -1,3 +1,10 @@
+/**
+ * Collector business tools, soul/material assembly, and result projection.
+ * Registration flags, activation barrier, resource assembly (no-skills / no-context),
+ * sole-final seal, and failInfrastructure exit live on the shared envelope
+ * (ADR 0018 / #676 E). No private lifecycle state machine, no command-name or
+ * path-string heuristics.
+ */
 import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import type { Static } from "typebox";
 
@@ -69,6 +76,34 @@ export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
+/** Envelope-owned transport flags (ADR 0018 / #676 E). */
+export const COLLECTOR_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: "ak-collector-repo",
+    definition: Object.freeze({
+      description:
+        "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar).",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-collector-pr",
+    definition: Object.freeze({
+      description:
+        "Positive safe-integer pull request number for Collector.",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
+    name: "ak-collector-request-manifest",
+    definition: Object.freeze({
+      description:
+        "Path to the Collector v1 request manifest JSON file.",
+      type: "string" as const,
+    }),
+  }),
+] as const);
+
 const observeSchema = collectorObserveArgsSchema;
 const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
@@ -102,8 +137,6 @@ type CollectorActivation = {
   clock: CollectorClock;
 };
 
-/** Sole-final at the output execution seam (same shape as other terminating roles). */
-
 function buildMethodContext(activation: CollectorActivation): string {
   return [
     "<collector_method>",
@@ -126,81 +159,17 @@ export function createCollectorRoleRuntime(
   ): Promise<void>;
 } {
   let activation: CollectorActivation | undefined;
-  let inputCount = 0;
-  let lifecycleRegistered = false;
   let toolsRegistered = false;
   let firstDispatchDone = false;
+  let materialHooksRegistered = false;
 
-  pi.registerFlag("ak-collector-repo", {
-    description:
-      "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
-    type: "string",
-  });
-  pi.registerFlag("ak-collector-pr", {
-    description:
-      "Positive safe-integer pull request number for Collector. Supported profile: --no-skills, --no-extensions with only the explicit Collector package extension, no prompt templates/context files, one print/JSON prompt",
-    type: "string",
-  });
-  pi.registerFlag("ak-collector-request-manifest", {
-    description:
-      "Path to the Collector v1 request manifest JSON file. In Pi latest, late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
-    type: "string",
-  });
+  const ensureMaterialHooks = (): void => {
+    if (materialHooksRegistered) return;
+    materialHooksRegistered = true;
 
-  const ensureLifecycle = (): void => {
-    if (lifecycleRegistered) return;
-    lifecycleRegistered = true;
-
-    pi.on("input", (_event, _ctx) => {
-      if (activation === undefined) {
-        // role not active
-        return { action: "continue" as const };
-      }
-      if (inputCount >= 1) {
-        activation.ledger.latchFatal("通进司已拒绝后续输入");
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-        console.error("Collector rejected later input");
-        return { action: "handled" as const };
-      }
-      inputCount += 1;
-      // #676 A: pass through the real call task/attachments — do not rewrite to a fixed kickoff.
-      return { action: "continue" as const };
-    });
-
-    pi.on("before_agent_start", (event, ctx) => {
+    // Soul + method context assembly (business materials) — not lifecycle ownership.
+    pi.on("before_agent_start", (event) => {
       if (activation === undefined) return;
-
-      // Detectable ambient instruction resources on the supported prompt surface.
-      const options = event.systemPromptOptions;
-      if (options.skills && options.skills.length > 0) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到系统提示中的环境 skills",
-          ),
-          ctx,
-        );
-      }
-      if (options.contextFiles && options.contextFiles.length > 0) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到系统提示中的环境 context files",
-          ),
-          ctx,
-        );
-      }
-      if (
-        typeof options.appendSystemPrompt === "string" &&
-        options.appendSystemPrompt.trim().length > 0
-      ) {
-        hostActions.failInfrastructure(
-          activation.ledger.latchFatal(
-            "通进司检测到 appendSystemPrompt 漂移",
-          ),
-          ctx,
-        );
-      }
 
       if (!firstDispatchDone) {
         firstDispatchDone = true;
@@ -220,6 +189,7 @@ export function createCollectorRoleRuntime(
       };
     });
 
+    // Business operational bookkeeping on the ledger (not a private lifecycle gate).
     pi.on("tool_call", (event) => {
       if (activation === undefined) return;
       if (activation.ledger.fatal) {
@@ -252,15 +222,6 @@ export function createCollectorRoleRuntime(
     pi.on("tool_result", (event) => {
       if (activation === undefined) return;
       activation.ledger.completeOperational(event.toolCallId);
-    });
-
-    pi.on("session_shutdown", () => {
-      if (activation === undefined) return;
-      if (activation.ledger.fatal) {
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-      }
     });
   };
 
@@ -464,116 +425,86 @@ export function createCollectorRoleRuntime(
   return {
     async activate(ctx, event) {
       activation = undefined;
-      ensureLifecycle();
+      ensureMaterialHooks();
 
+      // Public turn host uses json; real-entry/print fixtures share the same tools.
       if (ctx.mode !== "print" && ctx.mode !== "json") {
-          throw new Error(
-            `Collector supports only print or json mode (got ${ctx.mode})`,
-          );
-        }
-        if (
-          event.reason === "fork" ||
-          event.reason === "reload"
-        ) {
-          throw new Error(
-            `Collector does not support session_start reason ${event.reason}`,
-          );
-        }
-
-        const soul = (await dependencies.loadSoul()).trim();
-        if (soul.length === 0) throw new Error("Collector soul is empty");
-
-        const repoFlag = pi.getFlag("ak-collector-repo");
-        const prFlag = pi.getFlag("ak-collector-pr");
-        const requestManifestFlag = pi.getFlag("ak-collector-request-manifest");
-        if (typeof repoFlag !== "string" || repoFlag.trim().length === 0) {
-          throw new Error("Collector requires --ak-collector-repo");
-        }
-        if (typeof prFlag !== "string" && typeof prFlag !== "number") {
-          throw new Error("Collector requires --ak-collector-pr");
-        }
-        const repository = parseCollectorRepository(repoFlag);
-        const prNumber = parseCollectorPrNumber(prFlag);
-        const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
-          ? await loadCollectorManifest(requestManifestFlag)
-          : emptyCollectorManifest();
-
-        // Detectable ambient command surface (skills/templates) when exposed.
-        const commands = pi.getCommands?.() ?? [];
-        const ambientCommands = commands.filter((command) => {
-          const name = command.name.toLowerCase();
-          return (
-            name.includes("skill") ||
-            name.includes("prompt") ||
-            name.startsWith("template")
-          );
-        });
-        if (ambientCommands.length > 0) {
-          throw new Error(
-            `Collector detected ambient instruction commands: ${
-              ambientCommands.map((c) => c.name).join(", ")
-            }`,
-          );
-        }
-
-        // Fail closed if a required name is already occupied before Collector registers.
-        const preExisting = pi.getAllTools();
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          const prior = preExisting.filter((tool) => tool.name === required);
-          if (prior.length > 0) {
-            throw new Error(`Collector required tool name collision: ${required}`);
-          }
-        }
-
-        registerTools();
-
-        const allTools = pi.getAllTools();
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          const matches = allTools.filter((tool) => tool.name === required);
-          if (matches.length === 0) {
-            throw new Error(`Collector required tool missing: ${required}`);
-          }
-          if (matches.length > 1) {
-            throw new Error(`Collector required tool name collision: ${required}`);
-          }
-          const tool = matches[0]!;
-          if (
-            dependencies.packageExtensionPath !== undefined &&
-            tool.sourceInfo?.path !== undefined &&
-            tool.sourceInfo.path !== dependencies.packageExtensionPath &&
-            !tool.sourceInfo.path.includes("role-runtime")
-          ) {
-            throw new Error(
-              `Collector required tool ${required} is overridden by ${tool.sourceInfo.path}`,
-            );
-          }
-        }
-
-        pi.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
-        const active = new Set(pi.getActiveTools());
-        for (const required of COLLECTOR_REQUIRED_TOOLS) {
-          if (!active.has(required)) {
-            throw new Error(`Collector failed to activate required tool ${required}`);
-          }
-        }
-        for (const name of active) {
-          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
-            throw new Error(`Collector active tool surface includes unexpected ${name}`);
-          }
-        }
-
-        const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
-        const transport = dependencies.createTransport();
-
-        const ledger = dependencies.createLedger(
-          { repository, prNumber, manifest },
-          clock,
-          ctx,
+        throw new Error(
+          `Collector supports only print or json mode (got ${ctx.mode})`,
         );
+      }
+      if (event.reason === "fork" || event.reason === "reload") {
+        throw new Error(
+          `Collector does not support session_start reason ${event.reason}`,
+        );
+      }
 
-        if (ledger.activationRecorded) {
-          firstDispatchDone = true;
+      const soul = (await dependencies.loadSoul()).trim();
+      if (soul.length === 0) throw new Error("Collector soul is empty");
+
+      // Flags registered by the shared envelope (COLLECTOR_TRANSPORT_FLAGS).
+      const repoFlag = pi.getFlag("ak-collector-repo");
+      const prFlag = pi.getFlag("ak-collector-pr");
+      const requestManifestFlag = pi.getFlag("ak-collector-request-manifest");
+      if (typeof repoFlag !== "string" || repoFlag.trim().length === 0) {
+        throw new Error("Collector requires --ak-collector-repo");
+      }
+      if (typeof prFlag !== "string" && typeof prFlag !== "number") {
+        throw new Error("Collector requires --ak-collector-pr");
+      }
+      const repository = parseCollectorRepository(repoFlag);
+      const prNumber = parseCollectorPrNumber(prFlag);
+      const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
+        ? await loadCollectorManifest(requestManifestFlag)
+        : emptyCollectorManifest();
+
+      // Typed tool-name uniqueness on the shared registration surface (no path heuristics).
+      const preExisting = pi.getAllTools();
+      for (const required of COLLECTOR_REQUIRED_TOOLS) {
+        const prior = preExisting.filter((tool) => tool.name === required);
+        if (prior.length > 0) {
+          throw new Error(`Collector required tool name collision: ${required}`);
         }
+      }
+
+      registerTools();
+
+      const allTools = pi.getAllTools();
+      for (const required of COLLECTOR_REQUIRED_TOOLS) {
+        const matches = allTools.filter((tool) => tool.name === required);
+        if (matches.length === 0) {
+          throw new Error(`Collector required tool missing: ${required}`);
+        }
+        if (matches.length > 1) {
+          throw new Error(`Collector required tool name collision: ${required}`);
+        }
+      }
+
+      pi.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
+      const active = new Set(pi.getActiveTools());
+      for (const required of COLLECTOR_REQUIRED_TOOLS) {
+        if (!active.has(required)) {
+          throw new Error(`Collector failed to activate required tool ${required}`);
+        }
+      }
+      for (const name of active) {
+        if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
+          throw new Error(`Collector active tool surface includes unexpected ${name}`);
+        }
+      }
+
+      const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
+      const transport = dependencies.createTransport();
+
+      const ledger = dependencies.createLedger(
+        { repository, prNumber, manifest },
+        clock,
+        ctx,
+      );
+
+      if (ledger.activationRecorded) {
+        firstDispatchDone = true;
+      }
 
       activation = {
         soul,

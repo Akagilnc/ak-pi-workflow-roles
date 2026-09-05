@@ -292,6 +292,141 @@ export async function listPullRequestNumbersByCommit(
   return parsePullRequestNumberList(parseJson(response.bodyText, path), path);
 }
 
+/**
+ * Online association for a structured ticket number (#676 D1):
+ * - Number is itself a pull request → that PR.
+ * - Number is an issue → PRs linked via timeline cross-reference / closed-by.
+ * Transport/HTTP/JSON failures throw with true cause.
+ * 404 / empty association → [].
+ */
+export async function listPullRequestNumbersByTicket(
+  runner: GhApiRunner,
+  input: {
+    readonly owner: string;
+    readonly repo: string;
+    readonly ticketNumber: number;
+    readonly signal?: AbortSignal;
+  },
+): Promise<number[]> {
+  const issuePath = `/repos/${input.owner}/${input.repo}/issues/${input.ticketNumber}`;
+  const issueResponse = await runner(
+    ["api", "--hostname", "github.com", "--include", "-X", "GET", issuePath],
+    input.signal === undefined ? {} : { signal: input.signal },
+  );
+  if (issueResponse.status === 404) return [];
+  if (issueResponse.status < 200 || issueResponse.status >= 300) {
+    throw new Error(`GitHub ${issuePath} failed with HTTP ${issueResponse.status}`, {
+      cause: {
+        endpoint: issuePath,
+        status: issueResponse.status,
+        headers: issueResponse.headers,
+        body: issueResponse.bodyText,
+      },
+    });
+  }
+  const issueRaw = parseJson(issueResponse.bodyText, issuePath);
+  if (!isRecord(issueRaw)) {
+    throw new Error(`GitHub ${issuePath} payload is not an object`);
+  }
+  // Issues endpoint returns PRs too — own-key pull_request means the number is the PR.
+  if (Object.hasOwn(issueRaw, "pull_request")) {
+    return [parseCollectorPrNumber(issueRaw["number"] ?? input.ticketNumber)];
+  }
+
+  // Linked PRs: GraphQL closed-by + cross-referenced PR sources (existing gh runner seam).
+  const query = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      closedByPullRequestsReferences(first: 50) { nodes { number } }
+      timelineItems(first: 100, itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT]) {
+        nodes {
+          __typename
+          ... on CrossReferencedEvent {
+            source { ... on PullRequest { number } }
+          }
+          ... on ConnectedEvent {
+            subject { ... on PullRequest { number } }
+          }
+        }
+      }
+    }
+  }
+}`;
+  const args = [
+    "api",
+    "graphql",
+    "--hostname",
+    "github.com",
+    "--include",
+    "-f",
+    `query=${query}`,
+    "-f",
+    `owner=${input.owner}`,
+    "-f",
+    `repo=${input.repo}`,
+    "-F",
+    `number=${input.ticketNumber}`,
+  ];
+  const gqlResponse = await runner(
+    args,
+    input.signal === undefined ? {} : { signal: input.signal },
+  );
+  if (gqlResponse.status < 200 || gqlResponse.status >= 300) {
+    throw new Error(`GitHub GraphQL issue→PR failed with HTTP ${gqlResponse.status}`, {
+      cause: {
+        endpoint: "graphql",
+        status: gqlResponse.status,
+        headers: gqlResponse.headers,
+        body: gqlResponse.bodyText,
+      },
+    });
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(gqlResponse.bodyText);
+  } catch (error) {
+    throw new Error("GitHub GraphQL issue→PR returned malformed JSON", { cause: error });
+  }
+  if (!isRecord(payload)) {
+    throw new Error("GitHub GraphQL issue→PR payload is not an object");
+  }
+  if (payload.errors !== undefined) {
+    throw new Error(`GitHub GraphQL issue→PR errors: ${JSON.stringify(payload.errors).slice(0, 600)}`, {
+      cause: { body: gqlResponse.bodyText, errors: payload.errors },
+    });
+  }
+  const data = payload.data;
+  if (!isRecord(data)) return [];
+  const repository = data["repository"];
+  if (!isRecord(repository)) return [];
+  const issue = repository["issue"];
+  if (!isRecord(issue)) return [];
+  const numbers: number[] = [];
+  const closedBy = issue["closedByPullRequestsReferences"];
+  if (isRecord(closedBy) && Array.isArray(closedBy["nodes"])) {
+    for (const node of closedBy["nodes"]) {
+      if (isRecord(node) && typeof node["number"] === "number") {
+        numbers.push(parseCollectorPrNumber(node["number"]));
+      }
+    }
+  }
+  const timeline = issue["timelineItems"];
+  if (isRecord(timeline) && Array.isArray(timeline["nodes"])) {
+    for (const node of timeline["nodes"]) {
+      if (!isRecord(node)) continue;
+      const source = node["source"];
+      if (isRecord(source) && typeof source["number"] === "number") {
+        numbers.push(parseCollectorPrNumber(source["number"]));
+      }
+      const subject = node["subject"];
+      if (isRecord(subject) && typeof subject["number"] === "number") {
+        numbers.push(parseCollectorPrNumber(subject["number"]));
+      }
+    }
+  }
+  return [...new Set(numbers)];
+}
+
 let commentFailureEvidence = 0;
 function commentFailureCause(error: unknown) {
   return {
@@ -347,11 +482,8 @@ export function normalizePullRequest(raw: unknown): GitHubPullRequest {
   const mergedFlag = raw["merged"] === true
     || (typeof raw["merged_at"] === "string" && raw["merged_at"].length > 0);
   const rawState = requireString(raw["state"], "state").toUpperCase();
-  const state = mergedFlag
-    ? "MERGED"
-    : rawState === "OPEN" || rawState === "open"
-      ? "OPEN"
-      : rawState;
+  // After toUpperCase the only OPEN spelling is "OPEN"; keep MERGED vs CLOSED distinction.
+  const state = mergedFlag ? "MERGED" : rawState;
   const htmlUrl = typeof raw["html_url"] === "string"
     ? raw["html_url"]
     : `https://github.com/unknown/unknown/pull/${number}`;

@@ -2,7 +2,10 @@ import type {
   GitHubMachineIdentity,
 } from "./collector-github.ts";
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
+import type { CollectorSubmissionProjection } from "./package-contracts/collector-output.ts";
 import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
+
+export type { CollectorSubmissionProjection };
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
@@ -50,26 +53,6 @@ export type CollectorIdentityGroup = {
 export type ExtractedCollectorIdentityGroup = CollectorIdentityGroup & {
   attendance: true;
   findings: CollectorFinding[];
-};
-
-/**
- * #676 C: structured projection facts distinguishing readable-empty from
- * original-submission content that could not be projected into bound findings /
- * unfinished reasons. No body copy — downstream opens the session 正本.
- */
-export type CollectorSubmissionProjection = {
-  /** How the findings key appeared on the original candidate. */
-  findingsSource: "absent" | "array" | "unreadable";
-  /** Count of findings successfully bound to stored evidence. */
-  findingsProjectedCount: number;
-  /** True when original findings content existed but was not fully projected. */
-  findingsUnprojected: boolean;
-  /** How the unfinishedReasons key appeared on the original candidate. */
-  unfinishedReasonsSource: "absent" | "array" | "unreadable";
-  /** Count of unfinished reason strings projected. */
-  unfinishedReasonsProjectedCount: number;
-  /** True when original unfinishedReasons content existed but was not fully projected. */
-  unfinishedReasonsUnprojected: boolean;
 };
 
 function identityKey(identity: GitHubMachineIdentity | null): string {
@@ -195,6 +178,10 @@ export function enrichCollectorFindings(input: {
   findingsProjectedCount: number;
   findingsUnprojected: boolean;
 } {
+  // Candidate present but not a record — content existed, none projected (#676 C).
+  if (input.candidate !== undefined && input.candidate !== null && candidateRecord(input.candidate) === undefined) {
+    return { findingsSource: "unreadable", findingsProjectedCount: 0, findingsUnprojected: true };
+  }
   const record = candidateRecord(input.candidate);
   if (record === undefined) {
     return { findingsSource: "absent", findingsProjectedCount: 0, findingsUnprojected: false };
@@ -216,7 +203,8 @@ export function enrichCollectorFindings(input: {
       unprojected = true;
       continue;
     }
-    const evidenceId = (raw as { evidenceId?: unknown }).evidenceId;
+    const item = raw as Record<string, unknown>;
+    const evidenceId = item.evidenceId;
     if (typeof evidenceId !== "string" || evidenceId.length === 0) {
       // Present item without a bindable pointer — keep gap fact, do not fabricate.
       unprojected = true;
@@ -237,8 +225,12 @@ export function enrichCollectorFindings(input: {
     if (group === undefined) {
       throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
     }
-    const category = (raw as { category?: unknown }).category;
-    const summary = (raw as { summary?: unknown }).summary;
+    // Bound finding keeps pointer; non-string category/summary are unprojected field gaps
+    // (pointer success ≠ full content projection) — #676 C / 3939511832.
+    const category = item.category;
+    const summary = item.summary;
+    if (Object.hasOwn(item, "category") && typeof category !== "string") unprojected = true;
+    if (Object.hasOwn(item, "summary") && typeof summary !== "string") unprojected = true;
     group.findings.push({
       identity,
       source: {
@@ -279,6 +271,9 @@ export function extractCollectorUnfinishedReasons(candidate: unknown): {
   source: CollectorSubmissionProjection["unfinishedReasonsSource"];
   unprojected: boolean;
 } {
+  if (candidate !== undefined && candidate !== null && candidateRecord(candidate) === undefined) {
+    return { reasons: undefined, source: "unreadable", unprojected: true };
+  }
   const record = candidateRecord(candidate);
   if (record === undefined || !Object.hasOwn(record, "unfinishedReasons")) {
     return { reasons: undefined, source: "absent", unprojected: false };

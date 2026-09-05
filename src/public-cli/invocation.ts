@@ -36,6 +36,7 @@ import {
   type CollectorRepository,
 } from "../collector-config.ts";
 import { resolveCollectorTarget } from "../collector-target.ts";
+import { ownerRepoFromGitHubRemoteUrl } from "./github-remote.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -1704,6 +1705,7 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
 /**
  * Resolve owner/repo from the project's `origin` remote (github.com only).
  * Supports https and SSH GitHub URL shapes; never scrapes instruction prose.
+ * Missing origin / non-github remote → usage. Git execution failure → true cause (exit 1).
  */
 export function resolveGitHubRemoteRepository(
   projectRoot: string,
@@ -1716,10 +1718,16 @@ export function resolveGitHubRemoteRepository(
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   } catch (error) {
-    throw new CliUsageError(
-      "collector requires a github.com origin remote or an explicit --repo owner/repo",
-      { cause: error },
-    );
+    // git remote get-url exit 2 = no such remote; other failures keep true cause.
+    if (isGitRemoteMissing(error)) {
+      throw new CliUsageError(
+        "collector requires a github.com origin remote or an explicit --repo owner/repo",
+        { cause: error },
+      );
+    }
+    throw new Error("collector git failed: cannot read origin remote URL", {
+      cause: error instanceof Error ? error : new Error(String(error)),
+    });
   }
   if (remoteUrl.length === 0) {
     throw new CliUsageError(
@@ -1741,37 +1749,11 @@ export function resolveGitHubRemoteRepository(
   }
 }
 
-function ownerRepoFromGitHubRemoteUrl(remoteUrl: string): string | undefined {
-  const trimmed = remoteUrl.trim();
-  // git@github.com:owner/repo.git — exact owner/repo identity only.
-  const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
-  if (scp) {
-    return `${scp[1]}/${stripGitSuffix(scp[2]!)}`;
-  }
-  // ssh://git@github.com/owner/repo(.git) — exact owner/repo identity only.
-  const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(
-    trimmed,
-  );
-  if (ssh) {
-    return `${ssh[1]}/${stripGitSuffix(ssh[2]!)}`;
-  }
-  // https://github.com/owner/repo(.git) and git://github.com/... — exact two-segment path.
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return undefined;
-  }
-  if (!/^github\.com$/i.test(parsed.hostname)) return undefined;
-  // Non-identity URL material (query/hash/extra path) is not a repository remote.
-  if (parsed.search !== "" || parsed.hash !== "") return undefined;
-  const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
-  if (parts.length !== 2) return undefined;
-  return `${parts[0]}/${stripGitSuffix(parts[1]!)}`;
-}
-
-function stripGitSuffix(name: string): string {
-  return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
+/** git remote get-url: exit 2 = no such remote on common git; treat as missing config. */
+function isGitRemoteMissing(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return status === 2 || status === 1;
 }
 
 export type AdmitCollectorInvocationOptions = {
@@ -1826,13 +1808,6 @@ export async function admitCollectorInvocation(
     repository = resolveGitHubRemoteRepository(projectRoot);
   }
 
-  const target = await resolveCollectorTarget({
-    projectRoot,
-    repository,
-    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
-  });
-  const prNumber = target.prNumber;
-
   // Validate optional request-manifest before freezing request materials.
   let manifest = emptyCollectorManifest();
   let manifestCanonicalJson: string | undefined;
@@ -1864,16 +1839,26 @@ export async function admitCollectorInvocation(
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
+  // #676 A: freeze task materials BEFORE target bind so issue/PR recognition can
+  // use real instruction + attachments with online association (not branch-only lock).
   const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
+  const instruction = options.instruction ?? "";
+  const instructionEmpty = instruction.trim() === "";
+
+  const target = await resolveCollectorTarget({
+    projectRoot,
+    repository,
+    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
+    instruction,
+    attachmentPaths: attachments.map((a) => a.frozenPath),
+  });
+  const prNumber = target.prNumber;
 
   let requestManifestPath: string | undefined;
   if (manifestCanonicalJson !== undefined) {
     requestManifestPath = join(runDirectory, "request-manifest.json");
     await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
   }
-
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
   const admitted = {
     role: "collector" as const,
     runId,
