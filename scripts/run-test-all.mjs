@@ -16,6 +16,8 @@ import { isolatedTestProcessEnv } from "./test-process-env.mjs";
 const HEAVYWEIGHT_MANIFEST = Object.freeze([
   // #685 retained shortest real-host/packaged tracers (no named true-run handoff yet).
   // concurrency=2: ordinary file-parallelism flakes / contends these.
+  "test/integration/public-cli-coder-installed-run.test.ts",
+  "test/integration/activation-envelope-contract.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",

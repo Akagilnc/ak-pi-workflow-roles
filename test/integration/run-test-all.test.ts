@@ -44,6 +44,8 @@ function readHostModelsHash(): string | null {
 
 /** Exact heavy set — independent expected literals, not runner import (#160; #685 slimmed). */
 const TICKET_HEAVYWEIGHT = [
+  "test/integration/public-cli-coder-installed-run.test.ts",
+  "test/integration/activation-envelope-contract.test.ts",
   "test/package/package-entrypoint-navigator.integration.test.ts",
   "test/package/package-entrypoint-cold-help.integration.test.ts",
   "test/package/package-entrypoint-observation.integration.test.ts",
