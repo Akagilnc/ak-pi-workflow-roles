@@ -416,13 +416,24 @@ export async function dispatchPostAdmissionTurn<
             : previousRunDirectory,
         );
       } catch (error) {
+        // Dual failure: host already threw AND last-host write failed.
+        // Keep both as AggregateError leaves — projection must not cover either.
+        // Single write failure (host returned): surface the write error alone.
+        const thrown =
+          turnOutcome.kind === "thrown"
+            ? new AggregateError(
+                [turnOutcome.error, error],
+                "host turn and ticket-seat last-host write failed",
+                { cause: turnOutcome.error },
+              )
+            : error;
         return (await presentControlledFailure(
           admitted,
           {
             timedOut: false,
             code: turnOutcome.kind === "returned" ? turnOutcome.result.code : null,
             stderr: turnOutcome.kind === "returned" ? turnOutcome.result.stderr : "",
-            thrown: error,
+            thrown,
           },
           adapters,
           env.principalAuthority,

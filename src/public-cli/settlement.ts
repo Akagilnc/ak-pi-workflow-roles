@@ -435,6 +435,87 @@ function isTypedActivationError(
   );
 }
 
+/** Flatten nested AggregateError leaves; non-aggregate values stay as one fact. */
+function flattenThrownFailureLeaves(error: unknown): unknown[] {
+  if (!(error instanceof AggregateError)) {
+    return [error];
+  }
+  const leaves: unknown[] = [];
+  for (const item of error.errors) {
+    leaves.push(...flattenThrownFailureLeaves(item));
+  }
+  return leaves;
+}
+
+/**
+ * Project one thrown value into a ControlledFailure leaf.
+ * AggregateError is handled by the caller (classifyThrownFailure) so nested
+ * concurrent facts are not washed into a generic AggregateError name/message.
+ */
+function classifyThrownFailureLeaf(error: unknown): ControlledFailure {
+  if (isTypedActivationError(error)) {
+    const identity = thrownIdentity(error);
+    if (error.failureCode !== undefined && identity.code === undefined) {
+      identity.code = error.failureCode;
+    }
+    return {
+      cause: error.knownCause,
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+    };
+  }
+  if (error instanceof Error) {
+    const identity = thrownIdentity(error);
+    return {
+      cause: "unrecognized",
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+    };
+  }
+  return {
+    cause: "unrecognized",
+    diagnostic: String(error),
+  };
+}
+
+/**
+ * Concurrent thrown failures (host + cleanup / last-host write, etc.):
+ * primary leaf owns cause/diagnostic/identity; remaining leaves stay as
+ * details.concurrentFailures so neither fact covers the other.
+ */
+function classifyThrownFailure(error: unknown): ControlledFailure {
+  if (!(error instanceof AggregateError)) {
+    return classifyThrownFailureLeaf(error);
+  }
+  const leaves = flattenThrownFailureLeaves(error);
+  if (leaves.length === 0) {
+    // Empty aggregate — retain the aggregate shell rather than invent a cause.
+    return classifyThrownFailureLeaf(error);
+  }
+  const primary = classifyThrownFailureLeaf(leaves[0]);
+  if (leaves.length === 1) {
+    return primary;
+  }
+  const concurrentFailures = leaves.slice(1).map((leaf) => {
+    const secondary = classifyThrownFailureLeaf(leaf);
+    return {
+      cause: secondary.cause,
+      diagnostic: secondary.diagnostic,
+      ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
+      ...(secondary.details === undefined ? {} : { details: secondary.details }),
+    };
+  });
+  return {
+    cause: primary.cause,
+    diagnostic: primary.diagnostic,
+    ...(primary.identity === undefined ? {} : { identity: primary.identity }),
+    details: {
+      ...(primary.details ?? {}),
+      concurrentFailures,
+    },
+  };
+}
+
 /**
  * Classify a controlled post-admission failure without washing unrecognized identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
@@ -442,6 +523,7 @@ function isTypedActivationError(
  * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
  * knownCause precedes timeout so a co-present typed provider/session identity is not
  * washed when the child also timed out. Cause is never inferred from stderr wording.
+ * AggregateError concurrent leaves keep primary identity and secondary facts in details.
  */
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
@@ -471,30 +553,7 @@ export function classifyPostAdmissionFailure(input: {
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   if (Object.hasOwn(input, "thrown")) {
-    const error = input.thrown;
-    if (isTypedActivationError(error)) {
-      const identity = thrownIdentity(error);
-      if (error.failureCode !== undefined && identity.code === undefined) {
-        identity.code = error.failureCode;
-      }
-      return {
-        cause: error.knownCause,
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    if (error instanceof Error) {
-      const identity = thrownIdentity(error);
-      return {
-        cause: "unrecognized",
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    return {
-      cause: "unrecognized",
-      diagnostic: String(error),
-    };
+    return classifyThrownFailure(input.thrown);
   }
   if (input.knownCause !== undefined) {
     const fallback =
