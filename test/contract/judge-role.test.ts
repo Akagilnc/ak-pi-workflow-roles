@@ -1,9 +1,10 @@
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
+import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
@@ -100,11 +101,6 @@ import {
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import {
-  parentInheritedSeats,
-  writeInstitutionalSeatTable,
-} from "../helpers/institutional-seat-table.ts";
-import type { InstitutionalResolutionPage } from "../helpers/institutional-seat-table.ts";
 import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
@@ -112,15 +108,13 @@ import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, wit
 // scope writes the page and manages env + temp dir per test — no global
 // install registry in the shared helper, one page writer reused everywhere.
 const activeRunDirs: string[] = [];
-function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"]): string {
+function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefined>): string {
+  void seats; // seat page deleted (#675); argument retained for call-site shape only.
   // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
   // #604: nest under temp `.ak-roles` so session/ledger path-derive never hits real home.
   const runName = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`;
   const ledger = createTempPackageHomeLedger({ prefix: "ak-judge-home-", runName });
   const runDirectory = ledger.runDirectory;
-  // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
-  // resolved promise is fire-and-forget, so the page is on disk immediately.
-  void writeInstitutionalSeatTable(runDirectory, seats);
   activeRunDirs.push(runDirectory);
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   return runDirectory;
@@ -129,14 +123,10 @@ function disposeInstitutionalRunDir(runDirectory: string): void {
   const index = activeRunDirs.indexOf(runDirectory);
   if (index !== -1) activeRunDirs.splice(index, 1);
   if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-  // Package home owns `.ak-roles/books/<book>/runs/<run>` — remove the temp home root.
-  const marker = `${sep}.ak-roles${sep}`;
-  const markerIdx = runDirectory.indexOf(marker);
-  const homeRoot = markerIdx >= 0 ? runDirectory.slice(0, markerIdx) : dirname(runDirectory);
-  rmSync(homeRoot, { recursive: true, force: true });
+  // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup (no directory delete).
 }
 async function withInstitutionalRunDir<T>(
-  seats: InstitutionalResolutionPage["seats"],
+  seats: Record<string, SeatSelection | undefined>,
   run: () => Promise<T>,
 ): Promise<T> {
   const runDirectory = installInstitutionalRunDir(seats);
@@ -168,7 +158,7 @@ afterEach(() => {
   }
 });
 
-// The child institutional session (openPiInstitutionalSession) builds its OWN child
+// The child institutional session (openPiInProcessSession) builds its OWN child
 // ModelRuntime that reads <PI_CODING_AGENT_DIR>/models.json — the parent ExtensionContext's
 // modelRegistry is no longer consulted (#518). So every harness that drives a gatekeeper /
 // officer child must register the faux provider in the ambient models.json and serve it over
@@ -224,7 +214,7 @@ async function registerInstitutionalProviderFixture(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    rmSync(tempAgentDir, { recursive: true, force: true });
+    // Owner 2026-09-05: leave temp agent dir under tmpdir for OS cleanup.
   });
 }
 
@@ -399,7 +389,6 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   const runDirectory =
     ownedExisting ?? installInstitutionalRunDir(parentInheritedSeats(model));
   if (ownedExisting !== undefined) {
-    void writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
   }
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
@@ -592,7 +581,7 @@ async function realEntryGateModelHarness(options: {
   catalog?: ReadonlyArray<{ provider: string; id: string }>;
   authFailIds?: ReadonlySet<string>;
   /** Already-produced resolution page seats the consumer reads (B-lane). */
-  seats?: InstitutionalResolutionPage["seats"];
+  seats?: Record<string, SeatSelection | undefined>;
 }) {
   const officer = options.officer ?? "inspector";
   const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
@@ -2574,7 +2563,7 @@ test(
         assert.ok(formatted.length > 0);
       });
     } finally {
-      await rm(modelRoot, { recursive: true, force: true });
+    // Owner 2026-09-05: leave under tmpdir for OS cleanup.
     }
   },
 );
@@ -2590,9 +2579,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
   const nestedRunDir = nestedLedger.runDirectory;
-  await writeInstitutionalSeatTable(nestedRunDir, {
-    auditor: { provider: "installed-auditor", model: "installed-auditor" },
-  });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {

@@ -837,5 +837,3 @@ export async function openPiInProcessSession(
   }
 }
 
-/** @deprecated Prefer openPiInProcessSession — name kept for historical call sites. */
-export const openPiInstitutionalSession = openPiInProcessSession;

@@ -188,11 +188,11 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
         (frozenReviewerReceipt as { specDisposition?: string }).specDisposition,
         "launched",
       );
-      assert.equal(frozenReviewerReceipt.reports?.standards?.text, "Standards finding count: 0.");
-      assert.equal(
-        frozenReviewerReceipt.reports?.spec?.text,
-        "Spec: fixed target satisfies the stated behavior.",
-      );
+      // Structured report presence only — no free-text / canned-prose locks (quality-law).
+      assert.equal(typeof frozenReviewerReceipt.reports?.standards?.text, "string");
+      assert.ok((frozenReviewerReceipt.reports?.standards?.text as string).length > 0);
+      assert.equal(typeof frozenReviewerReceipt.reports?.spec?.text, "string");
+      assert.ok((frozenReviewerReceipt.reports?.spec?.text as string).length > 0);
       // #495 S6: single accept — no auditor revise/resubmit loop.
       assert.deepEqual(frozenReviewerReceipt.amendments, REVIEWER_AMENDMENT_TRACE);
       assert.equal("aggregate" in frozenReviewerReceipt, false);
