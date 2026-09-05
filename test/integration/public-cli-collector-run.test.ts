@@ -196,6 +196,19 @@ else process.exit(2);
           group.findings.some((finding: any) => finding.pointer?.commentId === 91),
         ),
       );
+      // #676 D/C: submissionProjection reaches public Terminal; evidence pointer opens on receipt.
+      const terminalProjection = result.terminal?.roleOutcome.decisiveFacts.submissionProjection as
+        | Record<string, unknown>
+        | undefined;
+      assert.ok(terminalProjection, "Terminal must carry submissionProjection");
+      assert.equal(typeof terminalProjection.findingsProjectedCount, "number");
+      assert.equal(report.receipt.submissionProjection?.findingsSource, "array");
+      const finding = report.receipt.groups.flatMap((g: any) => g.findings)[0];
+      assert.ok(finding?.source?.evidenceId, "finding must carry evidenceId pointer");
+      assert.ok(
+        report.receipt.evidenceRecords.some((r: any) => r.evidenceId === finding.source.evidenceId),
+        "evidenceId must resolve on the sealed receipt volume",
+      );
       const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
       assert.equal(calls.some((call: any) => call.method === "POST"), false, "merged PR must not POST");
     } finally {
@@ -445,8 +458,137 @@ process.stdout.write('HTTP/1.1 502 Bad Gateway\\r\\ncontent-type: application/js
       });
       assert.notEqual(gitFail.exitCode, 2, gitStderr.join(""));
       assert.equal(gitFail.exitCode, 1, gitStderr.join(""));
-      assert.ok(gitStderr.join("").includes("collector git failed"), gitStderr.join(""));
+      // Error-fact channel: non-usage exit with a non-empty diagnostic (not wording laundry).
+      assert.ok(gitStderr.join("").trim().length > 0, gitStderr.join(""));
       assert.equal(gitFail.terminal, undefined);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});
+
+test("#676 A public Collector resolves issue task materials via online ticket→PR without --pr", { timeout: 120_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-issue-task-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project);
+    // Detached HEAD: branch association unavailable — materials + online ticket must bind.
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+    execFileSync("git", ["checkout", "--detach", sha], { cwd: project, stdio: "ignore" });
+
+    const logPath = resolve(home, "gh-calls.jsonl");
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const fs=require('node:fs');
+const args=process.argv.slice(2);
+const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
+const methodIdx=args.indexOf('-X'); const method=methodIdx>=0?args[methodIdx+1]:'GET';
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({method,path,args})+'\\n');
+if(method==='POST'){ process.stderr.write('unexpected-post'); process.exit(3); }
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+if(args.includes('graphql')){
+  ok({data:{repository:{issue:{closedByPullRequestsReferences:{nodes:[{number:679}]},timelineItems:{nodes:[]}}}}});
+  process.exit(0);
+}
+if(path.endsWith('/user')) ok({login:'collector-fixture'});
+else if(path.includes('/issues/676')&&!path.includes('/comments')) ok({number:676,title:'slice',body:'x'});
+else if(path.includes('/pulls/679')&&!path.includes('/reviews')&&!path.includes('/comments')) ok({number:679,state:'open',head:{sha:'issuehead'},updated_at:'2026-01-01T00:00:00Z',html_url:'https://github.com/acme/widgets/pull/679'});
+else if(path.includes('/reviews')) ok([{id:71,user:{login:'bot',type:'Bot',id:1},state:'COMMENTED',body:'from-issue-task',commit_id:'issuehead',submitted_at:'2026-01-01T00:01:00Z',html_url:'https://github.com/acme/widgets/pull/679#pullrequestreview-71'}]);
+else if(path.includes('/comments')||path.includes('/reactions')) ok([]);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets",
+        "Collect findings for #676",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-issue-task",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 90_000,
+        io: { stdout() {}, stderr() {} },
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.decisiveFacts.prNumber, 679);
+      const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
+      assert.ok(reportPath);
+      const report = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: any };
+      assert.equal(report.receipt.prNumber, 679);
+      const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      assert.equal(calls.some((call: any) => call.method === "POST"), false);
+      assert.ok(
+        calls.some((call: any) => typeof call.path === "string" && call.path.includes("/issues/676")),
+        "issue task must query the structured ticket online",
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    }
+  });
+});
+
+test("#676 A upstream head hit does not skip commit association conflict", { timeout: 60_000 }, async () => {
+  await withHermeticHome({ prefix: "ak-public-collector-short-circuit-" }, async ({ home }) => {
+    const project = resolve(home, "work");
+    const agentDir = resolve(home, ".pi", "agent");
+    const binDir = resolve(home, "bin");
+    await mkdir(project, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    seedProject(project);
+    execFileSync("git", ["checkout", "-b", "feature/conflict"], { cwd: project });
+    execFileSync("git", ["remote", "add", "fork", "https://github.com/contributor/widgets.git"], { cwd: project });
+    execFileSync("git", ["config", "branch.feature/conflict.remote", "fork"], { cwd: project });
+    execFileSync("git", ["config", "branch.feature/conflict.merge", "refs/heads/feature/conflict"], { cwd: project });
+
+    const logPath = resolve(home, "gh-calls.jsonl");
+    const gh = resolve(binDir, "gh");
+    await writeFile(gh, `#!/usr/bin/env node
+const fs=require('node:fs');
+const args=process.argv.slice(2);
+const path=args.filter(a=>a.startsWith('/')).at(-1)||'';
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({path})+'\\n');
+function ok(body){process.stdout.write('HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n'+JSON.stringify(body));}
+const decoded=decodeURIComponent(path);
+if(path.includes('pulls?head=') || (path.includes('/pulls?') && path.includes('head='))) ok([{number:100,head:{ref:'feature/conflict'}}]);
+else if(path.includes('/commits/') && path.endsWith('/pulls')) ok([{number:200}]);
+else process.exit(2);
+`, "utf8");
+    await chmod(gh, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    try {
+      const stderr: string[] = [];
+      const result = await runAkRole([
+        "collector", "--model", "ak-collector-offline/faux-1", "--thinking", "off",
+        "--project", project, "--repo", "acme/widgets",
+        "Conflicting head and commit association must require --pr.",
+      ], {
+        packageRoot, home, agentDir, cwd: project,
+        createRunId: () => "public-collector-short-circuit",
+        credentials: { "openai-codex": true, xai: false },
+        collectorExtraPiArgs: ["-e", resolve(packageRoot, "test/fixtures/collector-observe-provider.ts")],
+        collectorTimeoutMs: 30_000,
+        io: { stdout() {}, stderr: (text) => stderr.push(text) },
+      });
+      assert.equal(result.exitCode, 2, stderr.join(""));
+      assert.equal(result.terminal, undefined);
+      const calls = (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      assert.ok(calls.some((c: any) => typeof c.path === "string" && c.path.includes("pulls?") && c.path.includes("head=")), "must query head");
+      assert.ok(calls.some((c: any) => typeof c.path === "string" && c.path.includes("/commits/") && c.path.endsWith("/pulls")), "must also query commit association");
+      assert.equal(calls.some((c: any) => c.method === "POST"), false);
     } finally {
       if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     }

@@ -710,6 +710,8 @@ test("#676 C non-array/non-object findings are not shape-rejected; unprojected c
           findings: [
             "skip-me",
             { evidenceId: target.evidenceId, category: "", summary: "bound-summary" },
+            // Bound pointer with non-string summary: keep finding, mark unprojected (#676 C).
+            { evidenceId: target.evidenceId, category: 99, summary: { text: "nope" } },
             null,
             { summary: "no-pointer" },
           ],
@@ -720,13 +722,15 @@ test("#676 C non-array/non-object findings are not shape-rejected; unprojected c
   });
   assert.ok(mixed.receipt, "mixed findings array must seal with partial projection");
   const findings = mixed.receipt.groups.flatMap((group: any) => group.findings);
-  assert.equal(findings.length, 1);
+  assert.equal(findings.length, 2, "pointer-bound items project even when category/summary unreadable");
   assert.equal(findings[0].summary, "bound-summary");
   assert.equal(findings[0].category, "");
+  assert.equal(findings[1].summary, undefined);
+  assert.equal(findings[1].category, undefined);
   assert.deepEqual(mixed.receipt.unfinishedReasons, ["partial bot unfinished", "still-here"]);
   assert.equal(mixed.receipt.submissionProjection.findingsSource, "array");
   assert.equal(mixed.receipt.submissionProjection.findingsUnprojected, true);
-  assert.equal(mixed.receipt.submissionProjection.findingsProjectedCount, 1);
+  assert.equal(mixed.receipt.submissionProjection.findingsProjectedCount, 2);
   assert.equal(mixed.receipt.submissionProjection.unfinishedReasonsUnprojected, true);
   assert.equal(mixed.receipt.submissionProjection.unfinishedReasonsProjectedCount, 2);
 });

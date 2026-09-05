@@ -530,8 +530,8 @@ const COLLECTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Positive GitHub pull request number. Optional when the current branch uniquely associates to one PR; ambiguous targets require an explicit value.",
-      zh: "正整数 GitHub PR 号。当前分支唯一关联到一个 PR 时可省略；目标歧义时必须显式提供。",
+      en: "Positive GitHub pull request number. Optional when task materials and online association uniquely determine the PR (branch/HEAD, issue↔PR links, structured #N/URL refs); ambiguous or unknown targets require an explicit value.",
+      zh: "正整数 GitHub PR 号。任务材料与线上关联能唯一确定 PR 时可省略（分支/HEAD、issue↔PR 链接、结构化 #N/URL）；目标歧义或无法确定时必须显式提供。",
     },
   },
   {
@@ -1156,9 +1156,10 @@ const ROLE_COMMAND_HELP = {
   collector: {
     command: "collector",
     summary: "Collect GitHub PR review evidence.",
-    usage: ["ak-role collector --pr <number> [options] [instruction]"],
+    usage: ["ak-role collector [--pr <number>] [options] [instruction]"],
     examples: [
       "ak-role collector --pr 42 --repo owner/repository",
+      "ak-role collector --repo owner/repository \"Collect findings for #42\"",
       "ak-role collector --pr 42 --request-manifest ./requests.json",
     ],
   },
