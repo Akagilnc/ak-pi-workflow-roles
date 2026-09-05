@@ -31,7 +31,11 @@ import {
 } from "./run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./config.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
-import { presentFailureTerminal, presentStructuralRejection } from "./settlement.ts";
+import {
+  presentFailureTerminal,
+  presentStructuralRejection,
+  type SealedAcceptanceRedispatchDisposition,
+} from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
@@ -343,11 +347,12 @@ export async function runWithAutoResumeLoop<
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
   /**
-   * After a non-lawful terminal or dispatch throw, stop further auto-resume when a unique sealed
-   * accepted projection is already readable (publication miss must not redispatch
-   * and destroy the sealed read — #648 / #599 alignment).
+   * After a non-lawful terminal or dispatch throw, consult settlement-owned
+   * sealed-acceptance redispatch disposition (#672 / ADR 0080). Publication
+   * miss must not redispatch and destroy the sealed read (#648 / #599).
+   * Loop presents entry-specific terminals; it must not rebuild the gate.
    */
-  shouldStopAutoResume?: () => Promise<boolean>;
+  sealedAcceptanceDisposition?: () => Promise<SealedAcceptanceRedispatchDisposition>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -431,42 +436,30 @@ export async function runWithAutoResumeLoop<
       }
     }
 
-    // One sealed ledger authority before any redispatch (#648): shared for
-    // non-lawful return and direct throw. Authority throw fail-closes with
-    // preserved cause — never wash into unsealed redispatch. Only the sealed=true
-    // projection differs (present returned terminal vs throw-path synthetic).
-    // Fail-closed decision is independent of cause value: `throw undefined` is
-    // legal JS and must not fail open. One cause + endReason → one presentation.
-    if (options.shouldStopAutoResume !== undefined) {
-      let failClosed: { cause: unknown; endReason: string } | undefined;
-      let sealedStop = false;
-      try {
-        sealedStop = await options.shouldStopAutoResume();
-      } catch (authorityError) {
-        failClosed = {
-          cause: authorityError,
-          endReason: "sealed-acceptance authority failed closed",
-        };
-      }
-      if (failClosed === undefined && sealedStop) {
-        if (result !== undefined) {
+    // Settlement-owned sealed disposition before any redispatch (#648 / #672):
+    // shared for non-lawful return and direct throw. Only entry presentation
+    // differs (present returned terminal vs throw-path synthetic).
+    if (options.sealedAcceptanceDisposition !== undefined) {
+      const disposition = await options.sealedAcceptanceDisposition();
+      if (disposition.kind === "block") {
+        if (disposition.reason === "sealed-accepted" && result !== undefined) {
           const terminal = (result as { terminal?: TerminalResult }).terminal;
           if (terminal !== undefined) presentTerminal(terminal, options.io);
           return result;
         }
-        failClosed = {
-          cause: lastThrownError,
-          endReason: "sealed accepted projection already present",
-        };
-      }
-      if (failClosed !== undefined) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
-          causeError: failClosed.cause,
+          causeError:
+            disposition.reason === "authority-failed"
+              ? disposition.cause
+              : lastThrownError,
           errorFiles: retainedErrorFiles,
           autoResumeAttempts,
-          endReason: failClosed.endReason,
+          endReason:
+            disposition.reason === "authority-failed"
+              ? "sealed-acceptance authority failed closed"
+              : "sealed accepted projection already present",
           everyAttemptThrew,
         });
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
