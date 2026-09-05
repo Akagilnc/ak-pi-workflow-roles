@@ -31,7 +31,6 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -90,7 +89,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-336-business-"));
+  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-336-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -105,17 +104,15 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
-    await rm(businessRepo, { recursive: true, force: true });
   }
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-336-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-336-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -233,7 +230,6 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         ticketNumber: TICKET_C4,
         issueNumber: TICKET_C4,
       }, { home });
-      await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
       const previousCwd = process.cwd();
       process.chdir(repo);
@@ -337,7 +333,7 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
     const before = await snapshotAnalystDir(ledgerHome);
-    const nonGit = await mkdtemp(join(testTmpdir(), "analyst-336-nongit-"));
+    const nonGit = await mkdtemp(join(tmpdir(), "analyst-336-nongit-"));
     const previousCwd = process.cwd();
     process.chdir(nonGit);
     try {
@@ -349,7 +345,6 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
       assertSnapshotsEqual(before, after);
     } finally {
       process.chdir(previousCwd);
-      await rm(nonGit, { recursive: true, force: true });
     }
   });
 });

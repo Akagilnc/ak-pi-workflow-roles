@@ -40,7 +40,6 @@ import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -70,11 +69,10 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-resume-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-resume-"));
   try {
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -736,7 +734,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     // resume rebuilds the public report from sealed facts without redispatch.
     const reportPath = join(runDirectory, "artifacts", "report.json");
     assert.equal((await stat(reportPath)).isDirectory(), true);
-    await rm(reportPath, { recursive: true, force: true });
     const { io: rebuildIo } = captureIo();
     const rebuilt = await runAkRole(["resume", runId], {
       packageRoot,
@@ -1097,7 +1094,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     // The persisted principal survives project relocation and loss of Git topology.
     const movedProject = join(home, "moved-non-git-project");
     await rename(project, movedProject);
-    await rm(join(movedProject, ".git"), { recursive: true, force: true });
     const admittedBefore = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
     ) as {
@@ -1783,7 +1779,6 @@ test("#418 lease release stays best-effort when cleanup fails: residual lock lef
     await lease.release();
     // The failed release must leave the residual lock object on disk.
     await stat(lockPath);
-    await rm(lockPath, { recursive: true });
     // Best-effort continue semantics preserved: next acquire succeeds.
     const next = await acquireRunWriterLease(runDirectory);
     await next.release();
@@ -1806,7 +1801,6 @@ test("#418 lease release stays best-effort when the diagnostic sink throws", asy
     // Contract: release() resolves despite the throwing sink — no propagation.
     await lease.release();
     assert.equal(sinkCalls, 1);
-    await rm(lockPath, { recursive: true });
   });
 });
 

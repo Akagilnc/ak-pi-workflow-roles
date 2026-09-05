@@ -30,7 +30,6 @@ import {
   type AnalystOptionalMetricNumber,
   type AnalystOptionalTimestamp,
 } from "../../src/analyst-page.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -93,7 +92,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-c1-business-"));
+  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-c1-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -108,17 +107,15 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
   } finally {
-    await rm(businessRepo, { recursive: true, force: true });
   }
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-c1-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-c1-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -271,7 +268,6 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
         "runs",
         `${C1_ALPHA_RUN}@coder`,
       );
-      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
       await writeFile(
         join(runDir, "run-state.json"),
         `${JSON.stringify({
@@ -328,7 +324,6 @@ test("analyst reads publisher durable error.settlement fallback as terminal fail
         "runs",
         `${C1_ALPHA_RUN}@coder`,
       );
-      await rm(join(runDir, "artifacts"), { recursive: true, force: true });
       await writeFile(
         join(runDir, "error.settlement.json"),
         `${JSON.stringify({

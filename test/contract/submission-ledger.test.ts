@@ -20,7 +20,6 @@ import {
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function registerTool(
   root: string,
@@ -71,7 +70,7 @@ function registerTool(
 }
 
 async function fixture() {
-  const root = await mkdtemp(`${testTmpdir()}/ak-submission-ledger-`);
+  const root = await mkdtemp(`${tmpdir()}/ak-submission-ledger-`);
   execFileSync("git", ["init", "-q", root]);
   return { root, ...registerTool(root) };
 }
@@ -91,7 +90,6 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
   try { await run(f); } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(f.root, { recursive: true, force: true });
   }
 }
 

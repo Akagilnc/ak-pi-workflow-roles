@@ -1,0 +1,38 @@
+#!/Users/akagilnc/.hermes/node/bin/node
+const { appendFileSync, readFileSync, writeFileSync, existsSync } = require("node:fs");
+const recordPath = process.env.AK_TEST_ALL_RECORD;
+if (!recordPath) {
+  console.error("AK_TEST_ALL_RECORD missing");
+  process.exit(2);
+}
+const counterPath = recordPath + ".count";
+const n = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) : 0;
+writeFileSync(counterPath, String(n + 1));
+
+let homeProbe;
+if (process.env.AK_549_HOME_PROBE_SENTINEL && n === 0) {
+  const { mkdirSync } = require("node:fs");
+  const { dirname, join } = require("node:path");
+  const home = process.env.HOME;
+  const modelsPath = join(home, ".pi", "agent", "models.json");
+  const sentinelPath = join(home, process.env.AK_549_HOME_PROBE_SENTINEL);
+  mkdirSync(dirname(modelsPath), { recursive: true });
+  writeFileSync(modelsPath, JSON.stringify({ providers: { probe: true } }) + "\n");
+  writeFileSync(sentinelPath, "fixture-poison-sentinel");
+  homeProbe = {
+    sentinel: readFileSync(sentinelPath, "utf8"),
+    modelsWritten: existsSync(modelsPath),
+  };
+}
+appendFileSync(
+  recordPath,
+  JSON.stringify({
+    argv: process.argv.slice(1),
+    index: n,
+    home: process.env.HOME,
+    ...(homeProbe ? { homeProbe } : {}),
+  }) + "\n",
+);
+process.kill(process.pid, "SIGTERM");
+// Keep the event loop alive until the signal is delivered.
+setInterval(() => {}, 1000);

@@ -21,11 +21,10 @@ import test from "node:test";
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(testTmpdir(),"ak-dispatch-throw-"));
-  try{return await fn(home);}finally{await rm(home,{recursive:true,force:true});}
+  const home=await mkdtemp(join(tmpdir(),"ak-dispatch-throw-"));
+  return await fn(home)
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 

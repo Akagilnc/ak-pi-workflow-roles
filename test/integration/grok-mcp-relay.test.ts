@@ -8,7 +8,6 @@ import { createInterface } from "node:readline";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const relayPath = join(packageRoot, "src/grok/mcp-relay.mjs");
 
@@ -18,7 +17,7 @@ async function withRelay(
   handleUpstream: UpstreamHandler,
   run: (child: ReturnType<typeof spawn>, replies: AsyncIterator<string>) => Promise<void>,
 ): Promise<{ exitCode: number | null }> {
-  const dir = await mkdtemp(join(testTmpdir(), "ak-mcp-relay-"));
+  const dir = await mkdtemp(join(tmpdir(), "ak-mcp-relay-"));
   const socketPath = join(dir, "upstream.sock");
   const token = "relay-token";
   const server = createServer((socket) => {
@@ -51,7 +50,6 @@ async function withRelay(
     lines.close();
     child.kill("SIGTERM");
     server.close();
-    await rm(dir, { recursive: true, force: true });
   }
 }
 

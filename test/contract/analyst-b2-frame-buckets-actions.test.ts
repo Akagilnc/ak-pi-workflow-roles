@@ -19,7 +19,6 @@ import {
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -162,12 +161,11 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-b2-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-b2-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 

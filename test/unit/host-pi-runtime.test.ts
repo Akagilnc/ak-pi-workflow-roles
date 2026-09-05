@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -5,7 +6,6 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { ensureHostPiRuntimeResolvable, HOST_PROVIDED_PACKAGES } from "../../src/public-cli/host-pi-runtime.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function writePackage(dir: string, name: string, entryBody: string): string {
   mkdirSync(dir, { recursive: true });
@@ -20,7 +20,7 @@ function writePackage(dir: string, name: string, entryBody: string): string {
  * resolution would honestly see as local. /tmp has no such ambient peers here.
  */
 function makeIsolatedRoot(): string {
-  return mkdtempSync(join(testTmpdir(), "ak-host-pi-runtime-iso-"));
+  return mkdtempSync(join(tmpdir(), "ak-host-pi-runtime-iso-"));
 }
 
 /** A fake host Pi global install: pi-coding-agent with nested pi-ai and typebox, plus a bin shim. */
@@ -73,7 +73,6 @@ test("links every host-provided package from the host pi on PATH when local reso
       "host packages are linked, not copied",
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -90,7 +89,6 @@ test("leaves an install with locally resolvable packages untouched", () => {
       assert.equal(lstatSync(linkPath).isSymbolicLink(), false, `${name} must stay a real local install`);
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -103,7 +101,6 @@ test("fails loud when neither local packages nor a host pi exist", () => {
       /no host `pi` executable on PATH/,
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -124,6 +121,5 @@ test("ancestor node_modules under the package tree count as local presence", () 
       "must not rewrite package-own node_modules when ancestors already resolve",
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });

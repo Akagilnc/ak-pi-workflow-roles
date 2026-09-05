@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 /**
  * Detour cancellation propagation + terminal process failures.
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
@@ -14,7 +15,6 @@ import { runEngineDetourOnce } from "../../src/engine-detour.ts";
 import {
   createEngineDetourToolDefinition,
 } from "../../src/engine-detour-tool.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";
@@ -23,13 +23,12 @@ console.log("should-not-print");
 `;
 
 async function withHangCwd<T>(run: (cwd: string, argv: string[]) => Promise<T>): Promise<T> {
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-hang-"));
+  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-hang-"));
   const scriptPath = join(cwd, "hang.mjs");
   await writeFile(scriptPath, hangScript, "utf8");
   try {
     return await run(cwd, [process.execPath, scriptPath]);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
   }
 }
 
@@ -70,14 +69,13 @@ test("detour spawn failure stops through the cause-bearing failure seam", async 
     engineName: "kimi",
     fail(error) { throw error; },
   });
-  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-spawn-miss-"));
+  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-spawn-miss-"));
   try {
     await assert.rejects(
       tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),
       (error: unknown) => error instanceof Error && error.message.includes("ak-engine-definitely-missing-binary-xyz"),
     );
   } finally {
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 

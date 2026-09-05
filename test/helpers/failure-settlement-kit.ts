@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,25 +13,15 @@ import {
   exitCodeForTerminalOutcome,
   isLawfulTypedTerminalOutcome,
 } from "../../src/public-cli/settlement.ts";
-import { testTmpdir } from "./worktree-temp.ts";
 import type {
   ControlledFailureCause,
   TerminalArtifactRef,
   TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 
-export async function withTempHome<T>(
-  scenario: (home: string) => Promise<T>,
-  options: { prefix?: string } = {},
-): Promise<T> {
-  const home = await mkdtemp(
-    join(testTmpdir(), options.prefix ?? "ak-public-cli-fail-"),
-  );
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+export async function withTempHome<T>(scenario: (home: string) => Promise<T>, options: { prefix?: string } = {}): Promise<T> {
+  const home = await mkdtemp(join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"));
+  return await scenario(home);
 }
 
 export function captureIo() {

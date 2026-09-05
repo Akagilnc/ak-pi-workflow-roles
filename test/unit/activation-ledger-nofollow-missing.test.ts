@@ -19,10 +19,9 @@ import { join } from "node:path";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailable", async () => {
-  const home = mkdtempSync(join(testTmpdir(), "ak-ledger-nofollow-"));
+  const home = mkdtempSync(join(tmpdir(), "ak-ledger-nofollow-"));
   try {
     // Shim node:fs so production sees a platform without O_NOFOLLOW (exactly
     // the Windows shape): the constants object simply lacks the key.
@@ -81,6 +80,5 @@ test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailabl
       return (error as { code?: unknown }).code === "ENOENT";
     });
   } finally {
-    rmSync(home, { recursive: true, force: true });
   }
 });

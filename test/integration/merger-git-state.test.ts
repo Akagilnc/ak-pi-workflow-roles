@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test, { after } from "node:test";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -19,7 +18,7 @@ let baseTemplateRoot: string | undefined;
 let baseTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function baseTemplate() {
   baseTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-base-"));
+    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-base-"));
     baseTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
@@ -47,13 +46,12 @@ async function baseTemplate() {
 
 after(async () => {
   if (baseTemplateRoot === undefined) return;
-  await rm(baseTemplateRoot, { recursive: true, force: true });
   baseTemplateRoot = undefined;
 });
 
 async function conflictedRepo() {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-git-"));
+  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-git-"));
   // Two subprocesses to the conflicted in-progress merge state.
   execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
     stdio: "ignore",
@@ -100,7 +98,6 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
       false,
     );
   } finally {
-    await rm(fixture.cwd, { recursive: true, force: true });
   }
 });
 
@@ -118,7 +115,6 @@ test("production Merger Git seam rejects pre-existing tracked and untracked dirt
       const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
       assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false, dirt);
     } finally {
-      await rm(fixture.cwd, { recursive: true, force: true });
     }
   }
 });
@@ -154,7 +150,6 @@ test("production Merger Git seam computes resolutionChangedPaths across clean an
         false,
       );
     } finally {
-      await rm(fixture.cwd, { recursive: true, force: true });
     }
   }
 
@@ -174,14 +169,13 @@ test("production Merger Git seam computes resolutionChangedPaths across clean an
         ["conflict.txt", "source-only.txt"],
       );
     } finally {
-      await rm(fixture.cwd, { recursive: true, force: true });
     }
   }
 });
 
 test("production Merger Git seam reports no conflict set after a non-conflicting merge", async () => {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-clean-"));
+  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-clean-"));
   try {
     execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
       stdio: "ignore",
@@ -203,6 +197,5 @@ test("production Merger Git seam reports no conflict set after a non-conflicting
     git(cwd, "merge", "--no-commit", "--no-ff", "clean-source");
     assert.deepEqual((await createProductionMergerGitState(cwd).activeMerge()).unmergedPaths, []);
   } finally {
-    await rm(cwd, { recursive: true, force: true });
   }
 });

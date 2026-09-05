@@ -13,7 +13,6 @@ import test from "node:test";
 import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const REAL_PASSWD_HOME = userInfo().homedir;
 const PRELOAD = fileURLToPath(
@@ -26,7 +25,7 @@ test("parent process packageMachineHome still follows real user profile", () => 
 
 test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {
   // Spaced temp preload path: bare `--require $path` truncates; encoding must keep it one token.
-  const spacedRoot = mkdtempSync(join(testTmpdir(), "ak test user profile "));
+  const spacedRoot = mkdtempSync(join(tmpdir(), "ak test user profile "));
   const preloadPath = join(spacedRoot, "pre load.cjs");
   const profileHome = mkdtempSync(join(spacedRoot, "profile "));
   const callerNodeOptions = "--unhandled-rejections=strict";
@@ -85,7 +84,6 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     assert.equal(body.realHome, REAL_PASSWD_HOME);
     assert.equal(body.preserved, REAL_PASSWD_HOME);
   } finally {
-    rmSync(spacedRoot, { recursive: true, force: true });
   }
 });
 

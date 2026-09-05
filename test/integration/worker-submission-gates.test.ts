@@ -49,7 +49,6 @@ import {
   seedGitRepository,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 
@@ -71,7 +70,7 @@ async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-worker-gate-home-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-worker-gate-home-"));
   const root = await mkdtemp(join(home, "repo-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
@@ -79,7 +78,6 @@ async function withTempGit<T>(
   try {
     return await fn(root, home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -122,7 +120,6 @@ async function scrubPlanted(
 ): Promise<void> {
   chmodSync(planted.hookPath, 0o755);
   chmodSync(planted.hooksDir, 0o755);
-  await rm(planted.hooksDir, { recursive: true, force: true });
   try {
     git(cwd, ["config", "--worktree", "--unset", "core.hooksPath"]);
   } catch {
@@ -170,7 +167,7 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    const bare = await mkdtemp(join(testTmpdir(), "ak-worker-gate-bare-"));
+    const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
     try {
       const gate = bareGate(home);
       gate.arm(root);
@@ -201,7 +198,6 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       }, { seed: false });
     } finally {
-      await rm(bare, { recursive: true, force: true });
     }
   });
 });
@@ -305,7 +301,6 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.ok(existsSync(foreignHook), "unmarked same-named dir must survive");
       assert.equal(hooksPathOf(root), foreignDir);
       git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
-      await rm(foreignDir, { recursive: true, force: true });
 
       // Mixed dir: owned hook + unmarked sibling → clear hooksPath, drop owned file only;
       // foreign sibling and the non-empty directory must survive (ownership boundary).
@@ -317,7 +312,6 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.equal(existsSync(mixed.hookPath), false, "owned hook file must be removed");
       assert.ok(existsSync(sibling), "unmarked sibling file must survive");
       assert.ok(existsSync(mixed.hooksDir), "non-empty hooks dir must survive");
-      await rm(mixed.hooksDir, { recursive: true, force: true });
 
       // Multi-valued core.hooksPath: drop only owned matching values; keep all foreign.
       // Plain --unset exit 5 is multi-value OR absent — must not leave stale owned config.
@@ -341,7 +335,6 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.equal(existsSync(multiOwned.hookPath), false, "owned hook file must be removed");
       assert.ok(existsSync(foreignMultiHook), "foreign multi-value target must survive");
       git(root, ["config", "--worktree", "--unset-all", "core.hooksPath"]);
-      await rm(foreignMultiDir, { recursive: true, force: true });
       
       // Migrated core.bare / core.worktree stay (real path — fake path bricks git).
       const commonDir = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);

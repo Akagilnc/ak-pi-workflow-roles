@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -12,7 +13,6 @@ import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,7 +51,7 @@ interface ExtractedPack {
 
 async function extractPackedArtifact(): Promise<ExtractedPack> {
   const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-meta-"));
+  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-meta-"));
   try {
     await execFileAsync("tar", ["-xzf", pack.tarball, "-C", root]);
     const packageJson = JSON.parse(
@@ -70,7 +70,6 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
       paths: pack.files.map((file) => file.path),
     };
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
     throw error;
   }
 }
@@ -82,7 +81,6 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
 const extracted = await extractPackedArtifact();
 process.on("exit", () => {
   try {
-    rmSync(extracted.root, { recursive: true, force: true });
   } catch {
     // Best-effort temp cleanup; never mask test results.
   }

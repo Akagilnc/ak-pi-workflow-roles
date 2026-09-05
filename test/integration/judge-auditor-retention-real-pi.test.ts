@@ -88,7 +88,6 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
       const sitianAuditorPath = join(reportedParentDirectory, "auditor");
       const sitianRecordsPath = join(sitianAuditorPath, "records.jsonl");
       await mkdir(sitianAuditorPath, { recursive: true });
-      await rm(sitianRecordsPath, { recursive: true, force: true });
       await mkdir(sitianRecordsPath);
       const parentBytes = await readFile(parentFile);
       // Also replace parent principal with a directory so any residual session write still EISDIR.
@@ -101,9 +100,7 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         restored = true;
         if (restoreInterval !== undefined) clearInterval(restoreInterval);
         try { watcher?.close(); } catch {}
-        await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
-        try { await rm(sitianRecordsPath, { recursive: true, force: true }); } catch {}
       };
       const checkAndRestore = async () => {
         try {

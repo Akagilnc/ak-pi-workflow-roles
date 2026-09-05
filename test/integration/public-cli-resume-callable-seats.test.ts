@@ -49,13 +49,11 @@ import {
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "ak-resume-four-seats-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-resume-four-seats-"));
   try {
     return await scenario(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 

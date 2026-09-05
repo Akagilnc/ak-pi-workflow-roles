@@ -21,7 +21,6 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -238,12 +237,11 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(testTmpdir(), "analyst-gate-home-"));
+  const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
   } finally {
-    await rm(home, { recursive: true, force: true });
   }
 }
 
@@ -319,7 +317,6 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
 
     // Rejected/no-result historical terminals do not form rounds.
-    await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({
       mode: "issue",
@@ -591,12 +588,10 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/malformed JSONL record/, "malformed JSONL", home);
 
     // Plain file at auditor-roles path is damaged topology (ENOTDIR), not lawful zero.
-    await rm(auditorDir, { recursive: true, force: true });
     await writeFile(auditorDir, "not-a-directory\n", "utf8");
     await assertAuditorRolesUnreadable(/ENOTDIR/, "ENOTDIR topology", home);
 
     // Accepted gate receipt with inverted span must not silently omit the volume.
-    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_inverted_span.jsonl"),
@@ -612,7 +607,6 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/unusable timestamp span/, "inverted span", home);
 
     // Accepted gate receipt with blank status — shape refusal wash is forbidden.
-    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "o01_inspector_blank_status.jsonl"),
@@ -628,7 +622,6 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
     await assertAuditorRolesUnreadable(/missing usable status/, "blank status", home);
 
     // Accepted dispatch with unknown officer arg.
-    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_unknown_officer.jsonl"),
@@ -645,7 +638,6 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
 
     // Lawful province non-dispatch release (pass) must be readable — zero rounds,
     // never unreadable (#597). Unknown non-contract statuses stay loud above.
-    await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
       join(auditorDir, "d01_gatekeeper_province_pass.jsonl"),

@@ -15,7 +15,6 @@ import {
   persistGateSubmissionCandidate,
   readLatestToolCallLeaf,
 } from "../../src/auditor-dossier-tool.ts";
-import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const MARKER = "GATE-CANDIDATE-BODY-MARKER-632";
 
@@ -54,7 +53,7 @@ function memoryToolCallLeaf(args: Record<string, unknown>) {
 }
 
 test("persistGateSubmissionCandidate writes memory tool-call leaf to run artifact", () => {
-  const runDirectory = mkdtempSync(join(testTmpdir(), "ak-gate-candidate-"));
+  const runDirectory = mkdtempSync(join(tmpdir(), "ak-gate-candidate-"));
   headerOnlySession(runDirectory);
   const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
   const context = {
@@ -71,7 +70,7 @@ test("persistGateSubmissionCandidate writes memory tool-call leaf to run artifac
 });
 
 test("dossier locator prefers persisted leaf over header-only session.jsonl", async () => {
-  const runDirectory = mkdtempSync(join(testTmpdir(), "ak-gate-dossier-"));
+  const runDirectory = mkdtempSync(join(tmpdir(), "ak-gate-dossier-"));
   const sessionFile = headerOnlySession(runDirectory);
   const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
   const path = persistGateSubmissionCandidate(runDirectory, {
@@ -92,7 +91,7 @@ test("dossier locator prefers persisted leaf over header-only session.jsonl", as
 });
 
 test("mutation: without persist, parentSessionCandidate stays header-only (blind)", async () => {
-  const runDirectory = mkdtempSync(join(testTmpdir(), "ak-gate-blind-"));
+  const runDirectory = mkdtempSync(join(tmpdir(), "ak-gate-blind-"));
   const sessionFile = headerOnlySession(runDirectory);
   const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
   // Leaf only in memory — same Grok booking shape; no artifact write.
@@ -124,7 +123,7 @@ test("readLatestToolCallLeaf returns the last assistant toolCall entry", () => {
 });
 
 test("persist returns undefined when session books have no toolCall leaf", () => {
-  const runDirectory = mkdtempSync(join(testTmpdir(), "ak-gate-empty-"));
+  const runDirectory = mkdtempSync(join(tmpdir(), "ak-gate-empty-"));
   const path = persistGateSubmissionCandidate(runDirectory, {
     sessionManager: {
       getEntries: () => [{ type: "message", message: { role: "user", content: "only user" } }],
