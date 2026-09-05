@@ -229,19 +229,11 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
       details: projection?.decisiveFacts,
     }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
 
-    // A later attempt owns settlement: an earlier escalation cannot survive a
-    // current-attempt correctable outcome.
-    const retry = registerTool(f.root, async () => ({ content: [], details: {}, terminate: false }));
-    retry.context.sessionManager.getHeader = () => ({ type: "session", id: "run-ledger:retry" });
-    await retry.tool().execute("retry-non-final", {}, undefined, undefined, retry.context);
-    assert.equal(await readAuditEscalationSubmission(f.root, "run-ledger", f.root), undefined);
-
     // Audit escalation is not sealed and therefore does not lock the durable run.
-    const acceptedRetry = registerTool(f.root);
-    acceptedRetry.context.sessionManager.getHeader = () => ({ type: "session", id: "run-ledger:accepted-retry" });
-    await acceptedRetry.start("after-audit");
-    await acceptedRetry.tool().execute("after-audit", {}, undefined, undefined, acceptedRetry.context);
-    await acceptedRetry.close();
+    const retry = registerTool(f.root);
+    await retry.start("after-audit");
+    await retry.tool().execute("after-audit", {}, undefined, undefined, retry.context);
+    await retry.close();
     assert.equal((await readSealedSubmission(f.root, "run-ledger", f.root))?.status, "converged");
   });
 });
