@@ -320,7 +320,11 @@ const TICKET_SEAT_LAST_HOST_FILE = "last-host.json";
 
 export type TicketSeatMemoryLastHost = {
   readonly host: string;
-  /** Prior run directory that held host-native records (Grok home lives under run). */
+  /**
+   * Established Grok native isolation run (GROK_HOME parent) when Grok has run on this nest.
+   * Preserved across non-Grok hosts so same-host retry and return-to-Grok reopen the same home.
+   * Absent until a Grok turn records ownership.
+   */
   readonly runDirectory?: string;
 };
 

@@ -20,13 +20,14 @@ import {
   runGatekeeper,
 } from "../../src/gatekeeper-role.ts";
 import {
+  readTicketSeatMemoryLastHost,
   ticketSeatMemorySessionDirectory,
   ticketSeatMemorySubject,
 } from "../../src/ticket-seat-memory.ts";
 import { createHash } from "node:crypto";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
-import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
+import { runPublicNotary, runPublicNotaryResume } from "../../src/public-cli/notary-run.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
@@ -472,6 +473,144 @@ test("#636 public notary CLI: second same-ticket call seals nest and sends conti
       seen[0]!.runDirectory,
       "each call keeps its own run directory",
     );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#636 public notary: Grok native home spans failure, same-run retry, return-to-Grok", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-native-home-"));
+  try {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project);
+    const admittedPath = join(sourceRunPath, "admitted-request.json");
+    const admittedRaw = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      admittedPath,
+      `${JSON.stringify({ ...admittedRaw, ticketNumber: 636 }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const memoryDir = ticketSeatMemorySessionDirectory({
+      ticketNumber: 636,
+      seat: "notary",
+      cwd: project,
+      home,
+    });
+
+    // Typed request + last-host ownership only — not a native ACP true-run (#638).
+    const seen: Array<{
+      kind: RoleTurnRequest["continuation"]["kind"];
+      runDirectory: string;
+      nativeHomeRunDirectory?: string;
+      previousHost?: string;
+    }> = [];
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        seen.push({
+          kind: request.continuation.kind,
+          runDirectory: request.runDirectory,
+          ...(request.nativeHomeRunDirectory === undefined
+            ? {}
+            : { nativeHomeRunDirectory: request.nativeHomeRunDirectory }),
+          ...(request.hostTransition === undefined
+            ? {}
+            : { previousHost: request.hostTransition.previousHost }),
+        });
+        return { code: 1, stderr: "controlled-stop\n", timedOut: false };
+      },
+    };
+
+    const io = {
+      stdout: (_t: string) => {},
+      stderr: (_t: string) => {},
+    };
+    const envBase = {
+      packageRoot,
+      home,
+      agentDir: join(home, "agent"),
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      roleTurnHost: host,
+      sessionAppender: appendPiSessionCustomEntry,
+    };
+
+    // 1) Failure path still records Grok native-home ownership on the nest.
+    await runPublicNotary(
+      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-1" },
+      io,
+      parseNotaryArgv,
+    );
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    assert.equal(seen[0]!.nativeHomeRunDirectory, undefined);
+    const afterFailure = await readTicketSeatMemoryLastHost(memoryDir);
+    assert.deepEqual(afterFailure, {
+      host: "grok-build",
+      runDirectory: seen[0]!.runDirectory,
+    });
+
+    // 2) New-run resume reopens the established Grok native home.
+    await runPublicNotary(
+      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-2" },
+      io,
+      parseNotaryArgv,
+    );
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume");
+    assert.equal(seen[1]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
+    assert.notEqual(seen[1]!.runDirectory, seen[0]!.runDirectory);
+
+    // 3) Same-run retry (invocation already marked grok) still carries native home.
+    await runPublicNotaryResume(
+      { runId: "notary-nh-2" },
+      { ...envBase, host: "grok-build" },
+      io,
+    );
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(seen[2]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[2]!.runDirectory, seen[1]!.runDirectory);
+
+    // 4) Leave Grok for Pi — last-host host flips, Grok native home pointer preserved.
+    await runPublicNotary(
+      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      { ...envBase, host: "pi", createRunId: () => "notary-nh-3" },
+      io,
+      parseNotaryArgv,
+    );
+    assert.equal(seen.length, 4);
+    assert.equal(seen[3]!.kind, "resume");
+    assert.equal(seen[3]!.previousHost, "grok-build");
+    const afterPi = await readTicketSeatMemoryLastHost(memoryDir);
+    assert.deepEqual(afterPi, {
+      host: "pi",
+      runDirectory: seen[0]!.runDirectory,
+    });
+
+    // 5) Return to Grok reopens the same native home (not the Pi run).
+    await runPublicNotary(
+      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-4" },
+      io,
+      parseNotaryArgv,
+    );
+    assert.equal(seen.length, 5);
+    assert.equal(seen[4]!.kind, "resume");
+    assert.equal(seen[4]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[4]!.previousHost, "pi");
+    const afterReturn = await readTicketSeatMemoryLastHost(memoryDir);
+    assert.deepEqual(afterReturn, {
+      host: "grok-build",
+      runDirectory: seen[0]!.runDirectory,
+    });
   } finally {
     await rm(home, { recursive: true, force: true });
   }
