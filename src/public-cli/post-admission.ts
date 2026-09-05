@@ -26,6 +26,10 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
+import {
+  readTicketSeatMemoryLastHost,
+  writeTicketSeatMemoryLastHost,
+} from "../ticket-seat-memory.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   missingCredentialPreDispatchFailure,
@@ -261,15 +265,26 @@ export async function dispatchPostAdmissionTurn<
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
-    const previousHost = await readInvocationHost(admitted.runDirectory);
+    // #636 ticket-seat memory: when this is a fresh run on a resumed memory principal,
+    // the prior host lives on the memory nest (last-host.json), not the new run page.
+    let previousHost = await readInvocationHost(admitted.runDirectory);
     const liveHost = env.host;
+    const principalCoordinates =
+      admitted.principal === undefined
+        ? undefined
+        : env.principalAuthority.decode(admitted.principal);
+    if (previousHost === undefined && principalCoordinates !== undefined) {
+      previousHost = await readTicketSeatMemoryLastHost(
+        principalCoordinates.sessionDirectory,
+      );
+    }
     const hostTransition =
-      previousHost !== undefined && liveHost !== undefined && admitted.principal !== undefined
+      previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
         ? await projectHostTransitionPriorNative({
             previousHost,
             liveHost,
             runDirectory: admitted.runDirectory,
-            piSessionFile: env.principalAuthority.decode(admitted.principal).sessionFile,
+            piSessionFile: principalCoordinates.sessionFile,
           })
         : undefined;
     const turnRequest: RoleTurnRequest =
@@ -345,6 +360,16 @@ export async function dispatchPostAdmissionTurn<
     }
     if (settled !== undefined && shouldPresent(settled)) {
       await markRunTerminal(admitted.runDirectory);
+      if (liveHost !== undefined && principalCoordinates !== undefined) {
+        try {
+          await writeTicketSeatMemoryLastHost(
+            principalCoordinates.sessionDirectory,
+            liveHost,
+          );
+        } catch {
+          // last-host is best-effort context for a later host switch; settlement stands.
+        }
+      }
       io.stdout(formatTerminalResult(settled));
       return {
         exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),

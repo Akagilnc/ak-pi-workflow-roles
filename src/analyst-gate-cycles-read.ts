@@ -243,6 +243,8 @@ type ClassifiedVolume =
       readonly reason?: string;
       /** Present only when the volume carries ak_auditor_parent_attempt_binding. */
       readonly attemptEntryId?: string;
+      /** Binding parent session file when present (#636 multi-parent memory filter). */
+      readonly parentSessionFile?: string;
     }
   | {
       readonly kind: "officer";
@@ -254,30 +256,78 @@ type ClassifiedVolume =
       readonly findingsCount: number;
       readonly officerWallMs: number;
       readonly attemptEntryId?: string;
+      readonly parentSessionFile?: string;
     };
 
-async function classifyAuditorVolume(
-  filePath: string,
-): Promise<ClassifiedVolume | undefined> {
-  // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
-  const rows = await readLedgerSessionJsonl(filePath);
-  // Recognize gate tool first. Non-gate volumes stay omitted; rejected gate
-  // receipts omit before accepted-only span/status validation; once an accepted
-  // receipt is present, required typed facts must not silently under-count.
-  const call = extractLastGateToolCall(rows);
-  if (call === undefined) return undefined;
-
-  const attemptEntryId = extractAttemptEntryId(rows);
-  if (!call.accepted) {
-    // Rejected historical dispatch is not a pairing key — omit it so a later
-    // independent direct officer summons remains its own round. Span is not
-    // validated here: accepted-only contract must not throw on rejected volumes.
-    return undefined;
+/** Nearest preceding attempt binding (id + parent session file) before row index. */
+function nearestAttemptBindingBefore(
+  rows: readonly LedgerSessionRow[],
+  beforeIndex: number,
+): { readonly attemptEntryId?: string; readonly parentSessionFile?: string } {
+  for (let i = beforeIndex - 1; i >= 0; i -= 1) {
+    const row = rows[i]!;
+    if (row.type !== "custom" || row.customType !== AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) {
+      continue;
+    }
+    if (!isRecord(row.data) || !isRecord(row.data.parent)) continue;
+    const id = row.data.parent.attemptEntryId;
+    const sessionFile = row.data.parent.sessionFile;
+    return {
+      ...(typeof id === "string" && id.length > 0 ? { attemptEntryId: id } : {}),
+      ...(typeof sessionFile === "string" && sessionFile.length > 0
+        ? { parentSessionFile: sessionFile }
+        : {}),
+    };
   }
+  return {};
+}
+
+/**
+ * All accepted gate terminating toolCalls on a volume (dispatch or officer),
+ * each with nearest preceding attempt binding. Ticket-seat continuous memory
+ * (#636) may carry multiple parent summons in one file — last-only would drop rounds.
+ */
+function extractAllAcceptedGateToolCalls(
+  rows: readonly LedgerSessionRow[],
+): ReadonlyArray<GateToolCall & { readonly rowIndex: number; readonly attemptEntryId?: string; readonly parentSessionFile?: string }> {
+  const acceptedIds = acceptedGateReceiptIds(rows);
+  const out: Array<GateToolCall & { readonly rowIndex: number; readonly attemptEntryId?: string; readonly parentSessionFile?: string }> = [];
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex]!;
+    const message = isRecord(row.message) ? row.message : undefined;
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (!isRecord(part) || part.type !== "toolCall") continue;
+      if (typeof part.id !== "string" || part.id.length === 0) continue;
+      if (typeof part.name !== "string" || part.name.length === 0) continue;
+      if (!isGateTerminatingToolName(part.name)) continue;
+      if (!acceptedIds.has(part.id)) continue;
+      const binding = nearestAttemptBindingBefore(rows, rowIndex);
+      out.push({
+        toolName: part.name,
+        args: isRecord(part.arguments) ? part.arguments : undefined,
+        accepted: true,
+        rowIndex,
+        ...binding,
+      });
+    }
+  }
+  return out;
+}
+
+function projectAcceptedGateCall(
+  filePath: string,
+  rows: readonly LedgerSessionRow[],
+  call: GateToolCall & { readonly attemptEntryId?: string; readonly parentSessionFile?: string },
+): ClassifiedVolume | undefined {
   const span = requireAcceptedGateSpan(rows, filePath);
   const status = requireAcceptedGateStatus(call.args, filePath);
   const findings = asStringFindings(call.args?.findings);
   const findingsCount = findings.length;
+  const bindingFields = {
+    ...(call.attemptEntryId === undefined ? {} : { attemptEntryId: call.attemptEntryId }),
+    ...(call.parentSessionFile === undefined ? {} : { parentSessionFile: call.parentSessionFile }),
+  };
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
     // Lawful province non-dispatch release — opens no round, never unreadable (#597).
@@ -303,7 +353,7 @@ async function classifyAuditorVolume(
       officer,
       status,
       ...(reason === undefined ? {} : { reason }),
-      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+      ...bindingFields,
     };
   }
 
@@ -323,8 +373,33 @@ async function classifyAuditorVolume(
     findings,
     findingsCount,
     officerWallMs: span.wallMs,
-    ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+    ...bindingFields,
   };
+}
+
+async function classifyAuditorVolume(
+  filePath: string,
+): Promise<readonly ClassifiedVolume[]> {
+  // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
+  const rows = await readLedgerSessionJsonl(filePath);
+  const accepted = extractAllAcceptedGateToolCalls(rows);
+  if (accepted.length === 0) {
+    // Preserve prior omit path for rejected-only / non-gate volumes via last-call probe.
+    const call = extractLastGateToolCall(rows);
+    if (call === undefined || !call.accepted) return [];
+    // Accepted path should have been captured above; keep loud if tables drift.
+    const projected = projectAcceptedGateCall(filePath, rows, {
+      ...call,
+      ...nearestAttemptBindingBefore(rows, rows.length),
+    });
+    return projected === undefined ? [] : [projected];
+  }
+  const volumes: ClassifiedVolume[] = [];
+  for (const call of accepted) {
+    const projected = projectAcceptedGateCall(filePath, rows, call);
+    if (projected !== undefined) volumes.push(projected);
+  }
+  return volumes;
 }
 
 function pairGateRounds(
@@ -402,29 +477,49 @@ function pairGateRounds(
 }
 
 /**
- * Read and pair gate-cycle rounds from a run's session/auditor-roles directory.
+ * Read and pair gate-cycle rounds from one or more auditor-roles directories.
  * ENOENT (directory truly absent) → []. ENOTDIR and other errors propagate
  * (failure honesty — damaged topology must not wash to zero rounds).
+ *
+ * #636 ticket-seat memory may place officer volumes under book-level subject
+ * digests shared across parent runs; pass `parentSessionFile` to keep only
+ * rounds whose attempt binding names that parent.
  */
 export async function readAnalystGateCyclesFromAuditorRoles(
-  auditorRolesDirectory: string,
+  auditorRolesDirectory: string | readonly string[],
+  options: {
+    readonly parentSessionFile?: string;
+  } = {},
 ): Promise<readonly AnalystGateCycleRound[]> {
-  let names: string[];
-  try {
-    const entries = await readdir(auditorRolesDirectory, { withFileTypes: true });
-    names = entries
-      .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
-      .map((e) => e.name)
-      .sort();
-  } catch (error) {
-    if (isMissingDirectoryError(error)) return [];
-    throw error;
-  }
-
+  const directories = typeof auditorRolesDirectory === "string"
+    ? [auditorRolesDirectory]
+    : auditorRolesDirectory;
   const volumes: ClassifiedVolume[] = [];
-  for (const name of names) {
-    const classified = await classifyAuditorVolume(join(auditorRolesDirectory, name));
-    if (classified !== undefined) volumes.push(classified);
+  for (const directory of directories) {
+    let names: string[];
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      names = entries
+        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .map((e) => e.name)
+        .sort();
+    } catch (error) {
+      if (isMissingDirectoryError(error)) continue;
+      throw error;
+    }
+    for (const name of names) {
+      const classified = await classifyAuditorVolume(join(directory, name));
+      for (const volume of classified) {
+        if (
+          options.parentSessionFile !== undefined &&
+          volume.parentSessionFile !== undefined &&
+          volume.parentSessionFile !== options.parentSessionFile
+        ) {
+          continue;
+        }
+        volumes.push(volume);
+      }
+    }
   }
   return pairGateRounds(volumes);
 }
