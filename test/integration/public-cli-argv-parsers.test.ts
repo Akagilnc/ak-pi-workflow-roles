@@ -1,7 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-// #420 整改移档（自 test/integration/public-cli-{coder,collector,doctor,fixer,engine-axis}.test.ts）：
-// 纯 parser / typed resolver 按性质归位快档。契约断言一字不减；
-// 真 admission（冻结 FS）与真子进程条仍留 integration。
+// #420 自 public-cli-{coder,collector,doctor,fixer,engine-axis} 抽出 parser/resolver 案；
+// #672 按文件真实资源归 integration（含 Git 子进程与临时目录），非快档。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
