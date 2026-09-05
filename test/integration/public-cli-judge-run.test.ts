@@ -318,7 +318,6 @@ async function traceJudgeInfrastructureFailure(input: {
   readonly name: string;
   readonly runId: string;
   readonly childEnv?: NodeJS.ProcessEnv;
-  readonly poisonRunDir?: boolean;
   readonly expectGateAbsent?: boolean;
   readonly expectDetails: Record<string, unknown>;
 }): Promise<void> {
@@ -357,9 +356,6 @@ async function traceJudgeInfrastructureFailure(input: {
             PI_OFFLINE: "1",
             ...input.childEnv,
           };
-          if (input.poisonRunDir) {
-            env.AK_ROLE_RUN_DIR = join(home, "missing-dossier-does-not-exist");
-          }
           const subprocess = await runPiSubprocess([...args], {
             cwd: options.cwd,
             env,
@@ -453,25 +449,52 @@ async function traceJudgeInfrastructureFailure(input: {
 }
 
 /**
- * #475 / #685: one public-entry failure-evidence tracer through real Pi.
- * Observation-kind matrix (missing-dossier / missing-subject / notary stage) stays
- * at judge-auditor-dossier + unit/dossier-resolution — not three real-Pi replays.
+ * #475 / #685: public-entry failure-evidence through real Pi.
+ * - missing-subject: dossier observation at public entry (matrix kinds also at
+ *   judge-auditor-dossier + unit/dossier-resolution).
+ * - notary-no-pass: Gate unusable-submission at public entry — no ordinary/unit
+ *   carrier asserts this public-entry shape; keep shortest real-Pi tracer.
+ * missing-dossier public-entry row culled: observation kind at
+ * judge-auditor-dossier "throws missing-dossier when AK_ROLE_RUN_DIR points at a
+ * nonexistent path" + unit/dossier-resolution; poisonRunDir harness path removed.
  */
-test(
-  "ak-role Judge public failure-evidence tracer: missing-subject",
-  { timeout: 120_000 },
-  async () => {
-    await traceJudgeInfrastructureFailure({
-      name: "missing-subject",
-      runId: "run-e2e-judge-missing-subject-001",
-      childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
-      expectDetails: {
-        observation: { kind: "missing-subject", subject: "candidate-verdict" },
-        candidate: null,
-      },
-    });
+for (const scenario of [
+  {
+    name: "missing-subject",
+    runId: "run-e2e-judge-missing-subject-001",
+    childEnv: { AK_AUDIT_MISSING_SUBJECT: "1" },
+    expectDetails: {
+      observation: { kind: "missing-subject", subject: "candidate-verdict" },
+      candidate: null,
+    },
   },
-);
+  {
+    name: "notary-no-pass",
+    runId: "run-e2e-judge-gate-notary-001",
+    childEnv: { AK_GATE_MODE: "notary-no-pass" },
+    expectGateAbsent: true,
+    expectDetails: {
+      stage: "notary",
+      submission: { status: "ok-enough" },
+    },
+  },
+] as const) {
+  test(
+    `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
+    { timeout: 120_000 },
+    async () => {
+      await traceJudgeInfrastructureFailure({
+        name: scenario.name,
+        runId: scenario.runId,
+        childEnv: scenario.childEnv,
+        expectDetails: scenario.expectDetails,
+        ...("expectGateAbsent" in scenario
+          ? { expectGateAbsent: scenario.expectGateAbsent }
+          : {}),
+      });
+    },
+  );
+}
 
 test(
   "ak-role judge reaches Judge gate and settles Terminal with registry command",
