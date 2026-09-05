@@ -1,9 +1,9 @@
 /**
  * #675 offline nested public officer/auditor provider.
- * Loaded via PublicSummonRequest.extraPiArgs or home-local
- * .ak-roles/.summon-extra-pi-args.json on nested pi children so
- * summonPublicRole / summonGateOfficer stay on the real public activation path.
- * Scripted LLM I/O only.
+ * Optional nested Pi extension for offline officer/auditor scripted I/O.
+ * Load only via explicit PublicSummonRequest.extraPiArgs (same face as public
+ * CLI seat extraPiArgs). Not a production env protocol.
+
  */
 import {
   fauxAssistantMessage,
