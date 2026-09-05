@@ -27,10 +27,9 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  setTestGateOfficerSummon,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import type { AuditorSummon } from "../../src/compliance-transport.ts";
+import type { ComplianceRoleSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
   createNavigatorAttendance,
@@ -151,7 +150,6 @@ afterEach(() => {
   // Drop any leftover env binding between tests (owned dirs already popped above).
   delete process.env.AK_ROLE_RUN_DIR;
   defaultGateSummon = undefined;
-  setTestGateOfficerSummon(undefined);
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
   while (institutionalProviderCleanups.length > 0) {
@@ -320,6 +318,14 @@ function extensionHarness(
 /** Offline gate summon for this file — threaded via hostActions, not globalThis. */
 let defaultGateSummon: GateOfficerSummon | undefined;
 
+/** Lazy gate summon for createPiRoleRuntimeExtension (resolves defaultGateSummon at call time). */
+const extensionGateSummon: GateOfficerSummon = async (officer, sourceRunDirectory) => {
+  if (defaultGateSummon === undefined) {
+    throw new Error("test gate summon not armed");
+  }
+  return defaultGateSummon(officer, sourceRunDirectory);
+};
+
 function testHostActions(
   fail: (error: unknown) => never = (error): never => {
     throw error instanceof Error ? error : new Error(String(error));
@@ -408,7 +414,6 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   }
   // #675: offline gate path injects public-summon results (hostActions + deep-activation mirror).
   defaultGateSummon = async (officer) => passingOfficerSummon(officer);
-  setTestGateOfficerSummon(defaultGateSummon);
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
@@ -517,7 +522,6 @@ async function workerCompletionGatekeeperHarness(options: {
     if (next === undefined) throw new Error("gate summon queue exhausted");
     return next;
   };
-  setTestGateOfficerSummon(defaultGateSummon);
   return {
     context(id: string, toolName: string) {
       installInstitutionalRunDir(parentInheritedSeats(model));
@@ -682,6 +686,7 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createPiRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
+      summonGateOfficer: extensionGateSummon,
   transcriptFromContext: (ctx: ExtensionContext) => string = () =>
     "review evidence and adjudication",
 ) {
@@ -690,6 +695,7 @@ async function startJudge(
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
       auditSoulCompliance,
+      summonGateOfficer: extensionGateSummon,
     }, { transcriptFromContext })(harness.pi as ExtensionAPI);
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -707,6 +713,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
 
   assert.deepEqual(new Set(harness.flags.keys()), new Set([
@@ -769,6 +776,7 @@ test("after_provider_response production handler writes typed 429 into resumable
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
       auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
     })(harness.pi as ExtensionAPI);
 
     const handler = harness.handlers.get("after_provider_response");
@@ -877,6 +885,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
 
   await assert.rejects(
@@ -903,6 +912,7 @@ test("focused Judge controller registers output without narrowing host tools", a
     {
       loadSoul: async () => "  JUDGE LAW  ",
       auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
     },
     testHostActions(),
   );
@@ -1003,6 +1013,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           {
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
+      summonGateOfficer: extensionGateSummon,
           },
           testHostActions(),
         );
@@ -1208,6 +1219,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
     const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
+      summonGateOfficer: extensionGateSummon,
       loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority", subjectProvenance: "role_input" as const }),
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
@@ -1289,6 +1301,7 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   const extension = createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "   \n",
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   });
 
   extension(harness.pi as ExtensionAPI);
@@ -1319,6 +1332,7 @@ test("coder plan loads its task without construction skill and returns planned",
       return tddBinding();
     },
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -1371,6 +1385,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1424,6 +1439,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness2.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness2.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1460,6 +1476,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
     const ctx = activationCtx(home);
@@ -1491,8 +1508,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
         runId: "test-gk-bounce",
       },
     });
-    setTestGateOfficerSummon(defaultGateSummon);
-    // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
+      // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
     installInstitutionalRunDir(parentInheritedSeats(model));
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
       cwd: process.cwd(),
@@ -1751,8 +1767,7 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
       officers.push(officer);
       return passingOfficerSummon(officer);
     };
-    setTestGateOfficerSummon(defaultGateSummon);
-    const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
+      const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
     const model = faux.getModel();
     const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
     const context = Object.assign(toolCallContext([{ id: "own-inspector", name: CODER_OUTPUT_TOOL_NAME }]), {
@@ -1784,8 +1799,7 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
         runId: "test-auth-fail",
       },
     });
-    setTestGateOfficerSummon(defaultGateSummon);
-    const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
+      const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
     const model = faux.getModel();
     const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
     const context = Object.assign(toolCallContext([{ id: "auth-fail", name: CODER_OUTPUT_TOOL_NAME }]), {
@@ -1827,8 +1841,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     const model = faux.getModel();
     // #675: completed submissions summon Inspector via public path; inject pass.
     defaultGateSummon = async (officer) => passingOfficerSummon(officer);
-    setTestGateOfficerSummon(defaultGateSummon);
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
+      const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
     const runtime = createCoderRoleRuntime(
       piHostAdapter.host,
       {
@@ -2131,6 +2144,7 @@ test("coder missing skill-expansion evidence persists typed non-pass on real hos
           loadCoderTask: async (path) => readFile(path, "utf8"),
           loadCanonicalSkillBinding: async () => tddBinding(),
           auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
         }),
       ],
     }, async ({ session, sessionManager }) => {
@@ -2200,6 +2214,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
       auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
     })(harness.pi as ExtensionAPI);
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
       await assert.rejects(
@@ -2216,6 +2231,7 @@ test("undeclared prerequisite submissions are rejected; declared references pass
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2290,6 +2306,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
   createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2323,6 +2340,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
       return instructionBytes;
     },
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   });
 
   extension(harness.pi as ExtensionAPI);
@@ -2379,6 +2397,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
     auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
   })(harness.pi as ExtensionAPI);
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -2427,6 +2446,7 @@ test(
       const extension = createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         auditSoulCompliance: async () => ({ status: "pass" }),
+      summonGateOfficer: extensionGateSummon,
         loadNavigatorWorkContext: async () => ({
           subjectKey: "/repo/.ak/work/issues/106",
           subject: "issue 106",
@@ -2715,24 +2735,26 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         // #675: compliance summons public auditor; offline injects the decision terminal.
         const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
           auditCalls += 1;
-          const summonAuditor: AuditorSummon = async () => ({
+          const summonRole: ComplianceRoleSummon = async () => ({
             exitCode: 0,
             terminal: {
               roleOutcome: {
                 kind: "accepted",
-                role: "auditor",
-                status: selectedDecision.status,
+                role: role === "judge" ? "judge" : "doctor",
+                status: selectedDecision.status === "pass" ? (role === "judge" ? "converged" : "completed")
+                  : selectedDecision.status === "revise" ? (role === "judge" ? "continue" : "refused")
+                  : selectedDecision.status,
                 decisiveFacts: selectedDecision as Record<string, unknown>,
               },
               navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
               artifacts: [],
-              runId: "test-auditor",
+              runId: "test-compliance",
             },
           });
           const piOptions = {
             ...options,
             context: toPiContext(options.context),
-            summonAuditor,
+            summonRole,
           };
           return (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
         };
@@ -2741,6 +2763,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
+      summonGateOfficer: extensionGateSummon,
           }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(piHostAdapter.host, {

@@ -107,12 +107,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
               HOME: home,
               PI_CODING_AGENT_DIR: agentDir,
               PI_OFFLINE: "1",
-              // #675: nested public auditor reuses the doctor faux provider extension.
-              AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
-                "-e",
-                resolve(packageRoot, "test/fixtures/doctor-fresh-process-provider.ts"),
-              ]),
-              AK_CORRELATION_ID: "doctor-fresh-corr",
+                            AK_CORRELATION_ID: "doctor-fresh-corr",
               AK_DOCTOR_FRESH_CASE_PATH: caseIdentityPath,
               AK_DOCTOR_FRESH_ISSUE: "58",
               AK_DOCTOR_FRESH_CAPTURE_SYSTEM_PROMPT: promptCapturePath,

@@ -77,17 +77,6 @@ export type GateOfficerSummon = (
   sourceRunDirectory: string,
 ) => Promise<PublicSummonResult>;
 
-/** Offline options-bag mirror for deep activation paths that cannot thread summonOfficer. */
-let offlineGateOfficerSummon: GateOfficerSummon | undefined;
-
-export function setTestGateOfficerSummon(summon: GateOfficerSummon | undefined): () => void {
-  const previous = offlineGateOfficerSummon;
-  offlineGateOfficerSummon = summon;
-  return () => {
-    offlineGateOfficerSummon = previous;
-  };
-}
-
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
@@ -344,7 +333,6 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
   try {
     const summon =
       options.summonOfficer
-      ?? offlineGateOfficerSummon
       ?? (async (nextOfficer, sourceRunDirectory) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({

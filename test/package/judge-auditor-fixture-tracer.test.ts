@@ -77,7 +77,6 @@ async function runPackagedTracer(marker: string): Promise<{
           AK_DOSSIER_TRACER_MARKER: marker,
           AK_DOSSIER_TRACER_TRACE: tracePath,
           // #675: nested public auditor summons reuse the same faux tracer provider.
-          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", provider]),
         },
       });
       assert.equal(result.localTimeout, false, result.stderr);

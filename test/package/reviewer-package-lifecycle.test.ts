@@ -119,7 +119,6 @@ test("installed npm tarball runs public ak-role Reviewer→Judge chain", async (
                 AK_REVIEW_EXPECT_AUTHORITY_REFS_JSON: JSON.stringify(discoveredRefs),
                 AK_REVIEW_CAPTURE_SYSTEM_PROMPT: promptCapturePath,
                 // #675: nested public evidence-child summons reuse the two-axis fixture.
-                AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
               },
               timeoutMs: options.timeoutMs ?? 120_000,
             });

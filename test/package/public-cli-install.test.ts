@@ -101,12 +101,7 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
           agentDir: piAgentDir,
           env: {
             PI_OFFLINE: "1",
-            // #675: nested public officer summons need offline faux provider if gate fires.
-            AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
-              "-e",
-              resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
-            ]),
-          },
+                      },
         },
       );
       assert.equal(run.localTimeout, false, run.stderr);

@@ -1527,46 +1527,56 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  // #675: nested public summons use the real activation path. Default arms nested
-  // faux provider via home-local fixture (dual-module safe; production never writes it)
-  // and seeds nested seats from the parent faux model (no parent-env model fallback).
-  let nestedFixturePath: string | undefined;
+  // #675: nested public summons use the real activation path. Seed nested seats
+  // from the parent faux model onto the temp HOME only when harness owns that home
+  // (options.home set by withActivationHome / withHermeticHome). Restore prior
+  // config on exit — never leave seats rewritten.
+  let nestedConfigRestore: (() => Promise<void>) | undefined;
+  // Prefer explicit options.home; else hermetic process HOME from withActivationHome.
   const nestedHome =
     options.home
     ?? (typeof process.env.HOME === "string" && process.env.HOME.trim() !== ""
       ? process.env.HOME
       : undefined);
   if (options.nestedSummonInject !== "none" && nestedHome !== undefined) {
-    const nestedProvider = resolve(
-      packageRoot,
-      "test/fixtures/nested-public-officer-pass-provider.ts",
-    );
-    const { mkdirSync, writeFileSync } = await import("node:fs");
-    const { join: pathJoin } = await import("node:path");
-    nestedFixturePath = pathJoin(nestedHome, ".ak-roles", ".summon-extra-pi-args.json");
-    mkdirSync(pathJoin(nestedHome, ".ak-roles"), { recursive: true });
-    writeFileSync(nestedFixturePath, JSON.stringify(["-e", nestedProvider]), "utf8");
     try {
-      const { savePublicCliConfig, loadPublicCliConfig } = await import("../../src/public-cli/config.ts");
+      const { savePublicCliConfig, loadPublicCliConfig, publicCliConfigPath } =
+        await import("../../src/public-cli/config.ts");
+      const { readFile, writeFile, rm } = await import("node:fs/promises");
+      const configPath = publicCliConfigPath(nestedHome);
+      let priorRaw: string | undefined;
+      try {
+        priorRaw = await readFile(configPath, "utf8");
+      } catch {
+        priorRaw = undefined;
+      }
       const existing = await loadPublicCliConfig(nestedHome).catch(() => ({ seats: {} as Record<string, unknown> }));
-      // nested-public-officer-pass-provider registers this provider id.
       const seat = {
-        provider: "ak-nested-officer-pass",
-        model: "faux-1",
+        provider: model.provider,
+        model: model.id ?? (model as { model?: string }).model ?? "faux-1",
       };
       await savePublicCliConfig({
         ...existing,
         seats: {
           ...existing.seats,
-          auditor: seat,
+          judge: seat,
+          doctor: seat,
           notary: seat,
           inspector: seat,
+          auditor: seat,
           "evidence-child": seat,
           gatekeeper: seat,
         },
       }, nestedHome);
+      nestedConfigRestore = async () => {
+        if (priorRaw === undefined) {
+          await rm(configPath, { force: true }).catch(() => {});
+        } else {
+          await writeFile(configPath, priorRaw, "utf8");
+        }
+      };
     } catch {
-      // seat seed best-effort — caller may own config
+      // seat seed best-effort
     }
   }
   try {
@@ -1599,13 +1609,8 @@ export async function withInProcessPi<T>(
         // best-effort shutdown before dispose
       }
       session.dispose();
-      if (nestedFixturePath !== undefined) {
-        try {
-          const { rmSync } = await import("node:fs");
-          rmSync(nestedFixturePath, { force: true });
-        } catch {
-          // best-effort
-        }
+      if (nestedConfigRestore !== undefined) {
+        await nestedConfigRestore().catch(() => {});
       }
     }
   }

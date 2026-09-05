@@ -124,7 +124,6 @@ async function runReviewerWithEngine(input: {
           PATH: `${input.binDir}:${dirname(piCli)}:${options.env.PATH ?? ""}`,
           PI_OFFLINE: "1",
           // Nested public summons (#675) reuse the same faux provider extension.
-          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", extensionPath]),
           AK_REVIEW_AXIS_LEDGER: axisLedgerPath,
         },
         timeoutMs: options.timeoutMs ?? 120_000,

@@ -26,7 +26,9 @@ export type PublicSummonRole =
   | "auditor"
   | "evidence-child"
   | "navigator"
-  | "gatekeeper";
+  | "gatekeeper"
+  | "judge"
+  | "doctor";
 
 export type PublicSummonRequest = {
   readonly role: PublicSummonRole;
@@ -176,27 +178,12 @@ async function createSummonEnv(options: {
       return observeLaunchedRolePackageIdentity(root, roleEntry);
     },
   } as const;
-  // Request field wins. Else optional home-local fixture (tests write under temp
-  // HOME; production never creates it) — dual-module safe without process.env protocol.
-  let extraPiArgs = options.extraPiArgs;
-  if (extraPiArgs === undefined || extraPiArgs.length === 0) {
-    const fixturePath = join(options.home, ".ak-roles", ".summon-extra-pi-args.json");
-    if (existsSync(fixturePath)) {
-      try {
-        const { readFileSync } = await import("node:fs");
-        const parsed = JSON.parse(readFileSync(fixturePath, "utf8")) as unknown;
-        if (Array.isArray(parsed) && parsed.every((part) => typeof part === "string")) {
-          extraPiArgs = parsed;
-        }
-      } catch {
-        // malformed fixture — ignore
-      }
-    }
-  }
   const piHost = createPiRoleTurnHost({
     packageRoot: options.packageRoot,
     principalAuthority,
-    ...(extraPiArgs === undefined || extraPiArgs.length === 0 ? {} : { extraPiArgs }),
+    ...(options.extraPiArgs === undefined || options.extraPiArgs.length === 0
+      ? {}
+      : { extraPiArgs: options.extraPiArgs }),
     ...piRecords,
   });
   // Same host axis table as public CLI (#617 DK-3 / #675): seat.host selects the adapter.
@@ -347,6 +334,22 @@ export async function summonPublicRole(
         "gatekeeper",
         parseGatekeeperArgv,
       );
+      break;
+    }
+    case "judge": {
+      const [{ runPublicJudge }, { parseJudgeArgv }] = await Promise.all([
+        import("./public-cli/judge-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      result = await runPublicJudge(options.argv, env, io, parseJudgeArgv);
+      break;
+    }
+    case "doctor": {
+      const [{ runPublicDoctor }, { parseDoctorArgv }] = await Promise.all([
+        import("./public-cli/doctor-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      result = await runPublicDoctor(options.argv, env, io, parseDoctorArgv);
       break;
     }
   }

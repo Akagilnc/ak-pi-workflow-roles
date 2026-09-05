@@ -151,45 +151,30 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         stopReason: "toolUse",
         timestamp: Date.now(),
       });
-      const nestedProvider = resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts");
-      const priorAgent = process.env.PI_CODING_AGENT_DIR;
-      const agentDir = resolve(home, ".pi", "agent");
-      await mkdir(agentDir, { recursive: true });
-      // Seed nested faux models so public auditor summon can select a model offline.
-      const { fauxProvider } = await import("@earendil-works/pi-ai");
-      const { seedAgentDirModelsJsonFromFaux } = await import("../helpers/pi-test-harness.ts");
-      const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
-      const nestedFaux = fauxProvider({
-        api: "ak-nested-officer-pass",
-        provider: "ak-nested-officer-pass",
-        tokenSize: { min: 1000, max: 1000 },
-      });
-      const seeded = await seedAgentDirModelsJsonFromFaux(nestedFaux, agentDir);
-      const seat = { provider: "ak-nested-officer-pass", model: "faux-1" };
-      await savePublicCliConfig({
-        seats: {
-          auditor: seat,
-          notary: seat,
-          inspector: seat,
-        },
-      }, home);
-      // Home-local fixture arms nested -e provider (dual-module safe; no env protocol).
-      await mkdir(resolve(home, ".ak-roles"), { recursive: true });
-      await writeFile(
-        resolve(home, ".ak-roles", ".summon-extra-pi-args.json"),
-        JSON.stringify(["-e", nestedProvider]),
-        "utf8",
-      );
-      process.env.PI_CODING_AGENT_DIR = agentDir;
       process.env.HOME = home;
       try {
         const context = { cwd: installedRoot, sessionManager: sm } as any;
-        const decision = await judge.createPiJudgeAuditor()({ context });
+        // Offline: inject public-role terminal via options.summonRole (same seam as production options).
+        const decision = await judge.createPiJudgeAuditor()({
+          context,
+          summonRole: async () => ({
+            exitCode: 0,
+            terminal: {
+              roleOutcome: {
+                kind: "accepted",
+                role: "judge",
+                status: "converged",
+                decisiveFacts: { judgeStatus: "converged" },
+              },
+              navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+              artifacts: [],
+              runId: "test-compliance-judge",
+            },
+          }),
+        });
         assert.equal(decision.status, "pass");
       } finally {
-        await seeded.close();
-        if (priorAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = priorAgent;
+        // home restored by withActivationHome
       }
       });
     },
@@ -352,7 +337,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        faux.setResponses(Array.from({ length: 8 }, () => response));
+        faux.setResponses(Array.from({ length: 24 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -483,6 +468,27 @@ test("packaged judge escalation emits one typed human decision", async () => {
           if (!names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
             return fauxAssistantMessage([], { stopReason: "stop" });
           }
+          // Nested compliance judge (AK_ROLE_COMPLIANCE_NESTING) under escalate mode.
+          if (
+            process.env.AK_ROLE_COMPLIANCE_NESTING === "1"
+            && process.env.AK_NESTED_AUDIT_MODE === "escalate"
+          ) {
+            return fauxAssistantMessage(
+              fauxToolCall(
+                JUDGE_OUTPUT_TOOL_NAME,
+                {
+                  judgeStatus: "escalate",
+                  conflicts: ["Soul authority conflicts with controlling authority"],
+                  decisionGate: {
+                    question: "Which authority governs this verdict?",
+                    options: ["Soul", "Controlling authority"],
+                  },
+                },
+                { id: "nested-compliance-escalate" },
+              ),
+              { stopReason: "toolUse" },
+            );
+          }
           return fauxAssistantMessage(
             fauxToolCall(
               JUDGE_OUTPUT_TOOL_NAME,
@@ -492,7 +498,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
             { stopReason: "toolUse" },
           );
         };
-        faux.setResponses(Array.from({ length: 6 }, () => escalateRespond));
+        faux.setResponses(Array.from({ length: 24 }, () => escalateRespond));
         await session.prompt("Exercise packaged audit escalation.");
 
         const result = sessionManager
@@ -522,9 +528,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
           judgeStatus?: unknown;
         };
         assert.equal(escalationDetails.kind, "audit_escalation");
-        assert.deepEqual(escalationDetails.conflicts, [
-          "Soul authority conflicts with controlling authority",
-        ]);
+        // Nested compliance is public judge (#675): escalate face carries decisionGate.
         assert.deepEqual(escalationDetails.auditDecisionGate, {
           question: "Which authority governs this verdict?",
           options: ["Soul", "Controlling authority"],

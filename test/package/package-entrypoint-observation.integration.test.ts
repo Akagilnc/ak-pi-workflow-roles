@@ -138,12 +138,7 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
         PI_CODING_AGENT_DIR: agentDir,
         PI_OFFLINE: "1",
         AK_ROLE_RUN_DIR: runDirectory,
-        // #675: nested public notary uses dedicated officer-pass fixture (parent queue stays intact).
-        AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify([
-          "-e",
-          resolve(packageRoot, "test/fixtures/nested-public-officer-pass-provider.ts"),
-        ]),
-      },
+              },
     });
     assert.equal(result.localTimeout, false, `tool observation subprocess timed out: ${result.stderr}`);
     assert.equal(result.code, 0, `tool observation subprocess failed: ${result.stderr}\n${result.stdout}`);
