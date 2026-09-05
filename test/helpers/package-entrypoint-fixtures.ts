@@ -160,13 +160,14 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
       const issueRoot = resolve(home, ".ak/work/issues/28");
       await mkdir(issueRoot, { recursive: true });
       // Role session under ledger book (ADR 0048); Navigator subject still derives from issueRoot cwd.
+      // #675 notary source-run requires <runId>@<role> leaf names.
       const sessionDirectory = resolve(
         home,
         ".ak-roles",
         "books",
         basename(home),
         "runs",
-        "judge-navigator",
+        "01a06ff1-0000-7000-8000-000000000001@judge",
         "session",
       );
       await mkdir(sessionDirectory, { recursive: true });
@@ -186,6 +187,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
         "-e", resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
         "--ak-role", "judge", "--provider", "ak-audit-failure", "--model", "faux-1", "--mode", "json", "Judge.",
       ];
+      const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
       const result = await runPiSubprocess(args, {
         cwd: issueRoot,
         env: {
@@ -194,6 +196,11 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
           PI_CODING_AGENT_DIR: agentDir,
           AK_NAVIGATOR_OBSERVATION: "1",
           PI_OFFLINE: "1",
+          // #675: offline navigator observation scripts the gate pass without nested spawn.
+          AK_ROLE_TEST_GATE_PASS: "1",
+          AK_ROLE_TEST_AUDIT_PASS: "1",
+          // Nested public officer/auditor summons inherit the offline faux provider when used.
+          AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
         },
       });
       const roleEntries = await readLatestSession(sessionDirectory);

@@ -125,7 +125,9 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector" }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" };
+  | { readonly role: "navigator" }
+  | { readonly role: "auditor" }
+  | { readonly role: "evidence-child" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

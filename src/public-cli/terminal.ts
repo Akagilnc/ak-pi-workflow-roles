@@ -40,7 +40,9 @@ export type TerminalRoleName =
   | "gleaner-left"
   | "inspector"
   | "gatekeeper"
-  | "navigator";
+  | "navigator"
+  | "auditor"
+  | "evidence-child";
 
 /** Merger/Collector residual only — Notary/audit residual abolished (#475). */
 export type ResidualIncompleteTerminalOutcome = {

@@ -12,10 +12,7 @@ import { Value } from "typebox/value";
 
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
-import {
-  InstitutionalResolutionError,
-  readInstitutionalSeatSelection,
-} from "./institutional-resolution.ts";
+
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
@@ -223,41 +220,15 @@ export function parseNavigatorModelSetting(value: string): {
 }
 
 /**
- * Prefer institutional-resolution navigator seat; fall back to model file only when
- * the page is missing or lacks the seat (typed reasons). Corrupted pages fail loud.
+ * Navigator model selection from the navigator-model setting file.
+ * Live seat-table resolution for public `ak-role navigator` is owned by the
+ * public CLI path (#675 deleted the institutional seat page).
  */
 export async function resolveNavigatorSeatSelection(
-  context: HostContext,
+  _context: HostContext,
   modelSettingPath: string | undefined,
   defaultModelSettingPath: string,
 ): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
-  const runDirectory = auditorRunDirectory(context);
-  if (runDirectory !== undefined) {
-    try {
-      const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
-      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
-      return {
-        selection: {
-          provider: selection.provider,
-          model: selection.model,
-          ...(selection.thinking === undefined ? {} : { thinking: selection.thinking }),
-        },
-        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
-        thinkingLevel,
-      };
-    } catch (error) {
-      if (
-        error instanceof InstitutionalResolutionError
-        && (error.reason === "missing-page" || error.reason === "missing-seat")
-      ) {
-        // documented bare-seam fallback
-      } else {
-        throw error instanceof NavigatorUnavailableError
-          ? error
-          : navigatorUnavailableError("model", error);
-      }
-    }
-  }
   let configured: string;
   try {
     configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);

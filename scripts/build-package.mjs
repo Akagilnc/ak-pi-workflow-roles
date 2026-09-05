@@ -14,8 +14,9 @@ const entries = [
   // Navigator package-graph dependencies used by attendance settlement.
   // navigator-session-contracts is a static import of the published attendance root
   // (#590: published non-bundle graph must stay closed under its own relative edges).
-  "evidence-child-executor",
+  "navigator-public-session",
   "navigator-session-contracts",
+  "public-role-summons",
   "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",

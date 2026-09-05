@@ -95,7 +95,9 @@ export type RoleRunRecord = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "auditor"
+    | "evidence-child";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -244,7 +246,9 @@ async function readRoleRunStateDisk(
     record.role !== "gleaner-left" &&
     record.role !== "inspector" &&
     record.role !== "gatekeeper" &&
-    record.role !== "navigator"
+    record.role !== "navigator" &&
+    record.role !== "auditor" &&
+    record.role !== "evidence-child"
   ) {
     return undefined;
   }
@@ -1242,7 +1246,11 @@ export type LoadedResumableGleanerLeftRun = {
 };
 
 export type LoadedResumableInstructionSeatRun = {
-  readonly admitted: AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  readonly admitted:
+    | AdmittedGatekeeperInvocation
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
+    | import("./invocation.ts").AdmittedEvidenceChildInvocation;
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
 };
@@ -1464,7 +1472,12 @@ export async function loadResumableInstructionSeatRun(
   authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableInstructionSeatRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "gatekeeper" && loaded.run.role !== "navigator") {
+  if (
+    loaded.run.role !== "gatekeeper"
+    && loaded.run.role !== "navigator"
+    && loaded.run.role !== "auditor"
+    && loaded.run.role !== "evidence-child"
+  ) {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not an instruction seat`,
     );
@@ -1472,7 +1485,11 @@ export async function loadResumableInstructionSeatRun(
   const admitted = {
     role: loaded.run.role,
     ...resumedBaseAdmitted(loaded),
-  } as AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  } as
+    | AdmittedGatekeeperInvocation
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
+    | import("./invocation.ts").AdmittedEvidenceChildInvocation;
   return seatLoadedResult(loaded, admitted);
 }
 
@@ -1726,6 +1743,8 @@ export async function peekRoleRunRole(
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "auditor"
+  | "evidence-child"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

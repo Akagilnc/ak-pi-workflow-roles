@@ -349,7 +349,7 @@ test("one cold install exercises all public roles plus Navigator gates", async (
       { cwd: project, stdio: "ignore" },
     );
 
-    // Discoverability: packaged callable seats (all of them, #639); no auditors.
+    // Discoverability: packaged callable seats (all of them, #639/#675 includes auditor).
     const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
@@ -360,7 +360,8 @@ test("one cold install exercises all public roles plus Navigator gates", async (
     for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
     }
-    assert.equal(roles.stdout.includes("auditor"), false);
+    assert.match(roles.stdout, /^auditor\t/m);
+    assert.match(roles.stdout, /^evidence-child\t/m);
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
     // typed contract (listHelpCapabilities / helpDocument). Do not stare at

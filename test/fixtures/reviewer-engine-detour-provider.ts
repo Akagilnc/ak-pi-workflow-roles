@@ -14,6 +14,7 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
+import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "../../src/package-contracts/evidence-child-output.ts";
 import {
   ENGINE_DETOUR_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
@@ -100,11 +101,22 @@ export default async function reviewerEngineDetourProvider(pi: ExtensionAPI): Pr
           `evidence child ${axis} missing canned engine labor in detour stdout: ${labor}`,
         );
       }
-      return fauxAssistantMessage(
+      // #675: evidence-child is a public role with terminating output tool.
+      const report =
         axis === "standards"
           ? `Standards finding count: 0. engine-labor=${labor.trim() || "none"}`
-          : `Spec: fixed target satisfies the stated behavior. engine-labor=${labor.trim() || "none"}`,
-      );
+          : `Spec: fixed target satisfies the stated behavior. engine-labor=${labor.trim() || "none"}`;
+      if (names.includes(EVIDENCE_CHILD_OUTPUT_TOOL_NAME)) {
+        return fauxAssistantMessage(
+          fauxToolCall(
+            EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+            { report },
+            { id: `evidence-child-${axis}` },
+          ),
+          { stopReason: "toolUse" },
+        );
+      }
+      return fauxAssistantMessage(report);
     }
 
     if (names.includes(REVIEWER_OUTPUT_TOOL_NAME)) {

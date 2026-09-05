@@ -141,6 +141,10 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
       return ["--ak-role", "gatekeeper"];
     case "navigator":
       return ["--ak-role", "navigator"];
+    case "auditor":
+      return ["--ak-role", "auditor"];
+    case "evidence-child":
+      return ["--ak-role", "evidence-child"];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;
@@ -433,6 +437,10 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         AK_ROLE_RUN_DIR: request.runDirectory,
       };
       applyEngineChildEnv(env, request.engine);
+      // Nested public role summons (#675) inherit offline faux provider args when present.
+      if (config.extraPiArgs !== undefined && config.extraPiArgs.length > 0) {
+        env.AK_ROLE_NESTED_EXTRA_PI_ARGS = JSON.stringify([...config.extraPiArgs]);
+      }
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;
       }

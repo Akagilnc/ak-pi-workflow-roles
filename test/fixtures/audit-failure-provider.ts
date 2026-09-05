@@ -23,6 +23,7 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 export default async function auditFailureProvider(pi: ExtensionAPI): Promise<void> {
@@ -152,12 +153,18 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         }), { stopReason: "toolUse" });
       }
     }
-    if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+    // #675: public auditor uses ak_auditor_output; keep historical soul-audit tool face too.
+    const auditTool = names.includes(AUDITOR_OUTPUT_TOOL_NAME)
+      ? AUDITOR_OUTPUT_TOOL_NAME
+      : names.includes(SOUL_AUDIT_TOOL_NAME)
+        ? SOUL_AUDIT_TOOL_NAME
+        : undefined;
+    if (auditTool !== undefined) {
       if (process.env.AK_AUDIT_NON_OBJECT === "1") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, ["malformed auditor candidate"]));
+        return fauxAssistantMessage(fauxToolCall(auditTool, ["malformed auditor candidate"]));
       }
       if (process.env.AK_AUDIT_UNKNOWN_STATUS === "1") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        return fauxAssistantMessage(fauxToolCall(auditTool, {
           status: "mystery",
           retained: "raw auditor candidate",
         }));
@@ -181,7 +188,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         });
       }
       if (deliveryMode === "silence") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        return fauxAssistantMessage(fauxToolCall(auditTool, {
           status: "escalate",
           violations: [],
           conflicts: ["Soul authority conflicts with controlling authority"],
@@ -191,7 +198,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
           },
         }), { stopReason: "toolUse" });
       }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
       // Healthy Navigator keeps typed no-receipt (malformed prose). The default
       // fatal path must still abort as infrastructure after Gatekeeper passes:
       // prose alone is no-receipt (exit 0), not infrastructure failure.

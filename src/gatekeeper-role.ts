@@ -1,16 +1,11 @@
-import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import {
   auditorRunDirectory,
-  createAuditorDossierTool,
   persistGateSubmissionCandidate,
 } from "./auditor-dossier-tool.ts";
-import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-executor.ts";
-import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import {
@@ -18,6 +13,8 @@ import {
   gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -75,14 +72,30 @@ export class GatekeeperEscalationError extends Error {
   }
 }
 
+export type GateOfficerSummon = (
+  officer: "inspector" | "notary",
+  sourceRunDirectory: string,
+) => Promise<PublicSummonResult>;
+
+/** Offline-test hook for public-role summons; production leaves this undefined. */
+let testGateOfficerSummon: GateOfficerSummon | undefined;
+
+/** Install or clear the offline gate summon hook (tests only). */
+export function setTestGateOfficerSummon(summon: GateOfficerSummon | undefined): void {
+  testGateOfficerSummon = summon;
+}
+
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly loadSoul?: (role: "inspector" | "notary") => Promise<string>;
-  /** Run directory carrying the institutional resolution page (#518). Derives
-   * from context when absent. */
+  /** Run directory of the parent role (pointer-only summons, ADR 0079). */
   readonly runDirectory?: string;
+  /**
+   * Test seam for public-role summons. Production calls the shared public
+   * activation path (#675); inject only in offline tracers.
+   */
+  readonly summonOfficer?: GateOfficerSummon;
 };
 
 export type GatekeeperPassHostActions = {
@@ -90,15 +103,6 @@ export type GatekeeperPassHostActions = {
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
   bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
-
-// Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
-// Opening goes through the sole openToolObject owner — no parallel transport helper.
-const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }),
-  reason: Type.Optional(Type.Unknown({ description: "status 为 escalate 时的理由" })),
-  findings: Type.Unknown({ description: "string[] findings，随 pass、bounce 或 escalate 留存" }),
-}));
-
 
 /**
  * Direct-seat decision tool spec (#639). Lifecycle assembly stays on the
@@ -121,28 +125,16 @@ function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
 }
 
-/** Shared officer decision tool — open transport; projection owns legality. */
-export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
-  return {
-    name,
-    description: "提交一份 typed pass/bounce/escalate 决议。",
-    parameters: officerDecisionSchema,
-    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
-  };
-}
-
 /** Gatekeeper province decision tool — open transport; package-contract projection owns legality. */
-export function createGatekeeperOutputTool(): AuditorDecisionTool {
+export function createGatekeeperOutputTool() {
   return {
     name: GATEKEEPER_OUTPUT_TOOL_NAME,
     description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
-    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id: string, args: unknown) {
+      return result(`已收 ${String((args as { status?: unknown })?.status)}`, args);
+    },
   };
-}
-
-async function defaultLoadSoul(role: "inspector" | "notary"): Promise<string> {
-  return loadGatekeeperSessionMaterials(role);
 }
 
 function failureReason(error: unknown): string {
@@ -227,38 +219,164 @@ function projectOfficerDecision(
   return noUsableReleaseFailure(officer, decision);
 }
 
-/** Submission-gate summons: subject kind determines the officer without a province child. */
+/** Map a public-role terminal onto the gate officer result surface. */
+function projectOfficerTerminal(
+  officer: "inspector" | "notary",
+  summoned: PublicSummonResult,
+): GatekeeperResult {
+  const terminal: TerminalResult | undefined = summoned.terminal;
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) {
+    const detail = summoned.stderr?.trim();
+    return {
+      status: "transport_failure",
+      stage: officer,
+      reason: detail && detail.length > 0
+        ? `${gateSeatLabel(officer)} public summon exit ${summoned.exitCode}: ${detail}`
+        : `${gateSeatLabel(officer)} public summon produced no terminal (exit ${summoned.exitCode})`,
+      submission: summoned,
+    };
+  }
+  if (outcome.kind === "no_receipt") {
+    return {
+      status: "no_receipt",
+      stage: officer,
+      reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`,
+      facts: outcome,
+    };
+  }
+  if (outcome.kind === "failure") {
+    return {
+      status: "transport_failure",
+      stage: officer,
+      reason: outcome.diagnostic,
+      submission: outcome.decisiveFacts,
+    };
+  }
+  if (outcome.kind === "accepted") {
+    return projectOfficerDecision(officer, {
+      status: outcome.status,
+      ...outcome.decisiveFacts,
+    });
+  }
+  return {
+    status: "transport_failure",
+    stage: officer,
+    reason: `${gateSeatLabel(officer)} public summon returned unusable terminal kind`,
+    submission: outcome,
+  };
+}
+
+/**
+ * Book a direct-officer receipt under parent session/auditor-roles so Terminal
+ * gate projection and Analyst gate-cycles keep one nested-volume reader (#478).
+ * Public officer runs remain independent; this is the parent-side pointer face.
+ */
+async function bookDirectOfficerReceipt(
+  context: ExtensionContext | HostContext,
+  officer: "inspector" | "notary",
+  result: GatekeeperResult,
+): Promise<void> {
+  if (result.status !== "pass" && result.status !== "bounce" && result.status !== "escalate") {
+    return;
+  }
+  const parentFile = context.sessionManager?.getSessionFile?.();
+  if (typeof parentFile !== "string" || parentFile.trim() === "") return;
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { dirname, join } = await import("node:path");
+  const toolName = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
+  const details =
+    result.status === "pass"
+      ? { status: "pass", findings: [...result.findings] }
+      : result.status === "bounce"
+        ? { status: "bounce", findings: [...result.findings] }
+        : {
+            status: "escalate",
+            findings: result.findings,
+            ...(Object.hasOwn(result, "reason") ? { reason: result.reason } : {}),
+          };
+  const nest = join(dirname(parentFile), "auditor-roles");
+  await mkdir(nest, { recursive: true });
+  const callId = `gate-direct-${officer}`;
+  const now = new Date().toISOString();
+  const rows = [
+    {
+      type: "message",
+      id: "gate-user",
+      parentId: null,
+      timestamp: now,
+      message: { role: "user", content: "gate summons", timestamp: Date.now() },
+    },
+    {
+      type: "message",
+      id: "gate-assistant",
+      parentId: "gate-user",
+      timestamp: now,
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: callId, name: toolName, arguments: details }],
+        timestamp: Date.now(),
+      },
+    },
+    {
+      type: "message",
+      id: "gate-result",
+      parentId: "gate-assistant",
+      timestamp: now,
+      message: {
+        role: "toolResult",
+        toolCallId: callId,
+        toolName,
+        isError: false,
+        content: [{ type: "text", text: "gate officer accepted" }],
+        details,
+        timestamp: Date.now(),
+      },
+    },
+  ];
+  await writeFile(
+    join(nest, `${officer}-${Date.now().toString(36)}.jsonl`),
+    `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    "utf8",
+  );
+}
+
+/** Submission-gate summons: subject kind → officer; activation is public role path (#675). */
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
-  const loadSoul = options.loadSoul ?? defaultLoadSoul;
   const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
-  // Resolve once so dossier tool and child session share the same run binding (#632).
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === undefined) {
+    return {
+      status: "transport_failure",
+      stage: officer,
+      reason: `${gateSeatLabel(officer)} requires a parent run directory pointer`,
+    };
+  }
   // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
   // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  const submissionCandidate =
-    runDirectory === undefined
-      ? undefined
-      : persistGateSubmissionCandidate(runDirectory, options.context);
+  persistGateSubmissionCandidate(runDirectory, options.context);
+  // Offline subprocess tracers may force a pass without nested public spawn.
+  if (process.env.AK_ROLE_TEST_GATE_PASS === "1" && options.summonOfficer === undefined && testGateOfficerSummon === undefined) {
+    const pass: GatekeeperResult = { status: "pass", officer, findings: [] };
+    await bookDirectOfficerReceipt(options.context, officer, pass);
+    return pass;
+  }
   try {
-    const officerRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
-      gateSeat: officer,
-      systemPrompt: await loadSoul(officer),
-      prompt: "卷宗已受理。",
-      tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
-      // Same locator as 审刑院 — run directory + path identifiers only; no receipt body (#632).
-      dossierTool: createAuditorDossierTool(
-        runDirectory,
-        submissionCandidate === undefined ? undefined : { submissionCandidate },
-      ),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(runDirectory === undefined ? {} : { runDirectory }),
-    });
-    if (officerRun.noReceiptLifecycle !== undefined) {
-      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
-    }
-    return projectOfficerDecision(officer, officerRun.decision);
+    const summon =
+      options.summonOfficer
+      ?? testGateOfficerSummon
+      ?? (async (nextOfficer, sourceRunDirectory) => {
+        const { summonGateOfficer } = await import("./public-role-summons.ts");
+        return summonGateOfficer({
+          officer: nextOfficer,
+          sourceRunDirectory,
+          cwd: options.context.cwd ?? process.cwd(),
+        });
+      });
+    const summoned = await summon(officer, runDirectory);
+    const projected = projectOfficerTerminal(officer, summoned);
+    await bookDirectOfficerReceipt(options.context, officer, projected);
+    return projected;
   } catch (error) {
     return { status: "transport_failure", stage: officer, reason: failureReason(error) };
   }

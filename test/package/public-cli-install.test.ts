@@ -48,6 +48,13 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
     // Use a Pi-shaped agent dir under the hermetic home (not the harness default .pi-agent label).
     const piAgentDir = resolve(home, ".pi", "agent");
     await mkdir(piAgentDir, { recursive: true });
+    // #675: avoid navigator attendance hanging on default openai-codex auth during
+    // activation-failure identity traces (no credentials on this install surface).
+    await writeFile(
+      resolve(piAgentDir, "navigator-model.json"),
+      `${JSON.stringify({ model: "offline-none/none" })}\n`,
+      "utf8",
+    );
     // R5: shared HEAD-keyed tarball inside installPackedArtifactIntoPiNpm; this
     // case alone owns the live pi install → settings.packages write path.
     const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
@@ -92,7 +99,12 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
         {
           home,
           agentDir: piAgentDir,
-          env: { PI_OFFLINE: "1" },
+          env: {
+            PI_OFFLINE: "1",
+            // #675: activation-failure identity only — skip nested public summons.
+            AK_ROLE_TEST_GATE_PASS: "1",
+            AK_ROLE_TEST_AUDIT_PASS: "1",
+          },
         },
       );
       assert.equal(run.localTimeout, false, run.stderr);
@@ -167,7 +179,8 @@ test("isolated Pi home installs packed artifact and discovers ak-role via privat
       assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
     }
     assert.match(roles.stdout, /^navigator\tstartup\t/m);
-    assert.equal(roles.stdout.includes("auditor"), false);
+    assert.match(roles.stdout, /^auditor\t/m);
+    assert.match(roles.stdout, /^evidence-child\t/m);
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
     // typed contract (listHelpCapabilities / helpDocument); do not stare at help

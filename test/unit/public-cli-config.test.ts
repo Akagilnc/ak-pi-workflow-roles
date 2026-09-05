@@ -149,8 +149,11 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "inspector",
     "gatekeeper",
     "navigator",
+    "auditor",
+    "evidence-child",
   ]);
-  assert.equal(seats.includes("auditor" as never), false);
+  assert.equal(seats.includes("auditor"), true);
+  assert.equal(seats.includes("evidence-child"), true);
 
   // #453/#620/#639: gatekeeper keeps no package startup; subordinates have none either.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");

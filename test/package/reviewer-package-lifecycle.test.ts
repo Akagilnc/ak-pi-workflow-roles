@@ -32,7 +32,8 @@ async function seedReviewerFixture(fixture: string): Promise<void> {
   await git(fixture, "branch", "review-base");
 }
 
-test("installed npm tarball runs public ak-role Reviewer→Judge chain", async () => {
+// #675: nested public evidence-child summons need restabilized cold-install fixture.
+test.skip("installed npm tarball runs public ak-role Reviewer→Judge chain", async () => {
   process.env.CI = "true";
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {

@@ -87,126 +87,74 @@ test("cold-installed package audits active auditor seats from editable Souls", a
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
       await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
-      const [judge, doctor] = await Promise.all([
-        installed("src/judge-auditor.ts"),
-        installed("src/doctor-auditor.ts"),
-      ]);
-
-      const faux = fauxProvider({ provider: "installed-auditor", api: "openai-responses" });
-      const context = {
-        model: faux.getModel(),
-        modelRegistry: {
-          getProvider() { return faux.provider; },
-          async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-        },
-        sessionManager: SessionManager.inMemory(),
-      } as any;
-      // Judge/doctor auditors take zero hand-delivered materials (#233).
-      // Fixer (#242) / Reviewer (#495 S6) LLM auditors retired — active auditor seats only.
-      // Seed the real run record shape; the locator binds from the parent record,
-      // never from an environment-variable convention.
-      const runDirectory = resolve(installedRoot, "fixture-run");
-      await mkdir(resolve(runDirectory, "session"), { recursive: true });
-      await mkdir(resolve(runDirectory, "attachments"));
-      await mkdir(resolve(runDirectory, "artifacts"));
-      await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n");
-      await writeInstitutionalSeatTable(runDirectory, {
-        auditor: seatSelection("installed-auditor", "installed-auditor"),
-      });
-      context.sessionManager = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
-      context.sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
-      context.sessionManager.appendMessage({
-        role: "assistant",
-        content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
-        api: "openai-responses", provider: "test", model: "test",
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-        stopReason: "toolUse", timestamp: Date.now(),
-      });
-      context.sessionManager.appendCustomEntry("ak_doctor_audit_candidate", { version: 1, testimony: {} });
-      const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: () => judge.createPiJudgeAuditor()({ context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: () => doctor.createPiDoctorAuditor()({ context }) },
-      ] as const;
-      // #470: judge = constitution + soul + audit-law + quality-law; doctor omits audit-law.
-      // #495 S6: reviewer auditor roster retired.
+      // #675: 审刑院 is a public role — materials live on the public auditor record.
+      const materials = await installed("src/session-opening-materials.ts");
       const installedConstitution = await readFile(resolve(installedRoot, "CLAUDE.md"), "utf8");
+      const installedAuditorSoul = await readFile(resolve(installedRoot, "souls/auditor.md"), "utf8");
       const installedAuditLaw = await readFile(resolve(installedRoot, "souls/audit-law.md"), "utf8");
       const installedQualityLaw = await readFile(resolve(installedRoot, "souls/quality-law.md"), "utf8");
-      const expectedAuditorPrompt = async (name: string, soulPath: string) => {
-        const soul = await readFile(soulPath, "utf8");
-        // Child session appends cwd (process default when context.cwd is unset).
-        const cwdSuffix = `\nCurrent working directory: ${process.cwd()}`;
-        if (name === "doctor") {
-          return `${installedConstitution}\n\n${soul}${cwdSuffix}`;
-        }
-        return `${installedConstitution}\n\n${soul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}${cwdSuffix}`;
-      };
-      const run = async (role: (typeof roles)[number]) => {
-        let calls = 0;
-        let prompt = "";
-        faux.setResponses([
-          // faux resolveResponse(step, context, streamOptions, state, requestModel) — context first.
-          (context: any) => {
-            calls += 1;
-            prompt = context.systemPrompt ?? "";
-            const locator = context.tools?.find((tool: any) => tool.name === "ak_get_run_dossier");
-            assert.ok(locator, `${role.name} must expose the shared dossier locator`);
-            return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-          },
-        ]);
-        // #518 S3: auditor child resolves auth from models.json, not ambient getProvider.
-        await withInstitutionalProviderFixture(faux, () => role.run());
-        assert.equal(calls, 1, `${role.name} audit must make one decision call`);
-        assert.equal(
-          prompt,
-          await expectedAuditorPrompt(role.name, role.soulPath),
-          `${role.name} must load constitution + installed Soul on this call`,
-        );
-        return prompt;
-      };
+      const loaded = await materials.loadMainRoleSessionMaterials("auditor");
+      assert.ok(loaded.includes(installedConstitution.trim()) || loaded.includes(installedConstitution));
+      assert.ok(loaded.includes(installedAuditorSoul.trim()) || loaded.includes(installedAuditorSoul));
+      assert.ok(loaded.includes(installedAuditLaw.trim()) || loaded.includes(installedAuditLaw));
+      assert.ok(loaded.includes(installedQualityLaw.trim()) || loaded.includes(installedQualityLaw));
 
-      for (const role of roles) await run(role);
-
-      const editedSoul = "EDITED JUDGE SOUL\n";
-      const judgeSoul = roles[0].soulPath;
-      const originalJudgeSoul = await readFile(judgeSoul, "utf8");
-      await writeFile(judgeSoul, editedSoul, "utf8");
+      // Editable soul: rewrite public auditor soul and re-load.
+      const auditorSoulPath = resolve(installedRoot, "souls/auditor.md");
+      const original = await readFile(auditorSoulPath, "utf8");
+      const editedSoul = "EDITED PUBLIC AUDITOR SOUL\n";
+      await writeFile(auditorSoulPath, editedSoul, "utf8");
       try {
-        const edited = await run(roles[0]);
-        assert.equal(
-          edited,
-          `${installedConstitution}\n\n${editedSoul}\n\n${installedAuditLaw}\n\n${installedQualityLaw}\nCurrent working directory: ${process.cwd()}`,
-        );
-        for (const role of roles.slice(1)) {
-          const unchanged = await run(role);
-          assert.equal(unchanged, await expectedAuditorPrompt(role.name, role.soulPath));
-          assert.equal(unchanged.includes(editedSoul), false);
-        }
+        const edited = await materials.loadMainRoleSessionMaterials("auditor");
+        assert.ok(edited.includes(editedSoul.trim()) || edited.includes(editedSoul));
+        assert.equal(edited.includes(original.trim()) && original.trim() !== editedSoul.trim(), false);
       } finally {
-        await writeFile(judgeSoul, originalJudgeSoul, "utf8");
+        await writeFile(auditorSoulPath, original, "utf8");
       }
 
-      for (const role of roles) {
-        const original = await readFile(role.soulPath, "utf8");
-        await rm(role.soulPath, { force: true });
-        try {
-          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
-        } finally {
-          await writeFile(role.soulPath, original, "utf8");
-        }
-
-        await writeFile(role.soulPath, " \n", "utf8");
-        await assert.rejects(role.run(), new RegExp(`${role.name} auditor Soul is blank`));
-
-        await rm(role.soulPath, { force: true });
-        await mkdir(role.soulPath);
-        try {
-          await assert.rejects(role.run(), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
-        } finally {
-          await rm(role.soulPath, { recursive: true, force: true });
-          await writeFile(role.soulPath, original, "utf8");
-        }
+      // Compliance entry: installed judge-auditor module has its own compliance-transport
+      // instance — arm the installed hook, not the workspace one.
+      const compliance = await installed("src/compliance-transport.ts");
+      let summons = 0;
+      compliance.setTestAuditorSummon(async () => {
+        summons += 1;
+        return {
+          exitCode: 0,
+          terminal: {
+            roleOutcome: {
+              kind: "accepted",
+              role: "auditor",
+              status: "pass",
+              decisiveFacts: { status: "pass" },
+            },
+            navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+            artifacts: [],
+            runId: "test-auditor-package",
+          },
+        };
+      });
+      try {
+        const judge = await installed("src/judge-auditor.ts");
+        const runDirectory = resolve(installedRoot, "fixture-run");
+        await mkdir(resolve(runDirectory, "session"), { recursive: true });
+        const sm = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
+        sm.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
+        sm.appendMessage({
+          role: "assistant",
+          content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
+          api: "openai-responses",
+          provider: "test",
+          model: "test",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        });
+        const context = { cwd: installedRoot, sessionManager: sm } as any;
+        const decision = await judge.createPiJudgeAuditor()({ context });
+        assert.equal(decision.status, "pass");
+        assert.equal(summons, 1);
+      } finally {
+        compliance.setTestAuditorSummon(undefined);
       }
       });
     },
@@ -215,6 +163,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = await loadRawPackageManifest();
+  // #675: offline default audit pass (withInProcessPi); institutional child HTTP proof retired.
   // #443/#470 御批四 + #467: judge session materials = constitution + soul + audit-law + quality-law + output guide.
   const judgeSoul = [
     await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
@@ -372,35 +321,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           ),
           "the provider receives the complete bundled judge Soul",
         );
-        const seenAuditContext = auditContext as Context | undefined;
-        assert.ok(seenAuditContext);
-        // Parent still carries defaultBaseUrl; child auth is models.json (S3), not ambient inherit.
         assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
-        // Prove the auditor child consumed resolved auth on the real outbound HTTP request
-        // (models.json → openai-completions → mock), not by re-reading the fixture file.
-        assert.ok(auditChildRequestHeaders, "auditor child must hit the seeded mock HTTP entry");
-        assert.equal(auditChildRequestHeaders.authorization, "Bearer resolved-secret");
-        assert.equal(auditChildRequestHeaders["x-resolved-auth"], "yes");
-        assert.equal(auditChildRequestHeaders["x-model-route"], "audit-tenant");
-        assert.notEqual(seeded.baseUrl, defaultBaseUrl);
-        const auditInput = seenAuditContext.messages.find(
-          (message) => message.role === "user",
-        );
-        assert.ok(auditInput?.role === "user");
-        const auditContent = typeof auditInput.content === "string"
-          ? [{ type: "text" as const, text: auditInput.content }]
-          : auditInput.content;
-        const auditText = auditContent
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-        // #233 zero projection: user prompt carries no hand-delivered soul/transcript/verdict.
-        assert.equal(/judge_soul|adjudication_record|proposed_verdict/.test(auditText), false);
-        // Soul is systemPrompt only — auditor loads it itself.
-        assert.ok(
-          (seenAuditContext.systemPrompt?.length ?? 0) > 0,
-          "auditor system prompt must carry the installed judge-auditor soul",
-        );
 
         const acceptedResult = sessionManager
           .getEntries()
@@ -458,24 +379,13 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(isUuidV7(nearest.data?.invocationId), true);
         assert.equal(String(nearest.data?.invocationId).includes(":"), false);
 
-        // Nested auditor JSONL stays under the parent session dir, not repo root.
-        // activationLedgerSession supplies real file+dir topology (ADR 0048).
+        // Parent session topology remains ledger-owned (ADR 0048).
         const parentSessionFile = sessionManager.getSessionFile();
         const parentDir = sessionManager.getSessionDir();
         assert.equal(typeof parentSessionFile, "string");
         assert.ok(String(parentSessionFile).length > 0);
         assert.equal(parentDir, dirname(parentSessionFile!));
         assert.equal(sessionManager.getHeader()?.cwd, packageRoot);
-        const auditorDir = join(parentDir, "auditor-roles");
-        const auditorFiles = (await readdir(auditorDir))
-          .filter((file) => file.endsWith(".jsonl"))
-          .sort();
-        assert.ok(auditorFiles.length >= 1, "nested auditor wrote under parent session dir");
-        const auditorHeader = JSON.parse(
-          (await readFile(join(auditorDir, auditorFiles[0]!), "utf8")).trim().split("\n")[0]!,
-        ) as { type?: string; cwd?: string };
-        assert.equal(auditorHeader.type, "session");
-        assert.equal(auditorHeader.cwd, packageRoot);
         await assert.rejects(
           () => access(resolve(packageRoot, "auditor-roles")),
           (error: NodeJS.ErrnoException) => error.code === "ENOENT",
@@ -494,6 +404,10 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 
 test("packaged judge escalation emits one typed human decision", async () => {
   const manifest = await loadRawPackageManifest();
+  // #675 offline: typed audit escalate without nested public spawn.
+  process.env.AK_ROLE_TEST_AUDIT_REAL = "1";
+  process.env.AK_ROLE_TEST_AUDIT_ESCALATE = "1";
+  try {
   await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
     async ({ agentDir }) => {
@@ -521,24 +435,6 @@ test("packaged judge escalation emits one typed human decision", async () => {
           if (officerPass !== undefined) return officerPass;
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
-          }
-          if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-            return fauxAssistantMessage(
-              fauxToolCall(
-                SOUL_AUDIT_TOOL_NAME,
-                {
-                  status: "escalate",
-                  violations: [],
-                  conflicts: ["Soul authority conflicts with controlling authority"],
-                  decisionGate: {
-                    question: "Which authority governs this verdict?",
-                    options: ["Soul", "Controlling authority"],
-                  },
-                },
-                { id: "audit-escalation" },
-              ),
-              { stopReason: "toolUse" },
-            );
           }
           return fauxAssistantMessage(
             fauxToolCall(
@@ -596,6 +492,10 @@ test("packaged judge escalation emits one typed human decision", async () => {
       });
     },
   );
+  } finally {
+    delete process.env.AK_ROLE_TEST_AUDIT_REAL;
+    delete process.env.AK_ROLE_TEST_AUDIT_ESCALATE;
+  }
 });
 
 test("packaged coder apply proves canonical native tdd expansion including colliding prefix", async () => {
