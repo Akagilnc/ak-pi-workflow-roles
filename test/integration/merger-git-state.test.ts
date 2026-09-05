@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test, { after } from "node:test";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -18,7 +19,7 @@ let baseTemplateRoot: string | undefined;
 let baseTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function baseTemplate() {
   baseTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-base-"));
+    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-base-"));
     baseTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
@@ -52,7 +53,7 @@ after(async () => {
 
 async function conflictedRepo() {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-git-"));
+  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-git-"));
   // Two subprocesses to the conflicted in-progress merge state.
   execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
     stdio: "ignore",
@@ -180,7 +181,7 @@ test("production Merger Git seam computes resolutionChangedPaths across clean an
 
 test("production Merger Git seam reports no conflict set after a non-conflicting merge", async () => {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-clean-"));
+  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-clean-"));
   try {
     execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
       stdio: "ignore",

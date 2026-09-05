@@ -8,6 +8,7 @@ import test from "node:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const faux = fauxProvider({
   provider: "ak-model-seed-test",
@@ -16,7 +17,7 @@ const faux = fauxProvider({
 });
 
 async function withAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-model-seed-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-model-seed-"));
   try {
     const agentDir = join(root, "agent");
     await mkdir(agentDir, { recursive: true });

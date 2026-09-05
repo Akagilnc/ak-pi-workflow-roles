@@ -20,6 +20,7 @@ import {
   withProductionGrokIsolation,
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 /** Path whose auth.json rm fails — cleanup-failure oracle (errno is platform-local). */
 const UNREMOVABLE_HOME = "/dev/null";
@@ -30,14 +31,14 @@ function under(root: string, path: string): boolean {
 }
 
 async function seedOperatorHome(): Promise<string> {
-  const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-"));
+  const operatorHome = await mkdtemp(join(testTmpdir(), "ak-grok-op-"));
   await mkdir(join(operatorHome, ".grok"), { recursive: true });
   await writeFile(join(operatorHome, ".grok", "auth.json"), "SECRET-AUTH\n", "utf8");
   return operatorHome;
 }
 
 async function seedRunDirectory(): Promise<string> {
-  return await mkdtemp(join(tmpdir(), "ak-grok-run-"));
+  return await mkdtemp(join(testTmpdir(), "ak-grok-run-"));
 }
 
 test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home under runDirectory", async () => {
@@ -160,7 +161,7 @@ test("withProductionGrokIsolation rethrows undefined primary, scrubs auth.json, 
 });
 
 test("openProductionGrokHome does not leak auth when auth copy fails", async () => {
-  const operatorHome = await mkdtemp(join(tmpdir(), "ak-grok-op-noauth-"));
+  const operatorHome = await mkdtemp(join(testTmpdir(), "ak-grok-op-noauth-"));
   const runDirectory = await seedRunDirectory();
   try {
     // No .grok/auth.json — prepareControlledGrokHome must fail.
@@ -194,7 +195,7 @@ test("openProductionGrokHome scrubs crash-window residual auth before recopying"
 test("openProductionGrokHome refuses a symlinked grok-home before auth copy", async () => {
   const operatorHome = await seedOperatorHome();
   const runDirectory = await seedRunDirectory();
-  const escapeTarget = await mkdtemp(join(tmpdir(), "ak-grok-escape-"));
+  const escapeTarget = await mkdtemp(join(testTmpdir(), "ak-grok-escape-"));
   try {
     await symlink(escapeTarget, join(runDirectory, "grok-home"));
     // Refusal is the contract; message prose is not. open primary + settle both refuse → AggregateError.
@@ -212,8 +213,8 @@ test("openProductionGrokHome refuses a symlinked grok-home before auth copy", as
 });
 
 test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async () => {
-  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-settle-symlink-"));
-  const escapeTarget = await mkdtemp(join(tmpdir(), "ak-grok-auth-escape-"));
+  const controlledHome = await mkdtemp(join(testTmpdir(), "ak-grok-settle-symlink-"));
+  const escapeTarget = await mkdtemp(join(testTmpdir(), "ak-grok-auth-escape-"));
   const escapeAuth = join(escapeTarget, "auth.json");
   try {
     await writeFile(escapeAuth, "OUTSIDE-SECRET\n", "utf8");

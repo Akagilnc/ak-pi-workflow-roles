@@ -29,6 +29,7 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { packageRoot, seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const zero = { count: 0, sources: [] as string[] };
 function patient(runsPath: string): DoctorCase {
@@ -80,7 +81,7 @@ async function withGrokRoot<T>(run: (ctx: {
   runDirectory: string;
   deps: ReturnType<typeof createGrokRoleRuntimeDependencies>;
 }) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-leg-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-leg-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
   delete process.env.AK_ROLE_ENGINE;

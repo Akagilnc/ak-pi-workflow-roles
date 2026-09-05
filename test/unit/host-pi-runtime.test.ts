@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { ensureHostPiRuntimeResolvable, HOST_PROVIDED_PACKAGES } from "../../src/public-cli/host-pi-runtime.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function writePackage(dir: string, name: string, entryBody: string): string {
   mkdirSync(dir, { recursive: true });
@@ -19,7 +20,7 @@ function writePackage(dir: string, name: string, entryBody: string): string {
  * resolution would honestly see as local. /tmp has no such ambient peers here.
  */
 function makeIsolatedRoot(): string {
-  return mkdtempSync(join("/tmp", "ak-host-pi-runtime-iso-"));
+  return mkdtempSync(join(testTmpdir(), "ak-host-pi-runtime-iso-"));
 }
 
 /** A fake host Pi global install: pi-coding-agent with nested pi-ai and typebox, plus a bin shim. */

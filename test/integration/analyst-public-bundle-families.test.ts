@@ -31,6 +31,7 @@ import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts
 import { machineLedgerHome, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const BOOK = "fixture-book";
@@ -61,10 +62,10 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   // /tmp/<id>/main.js makes naive join(bin,"..","..") === "/" and host-pi link
   // attempts mkdir('/node_modules/...'). macOS os.tmpdir() is deeper and hides
   // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
-  const binDir = await mkdtemp(join("/tmp", "analyst-bundle-bin-"));
+  const binDir = await mkdtemp(join(testTmpdir(), "analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
-  const project = await mkdtemp(join("/tmp", "analyst-bundle-cwd-"));
-  const profileHome = await mkdtemp(join("/tmp", "analyst-bundle-profile-"));
+  const project = await mkdtemp(join(testTmpdir(), "analyst-bundle-cwd-"));
+  const profileHome = await mkdtemp(join(testTmpdir(), "analyst-bundle-profile-"));
   await withBusinessRepo(async () => {
     try {
       const previousCwd = process.cwd();

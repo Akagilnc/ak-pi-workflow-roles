@@ -49,9 +49,10 @@ import {
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-fixer-"));
   try {
     return await scenario(home);
   } finally {

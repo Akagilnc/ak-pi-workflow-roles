@@ -45,6 +45,7 @@ import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import { callThroughMcp, listThroughMcp, type GrokMcpServer } from "../helpers/grok-mcp-harness.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 type McpServer = GrokMcpServer;
 
@@ -85,7 +86,7 @@ test("Grok projection maps public activations onto the shared envelope", () => {
 });
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-envelope-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-envelope-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
   delete process.env.AK_ROLE_RUN_DIR;
@@ -126,7 +127,7 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
 });
 
 test("Grok opening materials inject soul exactly once", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-soul-once-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-soul-once-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -167,7 +168,7 @@ test("Grok opening materials inject soul exactly once", async () => {
 });
 
 test("Grok dispose closes MCP server even when session_shutdown rejects", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-shutdown-failure-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-shutdown-failure-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -224,7 +225,7 @@ test("Grok Skill expansion evidence aligns with the packaged canonical binding",
 });
 
 test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-coder-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -269,7 +270,7 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
 });
 
 test("Grok typed infrastructureFailure aborts the round and closeRound returns knownFailure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-fail-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-infra-fail-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
@@ -325,7 +326,7 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
 test("Grok infra abort fills knownFailure before hanging tool_result projection so closeRound cannot race MissingSubmission", async () => {
   // #593 r3 finding 1: hostAbort must not win an empty infrastructureRoundFailure slot
   // while tool_result projection (navigator settle) is still in flight.
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-race-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-infra-race-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
@@ -406,7 +407,7 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
 test("Grok pre-execution observation failure terminates as typed InfrastructureFailure not MissingSubmission", async () => {
   // #593 r3 finding 2: tool_execution_start / tool_call throws must share the same
   // non-correctable infra pathway (slot + hostAbort), not bare outer RPC only.
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-preexec-infra-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-preexec-infra-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
@@ -466,7 +467,7 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
 });
 
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-coder-reject-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-coder-reject-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -526,7 +527,7 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
 });
 
 test("public Notary source-run ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-ticket-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-notary-ticket-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -722,7 +723,7 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
 });
 
 test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-notary-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-notary-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -798,7 +799,7 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
 });
 
 test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-sibling-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-sibling-"));
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -862,7 +863,7 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
 });
 
 test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries, and re-prompt succeeds in same ACP session", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-real-seam-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-real-seam-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   process.env.HOME = root;
@@ -953,7 +954,7 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
 test("Grok MCP projection extracts typed evidence keys from failInfrastructure thrown error", async () => {
   // Doctor has no gatekeeper-before-audit: auditCompliance throw reaches failInfrastructure
   // with the original error, so closeRound.details must carry NAVIGATOR evidence keys.
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-infra-evidence-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-infra-evidence-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
@@ -1053,7 +1054,7 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
 });
 
 test("Grok MCP projection routes thrown correctable submission error as retry without arming infrastructure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-worker-reminder-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-worker-reminder-"));
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   process.env.HOME = root;
@@ -1147,7 +1148,7 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
   const priorExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
-    const root = await mkdtemp(join(tmpdir(), "ak-grok-collector-"));
+    const root = await mkdtemp(join(testTmpdir(), "ak-grok-collector-"));
     const priorHome = process.env.HOME;
     const priorRun = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = root;

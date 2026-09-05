@@ -11,9 +11,10 @@ import {
   InstitutionalResolutionError,
   type InstitutionalResolutionPage,
 } from "../../src/institutional-resolution.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("resolution page write, read, missing-seat, resume rewrite, and corruption failures", async () => {
-  const runDir = await mkdtemp(join(tmpdir(), "ak-test-resolution-page-"));
+  const runDir = await mkdtemp(join(testTmpdir(), "ak-test-resolution-page-"));
   try {
     const pageV1: InstitutionalResolutionPage = {
       version: 1,
@@ -284,7 +285,7 @@ test("public CLI dispatch-resume entrypoint refreshes institutional resolution f
 });
 
 test("readInstitutionalSeatSelection reasons: missing-page, missing-seat, corrupted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-inst-reason-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-inst-reason-"));
   try {
     await assert.rejects(
       () => readInstitutionalSeatSelection(join(root, "absent"), "navigator"),

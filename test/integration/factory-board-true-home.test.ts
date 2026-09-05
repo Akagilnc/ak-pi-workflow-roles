@@ -22,6 +22,7 @@ import {
 
 import type { FactoryBoardBook, FactoryBoardView } from "../../src/factory-board.ts";
 import { UNACCEPTED_FLYING_MS, writeFactoryBoardPage } from "../../src/factory-board.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async (t) => {
   const homeLedger =
@@ -36,7 +37,7 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     return;
   }
 
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "factory-board-s3-true-home-"));
   try {
     const ledgerDir = join(workspace, "ledger");
 

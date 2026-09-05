@@ -12,6 +12,7 @@ import { executeReviewerChild, projectSharedChildFailure } from "../../src/revie
 import { executeEvidenceChild } from "../../src/evidence-child-executor.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("shared child classifications project without relabeling unrelated errors", () => {
   for (const classification of ["provider", "child", "unknown"] as const) {
@@ -40,7 +41,7 @@ function evidenceChildContext(cwd: string, faux: ReturnType<typeof fauxProvider>
 }
 
 test("aborted evidence without remote testimony projects unknown, not child", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-aborted-"));
+  const cwd = await mkdtemp(join(testTmpdir(), "ak-sp1-aborted-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
   try {
@@ -73,7 +74,7 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
   const previousBaseUrl = process.env.OPENAI_BASE_URL;
   process.env.OPENAI_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "http://127.0.0.1:1";
-  const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-cleanup-"));
+  const cwd = await mkdtemp(join(testTmpdir(), "ak-sp1-cleanup-"));
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
   let subscribes = 0;

@@ -47,6 +47,7 @@ import {
 } from "../../src/analyst-page.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import type { AnalystModelGroupsPage } from "../../src/analyst-model-groups.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -123,7 +124,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-338-business-"));
+  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-338-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -143,7 +144,7 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-338-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-338-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

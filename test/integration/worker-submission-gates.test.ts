@@ -1,3 +1,4 @@
+// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
@@ -47,8 +48,8 @@ import {
   resolvePackageEntrypoint,
   seedGitRepository,
   withHermeticHome,
-  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 const FACTORY = "ak-roles:";
 const OWNED_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 
@@ -70,7 +71,7 @@ async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-worker-gate-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-worker-gate-home-"));
   const root = await mkdtemp(join(home, "repo-"));
   git(root, ["init", "-b", "main"]);
   configureGitUser(root);
@@ -169,7 +170,7 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
-    const bare = await mkdtemp(join(tmpdir(), "ak-worker-gate-bare-"));
+    const bare = await mkdtemp(join(testTmpdir(), "ak-worker-gate-bare-"));
     try {
       const gate = bareGate(home);
       gate.arm(root);
@@ -341,8 +342,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       assert.ok(existsSync(foreignMultiHook), "foreign multi-value target must survive");
       git(root, ["config", "--worktree", "--unset-all", "core.hooksPath"]);
       await rm(foreignMultiDir, { recursive: true, force: true });
-      if (existsSync(multiOwned.hooksDir)) await rm(multiOwned.hooksDir, { recursive: true, force: true });
-
+      
       // Migrated core.bare / core.worktree stay (real path — fake path bricks git).
       const commonDir = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
       const mainWtConfig = join(commonDir, "config.worktree");
@@ -415,205 +415,3 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
   });
 });
 
-test("①② durability via real createRecordSession survives resume; no second false bounce", async () => {
-  await withHermeticHome({ prefix: "ak-worker-gate-durable-" }, async ({ home }) => {
-    async function parentSession(book: string, run: string, cwd: string): Promise<SessionManager> {
-      const dir = join(machineLedgerHome(home), "books", book, "runs", "activation", run);
-      await mkdir(dir, { recursive: true });
-      const file = join(dir, "session.jsonl");
-      await writeFile(
-        file,
-        `${JSON.stringify({
-          type: "session",
-          version: 3,
-          id: run,
-          timestamp: "2025-01-01T00:00:00.000Z",
-          cwd,
-        })}\n`,
-      );
-      return SessionManager.open(file);
-    }
-
-    async function durableProject(
-      name: string,
-      run: string,
-      seedMsg: string,
-    ): Promise<{ project: string; parent: SessionManager }> {
-      const project = join(home, name);
-      await mkdir(project, { recursive: true });
-      seedGitRepository(project);
-      configureGitUser(project);
-      git(project, ["commit", "--allow-empty", "-m", seedMsg]);
-      return { project, parent: await parentSession(name, run, project) };
-    }
-
-    const { project, parent } = await durableProject("proj", "worker-run", "seed");
-    const baselineHead = git(project, ["rev-parse", "HEAD"]);
-    const first = createWorkerSubmissionGate();
-    first.arm(project, parent);
-    assert.throws(() => first.assertAcceptable("completed"), WorkerCommitReminderError);
-
-    const nest = join(dirname(parent.getSessionFile()!), WORKER_SUBMISSION_GATE_RECORD_KIND);
-    const gatePath = soleGateRecordPath(nest);
-    const body = readFileSync(gatePath, "utf8");
-    assert.match(body, new RegExp(WORKER_COMMIT_BASELINE_ENTRY_TYPE));
-    assert.match(body, new RegExp(WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE));
-    assert.match(body, new RegExp(baselineHead));
-
-    git(project, ["commit", "--allow-empty", "-m", `${FACTORY} after bounce`]);
-    const bytesBefore = readFileSync(gatePath);
-    const resumed = createWorkerSubmissionGate();
-    resumed.arm(project, parent);
-    assert.equal(readdirSync(nest).filter((n) => n.endsWith(".jsonl")).length, 1);
-    assert.equal(Buffer.compare(bytesBefore, readFileSync(gatePath)), 0);
-    assert.doesNotThrow(() => resumed.assertAcceptable("completed"));
-
-    // Ordinary no-subject children mint fresh sessions (ADR 0065 caller-identity).
-    const evidenceA = createRecordSession({ cwd: project, kind: "evidence-children", parent });
-    evidenceA.appendCustomEntry("evidence-probe", { n: 1 });
-    const evidenceB = createRecordSession({ cwd: project, kind: "evidence-children", parent });
-    assert.notEqual(evidenceB.getSessionFile(), evidenceA.getSessionFile());
-    const auditorA = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
-    const auditorB = createRecordSession({ cwd: project, kind: "auditor-roles", parent });
-    assert.notEqual(auditorA.getSessionFile(), auditorB.getSessionFile());
-
-    // ② durable prefix bounce survives resume.
-    const { project: projectP, parent: parentP } = await durableProject(
-      "proj-prefix",
-      "worker-run-prefix",
-      "seed-p",
-    );
-    const prefixFirst = createWorkerSubmissionGate();
-    prefixFirst.arm(projectP, parentP);
-    git(projectP, ["commit", "--allow-empty", "-m", "no prefix on durable path"]);
-    assert.throws(() => prefixFirst.assertAcceptable("completed"), WorkerPrefixReminderError);
-    assert.match(
-      readFileSync(soleGateRecordPath(parentP), "utf8"),
-      new RegExp(WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE),
-    );
-    const prefixResumed = createWorkerSubmissionGate();
-    prefixResumed.arm(projectP, parentP);
-    assert.doesNotThrow(() => prefixResumed.assertAcceptable("completed"));
-
-    // Same HEAD after durable bounce → confirm, no second fire.
-    const { project: project2, parent: parent2 } = await durableProject(
-      "proj2",
-      "worker-run-2",
-      "seed2",
-    );
-    const a = createWorkerSubmissionGate();
-    a.arm(project2, parent2);
-    assert.throws(() => a.assertAcceptable("completed"), WorkerCommitReminderError);
-    const b = createWorkerSubmissionGate();
-    b.arm(project2, parent2);
-    assert.doesNotThrow(() => b.assertAcceptable("completed"));
-    assert.doesNotThrow(() => b.assertAcceptable("partially_completed"));
-
-    // EACCES on gate record → public CLI settles terminal failure through real hostActions.
-    const { project: projectF } = await durableProject("proj-f-eacces", "worker-run-f", "seed-f");
-    const callIdF = "fixer-eacces";
-    const completed = {
-      status: "completed" as const,
-      report: "done",
-      classResults: [{
-        name: "Contract",
-        disposition: "completed" as const,
-        searchScope: "all",
-        exceptions: [] as Array<{ where: string; reason: string }>,
-        commitSha: "a".repeat(40),
-      }],
-    };
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const prevExitF = process.exitCode;
-    process.exitCode = undefined;
-    let result: Awaited<ReturnType<typeof runAkRole>>;
-    try {
-      const agentDirF = join(home, ".pi-agent-eacces");
-      await mkdir(agentDirF, { recursive: true });
-      result = await runAkRole(
-        ["fixer", "--project", projectF, "Exercise gate EACCES durability."],
-        {
-          packageRoot,
-          home,
-          agentDir: agentDirF,
-          cwd: projectF,
-          createRunId: () => "run-gate-eacces-001",
-          io: {
-            stdout: (t: string) => { stdout.push(t); },
-            stderr: (t: string) => { stderr.push(t); },
-          },
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
-            const sessionFile = args[args.indexOf("--session") + 1]!;
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const packetPath = args[args.indexOf("--ak-fix-packet") + 1]!;
-            const agentDir = typeof options.env.PI_CODING_AGENT_DIR === "string"
-              ? options.env.PI_CODING_AGENT_DIR
-              : agentDirF;
-            const parentF = SessionManager.open(sessionFile, sessionDir, projectF);
-            createWorkerSubmissionGate().arm(projectF, parentF);
-            chmodSync(
-              soleGateRecordPath(join(dirname(sessionFile), WORKER_SUBMISSION_GATE_RECORD_KIND)),
-              0o444,
-            );
-            const faux = fauxProvider({
-              api: "ak-gate-eacces",
-              provider: "ak-gate-eacces",
-              tokenSize: { min: 1000, max: 1000 },
-            });
-            faux.setResponses([
-              fauxAssistantMessage(
-                fauxToolCall(FIXER_OUTPUT_TOOL_NAME, completed, { id: callIdF }),
-                { stopReason: "toolUse" },
-              ),
-            ]);
-            await withInProcessPi({
-              cwd: projectF,
-              agentDir,
-              faux,
-              sessionManager: SessionManager.open(sessionFile, sessionDir, projectF),
-              additionalExtensionPaths: [resolvePackageEntrypoint()],
-              systemPrompt: "GATE EACCES DURABILITY",
-              mode: "json",
-              flags: {
-                "ak-role": "fixer",
-                "ak-fixer-phase": "apply",
-                "ak-fix-packet": packetPath,
-              },
-              noTools: "builtin",
-              reviewerShutdown: true,
-            }, async ({ session }) => {
-              await session.prompt("Exercise gate EACCES durability.").catch(() => undefined);
-            });
-            return {
-              code: typeof process.exitCode === "number" ? process.exitCode : 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-          }),
-        },
-      );
-    } finally {
-      process.exitCode = prevExitF;
-    }
-
-    assert.equal(result.exitCode, 1, stdout.join("") || stderr.join("") || "public CLI must exit nonzero");
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.roleOutcome.cause, "output");
-      assert.match(result.terminal!.roleOutcome.diagnostic, /EACCES/);
-      assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.secondaryEvidence, {
-        ...buildNavigatorInfrastructureFailureFact(),
-        exitCode: 1,
-      });
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorName, FIXER_OUTPUT_TOOL_NAME);
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, callIdF);
-    }
-  });
-});

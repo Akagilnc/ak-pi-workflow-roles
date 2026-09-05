@@ -1,7 +1,7 @@
 /**
  * Owning seam for scripts/test-process-env.mjs pure option contract (#549 AC5).
  * Host-miss / preload / package.json wiring live on the real-entry integration seam.
- * #612: default process test home is create-and-delete, not create-and-abandon.
+ * #685/#612: default process test home is worktree-internal create-and-delete.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
+import { testTmpdir, WORKTREE_TEST_TMP } from "../helpers/worktree-temp.ts";
 
 const HOST_HOME = userInfo().homedir;
 const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -19,7 +20,7 @@ const PROCESS_ENV_MODULE = join(REPO_ROOT, "scripts/test-process-env.mjs");
 
 /** AC5: explicit options.home wins over default and over env.HOME. */
 test("isolatedTestProcessEnv: options.home wins over default and env.HOME", () => {
-  const custom = mkdtempSync(join(tmpdir(), "ak-549-explicit-home-"));
+  const custom = mkdtempSync(join(testTmpdir(), "ak-549-explicit-home-"));
   try {
     const env = isolatedTestProcessEnv({
       env: { ...process.env, HOME: HOST_HOME },
@@ -67,7 +68,7 @@ process.stdout.write(env.HOME);
 
 /** Explicit options.home is caller-owned — process exit must not delete it. */
 test("isolatedTestProcessEnv: explicit options.home is not deleted on process exit", () => {
-  const custom = mkdtempSync(join(tmpdir(), "ak-612-explicit-survive-"));
+  const custom = mkdtempSync(join(testTmpdir(), "ak-612-explicit-survive-"));
   try {
     const child = spawnSync(
       process.execPath,

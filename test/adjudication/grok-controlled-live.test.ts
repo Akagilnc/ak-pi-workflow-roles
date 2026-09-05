@@ -9,6 +9,7 @@ import {
   inspectControlledGrok,
   prepareControlledGrokHome,
 } from "../../src/grok/role-turn-host.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const binary = join(homedir(), ".grok", "bin", "grok");
 const auth = join(homedir(), ".grok", "auth.json");
@@ -31,7 +32,7 @@ test("real Grok isolates a personalized authenticated home while retaining AK pr
   });
   assert.ok(personalized.privateActive.length > 0, "fixture home must actually be personalized");
 
-  const controlledHome = await mkdtemp(join(tmpdir(), "ak-grok-controlled-live-"));
+  const controlledHome = await mkdtemp(join(testTmpdir(), "ak-grok-controlled-live-"));
   try {
     await prepareControlledGrokHome(homedir(), controlledHome);
     const controlled = await inspectControlledGrok({

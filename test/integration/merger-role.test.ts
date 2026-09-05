@@ -1,3 +1,4 @@
+// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -13,9 +14,10 @@ import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { readSealedSubmission } from "../../src/submission-ledger.ts";
-import { activationExtensionContext, packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { activationExtensionContext, packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -34,7 +36,7 @@ let conflictedTemplateRoot: string | undefined;
 let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
 async function conflictedTemplate() {
   conflictedTemplateMemo ??= (async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
+    const root = await mkdtemp(resolve(testTmpdir(), "ak-merger-conflict-template-"));
     conflictedTemplateRoot = root;
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
@@ -63,7 +65,7 @@ after(async () => {
 
 async function materializeConflictedRepo() {
   const template = await conflictedTemplate();
-  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
+  const cwd = await mkdtemp(resolve(testTmpdir(), "ak-merger-session-b-"));
   execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], { stdio: "ignore" });
   git(cwd, "config", "user.name", "Merger Test");
   git(cwd, "config", "user.email", "merger@test.local");
@@ -75,60 +77,6 @@ async function materializeConflictedRepo() {
     target: git(cwd, "rev-parse", "HEAD"),
   };
 }
-
-test("production extension observes session repository B, not ambient repository A, through activation and completion", async () => {
-  const fixture = await materializeConflictedRepo();
-  const repositoryB = fixture.cwd;
-  const env = { ...process.env, GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" };
-  try {
-    const source = fixture.source;
-    const target = fixture.target;
-    const resolutionBlob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: repositoryB, input: "resolved\n", encoding: "utf8" }).trim();
-    const temporaryIndex = resolve(repositoryB, "expected-index");
-    execFileSync("git", ["read-tree", "AUTO_MERGE^{tree}"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex } });
-    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${resolutionBlob},same.txt`], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex } });
-    const tree = execFileSync("git", ["write-tree"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex }, encoding: "utf8" }).trim();
-    const mergeCommitId = execFileSync("git", ["commit-tree", tree, "-p", target, "-p", source, "-m", "resolve"], { cwd: repositoryB, env, encoding: "utf8" }).trim();
-    const realInput = { ...input, targetObjectId: target, sourceObjectId: source };
-    const inputPath = resolve(repositoryB, "input.json"); await writeFile(inputPath, JSON.stringify(realInput));
-    await writeFile(resolve(repositoryB, ".git/info/exclude"), "input.json\nexpected-index\n");
-    await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir, home }) => {
-      // #443: merger session materials via production role-runtime wiring.
-      const mergerSoul = [
-        await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
-        await readFile(resolve(packageRoot, "souls/merger.md"), "utf8"),
-      ].join("\n\n").trim();
-      const faux = fauxProvider({ api: "merger-session-cwd", provider: "merger-session-cwd" });
-      let mergerContext: Context | undefined;
-      faux.setResponses([
-        (context: Context) => {
-          mergerContext = context;
-          return fauxAssistantMessage(fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }), { stopReason: "toolUse" });
-        },
-        fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, { status: "completed", attemptId: "attempt", report: "resolved", mergeCommitId }, { id: "out" }), { stopReason: "toolUse" }),
-      ]);
-      await withInProcessPi({ activationLedgerSession: true, home, cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
-        await session.prompt("Resolve and settle.");
-        assert.ok(mergerContext);
-        assert.ok(
-          mergerContext.systemPrompt?.includes(
-            `<merger_soul>\n${mergerSoul}\n</merger_soul>`,
-          ),
-          "provider receives constitution + merger soul from production role-runtime",
-        );
-        const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
-        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content));
-        assert.deepEqual(result?.message.details, { submissionDisposition: "pending-round-closure" });
-        const headerId = sessionManager.getHeader?.()?.id;
-        assert.ok(headerId);
-        // #604: sealed volume under hermetic package home (session path-derive).
-        const sealed = await readSealedSubmission(repositoryB, headerId, home);
-        assert.ok(sealed, "typed turn_end must seal sole candidate");
-        assert.equal((sealed.decisiveFacts as any)?.mergeCommitId, mergeCommitId);
-      });
-    });
-  } finally { await rm(repositoryB, { recursive: true, force: true }); }
-});
 
 test("role extension binds Merger Git state to session cwd while preserving injected state", async () => {
   await withHermeticHome({ prefix: "ak-merger-bind-cwd-" }, async ({ home }) => {

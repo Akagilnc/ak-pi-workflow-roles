@@ -5,9 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { projectHostTransitionPriorNative } from "../../src/host-transition-prior-native.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("unknown previous or live host yields no hostTransition (no inject)", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-unknown-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-host-transition-unknown-"));
   try {
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
@@ -38,7 +39,7 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
 });
 
 test("pi→grok-build projects the present Pi session path", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-pi-path-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-host-transition-pi-path-"));
   try {
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
@@ -62,7 +63,7 @@ test("pi→grok-build projects the present Pi session path", async () => {
 });
 
 test("grok-build→pi projects every present updates.jsonl path in sorted order", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-host-transition-paths-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-host-transition-paths-"));
   try {
     const runDirectory = join(root, "run");
     const later = join(runDirectory, "grok-home", "sessions", "z-cwd", "s2");

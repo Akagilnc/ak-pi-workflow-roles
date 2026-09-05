@@ -13,6 +13,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const usage = {
   input: 10,
@@ -80,7 +81,7 @@ function auditContext(runDirectory?: string): ExtensionContext {
 }
 
 test("Pi judge auditor preserves authentication failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-judge-auth-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-judge-auth-"));
   const runDirectory = join(root, "run");
   const agentDir = join(root, "agent");
   await mkdir(runDirectory);

@@ -13,6 +13,7 @@ import {
   exitCodeForTerminalOutcome,
   isLawfulTypedTerminalOutcome,
 } from "../../src/public-cli/settlement.ts";
+import { testTmpdir } from "./worktree-temp.ts";
 import type {
   ControlledFailureCause,
   TerminalArtifactRef,
@@ -24,7 +25,7 @@ export async function withTempHome<T>(
   options: { prefix?: string } = {},
 ): Promise<T> {
   const home = await mkdtemp(
-    join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"),
+    join(testTmpdir(), options.prefix ?? "ak-public-cli-fail-"),
   );
   try {
     return await scenario(home);

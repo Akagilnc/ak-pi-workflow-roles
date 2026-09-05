@@ -18,12 +18,13 @@ import {
 
 const hangScript = `
 import { setTimeout as sleep } from "node:timers/promises";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 await sleep(600_000);
 console.log("should-not-print");
 `;
 
 async function withHangCwd<T>(run: (cwd: string, argv: string[]) => Promise<T>): Promise<T> {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-hang-"));
+  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-hang-"));
   const scriptPath = join(cwd, "hang.mjs");
   await writeFile(scriptPath, hangScript, "utf8");
   try {
@@ -70,7 +71,7 @@ test("detour spawn failure stops through the cause-bearing failure seam", async 
     engineName: "kimi",
     fail(error) { throw error; },
   });
-  const cwd = await mkdtemp(join(tmpdir(), "ak-detour-spawn-miss-"));
+  const cwd = await mkdtemp(join(testTmpdir(), "ak-detour-spawn-miss-"));
   try {
     await assert.rejects(
       tool.execute("call-spawn-miss", { argv: ["ak-engine-definitely-missing-binary-xyz"] }, undefined, undefined, fakeCtx(cwd)),

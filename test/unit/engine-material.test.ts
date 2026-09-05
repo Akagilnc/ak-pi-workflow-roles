@@ -16,6 +16,7 @@ import {
   engineSessionMaterialFromOptions,
   listEngineMaterialNames,
 } from "../../src/package-resources/engine-material.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("assertLegalEngineName rejects only real path hazards; consecutive dots pass", () => {
   // Real hazards: traversal parents, separators, NUL, exact "." / "..".
@@ -66,7 +67,7 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-engine-empty-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-engine-empty-"));
   try {
     assert.deepEqual(listEngineMaterialNames(root), []);
     await mkdir(join(root, "resources", "engines"), { recursive: true });

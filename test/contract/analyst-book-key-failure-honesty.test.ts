@@ -16,14 +16,15 @@ import test from "node:test";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { resolveAnalystBookKey } from "../../src/analyst-book-key.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("resolveAnalystBookKey: absent projectRoot keeps the established synthetic root: identity", () => {
-  const absent = join(tmpdir(), `analyst-book-key-absent-${process.pid}-${Date.now()}`);
+  const absent = join(testTmpdir(), `analyst-book-key-absent-${process.pid}-${Date.now()}`);
   assert.equal(resolveAnalystBookKey(absent), `root:${physicalPathIdentity(absent)}`);
 });
 
 test("resolveAnalystBookKey: plain file mid-path (ENOTDIR) is the same cannot-be-a-repo fallback, not infrastructure", () => {
-  const parent = mkdtempSync(join(tmpdir(), "analyst-book-key-"));
+  const parent = mkdtempSync(join(testTmpdir(), "analyst-book-key-"));
   const filePath = join(parent, "file");
   const child = join(filePath, "child");
   try {
@@ -37,7 +38,7 @@ test("resolveAnalystBookKey: plain file mid-path (ENOTDIR) is the same cannot-be
 });
 
 test("resolveAnalystBookKey: git executable unavailable stays loud ENOENT, never a root: key", () => {
-  const dir = mkdtempSync(join(tmpdir(), "analyst-book-key-"));
+  const dir = mkdtempSync(join(testTmpdir(), "analyst-book-key-"));
   const realPath = process.env.PATH;
   process.env.PATH = "/nonexistent";
   try {
@@ -56,7 +57,7 @@ test("resolveAnalystBookKey: existing plain non-git directory keeps the establis
   // nonzero with its own "not a git repository" diagnostic — a *confirmed*
   // no-repo verdict at the single classification owner — so the legitimate
   // `root:<identity>` fallback applies exactly as adjudicated in r4.
-  const dir = mkdtempSync(join(tmpdir(), "analyst-book-key-"));
+  const dir = mkdtempSync(join(testTmpdir(), "analyst-book-key-"));
   try {
     assert.equal(resolveAnalystBookKey(dir), `root:${physicalPathIdentity(dir)}`);
   } finally {
@@ -70,8 +71,8 @@ test("resolveAnalystBookKey: dubious-ownership exit 128 stays loud with its real
   // to adjudicate it. The single classification owner marks it unconfirmed, so
   // Analyst must not synthesize a book identity behind the failure's back.
   // Stable counterexample: a PATH-injected git emitting the real diagnostic.
-  const dir = mkdtempSync(join(tmpdir(), "analyst-book-key-"));
-  const bin = mkdtempSync(join(tmpdir(), "analyst-book-key-bin-"));
+  const dir = mkdtempSync(join(testTmpdir(), "analyst-book-key-"));
+  const bin = mkdtempSync(join(testTmpdir(), "analyst-book-key-bin-"));
   const fakeGit = join(bin, "git");
   writeFileSync(
     fakeGit,

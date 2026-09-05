@@ -21,6 +21,7 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -237,7 +238,7 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-gate-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

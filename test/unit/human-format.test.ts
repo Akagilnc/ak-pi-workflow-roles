@@ -13,6 +13,7 @@ import test from "node:test";
 
 import { renderFactoryBoardHtml, type FactoryBoardView } from "../../src/factory-board.ts";
 import type { SnapshotTicket } from "../../src/ticket-snapshot.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
   const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
@@ -126,7 +127,7 @@ async function writeMinimalAcceptedCoderRun(
 }
 
 test("S2 board projects full-precision machine attrs and human-formatted spans (no raw ms)", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "human-format-s2-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "human-format-s2-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
@@ -193,7 +194,7 @@ test("S2 board projects full-precision machine attrs and human-formatted spans (
 });
 
 test("S2 board formats zero/edge metric inputs without inventing machine values", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "human-format-edge-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "human-format-edge-"));
   try {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });

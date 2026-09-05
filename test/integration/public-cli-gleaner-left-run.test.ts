@@ -25,9 +25,10 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-gleaner-left-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-gleaner-left-"));
   try {
     return await scenario(home);
   } finally {

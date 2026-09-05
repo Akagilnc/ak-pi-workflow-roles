@@ -21,9 +21,10 @@ import { loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/ru
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(tmpdir(),"ak-416-"));
+  const home=await mkdtemp(join(testTmpdir(),"ak-416-"));
   try{return await fn(home);}finally{await rm(home,{recursive:true,force:true});}
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
