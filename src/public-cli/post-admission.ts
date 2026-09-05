@@ -296,26 +296,21 @@ function withLastHostWriteConcurrentFailure(
   };
 }
 
-/**
- * True when settled already owns a failure terminal (output/candidate/…).
- * Distinct from shouldPresentSettled: presentability is not "no existing failure".
- * Sole shared predicate for last-host sole-vs-concurrent branching.
- */
-function hasExistingFailureTerminal(terminal: TerminalResult): boolean {
-  return terminal.roleOutcome.kind === "failure";
-}
+/** Settled failure roleOutcome already narrowed by kind at the sole call site. */
+type SettledFailureOutcome = Extract<
+  TerminalResult["roleOutcome"],
+  { kind: "failure" }
+>;
 
 /**
  * Rebuild the settled failure as knownFailure so concurrent last-host write can
  * append without replacing cause/identity/diagnostic/details.
+ * Caller narrows by kind; no second runtime re-check.
  */
-function knownFailureFromSettledFailureTerminal(
-  terminal: TerminalResult,
+function knownFailureFromSettledFailureOutcome(
+  outcome: SettledFailureOutcome,
 ): RoleTurnKnownFailure {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("knownFailureFromSettledFailureTerminal requires failure terminal");
-  }
-  const facts = terminal.roleOutcome.decisiveFacts;
+  const facts = outcome.decisiveFacts;
   const secondary = facts.secondaryEvidence;
   const details =
     secondary !== undefined &&
@@ -333,8 +328,8 @@ function knownFailureFromSettledFailureTerminal(
     identity.code = facts.errorCode;
   }
   return {
-    cause: terminal.roleOutcome.cause,
-    diagnostic: terminal.roleOutcome.diagnostic,
+    cause: outcome.cause,
+    diagnostic: outcome.diagnostic,
     ...(Object.keys(identity).length > 0 ? { identity } : {}),
     ...(details === undefined ? {} : { details }),
   };
@@ -610,7 +605,7 @@ export async function dispatchPostAdmissionTurn<
     }
     if (settled !== undefined && shouldPresent(settled)) {
       if (lastHostWriteFailure !== undefined) {
-        if (hasExistingFailureTerminal(settled)) {
+        if (settled.roleOutcome.kind === "failure") {
           // Existing failure terminal stays primary; last-host write is concurrent only.
           // shouldPresentSettled must not be read as "no existing failure".
           return (await presentControlledFailure(
@@ -620,7 +615,9 @@ export async function dispatchPostAdmissionTurn<
                 timedOut: result.timedOut,
                 code: result.code,
                 stderr: result.stderr,
-                knownFailure: knownFailureFromSettledFailureTerminal(settled),
+                knownFailure: knownFailureFromSettledFailureOutcome(
+                  settled.roleOutcome,
+                ),
               },
               lastHostWriteFailure.error,
             ),
