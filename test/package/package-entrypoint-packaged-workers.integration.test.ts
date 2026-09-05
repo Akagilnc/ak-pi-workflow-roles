@@ -157,14 +157,14 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         // Offline: inject public-role terminal via options.summonRole (same seam as production options).
         const decision = await judge.createPiJudgeAuditor()({
           context,
-          summonRole: async () => ({
+          summonAuditor: async () => ({
             exitCode: 0,
             terminal: {
               roleOutcome: {
                 kind: "accepted",
-                role: "judge",
-                status: "converged",
-                decisiveFacts: { judgeStatus: "converged" },
+                role: "auditor",
+                status: "pass",
+                decisiveFacts: { status: "pass" },
               },
               navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
               artifacts: [],
@@ -194,12 +194,39 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
   ].join("\n\n").trim();
   await withActivationHome(
     { prefix: "ak-role-integration-" },
-    async ({ agentDir }) => {
+    async ({ home, agentDir }) => {
       const faux = fauxProvider({
         api: "ak-role-offline",
         provider: "ak-role-offline",
         tokenSize: { min: 1000, max: 1000 },
       });
+      // Seed nested public seats onto this test-owned home; restore on exit (no harness rewrite).
+      const { savePublicCliConfig, loadPublicCliConfig, publicCliConfigPath } =
+        await import("../../src/public-cli/config.ts");
+      const configPath = publicCliConfigPath(home);
+      let priorConfig: string | undefined;
+      try {
+        priorConfig = await readFile(configPath, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const seat = { provider: "ak-role-offline", model: faux.getModel().id ?? "faux-1" };
+      await savePublicCliConfig({
+        seats: {
+          auditor: seat,
+          notary: seat,
+          inspector: seat,
+          judge: seat,
+          navigator: seat,
+        },
+      }, home);
+      const restoreSeats = async () => {
+        if (priorConfig === undefined) {
+          await rm(configPath, { force: true });
+        } else {
+          await writeFile(configPath, priorConfig, "utf8");
+        }
+      };
       const defaultBaseUrl = "https://default.invalid/v1";
       const resolvedBaseUrl = "https://tenant.invalid/v1";
       const activeModel = { ...faux.getModel(), baseUrl: defaultBaseUrl };
@@ -337,7 +364,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        faux.setResponses(Array.from({ length: 24 }, () => response));
+        faux.setResponses(Array.from({ length: 16 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -424,6 +451,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
         else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        await restoreSeats();
       }
     },
   );
@@ -437,12 +465,33 @@ test("packaged judge escalation emits one typed human decision", async () => {
   try {
   await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
-    async ({ agentDir }) => {
+    async ({ home, agentDir }) => {
       const faux = fauxProvider({
         api: "ak-judge-escalation-offline",
         provider: "ak-judge-escalation-offline",
         tokenSize: { min: 1000, max: 1000 },
       });
+      const { savePublicCliConfig, publicCliConfigPath } =
+        await import("../../src/public-cli/config.ts");
+      const configPath = publicCliConfigPath(home);
+      let priorConfig: string | undefined;
+      try {
+        priorConfig = await readFile(configPath, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const seat = {
+        provider: "ak-judge-escalation-offline",
+        model: faux.getModel().id ?? "faux-1",
+      };
+      await savePublicCliConfig({
+        seats: { auditor: seat, notary: seat, inspector: seat, judge: seat },
+      }, home);
+      const restoreSeats = async () => {
+        if (priorConfig === undefined) await rm(configPath, { force: true });
+        else await writeFile(configPath, priorConfig, "utf8");
+      };
+      try {
       await withAgentDirProviderFixture(faux, agentDir, async () => {
       await withInProcessPi({
         activationLedgerSession: true,
@@ -465,29 +514,29 @@ test("packaged judge escalation emits one typed human decision", async () => {
           if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
             return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
           }
-          if (!names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
-            return fauxAssistantMessage([], { stopReason: "stop" });
-          }
-          // Nested compliance judge (AK_ROLE_COMPLIANCE_NESTING) under escalate mode.
-          if (
-            process.env.AK_ROLE_COMPLIANCE_NESTING === "1"
-            && process.env.AK_NESTED_AUDIT_MODE === "escalate"
-          ) {
+          // Nested public auditor escalate (same scripted decision as dedicated fixture).
+          if (names.includes("ak_auditor_output") || names.includes(SOUL_AUDIT_TOOL_NAME)) {
+            const auditTool = names.includes("ak_auditor_output")
+              ? "ak_auditor_output"
+              : SOUL_AUDIT_TOOL_NAME;
             return fauxAssistantMessage(
               fauxToolCall(
-                JUDGE_OUTPUT_TOOL_NAME,
+                auditTool,
                 {
-                  judgeStatus: "escalate",
+                  status: "escalate",
                   conflicts: ["Soul authority conflicts with controlling authority"],
                   decisionGate: {
                     question: "Which authority governs this verdict?",
                     options: ["Soul", "Controlling authority"],
                   },
                 },
-                { id: "nested-compliance-escalate" },
+                { id: "audit-escalate" },
               ),
               { stopReason: "toolUse" },
             );
+          }
+          if (!names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+            return fauxAssistantMessage([], { stopReason: "stop" });
           }
           return fauxAssistantMessage(
             fauxToolCall(
@@ -498,7 +547,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
             { stopReason: "toolUse" },
           );
         };
-        faux.setResponses(Array.from({ length: 24 }, () => escalateRespond));
+        faux.setResponses(Array.from({ length: 6 }, () => escalateRespond));
         await session.prompt("Exercise packaged audit escalation.");
 
         const result = sessionManager
@@ -528,7 +577,9 @@ test("packaged judge escalation emits one typed human decision", async () => {
           judgeStatus?: unknown;
         };
         assert.equal(escalationDetails.kind, "audit_escalation");
-        // Nested compliance is public judge (#675): escalate face carries decisionGate.
+        assert.deepEqual(escalationDetails.conflicts, [
+          "Soul authority conflicts with controlling authority",
+        ]);
         assert.deepEqual(escalationDetails.auditDecisionGate, {
           question: "Which authority governs this verdict?",
           options: ["Soul", "Controlling authority"],
@@ -541,6 +592,9 @@ test("packaged judge escalation emits one typed human decision", async () => {
         );
       });
       });
+      } finally {
+        await restoreSeats();
+      }
     },
   );
   } finally {
