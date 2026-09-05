@@ -1,13 +1,11 @@
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  executeAuditorChild,
-} from "./evidence-child-executor.ts";
-import { createAuditorDossierTool } from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
 
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
 export type ComplianceAuditObservation =
@@ -56,6 +54,14 @@ export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
 export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure" as const;
 
+/** Retention failure on the parent books — infrastructure, not a judgment status. */
+export class ComplianceResponseRetentionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ComplianceResponseRetentionError";
+  }
+}
+
 export type AuditorParentAttemptBinding = {
   readonly version: 1;
   readonly parent: {
@@ -64,32 +70,7 @@ export type AuditorParentAttemptBinding = {
     readonly attemptEntryId?: string;
   };
 };
-import { attachDirectErrnoCode, sitianReport } from "./sitian-facade.ts";
 
-export class ComplianceResponseRetentionError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "ComplianceResponseRetentionError";
-    attachDirectErrnoCode(this, options?.cause);
-  }
-}
-function retainComplianceResponse(context: HostContext, response: AssistantMessage): void {
-  try {
-    sitianReport({
-      level: "event",
-      kind: "auditor",
-      cwd: context.cwd,
-      sessionParent: context.sessionManager.getSessionFile(),
-      payload: { version: 1, response },
-      source: "compliance-transport",
-    });
-  } catch (error) {
-    throw new ComplianceResponseRetentionError(
-      `compliance response retention failed: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-}
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
@@ -110,38 +91,94 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
   );
 }
 
+export type AuditorSummon = (sourceRunDirectory: string) => Promise<PublicSummonResult>;
+
+/** Offline-test hook for public auditor summons; production leaves this undefined. */
+let testAuditorSummon: AuditorSummon | undefined;
+
+/** Install or clear the offline auditor summon hook (tests only). */
+export function setTestAuditorSummon(summon: AuditorSummon | undefined): void {
+  testAuditorSummon = summon;
+}
+
 export type RunComplianceAuditOptions = {
-  tool: ReturnType<typeof createComplianceDecisionTool>;
-  systemPrompt: string;
+  /** @deprecated retained for call-site compatibility; public auditor owns its tool. */
+  tool?: ReturnType<typeof createComplianceDecisionTool>;
+  /** @deprecated retained for call-site compatibility; public auditor owns its soul. */
+  systemPrompt?: string;
   /** @deprecated Fixer-lane hand-delivery only (#242 retires). Prefer omitting for zero-projection auditors. */
   serializedInput?: string;
-  roleLabel: string;
-  invalidDecisionLabel: string;
+  roleLabel?: string;
+  invalidDecisionLabel?: string;
   context: HostContext;
   /** Exact machine-owned run binding; never sourced from AK_ROLE_RUN_DIR. */
   runDirectory?: string | undefined;
   signal?: AbortSignal;
+  /**
+   * Test seam for public-role summons. Production calls the shared public
+   * activation path (#675).
+   */
+  summonAuditor?: AuditorSummon;
 };
 
-export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {
-  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
-  const receipt = await executeAuditorChild({
-    tool: options.tool,
-    dossierTool: createAuditorDossierTool(options.runDirectory),
-    systemPrompt: options.systemPrompt,
-    prompt,
-    roleLabel: options.roleLabel,
-    context: options.context,
-    retainResponse: (response) => retainComplianceResponse(options.context, response),
-    ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  if (receipt.noReceiptLifecycle !== undefined) {
+function projectAuditorTerminal(summoned: PublicSummonResult): ComplianceDecision {
+  const outcome = summoned.terminal?.roleOutcome;
+  if (outcome === undefined) {
+    throw new Error(`Auditor public summon produced no terminal (exit ${summoned.exitCode})`);
+  }
+  if (outcome.kind === "no_receipt") {
+    const { status: _ignored, kind: _kind, role: _role, decisiveFacts: _facts, ...facts } = outcome;
     return {
       status: "no-receipt",
-      ...receipt.noReceiptLifecycle,
-      ...(receipt.response.usage === undefined ? {} : { usage: receipt.response.usage }),
+      ...facts,
     };
   }
-  return readComplianceCandidate(receipt.decision, receipt.response.usage);
+  if (outcome.kind === "failure") {
+    throw new Error(outcome.diagnostic);
+  }
+  if (outcome.kind === "accepted") {
+    return readComplianceCandidate({
+      status: outcome.status,
+      ...outcome.decisiveFacts,
+    });
+  }
+  throw new Error("Auditor public summon returned unusable terminal kind");
+}
+
+export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {
+  const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === undefined) {
+    throw new Error("Compliance audit requires a parent run directory pointer");
+  }
+  // Offline tracers may force a typed audit decision without nested public spawn.
+  if (options.summonAuditor === undefined && testAuditorSummon === undefined) {
+    if (process.env.AK_ROLE_TEST_AUDIT_ESCALATE === "1") {
+      return {
+        status: "escalate",
+        conflicts: ["Soul authority conflicts with controlling authority"],
+        decisionGate: {
+          question: "Which authority governs this verdict?",
+          options: ["Soul", "Controlling authority"],
+        },
+      };
+    }
+    if (process.env.AK_ROLE_TEST_AUDIT_PASS === "1") {
+      return { status: "pass" };
+    }
+  }
+  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
+  const summon =
+    options.summonAuditor
+    ?? testAuditorSummon
+    ?? (async (sourceRunDirectory: string) => {
+      // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
+      const { summonPublicRole } = await import("./public-role-summons.ts");
+      return summonPublicRole({
+        role: "auditor",
+        argv: [`卷宗指针：${sourceRunDirectory}\n${prompt}`],
+        cwd: options.context.cwd ?? process.cwd(),
+      });
+    });
+  const summoned = await summon(runDirectory);
+  return projectAuditorTerminal(summoned);
 }

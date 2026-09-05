@@ -1023,6 +1023,17 @@ export async function runPiSubprocess(
   if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
     env.AK_ROLE_RUN_DIR = injectedRunDir;
   }
+  // #675: offline Pi children default gate pass so nested public officer summons
+  // do not require a second real spawn for package/navigator observation tracers.
+  // Skip when AK_GATE_MODE scripts a real gate outcome; callers may override.
+  // Audit pass is NOT defaulted — fatal/no-receipt audit tracers must still fire.
+  if (
+    env.PI_OFFLINE === "1"
+    && env.AK_ROLE_TEST_GATE_PASS === undefined
+    && env.AK_GATE_MODE === undefined
+  ) {
+    env.AK_ROLE_TEST_GATE_PASS = "1";
+  }
   // Pi's package-manager install/update path does not pass --no-audit/--offline into
   // npm. On hosts where registry HTTPS is sinkholed (e.g. 198.18.0.0/15 VPN), a local
   // file: tarball still hangs in npm audit after the package is already cache-resolved.
@@ -1343,6 +1354,33 @@ export async function createMockProviderServer(
   };
 }
 
+/** #675 offline defaults for nested public summons inside the same process. */
+function armOfflineNestedSummonDefaults(): () => void {
+  const priorGate = process.env.AK_ROLE_TEST_GATE_PASS;
+  const priorAudit = process.env.AK_ROLE_TEST_AUDIT_PASS;
+  // Gate pass unless a real gate mode is scripted.
+  if (process.env.AK_GATE_MODE === undefined && priorGate === undefined) {
+    process.env.AK_ROLE_TEST_GATE_PASS = "1";
+  }
+  // Audit pass unless a real audit failure mode is scripted.
+  if (
+    priorAudit === undefined
+    && process.env.AK_AUDIT_UNKNOWN_STATUS === undefined
+    && process.env.AK_AUDIT_NON_OBJECT === undefined
+    && process.env.AK_AUDIT_TIMEOUT_FAILURE === undefined
+    && process.env.AK_ROLE_TEST_AUDIT_REAL === undefined
+    && process.env.AK_ROLE_TEST_AUDIT_ESCALATE === undefined
+  ) {
+    process.env.AK_ROLE_TEST_AUDIT_PASS = "1";
+  }
+  return () => {
+    if (priorGate === undefined) delete process.env.AK_ROLE_TEST_GATE_PASS;
+    else process.env.AK_ROLE_TEST_GATE_PASS = priorGate;
+    if (priorAudit === undefined) delete process.env.AK_ROLE_TEST_AUDIT_PASS;
+    else process.env.AK_ROLE_TEST_AUDIT_PASS = priorAudit;
+  };
+}
+
 export async function withInProcessPi<T>(
   options: InProcessPiOptions,
   scenario: (fixture: InProcessPiFixture) => Promise<T>,
@@ -1455,6 +1493,7 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
+  const disarmNested = armOfflineNestedSummonDefaults();
   try {
     for (const [name, value] of Object.entries(options.flags)) {
       session.extensionRunner.setFlagValue(name, value);
@@ -1480,6 +1519,7 @@ export async function withInProcessPi<T>(
       }
     } finally {
       session.dispose();
+      disarmNested();
     }
   }
 }

@@ -11,6 +11,8 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
+import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "./package-contracts/evidence-child-output.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
@@ -27,6 +29,21 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/quality-law.md",
   "souls/gate-output-guide.md",
+] as const;
+
+/** Public 审刑院 materials (#675) — one soul, no caller-identity branch. */
+export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/auditor.md",
+  "souls/audit-law.md",
+  "souls/quality-law.md",
+] as const;
+
+/** Public evidence-child materials (#675). */
+export const EVIDENCE_CHILD_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/evidence-child.md",
+  "souls/quality-law.md",
 ] as const;
 
 /**
@@ -184,6 +201,25 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
+  },
+  // #675: 审刑院 / evidence-child are roles like any other — public ak-role entries.
+  {
+    role: "auditor",
+    phases: [null],
+    outputTool: AUDITOR_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
+  },
+  {
+    role: "evidence-child",
+    phases: [null],
+    outputTool: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: EVIDENCE_CHILD_SESSION_MATERIALS,
   },
 ] as const;
 

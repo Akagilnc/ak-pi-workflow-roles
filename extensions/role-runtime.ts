@@ -130,6 +130,8 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
+    loadAuditorSoul: () => loadMainRoleSessionMaterials("auditor"),
+    loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

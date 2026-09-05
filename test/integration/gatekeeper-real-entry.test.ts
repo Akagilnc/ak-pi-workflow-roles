@@ -1,49 +1,101 @@
+/**
+ * Gate summons go through the public role path (#675). Offline tracers inject
+ * summonOfficer; production calls summonGateOfficer → runAkRole.
+ */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import {
-  AUDITOR_DOSSIER_TOOL_NAME,
-  createAuditorDossierTool,
-  gateSubmissionCandidatePath,
-} from "../../src/auditor-dossier-tool.ts";
+import { gateSubmissionCandidatePath } from "../../src/auditor-dossier-tool.ts";
 import {
   runGatekeeper,
-  INSPECTOR_OUTPUT_TOOL,
-  NOTARY_OUTPUT_TOOL,
   MISSING_ARGUMENTS_SUBMISSION,
 } from "../../src/gatekeeper-role.ts";
-import { fauxGatekeeper as completion } from "../helpers/faux-gatekeeper.ts";
+import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 
-async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvider>) => Promise<void>) {
+function baseTerminal(
+  roleOutcome: NonNullable<PublicSummonResult["terminal"]>["roleOutcome"],
+): NonNullable<PublicSummonResult["terminal"]> {
+  return {
+    roleOutcome,
+    navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+    artifacts: [],
+    runId: "test-run",
+  };
+}
+
+function acceptedTerminal(
+  role: "inspector" | "notary",
+  status: string,
+  decisiveFacts: Record<string, unknown>,
+): PublicSummonResult {
+  return {
+    exitCode: 0,
+    terminal: baseTerminal({
+      kind: "accepted",
+      role,
+      status,
+      decisiveFacts: { status, ...decisiveFacts },
+    }),
+  };
+}
+
+function noReceiptTerminal(role: "inspector" | "notary"): PublicSummonResult {
+  const facts = {
+    terminalToolCalled: false,
+    rejectedReceipts: [] as const,
+    deliveryTurns: 2 as const,
+    sessionCompletion: "settled-without-accepted-receipt" as const,
+    runPointer: "test-run",
+    attemptPointer: "test-attempt",
+    acceptedReceipt: false as const,
+  };
+  return {
+    exitCode: 0,
+    terminal: baseTerminal({
+      kind: "no_receipt",
+      role,
+      status: "no-accepted-receipt",
+      ...facts,
+      decisiveFacts: facts,
+    }),
+  };
+}
+
+function failureTerminal(
+  role: "inspector" | "notary",
+  diagnostic: string,
+  decisiveFacts: Record<string, unknown> = {},
+): PublicSummonResult {
+  return {
+    exitCode: 1,
+    terminal: baseTerminal({
+      kind: "failure",
+      role,
+      cause: "output",
+      diagnostic,
+      decisiveFacts,
+    }),
+  };
+}
+
+async function withParent(run: (context: any) => Promise<void>) {
   await withActivationHome({ prefix: "ak-gatekeeper-real-entry-" }, async ({ agentDir, home }) => {
     const faux = fauxProvider({ api: "gatekeeper-parent", provider: "gatekeeper-parent", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses([fauxAssistantMessage("parent")]);
     const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
     try {
       await withInProcessPi({ cwd: home, home, agentDir, activationLedgerSession: true, faux, modelsPath: null, noExtensions: true, noTools: "builtin", mode: "print", systemPrompt: "BASE", flags: {} }, async ({ session, model }) => {
-        await writeInstitutionalSeatTable(home, {
-          gatekeeper: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
-          inspector: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
-          notary: seatSelection("gatekeeper-parent", "gatekeeper-parent"),
-        });
         await run({
           cwd: home,
           model,
-          modelRegistry: {
-            getProvider() { return undefined; },
-            find() { return model; },
-            async getProviderAuth() { return { auth: {} }; },
-            async getApiKeyAndHeaders() { return { ok: true }; },
-          },
           thinkingLevel: "off",
           sessionManager: session.sessionManager,
           runDirectory: home,
-        }, faux);
+        });
       });
     } finally {
       await seeded.close();
@@ -51,64 +103,36 @@ async function withParent(run: (context: any, faux: ReturnType<typeof fauxProvid
   });
 }
 
-test("worker completion directly summons Inspector without a Gatekeeper child", async () => {
-  await withParent(async (context, faux) => {
-    const seen: string[] = [];
-    let dossierPayload: unknown;
-    let turn = 0;
-    const respond = async (childContext: any) => {
-      turn += 1;
-      const names = (childContext.tools ?? []).map((tool: { name?: string }) => tool.name);
-      assert.equal(names.includes(AUDITOR_DOSSIER_TOOL_NAME), true, "shared dossier tool present");
-      assert.equal(names.includes("ak_gatekeeper_subject"), false, "subject body tool gone");
-      if (turn === 1) {
-        // First turn: pull the shared locator (same tool 审刑院 uses).
-        return completion([{ tool: AUDITOR_DOSSIER_TOOL_NAME, args: {} }], seen)(childContext);
-      }
-      // Child HTTP path may strip toolName/details; content text still carries the locator JSON.
-      const results = (childContext.messages ?? []).filter(
-        (message: { role?: string }) => message.role === "toolResult",
-      );
-      assert.ok(results.length >= 1, "dossier tool must leave a toolResult");
-      const latest = results[results.length - 1]! as {
-        details?: unknown;
-        content?: Array<{ type?: string; text?: string }>;
-      };
-      if (latest.details !== undefined) {
-        dossierPayload = latest.details;
-      } else {
-        const text = (latest.content ?? [])
-          .map((part) => (part?.type === "text" ? part.text ?? "" : ""))
-          .join("");
-        dossierPayload = JSON.parse(text);
-      }
-      const serialized = JSON.stringify(dossierPayload ?? "");
-      assert.equal(/"status"\s*:\s*"pass"/.test(serialized), false);
-      return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], seen)(childContext);
-    };
-    // Headroom for dossier fetch + decision (and any idle retry).
-    faux.setResponses(Array.from({ length: 4 }, () => respond));
+test("worker completion directly summons Inspector via public path", async () => {
+  await withParent(async (context) => {
+    const summons: Array<{ officer: string; sourceRun: string }> = [];
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
+      async summonOfficer(officer, sourceRunDirectory) {
+        summons.push({ officer, sourceRun: sourceRunDirectory });
+        return acceptedTerminal("inspector", "pass", { findings: [] });
+      },
     });
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
-    assert.equal(seen.length, 2, "dossier fetch then officer decision");
-    const expected = await createAuditorDossierTool(context.runDirectory).execute("x", {});
-    assert.deepEqual(dossierPayload, expected.details);
-    assert.equal(typeof (dossierPayload as { runDirectory?: string }).runDirectory, "string");
+    assert.deepEqual(summons, [{ officer: "inspector", sourceRun: context.runDirectory }]);
   });
 });
 
 test("judge draft directly summons Notary and preserves bounce", async () => {
-  await withParent(async (context, faux) => {
+  await withParent(async (context) => {
     const submission = { status: "bounce", findings: ["quote has no source"] };
-    faux.setResponses([completion([{ tool: NOTARY_OUTPUT_TOOL, args: submission }], [])]);
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "judge_draft" },
+      async summonOfficer(officer) {
+        assert.equal(officer, "notary");
+        return acceptedTerminal("notary", "bounce", {
+          findings: ["quote has no source"],
+        });
+      },
     });
     assert.deepEqual(result, {
       status: "bounce",
@@ -121,13 +145,22 @@ test("judge draft directly summons Notary and preserves bounce", async () => {
 });
 
 test("direct officer escalate projects typed escalate result with reason and findings", async () => {
-  await withParent(async (context, faux) => {
-    const escalateSubmission = { status: "escalate", reason: "disputed authority", findings: ["rule A vs rule B"] };
-    faux.setResponses([completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: escalateSubmission }], [])]);
+  await withParent(async (context) => {
+    const escalateSubmission = {
+      status: "escalate",
+      reason: "disputed authority",
+      findings: ["rule A vs rule B"],
+    };
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
+      async summonOfficer() {
+        return acceptedTerminal("inspector", "escalate", {
+          reason: "disputed authority",
+          findings: ["rule A vs rule B"],
+        });
+      },
     });
     assert.equal(result.status, "escalate");
     if (result.status === "escalate") {
@@ -140,24 +173,29 @@ test("direct officer escalate projects typed escalate result with reason and fin
 });
 
 test("countersign verdict directly summons Notary", async () => {
-  await withParent(async (context, faux) => {
-    faux.setResponses([completion([{ tool: NOTARY_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], [])]);
+  await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "countersign_verdict" },
+      async summonOfficer(officer) {
+        assert.equal(officer, "notary");
+        return acceptedTerminal("notary", "pass", { findings: [] });
+      },
     });
     assert.deepEqual(result, { status: "pass", officer: "notary", findings: [] });
   });
 });
 
 test("direct officer settlement without a receipt stays loud and typed", async () => {
-  await withParent(async (context, faux) => {
-    faux.setResponses(Array.from({ length: 5 }, () => completion([{ text: "not a receipt" }], [])));
+  await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
+      async summonOfficer() {
+        return noReceiptTerminal("inspector");
+      },
     });
     assert.equal(result.status, "no_receipt");
     if (result.status === "no_receipt") {
@@ -167,20 +205,15 @@ test("direct officer settlement without a receipt stays loud and typed", async (
   });
 });
 
-test("direct officer missing arguments is one-shot serializable transport failure", async () => {
-  await withParent(async (context, faux) => {
-    let turns = 0;
-    faux.setResponses([
-      (ctx: any) => {
-        turns += 1;
-        if (turns > 1) throw new Error("must not retry missing officer arguments");
-        return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: undefined }], [])(ctx);
-      },
-    ]);
+test("direct officer missing arguments is transport failure with serializable submission", async () => {
+  await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
+      async summonOfficer() {
+        return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
+      },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") {
@@ -188,25 +221,26 @@ test("direct officer missing arguments is one-shot serializable transport failur
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
-    assert.equal(turns, 1);
   });
 });
 
 test("direct officer transport failure names the summoned seat", async () => {
-  await withParent(async (context, faux) => {
-    faux.setResponses([() => { throw new Error("provider disconnected"); }]);
+  await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "judge_draft" },
+      async summonOfficer() {
+        throw new Error("provider disconnected");
+      },
     });
     assert.equal(result.status, "transport_failure");
     if (result.status === "transport_failure") assert.equal(result.stage, "notary");
   });
 });
 
-test("runGatekeeper persists in-memory tool-call leaf so dossier resolves candidate body", async () => {
-  await withParent(async (context, faux) => {
+test("runGatekeeper persists in-memory tool-call leaf before public summons", async () => {
+  await withParent(async (context) => {
     const marker = "GATE-REAL-ENTRY-CANDIDATE-632";
     const leaf = {
       type: "message",
@@ -220,50 +254,20 @@ test("runGatekeeper persists in-memory tool-call leaf so dossier resolves candid
         }],
       },
     };
-    // Grok shape: candidate only on memory books; durable session may be header-only.
     const priorEntries = [...context.sessionManager.getEntries()];
     context.sessionManager.getEntries = () => [...priorEntries, leaf];
-
-    let dossierPayload: {
-      parentSessionCandidate?: string;
-      submissionCandidate?: string;
-    } | undefined;
-    let turn = 0;
-    const respond = async (childContext: any) => {
-      turn += 1;
-      if (turn === 1) {
-        return completion([{ tool: AUDITOR_DOSSIER_TOOL_NAME, args: {} }], [])(childContext);
-      }
-      const results = (childContext.messages ?? []).filter(
-        (message: { role?: string }) => message.role === "toolResult",
-      );
-      const latest = results[results.length - 1]! as {
-        details?: unknown;
-        content?: Array<{ type?: string; text?: string }>;
-      };
-      if (latest.details !== undefined) {
-        dossierPayload = latest.details as typeof dossierPayload;
-      } else {
-        const text = (latest.content ?? [])
-          .map((part) => (part?.type === "text" ? part.text ?? "" : ""))
-          .join("");
-        dossierPayload = JSON.parse(text) as typeof dossierPayload;
-      }
-      return completion([{ tool: INSPECTOR_OUTPUT_TOOL, args: { status: "pass", findings: [] } }], [])(childContext);
-    };
-    faux.setResponses(Array.from({ length: 4 }, () => respond));
 
     const result = await runGatekeeper({
       context,
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
+      async summonOfficer() {
+        return acceptedTerminal("inspector", "pass", { findings: [] });
+      },
     });
     assert.deepEqual(result, { status: "pass", officer: "inspector", findings: [] });
 
     const expectedPath = gateSubmissionCandidatePath(context.runDirectory);
     assert.equal(readFileSync(expectedPath, "utf8").includes(marker), true);
-    assert.equal(dossierPayload?.submissionCandidate, expectedPath);
-    assert.equal(dossierPayload?.parentSessionCandidate, expectedPath);
-    assert.equal(readFileSync(dossierPayload!.parentSessionCandidate!, "utf8").includes(marker), true);
   });
 });

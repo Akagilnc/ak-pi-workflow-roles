@@ -1,15 +1,32 @@
-import { executeEvidenceChild } from "./evidence-child-executor.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
+import type { Usage } from "@earendil-works/pi-ai";
+
+export type EvidenceChildSummon = (argv: readonly string[]) => Promise<PublicSummonResult>;
+
+/** Offline-test hook for public evidence-child summons; production leaves this undefined. */
+let testEvidenceChildSummon: EvidenceChildSummon | undefined;
+
+/** Install or clear the offline evidence-child summon hook (tests only). */
+export function setTestEvidenceChildSummon(summon: EvidenceChildSummon | undefined): void {
+  testEvidenceChildSummon = summon;
+}
 
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   credentialScratchParent?: string;
-  /** Run directory carrying the institutional resolution page (#518). Derives
-   * from context when absent. */
+  /** Parent run directory pointer (ADR 0079). */
   runDirectory?: string;
-  /** Package root for optional engine method-material on legs (#378). */
+  /** @deprecated engine rides the public seat table (#675); retained for call-site compatibility. */
   packageRoot?: string;
+  /**
+   * Test seam for public-role summons. Production calls the shared public
+   * activation path (#675).
+   */
+  summonEvidenceChild?: EvidenceChildSummon;
 }>;
 
 /**
@@ -26,15 +43,68 @@ export function projectSharedChildFailure(error: unknown): unknown {
   return error;
 }
 
-/** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
-export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: HostContext, options: ReviewerChildExecuteOptions = {}) {
-  try {
-    return await executeEvidenceChild(workspace, leg.prompt, context, {
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.credentialScratchParent === undefined ? {} : { credentialScratchParent: options.credentialScratchParent }),
-      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-      ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+function emptyUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function reportFromSummon(summoned: PublicSummonResult): string {
+  const outcome = summoned.terminal?.roleOutcome;
+  if (outcome === undefined) {
+    throw Object.assign(
+      new Error(`Evidence-child public summon produced no terminal (exit ${summoned.exitCode})`),
+      { evidenceChildFailure: "child" as const },
+    );
+  }
+  if (outcome.kind === "failure") {
+    throw Object.assign(new Error(outcome.diagnostic), {
+      evidenceChildFailure: "provider" as const,
     });
+  }
+  if (outcome.kind === "accepted") {
+    const report = outcome.decisiveFacts.report;
+    if (typeof report === "string" && report.trim() !== "") return report;
+  }
+  throw Object.assign(
+    new Error("Evidence-child public summon returned no report body"),
+    { evidenceChildFailure: "child" as const },
+  );
+}
+
+/** Reviewer evidence leg via the public evidence-child activation path (#675). */
+export async function executeReviewerChild(
+  workspace: string,
+  leg: AcceptedReviewerLeg,
+  context: HostContext,
+  options: ReviewerChildExecuteOptions = {},
+): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
+  try {
+    const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+    const pointer =
+      runDirectory === undefined
+        ? ""
+        : `\n卷宗指针：${runDirectory}`;
+    const argv = [`${String(leg.prompt)}${pointer}`];
+    const summon =
+      options.summonEvidenceChild
+      ?? testEvidenceChildSummon
+      ?? (async (nextArgv: readonly string[]) => {
+        const { summonPublicRole } = await import("./public-role-summons.ts");
+        return summonPublicRole({
+          role: "evidence-child",
+          argv: nextArgv,
+          cwd: workspace,
+        });
+      });
+    const summoned = await summon(argv);
+    const report = reportFromSummon(summoned);
+    return { report, usage: emptyUsage(), prompt: leg.prompt };
   } catch (error) {
     throw projectSharedChildFailure(error);
   }

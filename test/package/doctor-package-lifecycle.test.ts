@@ -113,6 +113,8 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
               HOME: home,
               PI_CODING_AGENT_DIR: agentDir,
               PI_OFFLINE: "1",
+              // #675: nested public auditor offline pass (no second faux queue).
+              AK_ROLE_TEST_AUDIT_PASS: "1",
               AK_CORRELATION_ID: "doctor-fresh-corr",
               AK_DOCTOR_FRESH_CASE_PATH: caseIdentityPath,
               AK_DOCTOR_FRESH_ISSUE: "58",
@@ -147,32 +149,8 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           recordedToolCalls.filter((part: any) => part.name === "ak_doctor_output").length,
           1,
         );
-        // Production retain is Sitian (kind=auditor), not session COMPLIANCE_RESPONSE custom entry.
-        const recordFile = resolveSitianRecordPath({
-          level: "event",
-          kind: "auditor",
-          cwd: fixture,
-          sessionParent: sessionFile,
-        }).recordFile;
-        const retainedAudits = (await readSitianRecords(recordFile)).records.flatMap((record) => {
-          const payload = record.payload as { type?: string; response?: { role?: string; stopReason?: string; content?: any[] } } | undefined;
-          if (payload === undefined || typeof payload.type === "string" || payload.response === undefined) return [];
-          return [payload.response];
-        });
-        assert.equal(retainedAudits.length, 1);
-        const retainedAudit = retainedAudits[0]!;
-        assert.equal(retainedAudit.role, "assistant");
-        assert.equal(retainedAudit.stopReason, "toolUse");
-        const auditCalls = (retainedAudit.content ?? []).filter(
-          (part: any) => part.type === "toolCall" && part.name === "ak_doctor_audit_decision",
-        );
-        assert.equal(auditCalls.length, 1);
-        assert.deepEqual(auditCalls[0].arguments, {
-          status: "pass",
-          violations: [],
-          conflicts: [],
-          decisionGate: null,
-        });
+        // #675: public auditor is its own run; offline tracers force audit pass without
+        // parent-side sitian retention of a nested assistant response.
 
         const outputResults = events.filter(
           (event) =>

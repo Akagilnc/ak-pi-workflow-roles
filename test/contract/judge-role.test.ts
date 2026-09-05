@@ -26,7 +26,10 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
+  setTestGateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
+import { setTestAuditorSummon } from "../../src/compliance-transport.ts";
+import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
   createNavigatorAttendance,
   type NavigatorEvent,
@@ -101,7 +104,7 @@ import {
   parentInheritedSeats,
   writeInstitutionalSeatTable,
 } from "../helpers/institutional-seat-table.ts";
-import type { InstitutionalResolutionPage } from "../../src/institutional-resolution.ts";
+import type { InstitutionalResolutionPage } from "../helpers/institutional-seat-table.ts";
 import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
@@ -156,6 +159,8 @@ afterEach(() => {
   }
   // Drop any leftover env binding between tests (owned dirs already popped above).
   delete process.env.AK_ROLE_RUN_DIR;
+  setTestGateOfficerSummon(undefined);
+  setTestAuditorSummon(undefined);
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
   while (institutionalProviderCleanups.length > 0) {
@@ -362,6 +367,23 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
+function passingOfficerSummon(officer: "inspector" | "notary"): PublicSummonResult {
+  return {
+    exitCode: 0,
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: officer,
+        status: "pass",
+        decisiveFacts: { status: "pass", findings: [] },
+      },
+      navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+      artifacts: [],
+      runId: "test-gate-pass",
+    },
+  };
+}
+
 async function withPassingGatekeeper(context: ExtensionContext): Promise<ExtensionContext> {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
@@ -382,20 +404,8 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
-  // The child reaches this faux over the real OpenAI-completions HTTP server (models.json).
-  // Choose the only registered direct officer tool; no province response is scripted.
-  faux.provider.stream = ((_model: unknown, context: { tools?: Array<{ name?: string; function?: { name?: string } }> }) => {
-    const names = new Set(context.tools?.map((entry) => entry.name ?? entry.function?.name));
-    const inspector = names.has(INSPECTOR_OUTPUT_TOOL);
-    const tool = inspector ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
-    const stream = createAssistantMessageEventStream();
-    queueMicrotask(() => stream.end(
-      fauxAssistantMessage(fauxToolCall(tool, { status: "pass", findings: [] })),
-    ));
-    return stream;
-  }) as any;
-  faux.provider.streamSimple = faux.provider.stream as any;
-  await registerInstitutionalProviderFixture(faux);
+  // #675: offline gate path injects public-summon results (no institutional child).
+  setTestGateOfficerSummon(async (officer) => passingOfficerSummon(officer));
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
@@ -419,29 +429,91 @@ async function workerCompletionGatekeeperHarness(options: {
     officerUnusableSubmission = { status: "not-an-audit-verdict" } as Record<string, unknown>,
     passingRuns = 1,
   } = options;
-  const officerToolName = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
   const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
   const model = faux.getModel();
-  // Transport failures stream as error-stop so the mock server surfaces an HTTP
-  // error the real child adapter records as a stream failure. A "no decision"
-  // text turn (no decision tool call) makes the child exhaust its shared
-  // delivery budget and settle a typed no_receipt lifecycle. Both are consumed
-  // over the real OpenAI-completions round-trip in sequence.
-  const responses: AssistantMessage[] = [
-    fauxAssistantMessage([{ type: "text", text: "" }], { stopReason: "error", errorMessage: "Officer transport dropped" }),
-    fauxAssistantMessage(fauxToolCall(officerToolName, officerUnusableSubmission)),
-    fauxAssistantMessage("no decision"),
-    fauxAssistantMessage("no decision"),
-    fauxAssistantMessage("no decision"),
-    fauxAssistantMessage(fauxToolCall(officerToolName, { status: "bounce", findings: ["add a focused regression"] })),
-    ...Array.from({ length: passingRuns }, () =>
-      fauxAssistantMessage(fauxToolCall(officerToolName, { status: "pass", findings: [] }))),
+  // #675: script public-summon terminals in order (transport → unusable → no_receipt → bounce → pass*).
+  const queue: PublicSummonResult[] = [
+    {
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: officer,
+          cause: "provider",
+          diagnostic: "Officer transport dropped",
+          decisiveFacts: {},
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-gate-transport",
+      },
+    },
+    {
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: officer,
+          cause: "output",
+          diagnostic: "decision 无显式 pass/bounce/escalate",
+          decisiveFacts: officerUnusableSubmission,
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-gate-unusable",
+      },
+    },
+    {
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "no_receipt",
+          role: officer,
+          status: "no-accepted-receipt",
+          terminalToolCalled: false,
+          rejectedReceipts: [],
+          deliveryTurns: 2,
+          sessionCompletion: "settled-without-accepted-receipt",
+          runPointer: "test",
+          attemptPointer: "test",
+          acceptedReceipt: false,
+          decisiveFacts: {
+            terminalToolCalled: false,
+            rejectedReceipts: [],
+            deliveryTurns: 2,
+            sessionCompletion: "settled-without-accepted-receipt",
+            runPointer: "test",
+            attemptPointer: "test",
+            acceptedReceipt: false,
+          },
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-gate-no-receipt",
+      },
+    },
+    {
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: officer,
+          status: "bounce",
+          decisiveFacts: { status: "bounce", findings: ["add a focused regression"] },
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-gate-bounce",
+      },
+    },
+    ...Array.from({ length: passingRuns }, (_, i) => passingOfficerSummon(officer)),
   ];
-  // The child reaches this faux over the real OpenAI-completions HTTP server
-  // (models.json), which calls faux.provider.stream — so the scripted responses
-  // live on the faux provider itself via setResponses.
-  faux.setResponses(responses);
-  await registerInstitutionalProviderFixture(faux);
+  let callCount = 0;
+  setTestGateOfficerSummon(async () => {
+    const next = queue[callCount++];
+    if (next === undefined) throw new Error("gate summon queue exhausted");
+    return next;
+  });
   return {
     context(id: string, toolName: string) {
       installInstitutionalRunDir(parentInheritedSeats(model));
@@ -491,8 +563,8 @@ async function workerCompletionGatekeeperHarness(options: {
         }
       });
     },
-    get providerRequests() { return faux.state.callCount; },
-    get remainingResponses() { return faux.getPendingResponseCount(); },
+    get providerRequests() { return callCount; },
+    get remainingResponses() { return Math.max(0, queue.length - callCount); },
   };
 }
 
@@ -1400,13 +1472,21 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
-    const responses = [
-      fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, bounceSubmission)),
-    ];
-    // The gatekeeper child reaches this faux over the real OpenAI-completions
-    // HTTP server registered in the ambient models.json.
-    faux.setResponses(responses);
-    await registerInstitutionalProviderFixture(faux);
+    // #675: offline gate summons inject public terminal results.
+    setTestGateOfficerSummon(async (officer) => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: officer,
+          status: "bounce",
+          decisiveFacts: bounceSubmission,
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-gk-bounce",
+      },
+    }));
     // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
     installInstitutionalRunDir(parentInheritedSeats(model));
     const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
@@ -1480,7 +1560,8 @@ test("coder completed submissions traverse the direct Inspector gate until pass"
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
-  assert.equal(tracer.providerRequests, 7);
+  // #675: one public summon per gate attempt (transport/unusable/no_receipt/bounce/pass).
+  assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1563,8 +1644,8 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
   );
   // skip statuses must not consume further officer passes.
   assert.equal(tracer.providerRequests, beforeAllStatuses);
-  // Direct-officer reject matrix (6 requests) + two DONE passes = 8.
-  assert.equal(tracer.providerRequests, 8);
+  // #675: reject matrix is 4 public summons + two DONE passes = 6.
+  assert.equal(tracer.providerRequests, 6);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1600,7 +1681,8 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
   assert.equal(auditCalls, 1, "auditor runs only after Notary pass");
-  assert.equal(tracer.providerRequests, 7);
+  // #675: 4 reject summons + 1 pass = 5.
+  assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 
   // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
@@ -1631,7 +1713,7 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   assert.equal(secondGate.providerRequests, 1);
 });
 
-test("direct Inspector submit uses its own seat override and never falls back on auth failure", async () => {
+test("direct Inspector submit summons inspector; transport failure stays loud", async () => {
   const request = "Apply the approved plan.";
   const completed = { status: "completed", report: "TDD and verification evidence" };
   const startCoder = async () => {
@@ -1657,33 +1739,64 @@ test("direct Inspector submit uses its own seat override and never falls back on
     return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
   };
 
-  const seats = {
-    gatekeeper: { provider: "xai", model: "gate-model" },
-    inspector: { provider: "openai-codex", model: "inspector-model" },
-  };
-  const catalog = [
-    { provider: "xai", id: "gate-model" },
-    { provider: "openai-codex", id: "inspector-model" },
-  ];
   {
     const tool = await startCoder();
-    const tracer = await realEntryGateModelHarness({ officer: "inspector", catalog, seats });
-    const accepted = await tool.execute("own-inspector", completed, undefined, undefined, tracer.context("own-inspector", CODER_OUTPUT_TOOL_NAME));
+    const officers: string[] = [];
+    setTestGateOfficerSummon(async (officer) => {
+      officers.push(officer);
+      return passingOfficerSummon(officer);
+    });
+    const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
+    const model = faux.getModel();
+    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
+    const context = Object.assign(toolCallContext([{ id: "own-inspector", name: CODER_OUTPUT_TOOL_NAME }]), {
+      cwd: process.cwd(),
+      model,
+      thinkingLevel: "off",
+    });
+    if (context.sessionManager !== undefined) {
+      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
+    }
+    const accepted = await tool.execute("own-inspector", completed, undefined, undefined, context);
     assert.equal(accepted.terminate, true);
-    assert.deepEqual(tracer.seen, [{ provider: "openai-codex", id: "inspector-model" }]);
+    assert.deepEqual(officers, ["inspector"]);
   }
   {
     const tool = await startCoder();
-    const tracer = await realEntryGateModelHarness({
-      officer: "inspector",
-      catalog: [{ provider: "openai-codex", id: "inspector-model" }],
-      authFailIds: new Set(["inspector-model"]),
-      seats,
+    setTestGateOfficerSummon(async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "inspector",
+          cause: "provider",
+          diagnostic: "provider is not configured: openai-codex",
+          decisiveFacts: {},
+        },
+        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+        artifacts: [],
+        runId: "test-auth-fail",
+      },
+    }));
+    const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
+    const model = faux.getModel();
+    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
+    const context = Object.assign(toolCallContext([{ id: "auth-fail", name: CODER_OUTPUT_TOOL_NAME }]), {
+      cwd: process.cwd(),
+      model,
+      thinkingLevel: "off",
     });
+    if (context.sessionManager !== undefined) {
+      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
+    }
     await assert.rejects(
-      tool.execute("auth-fail", completed, undefined, undefined, tracer.context("auth-fail", CODER_OUTPUT_TOOL_NAME)),
+      tool.execute("auth-fail", completed, undefined, undefined, context),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error instanceof GatekeeperDecisionError, false);
+        return /provider is not configured/.test(error.message);
+      },
     );
-    assert.deepEqual(tracer.seen, [], "officer auth failure must not reach completion or fall back");
   }
 });
 
@@ -1705,13 +1818,8 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     });
     const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
     const model = faux.getModel();
-    // Completed submissions directly summon Inspector; refused skips the gate.
-    const responses: AssistantMessage[] = [];
-    for (let i = 0; i < 20; i += 1) {
-      responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
-    }
-    faux.setResponses(responses);
-    await registerInstitutionalProviderFixture(faux);
+    // #675: completed submissions summon Inspector via public path; inject pass.
+    setTestGateOfficerSummon(async (officer) => passingOfficerSummon(officer));
     const piHostAdapter = createPiRoleHostAdapter(harness.pi as ExtensionAPI);
     const runtime = createCoderRoleRuntime(
       piHostAdapter.host,
@@ -2598,26 +2706,26 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
                 let auditCalls = 0;
         let selectedDecision = decision;
-        const complete = async (_model: unknown, _request: Context) => {
-          auditCalls += 1;
-          const auditTool = toolNames[role as "judge" | "doctor"];
-          return fauxAssistantMessage(fauxToolCall(auditTool, selectedDecision), { stopReason: "toolUse" });
-        };
         // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
-        const auditCompliance = (options: { context: HostContext; signal?: AbortSignal }) => {
+        // #675: compliance summons public auditor; offline injects the decision terminal.
+        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
+          auditCalls += 1;
+          setTestAuditorSummon(async () => ({
+            exitCode: 0,
+            terminal: {
+              roleOutcome: {
+                kind: "accepted",
+                role: "auditor",
+                status: selectedDecision.status,
+                decisiveFacts: selectedDecision as Record<string, unknown>,
+              },
+              navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+              artifacts: [],
+              runId: "test-auditor",
+            },
+          }));
           const piOptions = { ...options, context: toPiContext(options.context) };
-          // #518 removed the runCompletion impersonation: the auditor CHILD session
-          // builds its own ModelRuntime reading <PI_CODING_AGENT_DIR>/models.json,
-          // and resolves the auditor seat from its run binding. Judge inherits the
-          // parent (passing-gatekeeper) seat via withPassingGatekeeper; doctor
-          // resolves the nestedRunDir seat (installed-auditor). Serve the audit
-          // decision over a dedicated mock provider matching that seat so the
-          // auditor child resolves instead of exhausting the gatekeeper mock.
-          const auditProvider = role === "doctor" ? "installed-auditor" : "passing-gatekeeper";
-          const auditFaux = fauxProvider({ provider: auditProvider, api: auditProvider });
-          auditFaux.setResponses([() => complete(undefined, { messages: [] } as unknown as Context)]);
-          const runAuditor = () => (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
-          return withInstitutionalProviderFixture(auditFaux, runAuditor);
+          return (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
         };
         let runtime: any;
         if (role === "judge") {

@@ -78,6 +78,16 @@ import {
   NAVIGATOR_TOOL_SPEC,
   type NavigatorRuntimeDependencies,
 } from "./navigator-role.ts";
+import {
+  AUDITOR_TOOL_SPEC,
+  type AuditorRuntimeDependencies,
+} from "./auditor-role.ts";
+import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
+import {
+  EVIDENCE_CHILD_TOOL_SPEC,
+  type EvidenceChildRuntimeDependencies,
+} from "./evidence-child-role.ts";
+import { EVIDENCE_CHILD_ACCEPTED_TEXT } from "./package-contracts/evidence-child-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
@@ -327,14 +337,11 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { executeAuditorChild } from "./evidence-child-executor.ts";
-export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
-  createOfficerDecisionTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
@@ -439,6 +446,8 @@ type ActivationRuntime = {
   inspector: { activate(): Promise<void> };
   gatekeeper: { activate(): Promise<void> };
   navigator: { activate(): Promise<void> };
+  auditor: { activate(): Promise<void> };
+  evidenceChild: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -487,6 +496,8 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
     case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
+    case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
+    case "evidence-child": return { id: "load-and-install", run: async () => runtime.evidenceChild.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -594,6 +605,8 @@ export type RoleRuntimeDependencies = {
   loadInspectorSoul?(): Promise<string>;
   loadGatekeeperSoul?(): Promise<string>;
   loadNavigatorSoul?(): Promise<string>;
+  loadAuditorSoul?(): Promise<string>;
+  loadEvidenceChildSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -844,6 +857,40 @@ export function createNavigatorRoleRuntime(
       tool: NAVIGATOR_TOOL_SPEC,
       acceptedText: NAVIGATOR_ACCEPTED_TEXT,
       soulTag: "navigator",
+    },
+    dependencies,
+  );
+}
+
+/** #675: public 审刑院 seat on the shared filed-officer envelope. */
+export function createAuditorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: AuditorRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "auditor",
+      tool: AUDITOR_TOOL_SPEC,
+      acceptedText: AUDITOR_ACCEPTED_TEXT,
+      soulTag: "auditor",
+    },
+    dependencies,
+  );
+}
+
+/** #675: public evidence-child seat on the shared filed-officer envelope. */
+export function createEvidenceChildRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: EvidenceChildRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "evidence-child",
+      tool: EVIDENCE_CHILD_TOOL_SPEC,
+      acceptedText: EVIDENCE_CHILD_ACCEPTED_TEXT,
+      soulTag: "evidence-child",
     },
     dependencies,
   );
@@ -1358,6 +1405,18 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNavigatorSoul();
       },
     });
+    const auditor = createAuditorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadAuditorSoul) throw new Error("Auditor runtime dependencies are not configured");
+        return dependencies.loadAuditorSoul();
+      },
+    });
+    const evidenceChild = createEvidenceChildRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadEvidenceChildSoul) throw new Error("Evidence-child runtime dependencies are not configured");
+        return dependencies.loadEvidenceChildSoul();
+      },
+    });
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1524,6 +1583,8 @@ export function createRoleRuntimeExtension(
         inspector,
         gatekeeper,
         navigator,
+        auditor,
+        evidenceChild,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

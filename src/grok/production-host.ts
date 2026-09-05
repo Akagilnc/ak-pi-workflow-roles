@@ -223,6 +223,8 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
+    loadAuditorSoul: () => loadMainRoleSessionMaterials("auditor"),
+    loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),

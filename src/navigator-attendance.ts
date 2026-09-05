@@ -16,7 +16,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { HostContext } from "./host-contracts.ts";
-import { createNativeNavigatorSessionFactory } from "./evidence-child-executor.ts";
+import { createNativeNavigatorSessionFactory } from "./navigator-public-session.ts";
 import {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -78,7 +78,11 @@ export function resolveNavigatorAuthorityMaterial(
   return undefined;
 }
 
-export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
+/** Workflow-route seats only — nested summon seats stay public but are not route targets. */
+const NAVIGATOR_ROUTE_EXCLUSIONS = new Set(["auditor", "evidence-child"]);
+export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY
+  .filter(({ role }) => !NAVIGATOR_ROUTE_EXCLUSIONS.has(role))
+  .map(({ role, phases }) => ({ role, phases }));
 
 export type NavigatorTargetRole = PackagedRole;
 export type NavigatorPhase = "plan" | "apply" | null;

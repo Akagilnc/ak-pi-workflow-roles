@@ -104,13 +104,16 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
   // #620: subordinate officers inherit gatekeeper; no package startup model.
   notary: [],
   // #453/#620/#639: gatekeeper callable but no package startup model — caller
-  // configures it or the institutional resolution applies on the province path.
+  // configures it or inherits on the province path.
   gatekeeper: [],
   inspector: [],
   navigator: [
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  // #675: auditor / evidence-child public seats — no package startup; caller configures.
+  auditor: [],
+  "evidence-child": [],
 };
 
 export function publicStartupCandidates(

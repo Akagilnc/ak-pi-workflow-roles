@@ -113,6 +113,16 @@ import {
   validateRecordedNavigatorOutput,
 } from "../package-contracts/navigator-output.ts";
 import {
+  AUDITOR_OUTPUT_TOOL_NAME,
+  auditorDecisiveFacts,
+  validateRecordedAuditorOutput,
+} from "../package-contracts/auditor-output.ts";
+import {
+  EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+  evidenceChildDecisiveFacts,
+  validateRecordedEvidenceChildOutput,
+} from "../package-contracts/evidence-child-output.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -3153,7 +3163,9 @@ type SeatAcceptedSettlementSpec = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "auditor"
+    | "evidence-child";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
   readonly projectAccepted: (
@@ -3180,7 +3192,9 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGleanerLeftInvocation
     | AdmittedInspectorInvocation
     | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation,
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
+    | import("./invocation.ts").AdmittedEvidenceChildInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
 ): Promise<TerminalResult | undefined> {
@@ -3545,6 +3559,80 @@ export async function trySettleNavigatorTerminalResult(
   authority: DurablePrincipalAuthority,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulNavigatorTerminalResult(admitted, authority);
+}
+
+/** Lawful Auditor accepted outcome (pass/revise/escalate, #675). */
+export type LawfulAuditorRoleOutcome = {
+  kind: "accepted";
+  role: "auditor";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulAuditorTerminalResult(
+  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "auditor",
+    toolName: AUDITOR_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "审刑院回执无显式 pass/revise/escalate",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedAuditorOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedAuditorOutput(sealed.decisiveFacts);
+      const accepted: LawfulAuditorRoleOutcome = {
+        kind: "accepted",
+        role: "auditor",
+        status: output.status,
+        decisiveFacts: auditorDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+export async function trySettleAuditorTerminalResult(
+  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulAuditorTerminalResult(admitted, authority);
+}
+
+/** Lawful Evidence-Child accepted outcome (#675). */
+export type LawfulEvidenceChildRoleOutcome = {
+  kind: "accepted";
+  role: "evidence-child";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulEvidenceChildTerminalResult(
+  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "evidence-child",
+    toolName: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "取证回执无报告正文",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedEvidenceChildOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedEvidenceChildOutput(sealed.decisiveFacts);
+      const accepted: LawfulEvidenceChildRoleOutcome = {
+        kind: "accepted",
+        role: "evidence-child",
+        status: "report",
+        decisiveFacts: evidenceChildDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  });
+}
+
+export async function trySettleEvidenceChildTerminalResult(
+  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulEvidenceChildTerminalResult(admitted, authority);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

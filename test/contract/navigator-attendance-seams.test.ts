@@ -346,11 +346,13 @@ test("advice command derives phase token from registry metadata for every packag
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
-    // Registry output tools are the contract-owned constants: Navigator targets
-    // mirror the packaged registry exactly (absorbed from routes constants test).
+    // Registry output tools are contract-owned. Navigator route targets exclude
+    // nested summon seats (auditor / evidence-child) that stay public (#675).
     assert.deepEqual(
       NAVIGATOR_TARGETS.map(({ role }) => role),
-      PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
+      PACKAGED_ROLE_REGISTRY.map(({ role }) => role).filter(
+        (role) => role !== "auditor" && role !== "evidence-child",
+      ),
     );
     assert.deepEqual(
       PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
@@ -368,12 +370,16 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
         { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
         { role: "navigator", outputTool: "ak_navigator_output" },
+        { role: "auditor", outputTool: "ak_auditor_output" },
+        { role: "evidence-child", outputTool: "ak_evidence_child_output" },
       ],
     );
 
-    // Command ownership is registry phases on normalized next — no parallel role-name list.
+    // Command ownership is registry phases on normalized next — route seats only.
     // Unmatched next is rebound once then passed through as-is (no next.role legality table).
-    for (const entry of PACKAGED_ROLE_REGISTRY) {
+    for (const entry of PACKAGED_ROLE_REGISTRY.filter(
+      (e) => e.role !== "auditor" && e.role !== "evidence-child",
+    )) {
       for (const phase of entry.phases) {
         const harness = sessionHarness();
         const events: any[] = [];

@@ -72,12 +72,8 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { loadPublicCliConfig, THINKING_LEVELS } from "./config.ts";
+import { THINKING_LEVELS } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
-import {
-  resolveInstitutionalSeatSelections,
-  writeInstitutionalResolutionPage,
-} from "../institutional-resolution.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -148,6 +144,14 @@ export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "navigator";
+};
+
+export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "auditor";
+};
+
+export type AdmittedEvidenceChildInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "evidence-child";
 };
 
 export type CoderPhase = "plan" | "apply";
@@ -233,6 +237,8 @@ export type AdmittedRoleInvocation =
   | AdmittedInspectorInvocation
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
+  | AdmittedAuditorInvocation
+  | AdmittedEvidenceChildInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -361,10 +367,6 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
-  const home = homeFromRunDirectory(source.runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -411,21 +413,6 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
-  const effectiveModel: InvocationEffectiveModel | undefined =
-    typeof next.provider === "string" && typeof next.model === "string"
-      ? {
-          provider: next.provider,
-          model: next.model,
-          ...(typeof next.thinking === "string" &&
-          THINKING_LEVELS.has(next.thinking as PublicThinkingLevel)
-            ? { thinking: next.thinking as PublicThinkingLevel }
-            : {}),
-        }
-      : undefined;
-  const home = homeFromRunDirectory(runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
@@ -606,7 +593,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -846,6 +833,17 @@ export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvR
   return parseInstructionArgv(args, "navigator");
 }
 
+export type ParseAuditorArgvResult = ParseInstructionArgvResult;
+export type ParseEvidenceChildArgvResult = ParseInstructionArgvResult;
+
+export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
+  return parseInstructionArgv(args, "auditor");
+}
+
+export function parseEvidenceChildArgv(args: readonly string[]): ParseEvidenceChildArgvResult {
+  return parseInstructionArgv(args, "evidence-child");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -1064,7 +1062,7 @@ export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
  * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1182,6 +1180,23 @@ export async function admitNavigatorInvocation(
   options: AdmitNavigatorInvocationOptions,
 ): Promise<AdmittedNavigatorInvocation> {
   return admitStandardMaterialInvocation("navigator", options);
+}
+
+export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitEvidenceChildInvocationOptions = AdmitInspectorInvocationOptions;
+
+/** Admit a public 审刑院 run (#675). */
+export async function admitAuditorInvocation(
+  options: AdmitAuditorInvocationOptions,
+): Promise<AdmittedAuditorInvocation> {
+  return admitStandardMaterialInvocation("auditor", options);
+}
+
+/** Admit a public evidence-child run (#675). */
+export async function admitEvidenceChildInvocation(
+  options: AdmitEvidenceChildInvocationOptions,
+): Promise<AdmittedEvidenceChildInvocation> {
+  return admitStandardMaterialInvocation("evidence-child", options);
 }
 
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */

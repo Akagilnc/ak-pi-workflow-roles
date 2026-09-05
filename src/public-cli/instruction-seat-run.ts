@@ -1,16 +1,18 @@
 /**
- * Shared instruction-seat run (#639 repair seam): gatekeeper and navigator are
- * the same admit → turn-request → post-admission → settle shape, parameterized
- * by seat. Same direction as the settlement one-shot shared skeleton. cli.ts
- * calls this parameterized module directly; no per-seat wrappers.
+ * Shared instruction-seat run (#639 / #675): gatekeeper, navigator, auditor,
+ * and evidence-child share admit → turn-request → post-admission → settle.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  admitAuditorInvocation,
+  admitEvidenceChildInvocation,
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
   buildInstructionTransportPrompt,
+  type AdmittedAuditorInvocation,
+  type AdmittedEvidenceChildInvocation,
   type AdmittedGatekeeperInvocation,
   type AdmittedNavigatorInvocation,
   type ParseInstructionArgvResult,
@@ -28,6 +30,8 @@ import {
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
+  trySettleAuditorTerminalResult,
+  trySettleEvidenceChildTerminalResult,
   trySettleGatekeeperTerminalResult,
   trySettleNavigatorTerminalResult,
 } from "./settlement.ts";
@@ -38,11 +42,17 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 
-export type InstructionSeatRole = "gatekeeper" | "navigator";
+export type InstructionSeatRole =
+  | "gatekeeper"
+  | "navigator"
+  | "auditor"
+  | "evidence-child";
 
 export type AdmittedInstructionSeatInvocation =
   | AdmittedGatekeeperInvocation
-  | AdmittedNavigatorInvocation;
+  | AdmittedNavigatorInvocation
+  | AdmittedAuditorInvocation
+  | AdmittedEvidenceChildInvocation;
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -70,13 +80,36 @@ function instructionSeatAdapters() {
     trySettle: (
       admitted: AdmittedInstructionSeatInvocation,
       authority: DurablePrincipalAuthority,
-    ) =>
-      admitted.role === "gatekeeper"
-        ? trySettleGatekeeperTerminalResult(admitted, authority)
-        : trySettleNavigatorTerminalResult(admitted, authority),
-    // Accepted receipts and failure terminals both present via shared path.
+    ) => {
+      switch (admitted.role) {
+        case "gatekeeper":
+          return trySettleGatekeeperTerminalResult(admitted, authority);
+        case "navigator":
+          return trySettleNavigatorTerminalResult(admitted, authority);
+        case "auditor":
+          return trySettleAuditorTerminalResult(admitted, authority);
+        case "evidence-child":
+          return trySettleEvidenceChildTerminalResult(admitted, authority);
+      }
+    },
     shouldPresentSettled: () => true,
   };
+}
+
+async function admitInstructionSeat(
+  role: InstructionSeatRole,
+  options: Parameters<typeof admitGatekeeperInvocation>[0],
+): Promise<AdmittedInstructionSeatInvocation> {
+  switch (role) {
+    case "gatekeeper":
+      return admitGatekeeperInvocation(options);
+    case "navigator":
+      return admitNavigatorInvocation(options);
+    case "auditor":
+      return admitAuditorInvocation(options);
+    case "evidence-child":
+      return admitEvidenceChildInvocation(options);
+  }
 }
 
 export async function runPublicInstructionSeatResume(
@@ -116,7 +149,7 @@ export async function runPublicInstructionSeat(
   let admitted: AdmittedInstructionSeatInvocation;
   try {
     const parsed = parseArgv(argv);
-    const options = {
+    admitted = await admitInstructionSeat(role, {
       home: env.home,
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
@@ -126,11 +159,7 @@ export async function runPublicInstructionSeat(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    };
-    admitted =
-      role === "gatekeeper"
-        ? await admitGatekeeperInvocation(options)
-        : await admitNavigatorInvocation(options);
+    });
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
