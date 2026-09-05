@@ -40,8 +40,26 @@ const MUTATION_COMMANDS = new Set([
   "touch", "mkdir", "tee", "shred", "chmod", "chown", "chgrp",
 ]);
 
-/** Commands / forms whose mutation targets cannot be proven from argv text alone. */
-const UNPROVABLE_MUTATION = /\b(?:eval|source|exec)\b|\b(?:find|xargs)\b.*(?:-delete|-exec\b|-fprint)|\b(?:python|python3|ruby|perl|php|lua)\b.*\s-c\b|\bnode(?:js)?\b.*\s(?:-e|--eval|-p)\b|\bcd\b/i;
+/**
+ * Verbs that are proven read-only when used without redirects / expansion.
+ * Anything else is treated as a potential mutation (fail-closed).
+ */
+const READ_ONLY_COMMANDS = new Set([
+  "cat", "head", "tail", "less", "more", "ls", "ll", "dir",
+  "find", "grep", "egrep", "fgrep", "rg", "ag", "ack",
+  "wc", "stat", "file", "diff", "cmp", "md5", "md5sum", "sha256sum",
+  "echo", "printf", "true", "false", "test", "[",
+  "pwd", "which", "type", "command", "env", "printenv", "export",
+  "date", "whoami", "id", "uname", "hostname", "basename", "dirname",
+  "realpath", "readlink", "git", "jq", "yq", "sort", "uniq", "cut",
+  "tr", "awk", "sed", // sed without -i is read-only; -i caught below
+  "sleep", "seq", "yes", "cal", "df", "du", "free", "ps", "top",
+]);
+
+/** Shell expansion / glob / tilde / subshell — cannot prove concrete targets. */
+function hasUnprovableShellExpansion(command: string): boolean {
+  return /\$|`|\*\?|\*|\?|~|\$\(|\$\{/.test(command);
+}
 
 export function defaultRoleToolFsBoundaryRoots(cwd: string): RoleToolFsBoundaryRoots {
   return {
@@ -170,47 +188,95 @@ function assessBashCommand(
     if (hit !== undefined) return hit;
   }
 
-  // Unprovable mutation forms: fail closed (no target extraction arms race).
-  if (UNPROVABLE_MUTATION.test(command)) {
-    return {
-      code: ROLE_TOOL_FS_BOUNDARY_CODE,
-      toolName,
-      paths: [],
-      reason: roleToolFsBoundaryDenyReason(toolName, []),
-    };
-  }
-
-  // Nested shell without extractable -c body (or env bash …) → fail closed.
+  // Nested shell without extractable -c body → fail closed.
   if (/\b(?:bash|sh|zsh|dash|ksh)\b/.test(command) && extractNestedShellBodies(command).length === 0) {
-    // Allow the shell binary only when the whole command is that shell alone (no args) — still no mutation.
-    // Any shell invocation used as a carrier is unprovable if body wasn't extracted above.
     const trimmed = command.trim();
     if (!/^(?:\S*\/)?(?:bash|sh|zsh|dash|ksh)\s*$/.test(trimmed)) {
-      return {
-        code: ROLE_TOOL_FS_BOUNDARY_CODE,
-        toolName,
-        paths: [],
-        reason: roleToolFsBoundaryDenyReason(toolName, []),
-      };
+      return denyUnprovable(toolName);
     }
   }
 
+  // Proven read-only (no redirect, only allowlisted verbs) → allow.
+  if (isProvenReadOnlyBash(command)) return undefined;
+
+  // eval/source/exec and interpreter-eval sentinels are never concrete-path-provable.
+  if (/\b(?:eval|source|exec)\b/.test(command)) return denyUnprovable(toolName);
+
+  // Not proven read-only: fail closed on any shell expansion / glob / tilde / subshell.
+  if (hasUnprovableShellExpansion(command)) return denyUnprovable(toolName);
+
+  // Concrete mutation targets only — no path means unprovable mutation (e.g. sed -i).
   const targets = extractBashMutationTargetPaths(command);
-  const hasMutationVerb = commandHasMutationVerb(command);
-  const hasRedirect = />>?/.test(command);
+  // Also collect path-like operands from non-allowlisted verbs (sed -i path, etc.).
+  targets.push(...extractPathOperandsFromNonReadOnly(command));
+  const unique = [...new Set(targets)];
+  if (unique.length === 0) return denyUnprovable(toolName);
+  return denyIfOutside(toolName, unique, cwd, roots);
+}
 
-  if (!hasMutationVerb && !hasRedirect) return undefined; // read-only / no mutation
+function denyUnprovable(toolName: string): RoleToolFsBoundaryViolation {
+  return {
+    code: ROLE_TOOL_FS_BOUNDARY_CODE,
+    toolName,
+    paths: [],
+    reason: roleToolFsBoundaryDenyReason(toolName, []),
+  };
+}
 
-  if (targets.length === 0) {
-    // Mutation indicated but no extractable targets → fail closed.
-    return {
-      code: ROLE_TOOL_FS_BOUNDARY_CODE,
-      toolName,
-      paths: [],
-      reason: roleToolFsBoundaryDenyReason(toolName, []),
-    };
+function isProvenReadOnlyBash(command: string): boolean {
+  // Redirects are writes. Expansion is fine for pure reads (read unrestricted).
+  if (/>>?/.test(command)) return false;
+  for (const simple of splitSimpleCommands(command)) {
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+    if (idx >= tokens.length) continue;
+    const verb = basename(tokens[idx]!);
+    if (!READ_ONLY_COMMANDS.has(verb)) return false;
+    if (verb === "find" && /(?:-delete|-exec\b|-fprint)/.test(simple)) return false;
+    if (verb === "sed" && /(?:^|\s)-[a-zA-Z]*i[a-zA-Z]*/.test(simple)) return false;
+    if (verb === "git" && !isReadOnlyGit(tokens.slice(idx + 1))) return false;
   }
-  return denyIfOutside(toolName, targets, cwd, roots);
+  return true;
+}
+
+function isReadOnlyGit(args: readonly string[]): boolean {
+  const sub = args.find((a) => !a.startsWith("-"));
+  if (sub === undefined) return true;
+  return [
+    "status", "log", "diff", "show", "rev-parse", "rev-list",
+    "branch", "tag", "remote", "ls-files", "ls-tree", "cat-file",
+    "describe", "blame", "shortlog", "config", "help", "version",
+  ].includes(sub);
+}
+
+/** Path-like operands after non-read-only verbs (covers sed -i, install, etc.). */
+function extractPathOperandsFromNonReadOnly(command: string): string[] {
+  const out: string[] = [];
+  for (const simple of splitSimpleCommands(command)) {
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+    if (idx >= tokens.length) continue;
+    const verb = basename(tokens[idx]!);
+    if (READ_ONLY_COMMANDS.has(verb) && !(verb === "sed" && /(?:^|\s)-[a-zA-Z]*i/.test(simple))) {
+      continue;
+    }
+    idx += 1;
+    for (; idx < tokens.length; idx += 1) {
+      const tok = tokens[idx]!;
+      if (tok === ">" || tok === ">>" || tok === ">|" || tok === "<" || tok === "<<") {
+        idx += 1;
+        continue;
+      }
+      if (tok.startsWith("-") && tok !== "-") continue;
+      // Path-like: has / or . or is a bare filename operand
+      if (tok.includes("/") || tok.includes(".") || /^[A-Za-z0-9._-]+$/.test(tok)) {
+        out.push(tok);
+      }
+    }
+  }
+  return out;
 }
 
 function denyIfOutside(
@@ -288,13 +354,13 @@ function scriptBodiesFromArgv(exe: string, rest: readonly string[]): string[] {
       continue;
     }
     if (isNode && NODE_EVAL_FLAGS.has(tok) && i + 1 < rest.length) {
-      // Mark as unprovable mutation body via a sentinel the bash assessor denies.
-      bodies.push(`node -e ${rest[i + 1]!}`);
+      // Interpreter eval bodies are unprovable as shell — force fail-closed assess.
+      bodies.push(`eval ${rest[i + 1]!}`);
       i += 1;
       continue;
     }
     if (isInterpreter && INTERPRETER_C_FLAGS.has(tok) && i + 1 < rest.length) {
-      bodies.push(`${exe} -c ${rest[i + 1]!}`);
+      bodies.push(`eval ${rest[i + 1]!}`);
       i += 1;
     }
   }
@@ -306,7 +372,8 @@ function expandUserHome(raw: string): string {
   if (raw.startsWith(`~${sep}`) || raw.startsWith("~/")) {
     const home = process.env.HOME;
     if (typeof home !== "string" || home.length === 0) return raw;
-    return join(home, raw.slice(2));
+    // Preserve `..` components for followComponents — never path.join-collapse.
+    return appendRelativePreservingDots(home, raw.slice(2));
   }
   return raw;
 }

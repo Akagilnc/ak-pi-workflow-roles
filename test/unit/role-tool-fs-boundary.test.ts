@@ -106,17 +106,22 @@ test("edit/write/rm/mv outside deny; read-only bash allows", () => {
   }), undefined);
 });
 
-test("bash fail-closed: nested shell, -lc, fused redirect, cd, node -e, find -delete", () => {
+test("bash fail-closed: sed -i, vars, globs, tilde escape, nested, fused redirect", () => {
   const { workspaceRoot, tempRoot, protectedRoot } = isolationRoots();
   const roots = { workspaceRoot, tempRoot };
   const pFile = join(protectedRoot, "keep.txt");
+  const link = join(workspaceRoot, "link");
+  symlinkSync(join(protectedRoot, "sub"), link);
 
   for (const command of [
     `bash -c 'rm -f ${pFile}'`,
     `bash -lc 'rm -f ${pFile}'`,
     `env bash -c 'rm -f ${pFile}'`,
     `printf X>${pFile}`,
-    `cd ${JSON.stringify(protectedRoot)} && rm -f keep.txt`,
+    `sed -i '' 's/ORIGINAL/HIJACK/' ${JSON.stringify(pFile)}`,
+    `P=${JSON.stringify(protectedRoot)}; printf HIJACK > "$P/keep.txt"`,
+    `rm -f ${workspaceRoot}/*/keep.txt`,
+    `printf X > ${link}/../keep.txt`,
     `node -e "require('fs').unlinkSync(${JSON.stringify(pFile)})"`,
     `find ${JSON.stringify(protectedRoot)} -delete`,
   ] as const) {
@@ -130,6 +135,17 @@ test("bash fail-closed: nested shell, -lc, fused redirect, cd, node -e, find -de
       `must deny: ${command}`,
     );
   }
+
+  // Read unrestricted (including outside).
+  assert.equal(
+    assessRoleToolFsBoundary({
+      toolName: "bash",
+      toolInput: { command: `cat ${JSON.stringify(pFile)}` },
+      cwd: workspaceRoot,
+      roots,
+    }),
+    undefined,
+  );
 });
 
 test("detour argv: rm/bash -c outside deny; opaque engine argv alone allows (sandbox owns IO)", () => {
