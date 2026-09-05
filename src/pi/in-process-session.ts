@@ -237,7 +237,7 @@ export async function openPiInstitutionalSession(
       ? childRegistry.find(selection.provider, selection.model)
       : undefined;
 
-    const withTypedReason = (error: Error, reason: "auth" | "model" | "thinking"): Error =>
+    const withTypedReason = (error: Error, reason: "auth" | "model"): Error =>
       Object.assign(error, { reason });
 
     // Existing Navigator/model contract (pre-#590): unknown provider or model is
@@ -631,16 +631,15 @@ export async function openPiInstitutionalSession(
       }
     }
 
-    // 7. Create AgentSession
-    // Pass seat/selection thinking through as Pi createAgentSession understands it
-    // (off/minimal/low/medium/high/xhigh/max). Absent selection defaults to off
-    // (explicit, not Pi settings default). Pi clamps unsupported levels; if the
-    // requested level does not stick, fail as typed unavailable/thinking.
-    const requestedThinking = options.selection.thinking ?? "off";
+    // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
+    // omits thinkingLevel (Pi default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent defaults.
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: requestedThinking as any,
+      ...(options.selection.thinking === undefined
+        ? {}
+        : { thinkingLevel: options.selection.thinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -650,15 +649,6 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    if (session.thinkingLevel !== requestedThinking) {
-      session.dispose();
-      throw withTypedReason(
-        new Error(
-          `${label} thinking level ${requestedThinking} is unavailable for ${selection.provider}/${selection.model}`,
-        ),
-        "thinking",
-      );
-    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();
