@@ -14,7 +14,7 @@ import {
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import {
-  intervalRowsForMatchingBinding,
+  latestIntervalRowsForMatchingBinding,
   type LedgerSessionRow,
 } from "../ledger-session-read.ts";
 import {
@@ -915,14 +915,24 @@ async function readSitianRetainedAuditorProviderStop(
   return undefined;
 }
 
+/** Optional run ownership so shared-nest parent reads stay on the current attempt. */
+type SessionOwnership = {
+  readonly runId: string;
+  readonly runDirectory: string;
+};
+
 /** Read retained auditor stop (Sitian) then native session assistant stop, if any. */
 export async function readSessionProviderStop(
   sessionFile: string,
+  ownership?: SessionOwnership,
 ): Promise<SessionProviderStop | undefined> {
   const retained = await readSitianRetainedAuditorProviderStop(sessionFile);
   if (retained !== undefined) return retained;
   try {
-    const entries = await readBoundSessionEntries(sessionFile);
+    let entries = await readBoundSessionEntries(sessionFile);
+    if (ownership !== undefined) {
+      entries = sessionEntriesOwnedByAdmittedRun(entries, ownership, sessionFile);
+    }
     return extractSessionProviderStop(entries);
   } catch {
     return undefined;
@@ -977,6 +987,7 @@ type BoundAuditorVolume = {
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
+  ownership?: SessionOwnership,
 ): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
@@ -984,6 +995,14 @@ async function loadBoundAuditorVolumes(
   } catch (error) {
     if (isMissingPathError(error)) return undefined;
     throw sessionReadFailure(error, "failed to read parent session for auditor binding");
+  }
+  // Shared nest: parent attempt boundary is this run's latest binding, not whole-volume latest user.
+  if (ownership !== undefined) {
+    parentEntries = sessionEntriesOwnedByAdmittedRun(
+      parentEntries,
+      ownership,
+      sessionFile,
+    );
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
@@ -1160,8 +1179,9 @@ function providerStopFallbackFromAuditorVolumes(
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
+  ownership?: SessionOwnership,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, ownership);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes)
     ?? providerStopFallbackFromAuditorVolumes(volumes);
@@ -1170,8 +1190,9 @@ export async function readBoundAuditorKnownFailure(
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
+  ownership?: SessionOwnership,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, ownership);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
 }
@@ -1179,8 +1200,9 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
+  ownership?: SessionOwnership,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, ownership);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
@@ -1256,9 +1278,15 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
   credential: RoleTurnKnownFailure | undefined;
-  /** Reviewer only: recover child-written rejection page into knownFailure.details. */
+  /** Reviewer rejection page + shared-nest ownership for parent/provider reads. */
   runDirectory?: string;
+  /** With runDirectory, slices shared parent session to this run's current attempt. */
+  runId?: string;
 }): Promise<AuditedRunnerFailureResolution> {
+  const ownership: SessionOwnership | undefined =
+    input.runDirectory !== undefined && input.runId !== undefined
+      ? { runId: input.runId, runDirectory: input.runDirectory }
+      : undefined;
   if (input.runner !== undefined) return resolutionOf(input.runner);
   if (input.runDirectory !== undefined) {
     try {
@@ -1278,7 +1306,10 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // host failure is next — it outranks weaker auditor provider-stop fallback so
   // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   try {
-    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    const auditorCompliance = await readBoundAuditorComplianceFailure(
+      input.sessionFile,
+      ownership,
+    );
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
@@ -1289,9 +1320,15 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     });
   }
   try {
-    const terminatingFailure = typedFailedTerminatingToolKnownFailure(
-      await readBoundSessionEntries(input.sessionFile),
-    );
+    let parentEntries = await readBoundSessionEntries(input.sessionFile);
+    if (ownership !== undefined) {
+      parentEntries = sessionEntriesOwnedByAdmittedRun(
+        parentEntries,
+        ownership,
+        input.sessionFile,
+      );
+    }
+    const terminatingFailure = typedFailedTerminatingToolKnownFailure(parentEntries);
     if (terminatingFailure !== undefined) return resolutionOf(terminatingFailure);
   } catch (error) {
     if (!isMissingPathError(error)) {
@@ -1304,7 +1341,10 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     }
   }
   try {
-    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
+    const auditorStop = await readBoundAuditorProviderStopFallback(
+      input.sessionFile,
+      ownership,
+    );
     if (auditorStop !== undefined) return resolutionOf(auditorStop);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
@@ -1328,7 +1368,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       diagnostic: failure.message || failure.name,
     });
   }
-  const parentStop = await readSessionProviderStop(input.sessionFile);
+  const parentStop = await readSessionProviderStop(input.sessionFile, ownership);
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
   // This is the single sidecar read for both knownFailure projection and v1 resume.
   let httpObservation: TypedProviderHttpObservation | undefined;
@@ -2377,30 +2417,50 @@ export function projectTerminalGateFact(
  * carries a ticket, from #636 ticket-seat memory nests via the sole nested-volume
  * reader (#446/#478). Missing directories → undefined (no-gate zero change).
  * Damaged discovered volumes propagate — never wash to "no gate".
+ *
+ * Callers must pass the real runDirectory and parent session file — never let a
+ * shared nest sessionDirectory invent `..` as the run or assume session.jsonl
+ * (#637 class 4).
  */
 export async function extractGateFactFromSessionDirectory(
   sessionDirectory: string,
   options: {
-    readonly runDirectory?: string;
-    readonly parentSessionFile?: string;
-  } = {},
+    readonly runDirectory: string;
+    readonly parentSessionFile: string;
+  },
 ): Promise<TerminalGateFact | undefined> {
-  const runDirectory = options.runDirectory ?? join(sessionDirectory, "..");
   const memoryNests = await resolveTicketSeatMemoryNestDirectories({
-    runDirectory,
+    runDirectory: options.runDirectory,
     seats: ["inspector", "notary"],
   });
   const directories = [
     join(sessionDirectory, "auditor-roles"),
     ...memoryNests,
   ];
-  const parentSessionFile =
-    options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
   const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
-    parentSessionFile,
+    parentSessionFile: options.parentSessionFile,
   });
   return projectTerminalGateFact(rounds);
 }
+
+/** Gate read identity — real run + sealed session file, never nest-relative guess. */
+type SettlementGateContext = {
+  readonly sessionDirectory: string;
+  readonly runDirectory: string;
+  readonly sessionFile: string;
+};
+
+function settlementGateContext(
+  admitted: { readonly runDirectory: string },
+  coordinates: { readonly sessionDirectory: string; readonly sessionFile: string },
+): SettlementGateContext {
+  return {
+    sessionDirectory: coordinates.sessionDirectory,
+    runDirectory: admitted.runDirectory,
+    sessionFile: coordinates.sessionFile,
+  };
+}
+
 
 /**
  * Attach optional gate projection onto a settled Terminal base.
@@ -2418,11 +2478,7 @@ async function withOptionalGateProjection<
   },
 >(
   base: T,
-  sessionDirectory: string,
-  gateContext: {
-    readonly runDirectory?: string;
-    readonly parentSessionFile?: string;
-  } = {},
+  gateContext: SettlementGateContext,
 ): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
   // accepted gate cycle to project. Re-reading that rejected receipt as an
@@ -2440,8 +2496,10 @@ async function withOptionalGateProjection<
     )
   ) return base;
 
-  // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
+  const gate = await extractGateFactFromSessionDirectory(gateContext.sessionDirectory, {
+    runDirectory: gateContext.runDirectory,
+    parentSessionFile: gateContext.sessionFile,
+  });
   return gate === undefined ? base : { ...base, gate };
 }
 
@@ -2522,20 +2580,23 @@ export function extractNavigatorFact(
 }
 
 /**
- * Slice shared ticket-seat volume entries to the intervals owned by this run's
- * binding markers. Private per-run volumes keep the whole file. Shared volumes
- * without a binding for this run yield an empty slice — never borrow a prior
- * run's user/terminal/attendance (#637 class 4).
+ * Slice shared ticket-seat volume entries to the *current attempt* interval owned
+ * by this run's latest binding marker (terminal evidence). Private per-run volumes
+ * (session under the run directory by placement) keep the whole file. Shared volumes
+ * without a binding for this run yield an empty slice — never borrow a prior run's
+ * user/terminal/attendance. Full-run stats stay on analyst's matching-binding union
+ * (#637 class 4).
  */
 function sessionEntriesOwnedByAdmittedRun(
   entries: readonly SessionEntry[],
   admitted: { readonly runId: string; readonly runDirectory: string },
   sessionFile: string,
 ): SessionEntry[] {
+  // Positive private-volume fact from run placement topology — not "outside run ⇒ nest".
   if (pathContainedIn(admitted.runDirectory, sessionFile)) {
     return [...entries];
   }
-  const interval = intervalRowsForMatchingBinding(
+  const interval = latestIntervalRowsForMatchingBinding(
     entries as LedgerSessionRow[],
     (row) => isTicketSeatRunBindingRow(row),
     (row) => ticketSeatRunBindingRunId(row) === admitted.runId,
@@ -2777,7 +2838,7 @@ async function settleLawfulJudgeTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    coordinates.sessionDirectory,
+    settlementGateContext(admitted, coordinates),
   );
 }
 
@@ -2852,7 +2913,7 @@ async function settleLawfulCoderTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    coordinates.sessionDirectory,
+    settlementGateContext(admitted, coordinates),
   );
 }
 
@@ -3046,7 +3107,7 @@ async function settleLawfulFixerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -3192,7 +3253,7 @@ async function settleLawfulCollectorTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -3309,7 +3370,7 @@ async function settleLawfulDoctorTerminalResult(
         artifacts,
         runId: admitted.runId,
       },
-      sessionDirectory,
+      settlementGateContext(admitted, { sessionDirectory, sessionFile }),
     );
   }
   const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
@@ -3352,7 +3413,7 @@ async function settleLawfulDoctorTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -3439,7 +3500,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
         artifacts: [],
         runId: admitted.runId,
       },
-      sessionDirectory,
+      settlementGateContext(admitted, { sessionDirectory, sessionFile }),
     );
   }
   if (roleOutcome?.role !== spec.role) {
@@ -3506,7 +3567,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
       artifacts: [],
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -3967,7 +4028,7 @@ async function settleLawfulReviewerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -4205,7 +4266,7 @@ async function settleLawfulMergerTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 
@@ -4559,7 +4620,7 @@ export async function settleFailureTerminalResult(
                 artifacts: [],
                 runId: admitted.runId,
               },
-              sessionDirectory,
+              settlementGateContext(admitted, { sessionDirectory, sessionFile }),
             );
           }
         } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
@@ -4609,7 +4670,7 @@ export async function settleFailureTerminalResult(
         artifacts: [],
         resume: options.resume,
       },
-      sessionDirectory,
+      settlementGateContext(admitted, { sessionDirectory, sessionFile }),
     );
   }
   const roleOutcome: TerminalRoleOutcome = {
@@ -4627,7 +4688,7 @@ export async function settleFailureTerminalResult(
       artifacts,
       runId: admitted.runId,
     },
-    sessionDirectory,
+    settlementGateContext(admitted, { sessionDirectory, sessionFile }),
   );
 }
 

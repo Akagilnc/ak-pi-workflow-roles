@@ -99,9 +99,10 @@ async function readInvocationHost(runDirectory: string): Promise<string | undefi
 }
 
 /**
- * When the admitted principal already sits on a ticket-seat nest, append this
- * run's binding before an actual write dispatch. No-op for private per-run
- * principals and for seats without a bound ticket (no migration guess).
+ * When the admitted principal already sits on the topology-confirmed ticket-seat
+ * nest, append this run's binding on the sealed principal that dispatch will use.
+ * Returned open coordinates are sealed back onto admitted so marker and turn share
+ * one volume (#637 class 4). No-op for private per-run principals and unbound seats.
  */
 async function appendTicketSeatRunBindingForDispatch(
   admitted: AdmittedRoleInvocation,
@@ -115,20 +116,82 @@ async function appendTicketSeatRunBindingForDispatch(
   const coordinates = principalAuthority.decode(admitted.principal);
   if (
     !isPrincipalOnTicketSeatNest({
-      runDirectory: admitted.runDirectory,
       sessionDirectory: coordinates.sessionDirectory,
       sessionFile: coordinates.sessionFile,
+      ticketNumber: bound.ticketNumber,
+      seat: bound.role,
+      projectRoot: admitted.projectRoot,
+      ledgerAnchorSessionFile: coordinates.sessionFile,
     })
   ) {
     return;
   }
-  await openTicketSeatMemoryCoordinates({
+  const opened = await openTicketSeatMemoryCoordinates({
     ticketNumber: bound.ticketNumber,
     seat: bound.role,
     cwd: admitted.projectRoot,
     ledgerAnchorSessionFile: coordinates.sessionFile,
     runId: admitted.runId,
   });
+  // Marker must name the same sealed principal dispatch will open — never discard
+  // the open fact after re-resolving current-session.
+  const sealed = principalAuthority.seal({
+    sessionDirectory: opened.sessionDirectory,
+    sessionFile: opened.sessionFile,
+  });
+  principalAuthority.decode(sealed);
+  (admitted as { principal: DurablePrincipal }).principal = sealed;
+}
+
+/**
+ * Seats whose initial path self-binds ticket via Hermes (#635). Notary inherits
+ * ticket from source-run and must not gain a resume-time self-bind default.
+ */
+function seatSelfBindsTicketOnPrep(role: string): boolean {
+  return role === "inspector" || role === "countersign" || role === "auditor";
+}
+
+/**
+ * Finish incomplete ticket-seat prep on manual resume: optional self-ticket bind,
+ * then memory rebind when the durable principal is still private, then sync the
+ * sole run-state principal (#637 class 3). No parallel recovery ledger.
+ */
+async function completeTicketSeatMemoryPrepOnResume(
+  admitted: AdmittedRoleInvocation,
+  env: PostAdmissionEnv,
+  seat: TicketSeatMemorySeat,
+): Promise<void> {
+  if (seatSelfBindsTicketOnPrep(seat)) {
+    await resolveSeatTicketBinding(admitted, env);
+  }
+  const bound = {
+    role: admitted.role,
+    ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
+  };
+  if (!isTicketSeatMemoryBound(bound)) return;
+  const coordinates = env.principalAuthority.decode(admitted.principal);
+  if (
+    isPrincipalOnTicketSeatNest({
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      ticketNumber: bound.ticketNumber,
+      seat,
+      projectRoot: admitted.projectRoot,
+      ledgerAnchorSessionFile: coordinates.sessionFile,
+    })
+  ) {
+    return;
+  }
+  // Still-private principal after early admit: finish the same rebind initial uses.
+  // Binding marker stays on the dispatch path (lease envelope) — do not double-mark.
+  await rebindAdmittedToTicketSeatMemory({
+    admitted: admitted as AdmittedRoleInvocation & {
+      principal: DurablePrincipal;
+    },
+    seat,
+    principalAuthority: env.principalAuthority,
+  });
+  await markRunAdmitted(admitted, env.principalAuthority);
 }
 
 export type PostAdmissionEnv = {
@@ -419,6 +482,24 @@ export async function dispatchPostAdmissionTurn<
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
   try {
+    // Binding append lives inside the sole lease ownership envelope (return + throw).
+    // Manual resume no longer appends outside this finally (#637 class 5).
+    try {
+      await appendTicketSeatRunBindingForDispatch(admitted, env.principalAuthority);
+    } catch (error) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
       env.credentials,
@@ -459,10 +540,14 @@ export async function dispatchPostAdmissionTurn<
     });
     const principalOnTicketSeatNest =
       principalCoordinates !== undefined &&
+      ticketSeatEligible &&
       isPrincipalOnTicketSeatNest({
-        runDirectory: admitted.runDirectory,
         sessionDirectory: principalCoordinates.sessionDirectory,
         sessionFile: principalCoordinates.sessionFile,
+        ticketNumber: admitted.ticketNumber as number,
+        seat: admitted.role as TicketSeatMemorySeat,
+        projectRoot: admitted.projectRoot,
+        ledgerAnchorSessionFile: principalCoordinates.sessionFile,
       });
     const ticketSeatMemoryBound = ticketSeatEligible && principalOnTicketSeatNest;
     let turnRequest: RoleTurnRequest;
@@ -723,6 +808,7 @@ export async function dispatchPostAdmissionTurn<
       sessionFile,
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
+      runId: admitted.runId,
     });
     const hostFailureInput: ControlledFailureInput = {
       timedOut: result.timedOut,
@@ -929,11 +1015,15 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  // Incomplete ticket prep on an already-admitted run must continue resolution
-  // (never skip or invent true-unbound). Already-settled admissions short-circuit
-  // inside resolveSeatTicketBinding (#635 / #637 class 3).
+  // Incomplete ticket-seat prep must continue (ticket self-bind where authorized,
+  // then unfinished memory rebind + durable principal sync). Notary never gains a
+  // resume-time Hermes self-bind default — source-run inheritance stays (#637 class 3).
   if (isTicketSeatMemorySeat(loaded.admitted.role)) {
-    await resolveSeatTicketBinding(loaded.admitted, input.env);
+    await completeTicketSeatMemoryPrepOnResume(
+      loaded.admitted,
+      input.env,
+      loaded.admitted.role,
+    );
   }
   return await runPostAdmissionManualResume({
     admitted: loaded.admitted,
@@ -1140,31 +1230,8 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
-  // Actual write resume on a shared nest appends this run's binding so A→B→resume A
-  // owns the new interval. Sealed-only projection above never reaches here — no
-  // false write interval for pure receipt projection (#637 class 4).
-  try {
-    await appendTicketSeatRunBindingForDispatch(admitted, env.principalAuthority);
-  } catch (error) {
-    return (await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      adapters,
-      env.principalAuthority,
-      io,
-    )) as {
-      exitCode: number;
-      admitted: A;
-      terminal: T;
-      staleWriterLeaseReclaimed?: true;
-    };
-  }
-
+  // Binding append is inside dispatchPostAdmissionTurn's lease envelope (#637 class 5).
+  // Sealed-only projection above never reaches dispatch — no false write interval.
   const result = await dispatchPostAdmissionTurn({
     admitted,
     env: {

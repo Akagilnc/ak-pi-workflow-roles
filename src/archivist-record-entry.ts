@@ -89,24 +89,55 @@ function tryClaimCurrentSession(
   );
   writeFileSync(tmp, `${JSON.stringify({ sessionFile })}
 `);
+  // Claim outcome and publish error are settled before cleanup so a temp unlink
+  // failure cannot erase a published pointer or mask the native publish cause
+  // (#637 class 2 / failure honesty). Published claims are never rolled back.
+  let outcome: "claimed" | "lost-to-concurrent-publisher" | undefined;
+  let publishError: unknown;
   try {
-    linkSync(tmp, ledger);
-    return "claimed";
-  } catch (error) {
-    if (nativeErrnoCode(error) === "EEXIST") {
-      return "lost-to-concurrent-publisher";
+    try {
+      linkSync(tmp, ledger);
+      outcome = "claimed";
+    } catch (error) {
+      if (nativeErrnoCode(error) === "EEXIST") {
+        outcome = "lost-to-concurrent-publisher";
+      } else {
+        publishError = error;
+      }
     }
-    throw new ActivationLedgerError(
-      `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
-      { cause: error },
-    );
   } finally {
     try {
       unlinkSync(tmp);
-    } catch {
-      // Temp residue is not the published claim; ignore best-effort cleanup failure.
+    } catch (cleanupError) {
+      if (nativeErrnoCode(cleanupError) === "ENOENT") {
+        // Temp already gone — nothing to report.
+      } else if (outcome !== undefined) {
+        // Claim already published or lost; keep that fact, surface cleanup cause.
+        throw new ActivationLedgerError(
+          `archivist current-session claim outcome ${outcome} but temp cleanup failed (${tmp}): ${errorText(cleanupError)}`,
+          { cause: cleanupError },
+        );
+      } else if (publishError !== undefined) {
+        // Preserve both publish and cleanup identities — do not mask either.
+        throw new ActivationLedgerError(
+          `archivist current-session ledger cannot be created (${ledger}): ${errorText(publishError)}; temp cleanup also failed (${tmp}): ${errorText(cleanupError)}`,
+          { cause: new AggregateError([publishError, cleanupError]) },
+        );
+      } else {
+        throw new ActivationLedgerError(
+          `archivist current-session claim temp cleanup failed (${tmp}): ${errorText(cleanupError)}`,
+          { cause: cleanupError },
+        );
+      }
     }
   }
+  if (publishError !== undefined) {
+    throw new ActivationLedgerError(
+      `archivist current-session ledger cannot be created (${ledger}): ${errorText(publishError)}`,
+      { cause: publishError },
+    );
+  }
+  return outcome!;
 }
 
 /** Open the published current-session principal (shared resume path). */

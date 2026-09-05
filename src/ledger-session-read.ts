@@ -303,6 +303,10 @@ export function intervalRowsAroundAnchor(
  * taken from the last matched interval: true iff a later binding ended ownership
  * before EOF. `undefined` when the volume carries no matching binding — callers
  * must not silently treat the whole continuous volume as that owner.
+ *
+ * Stats/analyst use this full-run union. Terminal attempt evidence must use
+ * {@link latestIntervalRowsForMatchingBinding} so a fresh binding without a user
+ * turn cannot borrow residual/attendance from an earlier A interval (#637 class 4).
  */
 export function intervalRowsForMatchingBinding(
   rows: readonly LedgerSessionRow[],
@@ -322,4 +326,25 @@ export function intervalRowsForMatchingBinding(
   }
   if (!matched) return undefined;
   return { rows: collected, closed: lastClosed };
+}
+
+/**
+ * Sole current-attempt / terminal-evidence interval: the latest binding row that
+ * satisfies `matches`, through the next binding or EOF. Distinct from the full-run
+ * union in {@link intervalRowsForMatchingBinding} — A→B→resume A with an empty new
+ * A binding yields only that empty tail, never the prior A user/residual slice.
+ */
+export function latestIntervalRowsForMatchingBinding(
+  rows: readonly LedgerSessionRow[],
+  isBindingRow: (row: LedgerSessionRow) => boolean,
+  matches: (row: LedgerSessionRow) => boolean,
+): BindingInterval | undefined {
+  let latestIndex = -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!;
+    if (!isBindingRow(row) || !matches(row)) continue;
+    latestIndex = i;
+  }
+  if (latestIndex < 0) return undefined;
+  return intervalRowsAroundAnchor(rows, latestIndex, isBindingRow);
 }
