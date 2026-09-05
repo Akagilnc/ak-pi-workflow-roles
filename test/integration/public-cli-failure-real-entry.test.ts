@@ -27,6 +27,7 @@ import {
   multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
 import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 
 test("public CLI multi-turn audit escalate covers audited seats", async () => {
   // #495 S6: reviewer-side auditor retired — seats follow AUDITOR_SOUL_ROLES (judge/doctor).
@@ -706,32 +707,3 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
   });
 });
-async function seedDoctorIssueRuns(
-  home: string,
-  bookKey: string,
-  issueNumber: number,
-): Promise<void> {
-  const runs = join(
-    home,
-    ".ak-roles",
-    "books",
-    bookKey,
-    "issues",
-    String(issueNumber),
-    "runs",
-  );
-  await mkdir(join(runs, "review-001", "session"), { recursive: true });
-  await writeFile(
-    join(runs, "review-001", "session", "leg.jsonl"),
-    `${JSON.stringify({
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolName: "ak_coder_output",
-        isError: false,
-        details: { status: "completed", report: "seed" },
-      },
-    })}\n`,
-    "utf8",
-  );
-}
