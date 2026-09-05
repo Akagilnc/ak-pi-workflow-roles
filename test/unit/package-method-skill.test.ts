@@ -38,6 +38,7 @@ async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   } finally {
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+    await rm(home, { recursive: true, force: true });
   }
 }
 

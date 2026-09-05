@@ -120,6 +120,7 @@ async function withPhysicalAliasFixture<T>(
       }
     } finally {
       // Root removal still runs if alias unlink rejects.
+      await rm(physicalRoot, { recursive: true, force: true });
     }
   }
 }

@@ -50,6 +50,7 @@ async function withRelay(
     lines.close();
     child.kill("SIGTERM");
     server.close();
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

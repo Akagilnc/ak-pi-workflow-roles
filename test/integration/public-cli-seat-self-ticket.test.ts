@@ -59,6 +59,7 @@ async function withTempHome(
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
+    await rm(home, { recursive: true, force: true });
   }
 }
 

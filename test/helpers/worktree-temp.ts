@@ -24,14 +24,3 @@ export function worktreeTempPrefix(label: string): string {
   const normalized = label.startsWith(".test-tmp-") ? label : `.test-tmp-${label}`;
   return join(worktreePackageRoot, normalized);
 }
-
-/**
- * @deprecated Prefer worktreeTempPrefix(label) so each fixture is a self-owned
- * sibling root. Kept only for call sites that need the package root path itself.
- */
-export function testTmpdir(): string {
-  return worktreePackageRoot;
-}
-
-/** @deprecated No shared parent; use worktreeTempPrefix. */
-export const WORKTREE_TEST_TMP = join(worktreePackageRoot, ".test-tmp");

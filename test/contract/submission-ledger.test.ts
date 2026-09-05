@@ -90,6 +90,7 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
   try { await run(f); } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+    await rm(f.root, { recursive: true, force: true });
   }
 }
 

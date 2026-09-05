@@ -108,5 +108,6 @@ test("isHeadMatchedProjectInstruction: worktree permission failure stays loud wi
     );
   } finally {
     await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
   }
 });

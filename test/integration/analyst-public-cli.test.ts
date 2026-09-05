@@ -335,7 +335,9 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
     const before = await snapshotAnalystDir(ledgerHome);
-    const nonGit = await mkdtemp(worktreeTempPrefix("analyst-336-nongit-"));
+    // Must sit outside this git worktree so analyst sees a true non-repo cwd.
+    // /tmp isolation root is not deleted (r12/r6 outside-worktree rule).
+    const nonGit = await mkdtemp(join("/tmp", "analyst-336-nongit-"));
     const previousCwd = process.cwd();
     process.chdir(nonGit);
     try {

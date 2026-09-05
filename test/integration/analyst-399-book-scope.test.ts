@@ -258,12 +258,16 @@ async function withBookScopeWorld<T>(
       return await fn({ home, mainRoot, worktreeRoot, worktree2Root, bookKey });
     },
     async () => {
+      await rm(home, { recursive: true, force: true });
     },
     async () => {
+      if (mainRoot !== "") await rm(mainRoot, { recursive: true, force: true });
     },
     async () => {
+      if (worktreeParent1 !== "") await rm(worktreeParent1, { recursive: true, force: true });
     },
     async () => {
+      if (worktreeParent2 !== "") await rm(worktreeParent2, { recursive: true, force: true });
     },
   );
 }
@@ -384,10 +388,11 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
   const home = await mkdtemp(worktreeTempPrefix("analyst-399-nongit-home-"));
   const previousCwd = process.cwd();
+  // nonGit must sit outside this git worktree; /tmp isolation root is not deleted.
   let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      nonGit = await mkdtemp(worktreeTempPrefix("analyst-399-nongit-cwd-"));
+      nonGit = await mkdtemp(join("/tmp", "analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
@@ -402,8 +407,7 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
       process.chdir(previousCwd);
     },
     async () => {
-    },
-    async () => {
+      await rm(home, { recursive: true, force: true });
     },
   );
 });
@@ -482,10 +486,13 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
       process.chdir(previousCwd);
     },
     async () => {
+      await rm(home, { recursive: true, force: true });
     },
     async () => {
+      if (repoA !== "") await rm(repoA, { recursive: true, force: true });
     },
     async () => {
+      if (repoB !== "") await rm(repoB, { recursive: true, force: true });
     },
   );
 });
