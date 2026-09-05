@@ -10,7 +10,6 @@ import {
   createGhApiRunner,
   listPullRequestNumbersByCommit,
   listPullRequestNumbersByHead,
-  type GhApiRunner,
 } from "./collector-github.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 
@@ -19,8 +18,6 @@ export type ResolveCollectorTargetInput = {
   readonly repository: CollectorRepository;
   /** Caller-provided PR number when already explicit. */
   readonly explicitPrNumber?: number;
-  /** Optional gh runner injection for production seams that already own a runner. */
-  readonly runner?: GhApiRunner;
 };
 
 function ambiguousTarget(detail: string, cause?: unknown): never {
@@ -92,10 +89,6 @@ function readUpstreamHeadOwner(projectRoot: string, branch: string): string | un
   }
 }
 
-function uniquePrNumbers(numbers: readonly number[]): number[] {
-  return [...new Set(numbers)];
-}
-
 /**
  * Resolve the Collector PR target without guessing.
  * - Explicit `--pr` → that number.
@@ -116,7 +109,7 @@ export async function resolveCollectorTarget(
   }
 
   const headSha = readHeadSha(input.projectRoot);
-  const runner = input.runner ?? createGhApiRunner();
+  const runner = createGhApiRunner();
   const { owner, repo } = input.repository;
   const headOwner = readUpstreamHeadOwner(input.projectRoot, branch);
 
@@ -154,7 +147,7 @@ export async function resolveCollectorTarget(
     );
   }
 
-  const unique = uniquePrNumbers(numbers);
+  const unique = [...new Set(numbers)];
   if (unique.length === 0) {
     ambiguousTarget(
       `no PR associated with branch ${branch} (HEAD ${headSha})`,

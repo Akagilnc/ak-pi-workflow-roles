@@ -347,7 +347,7 @@ export function presentStructuralRejection(
   io: { stderr: (text: string) => void },
 ): void {
   let message = error.message;
-  const cause = error instanceof Error ? error.cause : error.cause;
+  const cause = error.cause;
   if (cause !== undefined) {
     const detail = cause instanceof Error ? cause.message : String(cause);
     if (detail.trim().length > 0) {
