@@ -89,7 +89,8 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
       "books",
       basename(home),
       "runs",
-      "judge-tool-observation",
+      // #675: notary source-run leaf must be <runId>@<role>.
+      "judge-tool-observation@judge",
     );
     const sessionDirectory = resolve(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
@@ -98,17 +99,36 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
       runDirectory,
       parentInheritedSeats({ provider: "ak-tool-observation-bash", model: "faux-1", thinking: "off" }),
     );
+    // #675: nested public notary needs retained run identity + leaf name.
+    await writeFile(
+      resolve(runDirectory, "run-state.json"),
+      `${JSON.stringify({
+        runId: "judge-tool-observation",
+        role: "judge",
+        state: "running",
+        bookKey: basename(home),
+        projectRoot: issueRoot,
+        sessionDirectory,
+        sessionFile: resolve(sessionDirectory, "session.jsonl"),
+        runDirectory,
+        admittedRequestPath: resolve(runDirectory, "admitted-request.json"),
+        principalWire: { kind: "pi", sessionFile: resolve(sessionDirectory, "session.jsonl") },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n", "utf8");
     await writeFile(resolve(issueRoot, "authority.md"), "owner authority for tool observation\n", "utf8");
     await writeFile(
       resolve(agentDir, "navigator-model.json"),
       JSON.stringify({ model: "ak-tool-observation-bash/faux-1" }),
       "utf8",
     );
+    const providerPath = resolve(packageRoot, "test/fixtures/tool-observation-bash-provider.ts");
     const result = await runPiSubprocess([
       "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
       "--session-dir", sessionDirectory,
       "-e", packageEntrypoint(manifest),
-      "-e", resolve(packageRoot, "test/fixtures/tool-observation-bash-provider.ts"),
+      "-e", providerPath,
       "--ak-role", "judge",
       "--provider", "ak-tool-observation-bash",
       "--model", "faux-1",
@@ -122,6 +142,9 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
         HOME: home,
         PI_CODING_AGENT_DIR: agentDir,
         PI_OFFLINE: "1",
+        AK_ROLE_RUN_DIR: runDirectory,
+        // #675: nested public notary reuses the observation faux provider.
+        AK_ROLE_NESTED_EXTRA_PI_ARGS: JSON.stringify(["-e", providerPath]),
       },
     });
     assert.equal(result.localTimeout, false, `tool observation subprocess timed out: ${result.stderr}`);

@@ -13,6 +13,7 @@ import {
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 /**
@@ -54,9 +55,14 @@ export default async function fixture(pi: ExtensionAPI): Promise<void> {
         { stopReason: "toolUse" },
       );
     }
-    if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+    const auditTool = names.includes(AUDITOR_OUTPUT_TOOL_NAME)
+      ? AUDITOR_OUTPUT_TOOL_NAME
+      : names.includes(SOUL_AUDIT_TOOL_NAME)
+        ? SOUL_AUDIT_TOOL_NAME
+        : undefined;
+    if (auditTool !== undefined) {
       return fauxAssistantMessage(
-        fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+        fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
         { stopReason: "toolUse" },
       );
     }

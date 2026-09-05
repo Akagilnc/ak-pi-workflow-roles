@@ -107,7 +107,8 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
             cwd: fixture,
             // Full-suite evidence: isolated ~1.4s; contended green ~8–9s; contended red timed out at 15s (duration_ms 16346).
             // #567: this file is on HEAVYWEIGHT_MANIFEST (concurrency=2) so suite contention is scheduled, not absorbed by a wider wait.
-            timeoutMs: 30_000,
+            // #675: nested public auditor adds a second real spawn under load.
+            timeoutMs: 60_000,
             env: {
               ...process.env,
               HOME: home,
@@ -177,10 +178,16 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         assert.ok(output.cost);
 
         // Envelope activation fact (outside locator-focused tests): points at the durable Pi session.
+        // #675: nested public auditor may also append an activation fact on the same book.
         const ledgerPath = activationWaitingLedgerPath(resolve(home, ".ak-roles"), bookKey);
-        const factLines = (await readFile(ledgerPath, "utf8")).trim().split("\n");
-        assert.equal(factLines.length, 1, `expected one activation fact at ${ledgerPath}`);
-        const fact = JSON.parse(factLines[0]!) as AcceptedActivationFact;
+        const facts = (await readFile(ledgerPath, "utf8"))
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as AcceptedActivationFact)
+          .filter((entry) => entry.role === "doctor");
+        assert.equal(facts.length, 1, `expected one doctor activation fact at ${ledgerPath}`);
+        const fact = facts[0]!;
         assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
         assert.equal(fact.role, "doctor");
         assert.equal(fact.bookKey, bookKey);
