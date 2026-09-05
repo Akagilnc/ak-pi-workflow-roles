@@ -40,6 +40,7 @@ import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -69,7 +70,7 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-resume-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-resume-"));
   try {
     return await scenario(home);
   } finally {

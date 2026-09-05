@@ -10,11 +10,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempRunsRoot<T>(
   scenario: (runsRoot: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-run-terminal-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-run-terminal-"));
   try {
     const runsRoot = join(root, "runs");
     await mkdir(runsRoot, { recursive: true });

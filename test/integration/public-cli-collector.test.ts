@@ -11,6 +11,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function seedProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
@@ -45,7 +46,7 @@ function receipt() {
 }
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
-  const home = await mkdtemp(join(tmpdir(), "collector-groups-"));
+  const home = await mkdtemp(join(testTmpdir(), "collector-groups-"));
   try {
     const project = join(home, "project");
     await mkdir(project);

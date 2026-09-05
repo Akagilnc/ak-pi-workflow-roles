@@ -22,7 +22,7 @@ import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-explicit-internal-"));
   try {
     seedGitRepository(home);
     return await scenario(home);
@@ -497,6 +497,7 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
         stub,
         `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(signal)}, "SIGTERM"); process.exit(143); });
 writeFileSync(${JSON.stringify(ready)}, "ready");
 setInterval(() => {}, 1000);

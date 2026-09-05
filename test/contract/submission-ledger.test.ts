@@ -20,6 +20,7 @@ import {
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function registerTool(
   root: string,
@@ -70,7 +71,7 @@ function registerTool(
 }
 
 async function fixture() {
-  const root = await mkdtemp(`${tmpdir()}/ak-submission-ledger-`);
+  const root = await mkdtemp(`${testTmpdir()}/ak-submission-ledger-`);
   execFileSync("git", ["init", "-q", root]);
   return { root, ...registerTool(root) };
 }

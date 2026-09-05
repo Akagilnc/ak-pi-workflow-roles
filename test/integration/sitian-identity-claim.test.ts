@@ -20,6 +20,7 @@ import {
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function waitChildExit(child: ChildProcess): Promise<number | null> {
   return new Promise((resolvePromise, reject) => {
@@ -41,7 +42,7 @@ async function settleSpawnedChild(child: ChildProcess): Promise<void> {
 async function withHermeticLedgerRoot<T>(
   run: (ctx: { home: string; cwd: string }) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "sitian-identity-claim-"));
+  const root = await mkdtemp(join(testTmpdir(), "sitian-identity-claim-"));
   return withPrimaryAwareCleanup(
     async () => {
       const home = join(root, "home");

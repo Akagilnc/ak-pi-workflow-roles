@@ -25,6 +25,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { analystIssuePagePath, type AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const ABSENT_METRIC = { status: "absent" as const };
 
@@ -80,8 +81,8 @@ test("401-F1: raw-existing legacy rows upsert without localeCompare crash", () =
 });
 
 test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other book; wrong book absent", async () => {
-  const home = await mkdtemp(join(tmpdir(), "analyst-412-entry-"));
-  const repo = await mkdtemp(join(tmpdir(), "analyst-412-repo-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-412-entry-"));
+  const repo = await mkdtemp(join(testTmpdir(), "analyst-412-repo-"));
   const previousCwd = process.cwd();
   try {
     // Real Git repository cwd — book identity comes from the same true source

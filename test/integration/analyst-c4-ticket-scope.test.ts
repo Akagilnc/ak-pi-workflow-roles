@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -71,7 +72,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-c4-business-"));
+  const businessRepo = await mkdtemp(join(testTmpdir(), "analyst-c4-business-"));
   try {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
@@ -91,7 +92,7 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-c4-home-"));
+  const home = await mkdtemp(join(testTmpdir(), "analyst-c4-home-"));
   try {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);

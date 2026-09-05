@@ -13,13 +13,14 @@ import {
   inspectControlledGrok,
   isHeadMatchedProjectInstruction,
 } from "../../src/grok/role-turn-host.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
 test("inspectControlledGrok: HEAD match, case-fold, and same-byte symlink leave privateActive empty; dirty, different-byte symlink, untracked stay private", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-head-match-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-match-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);
@@ -89,7 +90,7 @@ process.stdout.write(JSON.stringify({
 });
 
 test("isHeadMatchedProjectInstruction: worktree permission failure stays loud with permission identity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-head-perm-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-head-perm-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);

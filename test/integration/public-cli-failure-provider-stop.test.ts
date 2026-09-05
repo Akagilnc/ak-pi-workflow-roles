@@ -36,6 +36,7 @@ import {
   seedGitProject,
   assertPublicFailureSettlement,
 } from "../helpers/failure-settlement-kit.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("fast audited-seat public wiring matrix settles an injected auditor provider stop", async () => {
   // #495 S6: AUDITOR_SOUL_ROLES is judge/doctor only (reviewer gate retired; fixer #242).
@@ -998,7 +999,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
   });
 });
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
-  const runDir = await mkdtemp(join(tmpdir(), "http-2xx-clear-"));
+  const runDir = await mkdtemp(join(testTmpdir(), "http-2xx-clear-"));
   try {
     // Single shortest real tracer: production after_provider_response only.
     await observeTyped429ViaProductionHandler({

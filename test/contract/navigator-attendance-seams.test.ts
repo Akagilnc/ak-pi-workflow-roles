@@ -31,6 +31,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
@@ -40,7 +41,7 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   assert.equal(resolveNavigatorAuthorityMaterial(undefined, undefined), undefined);
   assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
 
-  const root = await mkdtemp(join(tmpdir(), "navigator-input-authority-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-input-authority-"));
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
   try {
@@ -153,7 +154,7 @@ test("prepare provider schema admits object-root nested malformation through rea
   assert.equal(accepted.length, payloads.length, "every object-root payload reaches the unique execute sink exactly once");
 
   // Usable next survives nested malformation after real validate→execute→settle.
-  const root = await mkdtemp(join(tmpdir(), "navigator-schema-gate-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-schema-gate-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -231,7 +232,7 @@ test("prepare provider schema admits object-root nested malformation through rea
 });
 
 test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-direction-only-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-direction-only-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -341,7 +342,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
 });
 
 test("advice command derives phase token from registry metadata for every packaged role", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-command-registry-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-command-registry-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -413,7 +414,7 @@ test("advice command derives phase token from registry metadata for every packag
 });
 
 test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-no-invented-route-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-no-invented-route-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -505,7 +506,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
 });
 
 test("empty authority at prepare is honest context unavailable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-empty-authority-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-empty-authority-"));
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
@@ -539,7 +540,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
 });
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-admitted-request-"));
+  const root = await mkdtemp(join(testTmpdir(), "navigator-admitted-request-"));
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     const runDir = join(root, "run-public-judge");

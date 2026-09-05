@@ -35,7 +35,6 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import {
-  createAgentSession,
   DefaultResourceLoader,
   type ExtensionContext,
   type InlineExtension,
@@ -51,6 +50,7 @@ import {
   type AcceptedActivationFact,
 } from "../../src/activation-ledger.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
+import { testTmpdir } from "./worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -186,7 +186,7 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
+  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-mat-"));
   try {
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
@@ -266,10 +266,7 @@ export interface SharedPackFixture extends IsolatedPackResult {
   cacheDir: string;
 }
 
-const FIXTURE_CACHE_ROOT = resolve(
-  tmpdir(),
-  "ak-pi-workflow-roles-cold-fixtures",
-);
+const FIXTURE_CACHE_ROOT = resolve(testTmpdir(), "ak-pi-workflow-roles-cold-fixtures");
 
 async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
   const started = Date.now();
@@ -310,7 +307,7 @@ let sharedPackMemo: Promise<SharedPackFixture> | undefined;
 
 /**
  * Build or reuse one isolated pack for the current construction HEAD.
- * Cross-process safe via a fingerprint-keyed cache under os.tmpdir().
+ * Cross-process safe via a fingerprint-keyed cache under worktree .test-tmp (#685).
  */
 export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
   sharedPackMemo ??= (async () => {
@@ -467,11 +464,9 @@ export async function withHermeticHome<T>(
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
 ): Promise<T> {
   return await withProcessGlobalLock(async () => {
-    // Prefer /tmp over os.tmpdir(): Linux CI tmpdir is /tmp already; macOS
-    // os.tmpdir() is deeper under /var/folders and can hide shallow-path
-    // footguns (host-pi-runtime / analyst bundle layout). Same pin as those tests.
+    // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
     const home = await mkdtemp(
-      resolve("/tmp", options.prefix ?? "ak-pi-test-"),
+      resolve(testTmpdir(), options.prefix ?? "ak-pi-test-"),
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
@@ -545,7 +540,7 @@ export function createTempPackageHomeLedger(input: {
   sessionFile: string;
   dispose(): void;
 } {
-  const home = mkdtempSync(join(tmpdir(), input.prefix));
+  const home = mkdtempSync(join(testTmpdir(), input.prefix));
   const bookKey = basename(home);
   const ledgerHome = machineLedgerHome(home);
   const runDirectory = join(
@@ -694,60 +689,7 @@ export async function withProcessCwd<T>(
   });
 }
 
-export interface InProcessPiOptions {
-  cwd: string;
-  agentDir: string;
-  home?: string;
-  faux: FauxProviderHandle;
-  model?: Model<any>;
-  provider?: Provider;
-  modelsPath?: string | null;
-  additionalExtensionPaths?: string[];
-  extensionFactories?: InlineExtension[];
-  additionalSkillPaths?: string[];
-  /** Optional caller-owned persisted SessionManager for same-session assertions. */
-  sessionManager?: SessionManager;
-  /** When set, forwarded to DefaultResourceLoader; default remains true. */
-  noSkills?: boolean;
-  /** When set, forwarded to DefaultResourceLoader; default remains true. */
-  noContextFiles?: boolean;
-  skillsOverride?: ConstructorParameters<typeof DefaultResourceLoader>[0]["skillsOverride"];
-  appendSystemPrompt?: string[];
-  systemPrompt: string;
-  mode: "print" | "tui" | "json";
-  flags: Record<string, string>;
-  noTools?: "all" | "builtin";
-  customTools?: ToolDefinition[];
-  noExtensions?: boolean;
-  reviewerShutdown?: boolean;
-  /**
-   * Opt-in at activation-owning tests only: real parent SessionManager whose
-   * getSessionFile/getSessionDir share a persisted directory under the machine
-   * ledger book (ADR 0048). Requires explicit `home` (or `agentDir` under that
-   * home) and a git cwd — never process.env.HOME (#604). Generic in-process
-   * callers must leave this unset so they incur no git discovery or
-   * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
-   */
-  activationLedgerSession?: boolean;
-  /**
-   * Optional credential store for OAuth/auth fixtures (#351 keepalive E2E).
-   * Defaults to a fresh InMemoryCredentialStore when omitted.
-   */
-  credentials?: CredentialStore;
-}
 
-export interface InProcessPiFixture {
-  faux: FauxProviderHandle;
-  provider: Provider;
-  model: Model<any>;
-  modelRuntime: ModelRuntime;
-  loader: DefaultResourceLoader;
-  extensions: Awaited<
-    ReturnType<typeof createAgentSession>
-  >["extensionsResult"];
-  session: Awaited<ReturnType<typeof createAgentSession>>["session"];
-  sessionManager: SessionManager;
-}
 
 export interface MockProviderServerObservers {
   /** Observe the model id each child stream request carries (model.id round-trips
@@ -997,146 +939,6 @@ export async function createMockProviderServer(
   };
 }
 
-export async function withInProcessPi<T>(
-  options: InProcessPiOptions,
-  scenario: (fixture: InProcessPiFixture) => Promise<T>,
-): Promise<T> {
-  const model = options.model ?? options.faux.getModel();
-  const provider = options.provider ?? {
-    ...options.faux.provider,
-    auth: {
-      apiKey: {
-        name: "Hermetic test authentication",
-        async resolve() {
-          return { auth: { apiKey: "offline" } };
-        },
-      },
-    },
-    getModels() {
-      return [model];
-    },
-  };
-  const modelRuntime = await ModelRuntime.create({
-    credentials: options.credentials ?? new InMemoryCredentialStore(),
-    modelsPath: options.modelsPath === undefined
-      ? resolve(options.agentDir, "models.json")
-      : options.modelsPath,
-  });
-  modelRuntime.registerNativeProvider(provider);
-  // Same seal as createInheritedRuntime: do not race void background refresh
-  // before session.prompt (mock timers freeze any setTimeout inside refresh).
-  await modelRuntime.refresh({ allowNetwork: false });
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
-  const loader = new DefaultResourceLoader({
-    cwd: options.cwd,
-    agentDir: options.agentDir,
-    settingsManager,
-    ...(options.additionalExtensionPaths === undefined
-      ? {}
-      : { additionalExtensionPaths: options.additionalExtensionPaths }),
-    ...(options.extensionFactories === undefined
-      ? {}
-      : { extensionFactories: options.extensionFactories }),
-    ...(options.additionalSkillPaths === undefined
-      ? {}
-      : { additionalSkillPaths: options.additionalSkillPaths }),
-    ...(options.noExtensions === undefined
-      ? {}
-      : { noExtensions: options.noExtensions }),
-    noSkills: options.noSkills === false || options.noSkills === true
-      ? options.noSkills
-      : true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: options.noContextFiles === false || options.noContextFiles === true
-      ? options.noContextFiles
-      : true,
-    ...(options.skillsOverride === undefined
-      ? {}
-      : { skillsOverride: options.skillsOverride }),
-    ...(options.appendSystemPrompt === undefined
-      ? {}
-      : { appendSystemPrompt: options.appendSystemPrompt }),
-    systemPrompt: options.systemPrompt,
-  });
-  await loader.reload();
-  // Default: plain in-memory session — no git discovery, no durable-session I/O.
-  // Activation-owning tests opt in via activationLedgerSession.
-  let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
-  if (options.sessionManager === undefined && options.activationLedgerSession === true) {
-    // Real parent manager: file + dir co-located under the hermetic ledger book so
-    // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
-    // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
-    // cwd/Navigator identity stays fixture-owned.
-    const hermeticHome = options.home ?? (options.agentDir ? dirname(options.agentDir) : undefined);
-    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-      throw new Error("withInProcessPi activationLedgerSession requires home or agentDir");
-    }
-    // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
-    const bookKey = resolveBookKeyFromGit(options.cwd);
-    const parentSessionDir = join(
-      machineLedgerHome(hermeticHome),
-      "books",
-      bookKey,
-      "runs",
-      "activation",
-      "inprocess-pi",
-    );
-    // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
-    // materializes the real principal without a synthetic assistant message.
-    sessionManager = SessionManager.create(options.cwd, parentSessionDir);
-    const runDirectory = dirname(parentSessionDir);
-    await mkdir(runDirectory, { recursive: true });
-    await mkdir(parentSessionDir, { recursive: true });
-    const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
-    await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
-    await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
-  }
-  const { session, extensionsResult } = await createAgentSession({
-    cwd: options.cwd,
-    agentDir: options.agentDir,
-    model,
-    thinkingLevel: "off",
-    modelRuntime,
-    resourceLoader: loader,
-    sessionManager,
-    settingsManager,
-    ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
-    ...(options.customTools === undefined
-      ? {}
-      : { customTools: options.customTools }),
-  });
-  try {
-    for (const [name, value] of Object.entries(options.flags)) {
-      session.extensionRunner.setFlagValue(name, value);
-    }
-    await session.bindExtensions({ mode: options.mode });
-    return await scenario({
-      faux: options.faux,
-      provider,
-      model,
-      modelRuntime,
-      loader,
-      extensions: extensionsResult,
-      session,
-      sessionManager,
-    });
-  } finally {
-    try {
-      if (options.reviewerShutdown) {
-        await session.extensionRunner.emit({
-          type: "session_shutdown",
-          reason: "quit",
-        });
-      }
-    } finally {
-      session.dispose();
-    }
-  }
-}
 
 /**
  * Seed the child institutional sub-session's provider from a faux provider over
@@ -1153,7 +955,7 @@ export async function withInstitutionalProviderFixture<T>(
 ): Promise<T> {
   const mock = await createMockProviderServer(faux);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
+  const tempAgentDir = await mkdtemp(join(testTmpdir(), "ak-institutional-agent-"));
   process.env.PI_CODING_AGENT_DIR = tempAgentDir;
   try {
     const modelsPath = resolve(tempAgentDir, "models.json");

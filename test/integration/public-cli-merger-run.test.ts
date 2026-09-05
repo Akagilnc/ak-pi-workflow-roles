@@ -40,6 +40,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { Type } from "typebox";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync("git", args, {
@@ -101,7 +102,7 @@ async function conflictedRepository(root: string) {
 }
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-role-table-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;

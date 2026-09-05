@@ -6,9 +6,10 @@ import test from "node:test";
 
 import type { DurablePrincipalAuthority } from "../../src/host-contracts.ts";
 import { createGrokSessionIdentityAuthority } from "../../src/grok/session-identity.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("Grok ACP session binding persists through the durable-principal authority", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-session-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-grok-session-"));
   try {
     const principal = {};
     const durable: DurablePrincipalAuthority = {

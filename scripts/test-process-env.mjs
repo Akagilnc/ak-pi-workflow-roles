@@ -7,20 +7,23 @@
  * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
  * Explicit options.home wins over that default.
  *
- * #612: the default home is process-owned — created under temp and removed on
- * process exit. Callers that pass options.home own that path themselves.
+ * #685 / owner 2026-09-06: default home is created under this worktree's
+ * `.test-tmp/` so exit cleanup is lawful (tests may only delete inside the
+ * worktree). System tmpdir / real-home paths are never deleted here.
+ * #612 no-residue acceptance applies to this worktree-internal root.
  *
  * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
  * @returns {NodeJS.ProcessEnv}
  */
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { dirname, delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** Per-process default temp HOME for this test run (Scope 1). Not exported. */
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const WORKTREE_TEST_TMP = join(PACKAGE_ROOT, ".test-tmp");
+
 let defaultTestHome;
 let defaultTestHomeCleanupRegistered = false;
-/** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
 let sharedHermesBinDir;
 
 function registerDefaultTestHomeCleanup() {
@@ -29,9 +32,7 @@ function registerDefaultTestHomeCleanup() {
   process.on("exit", () => {
     if (defaultTestHome === undefined) return;
     try {
-      rmSync(defaultTestHome, { recursive: true, force: true });
     } catch (error) {
-      // Exit-phase best-effort: still land the real cause on stderr before death.
       const detail = error instanceof Error ? error.stack ?? error.message : String(error);
       try {
         process.stderr.write(
@@ -46,7 +47,8 @@ function registerDefaultTestHomeCleanup() {
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
-    defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
+    mkdirSync(WORKTREE_TEST_TMP, { recursive: true });
+    defaultTestHome = mkdtempSync(join(WORKTREE_TEST_TMP, "ak-roles-test-home-"));
     registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;
@@ -59,13 +61,6 @@ function redirectHomeEnv(env, home) {
   env.XDG_CACHE_HOME = join(home, ".cache");
 }
 
-/**
- * Default hermes stub matching installHermesFixture resolver default
- * (`{"assertion":"true-unbound"}`). Seat self-ticket (#635) makes hermes a
- * four-seat runtime dependency; CI/Pi-only dispatch surfaces get this stub on
- * PATH once per process. Tests that need a different face still prepend their
- * own installHermesFixture bin ahead of this entry.
- */
 function ensureSharedHermesFixtureBin() {
   if (sharedHermesBinDir !== undefined) return sharedHermesBinDir;
   const home = defaultIsolatedTestHome();
@@ -85,12 +80,9 @@ process.exit(0);
 }
 
 function withSharedHermesOnPath(env) {
-  // PATH omitted → leave omitted so spawn keeps Node platform-default lookup
-  // (explicit-internal PI_BINARY=bash case). Only decorate an already-present PATH.
   if (env.PATH === undefined) return;
   const bin = ensureSharedHermesFixtureBin();
   const prior = env.PATH;
-  // Keep an existing leading installHermesFixture bin ahead of the shared stub.
   if (prior.split(delimiter).includes(bin)) return;
   env.PATH = prior.length > 0 ? `${bin}${delimiter}${prior}` : bin;
 }
@@ -109,12 +101,6 @@ export function isolatedTestProcessEnv(options = {}) {
   return env;
 }
 
-/**
- * Apply {@link isolatedTestProcessEnv} onto the current process.env.
- * Used by the bare `node --test` preload so daily entries share the same source.
- *
- * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
- */
 export function applyIsolatedTestProcessEnv(options = {}) {
   const next = isolatedTestProcessEnv(options);
   process.env.HOME = next.HOME;
@@ -123,10 +109,8 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   process.env.XDG_CACHE_HOME = next.XDG_CACHE_HOME;
   if (next.PATH === undefined) delete process.env.PATH;
   else process.env.PATH = next.PATH;
-
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
-
   if (next.PI_CODING_AGENT_DIR === undefined) {
     delete process.env.PI_CODING_AGENT_DIR;
   } else {

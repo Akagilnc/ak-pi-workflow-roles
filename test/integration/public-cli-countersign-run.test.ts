@@ -44,9 +44,10 @@ import { DiaristIssueSourceError } from "../../src/diarist.ts";
 import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-public-cli-countersign-"));
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;

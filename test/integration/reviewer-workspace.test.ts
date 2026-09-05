@@ -6,13 +6,14 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createReviewerWorkspaceOwner } from "../../src/reviewer-workspace.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 }
 
 async function repositoryFixture() {
-  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-workspace-test-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-reviewer-workspace-test-"));
   git(root, "init");
   git(root, "config", "user.name", "Reviewer Test");
   git(root, "config", "user.email", "reviewer@example.invalid");

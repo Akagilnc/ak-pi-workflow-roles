@@ -18,9 +18,10 @@ import {
   readRoleRunState,
   renderResumeCommand,
 } from "../../src/public-cli/run-lifecycle.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-665-resume-hint-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-665-resume-hint-"));
   try {
     const runId = "run-665-uniform-429";
     const runDirectory = join(home, "runs", `${runId}@doctor`);

@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const stampScriptPath = resolve(packageRoot, "scripts/publish-registry-stamp.sh");
 
@@ -86,7 +87,7 @@ function runStamp(options: {
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "ak-publish-registry-"));
+  const root = mkdtempSync(join(testTmpdir(), "ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),

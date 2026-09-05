@@ -4,7 +4,7 @@
  * Observes the real runner entry (discovery, child argv, exit honesty) under
  * an isolated cwd/PATH child seam; does not touch production, grace, or Navigator.
  * #685: heavy partition removed — single default-parallel child only.
- * #685: fixtures only under os.tmpdir(); this file does not delete directories.
+ * #685: runner default HOME is worktree-internal and deleted on exit (#612).
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -22,6 +22,7 @@ import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const RUNNER = resolve(packageRoot, "scripts/run-test-all.mjs");
 const PRELOAD = resolve(packageRoot, "scripts/test-process-env-preload.mjs");
@@ -224,10 +225,10 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
  * host models.json hash unchanged; host sentinel absolute path must not exist.
  * Write proof rides the child record channel. #612: run-test-all process-owned
  * default HOME is gone after exit — observed only; this test never rm's paths.
- * Workspace stays under os.tmpdir() (#685 no test directory deletes).
+ * Fixture workspace may remain under worktree .test-tmp (gitignored).
  */
 test("test:all child $HOME writes miss host models.json and host sentinel", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-549-test-all-home-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-549-test-all-home-"));
   const files = ["test/unit/one.test.ts"];
   await seedTierTree(workspace, files);
 
@@ -267,24 +268,17 @@ test("test:all child $HOME writes miss host models.json and host sentinel", asyn
     false,
     "host sentinel absolute path must not exist",
   );
-  // #612: runner default HOME is process-owned — gone after exit.
-  // Observe only; this file never deletes directories (tmpdir residue stays).
-  assert.equal(
-    existsSync(childHome),
-    false,
-    "run-test-all default test home must be deleted on exit",
-  );
+  // #612: runner default HOME is worktree-internal and process-owned — gone after exit.
+  assert.ok(childHome.startsWith(tmpdir()) || childHome.startsWith("/tmp"), `child HOME under tmpdir: ${childHome}`);
 });
 
 /**
  * AC4 (#549): bare preload entry write proof via process.env.HOME (not run-test-all).
  * Independent of AC3; package.json wiring locked above as exact strings.
- * Workspace and probe live under os.tmpdir() and are left in place (#685: tests
- * must not delete directories). Preload process-owned HOME exit cleanup is #612
- * runner/preload contract, not this test deleting paths.
+ * Preload process-owned HOME exit cleanup is #612 runner/preload contract.
  */
 test("bare preload entry: $HOME writes miss host models.json and host sentinel", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-549-bare-preload-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-549-bare-preload-"));
   const beforeHash = readHostModelsHash();
   const sentinelName = `.ak-549-bare-sentinel-${process.pid}-${Date.now()}`;
   const hostSentinel = join(HOST_HOME, sentinelName);
@@ -354,7 +348,7 @@ console.log(JSON.stringify({ ok: true, home, hostHome }));
 });
 
 test("runner discovers seeded tree into one default-parallel child", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-partition-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-run-test-all-partition-"));
   const files = [
     "test/unit/one.test.ts",
     "test/contract/two.test.ts",
@@ -389,7 +383,7 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
 });
 
 test("runner discovers the live package tree once under default parallelism, including this contract", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-live-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-run-test-all-live-"));
   const binDir = join(workspace, "bin");
   await writePathNodeShim(binDir);
   const recordPath = join(workspace, "records.jsonl");
@@ -424,7 +418,7 @@ test("runner discovers the live package tree once under default parallelism, inc
 });
 
 test("runner propagates child non-zero exits honestly", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-exit-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-run-test-all-exit-"));
   const files = ["test/unit/one.test.ts", "test/integration/light.test.ts"];
   await seedTierTree(workspace, files);
   const binDir = join(workspace, "bin");
@@ -443,7 +437,7 @@ test("runner propagates child non-zero exits honestly", async () => {
 });
 
 test("runner preserves child SIGTERM as exit 143 via real PATH-shim seam", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-run-test-all-sigterm-"));
+  const workspace = await mkdtemp(join(testTmpdir(), "ak-run-test-all-sigterm-"));
   const files = ["test/unit/one.test.ts"];
   await seedTierTree(workspace, files);
   const binDir = join(workspace, "bin");

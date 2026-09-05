@@ -9,9 +9,10 @@ import {
   loadTicketTrajectoryRuns,
   loadUnboundTrajectoryRuns,
 } from "../../src/ticket-trajectory.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 async function withBookDir<T>(scenario: (ledgerDir: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "ak-ticket-traj-"));
+  const root = await mkdtemp(join(testTmpdir(), "ak-ticket-traj-"));
   try {
     return await scenario(root);
   } finally {

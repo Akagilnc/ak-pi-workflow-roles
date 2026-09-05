@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { materializePackageTree } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -95,7 +96,7 @@ async function missingRelativeImports(distRoot: string): Promise<
 test(
   "fresh-build published dist relative-import graph is closed",
   async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "ak-dist-closure-"));
+    const root = await mkdtemp(resolve(testTmpdir(), "ak-dist-closure-"));
     try {
       await materializePackageTree(root, { nodeModules: "symlink" });
       await execFileAsync("npm", ["run", "build"], {

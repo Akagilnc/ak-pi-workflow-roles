@@ -13,6 +13,7 @@ import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,7 +52,7 @@ interface ExtractedPack {
 
 async function extractPackedArtifact(): Promise<ExtractedPack> {
   const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-meta-"));
+  const root = await mkdtemp(resolve(testTmpdir(), "ak-pack-meta-"));
   try {
     await execFileAsync("tar", ["-xzf", pack.tarball, "-C", root]);
     const packageJson = JSON.parse(
@@ -80,9 +81,6 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
  * 不触「独立契约塞共享可变状态」禁令）。进程退出时清理唯一 tmpdir。
  */
 const extracted = await extractPackedArtifact();
-process.on("exit", () => {
-  try {
-    rmSync(extracted.root, { recursive: true, force: true });
   } catch {
     // Best-effort temp cleanup; never mask test results.
   }

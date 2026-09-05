@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {
@@ -19,7 +20,7 @@ async function git(root: string, ...args: string[]): Promise<string> {
 let seededTemplateMemo: Promise<string> | undefined;
 async function seededTemplate(): Promise<string> {
   seededTemplateMemo ??= (async () => {
-    const root = await mkdtemp(join(tmpdir(), "reviewer-pin-template-"));
+    const root = await mkdtemp(join(testTmpdir(), "reviewer-pin-template-"));
     await git(root, "init");
     await git(root, "config", "maintenance.auto", "false");
     await git(root, "config", "gc.auto", "0");
@@ -35,7 +36,7 @@ async function seededTemplate(): Promise<string> {
 
 async function materializeSeededRepo(prefix: string): Promise<string> {
   const template = await seededTemplate();
-  const root = await mkdtemp(join(tmpdir(), prefix));
+  const root = await mkdtemp(join(testTmpdir(), prefix));
   await cp(template, root, { recursive: true });
   return root;
 }
@@ -71,11 +72,11 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const withAliases = await createReviewerPinnedGitReader(root);
     await assert.rejects(withAliases.resolve("same"), /base revision is ambiguous across pinned refs/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /base revision syntax is invalid or uses a forbidden revision form/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
+  const root = await mkdtemp(join(testTmpdir(), "reviewer-sha256-"));
   try {
     try { await git(root, "init", "--object-format=sha256"); }
     catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
@@ -94,7 +95,7 @@ test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", asyn
     assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
@@ -155,11 +156,11 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     await git(root, "update-ref", "HEAD", chain[0]!);
     const ambiguousReader = await createReviewerPinnedGitReader(root);
     await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  }
 });
 
 test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-"));
+  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-"));
   const root = join(temporary, "repository");
   const nested = join(root, "nested", "directory");
   const linked = join(temporary, "linked-repository");
@@ -171,17 +172,17 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
     const canonicalRoot = await realpath(root);
     assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
     assert.equal((await createReviewerPinnedGitReader(join(linked, "nested"))).pin.repositoryRoot, canonicalRoot);
-  } finally { await rm(temporary, { recursive: true, force: true }); }
+  }
 });
 
 test("pinning rejects non-repositories and bare repositories", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-reject-"));
+  const temporary = await mkdtemp(join(testTmpdir(), "reviewer-root-reject-"));
   const bare = join(temporary, "bare.git");
   try {
     await assert.rejects(createReviewerPinnedGitReader(temporary));
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
-  } finally { await rm(temporary, { recursive: true, force: true }); }
+  }
 });
 
 test("shared ref snapshot helper canonicalizes refs immutably", () => {
@@ -257,7 +258,7 @@ test("pinned reader: execGit pins LC_ALL=C so soft-degrade classifiers stay Engl
   await git(root, "add", ".");
   await git(root, "commit", "-m", "adr");
 
-  const shimDir = await mkdtemp(join(tmpdir(), "reviewer-git-lc-shim-"));
+  const shimDir = await mkdtemp(join(testTmpdir(), "reviewer-git-lc-shim-"));
   const lcLog = join(shimDir, "lc_all.log");
   const realGit = (await exec("which", ["git"])).stdout.trim();
   assert.ok(realGit.length > 0);

@@ -40,6 +40,7 @@ import {
   type DispatchStubFact,
   type ReconciliationOutcome,
 } from "../../src/activation-reconciliation.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 test("accepted-activation fact is closed at the typed API and omits injected content keys", () => {
   const closed: AcceptedActivationFact = {
@@ -92,12 +93,12 @@ test("resolved ledger home rejects relative process home before filesystem write
     );
   }
 
-  const absoluteHome = resolve(tmpdir(), "ak-ledger-abs-home");
+  const absoluteHome = resolve(testTmpdir(), "ak-ledger-abs-home");
   const ledgerHome = resolveActivationLedgerHome(absoluteHome);
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-rel-home-"));
+  const root = mkdtempSync(join(testTmpdir(), "ak-ledger-rel-home-"));
   try {
     const relativeLedgerHome = "relative-ledger-home";
     assert.equal(isAbsolute(relativeLedgerHome), false);

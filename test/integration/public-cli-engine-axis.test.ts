@@ -40,6 +40,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -75,7 +76,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-engine-axis-"));
+  const home = await mkdtemp(join(testTmpdir(), "ak-engine-axis-"));
   try {
     return await scenario(home);
   } finally {
@@ -227,7 +228,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     // (absorbed from the former dedicated unset-engine test; golden byte
     // reassertion deleted with the frozen-baseline oracle).
     {
-      const cliHome = await mkdtemp(join(tmpdir(), "ak-engine-unset-"));
+      const cliHome = await mkdtemp(join(testTmpdir(), "ak-engine-unset-"));
       try {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],

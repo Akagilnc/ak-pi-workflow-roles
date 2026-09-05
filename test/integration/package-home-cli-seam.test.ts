@@ -12,12 +12,13 @@ import test from "node:test";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
+import { testTmpdir } from "../helpers/worktree-temp.ts";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI_MODULE = new URL("../../src/public-cli/cli.ts", import.meta.url).href;
 
 test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async () => {
-  const fakeTmpHome = mkdtempSync(join(tmpdir(), "ak-fake-cli-home-"));
+  const fakeTmpHome = mkdtempSync(join(testTmpdir(), "ak-fake-cli-home-"));
   const previousHome = process.env.HOME;
   try {
     process.env.HOME = fakeTmpHome;
