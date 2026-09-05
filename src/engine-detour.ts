@@ -9,6 +9,9 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { platform } from "node:process";
+
+import { physicalPathIdentity } from "./activation-ledger-topology.ts";
 
 /** Package-owned detour tool name (settlement whitelist + session principal). */
 export const ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour" as const;
@@ -71,6 +74,36 @@ function abortReasonError(signal: AbortSignal): Error {
   return error;
 }
 
+/** Scheme-string escape for sandbox-exec subpath literals. */
+function sandboxSubpath(path: string): string {
+  const escaped = path.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+/**
+ * #692 real-IO write confinement for detour children.
+ * Darwin: sandbox-exec deny file-write* except workspace + temp.
+ * Other platforms: argv unchanged (argv fail-closed + host native sandbox).
+ */
+export function wrapDetourArgvWithWriteSandbox(
+  argv: readonly string[],
+  cwd: string,
+  roots?: { readonly workspaceRoot?: string; readonly tempRoot?: string },
+): string[] {
+  if (argv.length === 0) return [];
+  if (platform !== "darwin") return [...argv];
+  const workspace = physicalPathIdentity(roots?.workspaceRoot ?? cwd);
+  const temp = physicalPathIdentity(roots?.tempRoot ?? tmpdir());
+  const profile = [
+    "(version 1)",
+    "(allow default)",
+    "(deny file-write*)",
+    '(allow file-write-data (literal "/dev/null"))',
+    `(allow file-write* (subpath ${sandboxSubpath(workspace)}) (subpath ${sandboxSubpath(temp)}))`,
+  ].join("\n");
+  return ["/usr/bin/sandbox-exec", "-p", profile, ...argv];
+}
+
 function resolveArgvWithStagedPrompt(
   argv: readonly string[],
   stagedPath: string,
@@ -97,8 +130,12 @@ async function spawnEngineDetourOnce(
   if (input.argv.length === 0) {
     throw new Error("劳务引擎 argv 不得为空");
   }
-  const command = input.argv[0]!;
-  const args = input.argv.slice(1);
+  // #692: confine detour child writes to workspace + process temp when the OS
+  // offers a write sandbox (Darwin sandbox-exec). Argv fail-closed still runs
+  // in the tool layer; this is the real-IO seam for opaque engines.
+  const sandboxed = wrapDetourArgvWithWriteSandbox(input.argv, input.cwd);
+  const command = sandboxed[0]!;
+  const args = sandboxed.slice(1);
   return await new Promise<EngineDetourResult>((resolve, reject) => {
     let settled = false;
     const signal = input.signal;

@@ -1,13 +1,20 @@
 /**
  * Role tool filesystem boundary (#692).
- * One layer at the shared-envelope tool seam: write/delete/move only inside the
- * current workspace root and the process temp root (realpath / symlink-stable).
- * Ordinary bash/edit/write violations block that call with a typed error; the
- * run continues. Engine-detour violations are a detour failure (ADR 0071).
- * Reads are unrestricted. Envelope/host trusted ledger IO is out of scope.
+ * One layer: write/delete/move only inside workspace + process temp (symlink-
+ * component realpath). Ordinary bash/edit/write → block call, run continues.
+ * Detour → fail whole run (ADR 0071). Reads unrestricted. Unprovable bash/detour
+ * mutation is fail-closed (no regex arms race). Ledger/host IO out of scope.
  */
+import { lstatSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  resolve as lexicalResolve,
+  sep,
+} from "node:path";
 
 import {
   pathContainedIn,
@@ -15,10 +22,6 @@ import {
 } from "./activation-ledger-topology.ts";
 
 export const ROLE_TOOL_FS_BOUNDARY_CODE = "role-tool-fs-boundary" as const;
-
-/** Tools whose mutation targets are subject to the boundary. */
-export const ROLE_TOOL_FS_BOUNDARY_TOOLS = ["bash", "edit", "write"] as const;
-export type RoleToolFsBoundaryTool = (typeof ROLE_TOOL_FS_BOUNDARY_TOOLS)[number];
 
 export type RoleToolFsBoundaryRoots = Readonly<{
   workspaceRoot: string;
@@ -33,23 +36,12 @@ export type RoleToolFsBoundaryViolation = Readonly<{
 }>;
 
 const MUTATION_COMMANDS = new Set([
-  "rm",
-  "rmdir",
-  "unlink",
-  "mv",
-  "cp",
-  "ln",
-  "install",
-  "truncate",
-  "dd",
-  "touch",
-  "mkdir",
-  "tee",
-  "shred",
-  "chmod",
-  "chown",
-  "chgrp",
+  "rm", "rmdir", "unlink", "mv", "cp", "ln", "install", "truncate", "dd",
+  "touch", "mkdir", "tee", "shred", "chmod", "chown", "chgrp",
 ]);
+
+/** Commands / forms whose mutation targets cannot be proven from argv text alone. */
+const UNPROVABLE_MUTATION = /\b(?:eval|source|exec)\b|\b(?:find|xargs)\b.*(?:-delete|-exec\b|-fprint)|\b(?:python|python3|ruby|perl|php|lua)\b.*\s-c\b|\bnode(?:js)?\b.*\s(?:-e|--eval|-p)\b|\bcd\b/i;
 
 export function defaultRoleToolFsBoundaryRoots(cwd: string): RoleToolFsBoundaryRoots {
   return {
@@ -58,7 +50,6 @@ export function defaultRoleToolFsBoundaryRoots(cwd: string): RoleToolFsBoundaryR
   };
 }
 
-/** True when candidate lands on or inside either allowed root (symlink-stable). */
 export function isWithinRoleToolFsBoundary(
   candidate: string,
   roots: RoleToolFsBoundaryRoots,
@@ -78,28 +69,27 @@ export function roleToolFsBoundaryDenyReason(
   toolName: string,
   paths: readonly string[],
 ): string {
-  const shown = paths.length === 0 ? "(unresolved path)" : paths.join(", ");
+  const shown = paths.length === 0 ? "(unprovable or outside path)" : paths.join(", ");
   return (
     `角色工具文件系统边界：${toolName} 不得删改工作区与临时目录之外的路径（${ROLE_TOOL_FS_BOUNDARY_CODE}）：${shown}`
   );
 }
 
 /**
- * Collect mutation target paths from a bash command string.
- * Covers rm/mv/cp/redirects and simple command lists; not a full shell parser.
- * Read-only commands contribute no targets (read remains unrestricted).
+ * Resolve a user path with symlink components followed left-to-right.
+ * Does NOT lexically collapse `..` before following (closes W/link/../escape).
  */
-export function extractBashMutationTargetPaths(command: string): string[] {
-  const targets: string[] = [];
-  for (const simple of splitSimpleCommands(command)) {
-    collectMutationTargetsFromSimpleCommand(simple, targets);
-  }
-  return targets;
+export function resolveMutationPath(raw: string, cwd: string): string {
+  const expanded = expandUserHome(raw);
+  const absolute = isAbsolute(expanded)
+    ? expandAbsoluteLexical(expanded)
+    : joinComponents(physicalPathIdentity(cwd), expanded);
+  return followComponents(absolute);
 }
 
 /**
- * Assess one tool_call for boundary violation. Undefined = allow.
- * edit/write: `path` argument. bash: mutation targets only.
+ * Assess bash/edit/write. Undefined = allow.
+ * Bash: fail-closed on unprovable mutation; proven outside targets denied.
  */
 export function assessRoleToolFsBoundary(input: {
   readonly toolName: string;
@@ -107,42 +97,23 @@ export function assessRoleToolFsBoundary(input: {
   readonly cwd: string;
   readonly roots?: RoleToolFsBoundaryRoots;
 }): RoleToolFsBoundaryViolation | undefined {
-  const toolName = input.toolName;
-  if (
-    toolName !== "bash" &&
-    toolName !== "edit" &&
-    toolName !== "write"
-  ) {
+  if (input.toolName !== "bash" && input.toolName !== "edit" && input.toolName !== "write") {
     return undefined;
   }
-
   const roots = input.roots ?? defaultRoleToolFsBoundaryRoots(input.cwd);
-  const rawTargets = mutationTargetPathsForTool(toolName, input.toolInput);
-  if (rawTargets.length === 0) return undefined;
 
-  const outside: string[] = [];
-  for (const raw of rawTargets) {
-    const absolute = resolvePathAgainstCwd(raw, input.cwd);
-    if (!isWithinRoleToolFsBoundary(absolute, roots)) {
-      outside.push(absolute);
-    }
+  if (input.toolName === "edit" || input.toolName === "write") {
+    const path = input.toolInput.path;
+    if (typeof path !== "string" || path.length === 0) return undefined;
+    return denyIfOutside(input.toolName, [path], input.cwd, roots);
   }
-  if (outside.length === 0) return undefined;
 
-  return {
-    code: ROLE_TOOL_FS_BOUNDARY_CODE,
-    toolName,
-    paths: outside,
-    reason: roleToolFsBoundaryDenyReason(toolName, outside),
-  };
+  const command = input.toolInput.command;
+  if (typeof command !== "string" || command.length === 0) return undefined;
+  return assessBashCommand(command, input.cwd, roots, "bash");
 }
 
-/**
- * Detour argv mutation check. argv[0] is the executable (may live outside).
- * Remaining path-like tokens that resolve outside W/T are violations when the
- * invocation is a known mutation command or embeds absolute outside paths next
- * to write-like shell text (covers scripted `rm`/`mv`/`writeFile` fixtures).
- */
+/** Detour argv: same fail-closed mutation rules; exe path itself may live outside. */
 export function assessDetourArgvFsBoundary(input: {
   readonly argv: readonly string[];
   readonly cwd: string;
@@ -153,52 +124,134 @@ export function assessDetourArgvFsBoundary(input: {
   const exe = basename(input.argv[0] ?? "");
   const rest = input.argv.slice(1);
 
-  const targets: string[] = [];
   if (MUTATION_COMMANDS.has(exe)) {
-    for (const token of rest) {
-      if (token === "--") continue;
-      if (token.startsWith("-") && token !== "-") continue;
-      targets.push(token);
+    const targets = rest.filter((t) => t !== "--" && !(t.startsWith("-") && t !== "-"));
+    if (targets.length === 0) {
+      return {
+        code: ROLE_TOOL_FS_BOUNDARY_CODE,
+        toolName: "ak_engine_detour",
+        paths: [],
+        reason: roleToolFsBoundaryDenyReason("ak_engine_detour", []),
+      };
     }
-  } else {
-    // shell -c SCRIPT / shell -lc SCRIPT / node -e CODE: assess the script body.
-    const scriptBodies = scriptBodiesFromArgv(exe, rest);
-    for (const body of scriptBodies) {
-      targets.push(...extractBashMutationTargetPaths(body));
-    }
+    return denyIfOutside("ak_engine_detour", targets, input.cwd, roots);
   }
 
-  if (targets.length === 0) return undefined;
+  const bodies = scriptBodiesFromArgv(exe, rest);
+  if (bodies.length === 0) {
+    // Opaque engine binary: no script body to prove. Detour spawn must confine
+    // writes via OS sandbox (see engine-detour); argv-only allow.
+    return undefined;
+  }
+  for (const body of bodies) {
+    const hit = assessBashCommand(body, input.cwd, roots, "ak_engine_detour");
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
 
+function assessBashCommand(
+  command: string,
+  cwd: string,
+  roots: RoleToolFsBoundaryRoots,
+  toolName: string,
+): RoleToolFsBoundaryViolation | undefined {
+  // Always assess nested shell -c bodies first (bash -c 'rm P', etc.).
+  for (const body of extractNestedShellBodies(command)) {
+    const hit = assessBashCommand(body, cwd, roots, toolName);
+    if (hit !== undefined) return hit;
+  }
+
+  // Unprovable mutation forms: fail closed (no target extraction arms race).
+  if (UNPROVABLE_MUTATION.test(command)) {
+    return {
+      code: ROLE_TOOL_FS_BOUNDARY_CODE,
+      toolName,
+      paths: [],
+      reason: roleToolFsBoundaryDenyReason(toolName, []),
+    };
+  }
+
+  const targets = extractBashMutationTargetPaths(command);
+  const hasMutationVerb = commandHasMutationVerb(command);
+  const hasRedirect = /(?:^|[\s\d])>>?/.test(command);
+
+  if (!hasMutationVerb && !hasRedirect) return undefined; // read-only / no mutation
+
+  if (targets.length === 0) {
+    // Mutation indicated but no extractable targets → fail closed.
+    return {
+      code: ROLE_TOOL_FS_BOUNDARY_CODE,
+      toolName,
+      paths: [],
+      reason: roleToolFsBoundaryDenyReason(toolName, []),
+    };
+  }
+  return denyIfOutside(toolName, targets, cwd, roots);
+}
+
+function denyIfOutside(
+  toolName: string,
+  rawTargets: readonly string[],
+  cwd: string,
+  roots: RoleToolFsBoundaryRoots,
+): RoleToolFsBoundaryViolation | undefined {
   const outside: string[] = [];
-  for (const raw of targets) {
-    const absolute = resolvePathAgainstCwd(raw, input.cwd);
-    if (!isWithinRoleToolFsBoundary(absolute, roots)) {
-      outside.push(absolute);
-    }
+  for (const raw of rawTargets) {
+    const resolved = resolveMutationPath(raw, cwd);
+    if (!isWithinRoleToolFsBoundary(resolved, roots)) outside.push(resolved);
   }
   if (outside.length === 0) return undefined;
-
   return {
     code: ROLE_TOOL_FS_BOUNDARY_CODE,
-    toolName: "ak_engine_detour",
+    toolName,
     paths: outside,
-    reason: roleToolFsBoundaryDenyReason("ak_engine_detour", outside),
+    reason: roleToolFsBoundaryDenyReason(toolName, outside),
   };
+}
+
+/** Exported for unit coverage of path extraction. */
+export function extractBashMutationTargetPaths(command: string): string[] {
+  const targets: string[] = [];
+  for (const simple of splitSimpleCommands(command)) {
+    collectMutationTargetsFromSimpleCommand(simple, targets);
+  }
+  return targets;
+}
+
+function commandHasMutationVerb(command: string): boolean {
+  for (const simple of splitSimpleCommands(command)) {
+    const tokens = tokenizeShell(simple);
+    let idx = 0;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
+    if (idx >= tokens.length) continue;
+    if (MUTATION_COMMANDS.has(basename(tokens[idx]!))) return true;
+  }
+  return false;
+}
+
+function extractNestedShellBodies(command: string): string[] {
+  const bodies: string[] = [];
+  // bash/sh -c 'body' or bash -c "body"
+  const re = /\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-[a-zA-Z]*)*\s+-c\s+(?:'([^']*)'|"([^"]*)"|(\S+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(command)) !== null) {
+    const body = match[1] ?? match[2] ?? match[3];
+    if (typeof body === "string" && body.length > 0) bodies.push(body);
+  }
+  return bodies;
 }
 
 const SHELL_SCRIPT_FLAGS = new Set(["-c", "-lc", "-ic", "-sc"]);
 const NODE_EVAL_FLAGS = new Set(["-e", "--eval", "-p", "--print"]);
+const INTERPRETER_C_FLAGS = new Set(["-c", "--command"]);
+const INTERPRETER_EXES = new Set(["python", "python3", "ruby", "perl", "php", "lua", "node", "nodejs"]);
 
 function scriptBodiesFromArgv(exe: string, rest: readonly string[]): string[] {
   const bodies: string[] = [];
-  const isShell =
-    exe === "bash" ||
-    exe === "sh" ||
-    exe === "zsh" ||
-    exe === "dash" ||
-    exe === "ksh";
+  const isShell = ["bash", "sh", "zsh", "dash", "ksh"].includes(exe);
   const isNode = exe === "node" || exe === "nodejs";
+  const isInterpreter = INTERPRETER_EXES.has(exe);
   for (let i = 0; i < rest.length; i += 1) {
     const tok = rest[i]!;
     if (isShell && SHELL_SCRIPT_FLAGS.has(tok) && i + 1 < rest.length) {
@@ -207,36 +260,17 @@ function scriptBodiesFromArgv(exe: string, rest: readonly string[]): string[] {
       continue;
     }
     if (isNode && NODE_EVAL_FLAGS.has(tok) && i + 1 < rest.length) {
-      // node -e bodies are JS; still scan for embedded shell-like rm/mv text
-      // and absolute path write patterns used by isolation fixtures.
-      bodies.push(rest[i + 1]!);
+      // Mark as unprovable mutation body via a sentinel the bash assessor denies.
+      bodies.push(`node -e ${rest[i + 1]!}`);
       i += 1;
       continue;
     }
-  }
-  // Fallback: whole rest joined, so free-form engine argv still yields mutation paths.
-  if (bodies.length === 0 && rest.length > 0) {
-    bodies.push(rest.join(" "));
+    if (isInterpreter && INTERPRETER_C_FLAGS.has(tok) && i + 1 < rest.length) {
+      bodies.push(`${exe} -c ${rest[i + 1]!}`);
+      i += 1;
+    }
   }
   return bodies;
-}
-
-function mutationTargetPathsForTool(
-  toolName: "bash" | "edit" | "write",
-  toolInput: Record<string, unknown>,
-): string[] {
-  if (toolName === "edit" || toolName === "write") {
-    const path = toolInput.path;
-    return typeof path === "string" && path.length > 0 ? [path] : [];
-  }
-  const command = toolInput.command;
-  if (typeof command !== "string" || command.length === 0) return [];
-  return extractBashMutationTargetPaths(command);
-}
-
-function resolvePathAgainstCwd(raw: string, cwd: string): string {
-  const expanded = expandUserHome(raw);
-  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
 }
 
 function expandUserHome(raw: string): string {
@@ -249,6 +283,76 @@ function expandUserHome(raw: string): string {
   return raw;
 }
 
+/** Absolute path: keep root, do not collapse `..` across symlink components yet. */
+function expandAbsoluteLexical(absolute: string): string {
+  // Normalize repeated separators only; keep .. for component walk.
+  return absolute.replace(/\/{2,}/g, "/");
+}
+
+function joinComponents(base: string, rel: string): string {
+  const parts = rel.split(/[/\\]/).filter((p) => p.length > 0);
+  let cur = base;
+  for (const part of parts) {
+    if (part === ".") continue;
+    if (part === "..") {
+      cur = dirname(cur);
+      continue;
+    }
+    cur = join(cur, part);
+  }
+  return cur;
+}
+
+/**
+ * Walk absolute path components left-to-right. When a component exists and is a
+ * symlink, replace the walk cursor with its realpath before consuming `..`.
+ */
+function followComponents(absolute: string): string {
+  if (absolute === sep) return sep;
+  const root = absolute.startsWith(sep) ? sep : "";
+  const parts = absolute.split(sep).filter((p) => p.length > 0);
+  let current = root === sep ? sep : "";
+  if (root !== sep && parts.length === 0) return physicalPathIdentity(absolute);
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]!;
+    if (part === ".") continue;
+    if (part === "..") {
+      current = current === sep || current === "" ? current : dirname(current);
+      if (current === "") current = sep;
+      continue;
+    }
+    const next = current === sep ? `${sep}${part}` : current === "" ? part : join(current, part);
+    try {
+      const st = lstatSync(next);
+      if (st.isSymbolicLink() || st.isDirectory() || st.isFile()) {
+        // realpath this node so subsequent .. operate on the real parent chain.
+        try {
+          current = realpathSync(next);
+        } catch {
+          current = next;
+        }
+      } else {
+        current = next;
+      }
+    } catch {
+      // Missing node: rejoin remaining components lexically under current real prefix.
+      const rest = parts.slice(i);
+      const prefix = current === "" ? physicalPathIdentity(process.cwd()) : physicalPathIdentity(current === sep ? sep : current);
+      return rest.reduce((acc, p) => {
+        if (p === ".") return acc;
+        if (p === "..") return dirname(acc);
+        return join(acc, p);
+      }, prefix === sep && rest.length ? sep : prefix);
+    }
+  }
+  try {
+    return realpathSync(current);
+  } catch {
+    return physicalPathIdentity(current);
+  }
+}
+
 function splitSimpleCommands(command: string): string[] {
   const parts: string[] = [];
   let current = "";
@@ -258,8 +362,7 @@ function splitSimpleCommands(command: string): string[] {
     if (quote !== null) {
       current += ch;
       if (ch === "\\" && quote === '"' && i + 1 < command.length) {
-        current += command[i + 1]!;
-        i += 1;
+        current += command[++i]!;
         continue;
       }
       if (ch === quote) quote = null;
@@ -270,94 +373,50 @@ function splitSimpleCommands(command: string): string[] {
       current += ch;
       continue;
     }
-    // Command separators / pipes start a new simple command.
-    if (ch === "|" || ch === ";" || ch === "&") {
-      if (ch === "&" && command[i + 1] === "&") {
-        pushCurrent();
-        i += 1;
-        continue;
-      }
-      if (ch === "|" && command[i + 1] === "|") {
-        pushCurrent();
-        i += 1;
-        continue;
-      }
-      if (ch === "|") {
-        // Pipeline: left may still hold redirects; right is new command.
-        pushCurrent();
-        continue;
-      }
-      pushCurrent();
+    if (ch === "|" || ch === ";" || ch === "\n") {
+      push();
       continue;
     }
-    // Newline as separator.
-    if (ch === "\n") {
-      pushCurrent();
+    if (ch === "&" && command[i + 1] === "&") {
+      push();
+      i += 1;
+      continue;
+    }
+    if (ch === "|" && command[i + 1] === "|") {
+      push();
+      i += 1;
       continue;
     }
     current += ch;
   }
-  pushCurrent();
+  push();
   return parts;
 
-  function pushCurrent(): void {
-    const trimmed = current.trim();
+  function push(): void {
+    const t = current.trim();
     current = "";
-    if (trimmed.length > 0) parts.push(trimmed);
+    if (t.length > 0) parts.push(t);
   }
 }
 
-function collectMutationTargetsFromSimpleCommand(
-  simple: string,
-  targets: string[],
-): void {
+function collectMutationTargetsFromSimpleCommand(simple: string, targets: string[]): void {
   const tokens = tokenizeShell(simple);
   if (tokens.length === 0) return;
 
-  // Redirections anywhere in the simple command (write targets).
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i]!;
     if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>") {
       const next = tokens[i + 1];
-      if (typeof next === "string" && next.length > 0 && next !== "&") {
-        targets.push(next);
-      }
-      continue;
-    }
-    // `n>path` fused form
-    const fused = /^(\d*)>>?\|?$/.exec(tok);
-    if (fused !== null) {
-      const next = tokens[i + 1];
-      if (typeof next === "string" && next.length > 0) targets.push(next);
-      continue;
-    }
-    const fusedPath = /^(\d*)>>?\|?(.*)$/.exec(tok);
-    if (fusedPath !== null && fusedPath[2] && fusedPath[2].length > 0 && tok.includes(">")) {
-      // e.g. >file or 2>file without space — only when operator present
-      if (tok.includes(">") && !tok.startsWith("<")) {
-        const pathPart = fusedPath[2];
-        if (pathPart.length > 0 && pathPart !== "&1" && pathPart !== "&2") {
-          targets.push(pathPart);
-        }
-      }
+      if (typeof next === "string" && next.length > 0 && next !== "&") targets.push(next);
     }
   }
 
-  // Leading env assignments: FOO=bar cmd ...
   let idx = 0;
-  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) {
-    idx += 1;
-  }
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]!)) idx += 1;
   if (idx >= tokens.length) return;
-
-  let cmd = tokens[idx]!;
-  // Strip path prefix from command name: /bin/rm → rm
-  cmd = basename(cmd);
+  const cmd = basename(tokens[idx]!);
   if (!MUTATION_COMMANDS.has(cmd)) return;
-
   idx += 1;
-  // Options until -- or first non-flag operand.
-  const operands: string[] = [];
   let endFlags = false;
   for (; idx < tokens.length; idx += 1) {
     const tok = tokens[idx]!;
@@ -365,29 +424,22 @@ function collectMutationTargetsFromSimpleCommand(
       endFlags = true;
       continue;
     }
-    // Skip redirect tokens and their targets (already collected).
     if (tok === ">" || tok === ">>" || tok === ">|" || tok === "&>" || tok === "&>>" || tok === "<" || tok === "<<") {
-      idx += 1; // skip target
+      idx += 1;
       continue;
     }
     if (!endFlags && tok.startsWith("-") && tok !== "-") {
-      // flag; some take a value (-t dir for install) — treat next as operand if not flag-like
-      // Only skip pure flags; path-taking flags still need care for mv -t DEST.
-      if ((cmd === "mv" || cmd === "cp" || cmd === "ln" || cmd === "install") &&
+      if (
+        (cmd === "mv" || cmd === "cp" || cmd === "ln" || cmd === "install") &&
         (tok === "-t" || tok === "--target-directory") &&
         idx + 1 < tokens.length
       ) {
-        operands.push(tokens[idx + 1]!);
+        targets.push(tokens[idx + 1]!);
         idx += 1;
       }
       continue;
     }
-    // Stop at further operators already handled as separators.
-    operands.push(tok);
-  }
-
-  for (const op of operands) {
-    if (op.length > 0) targets.push(op);
+    targets.push(tok);
   }
 }
 
@@ -398,14 +450,11 @@ function tokenizeShell(command: string): string[] {
     while (i < command.length && /\s/.test(command[i]!)) i += 1;
     if (i >= command.length) break;
     const ch = command[i]!;
-    if (ch === "'" ) {
+    if (ch === "'") {
       i += 1;
       let value = "";
-      while (i < command.length && command[i] !== "'") {
-        value += command[i]!;
-        i += 1;
-      }
-      if (i < command.length) i += 1; // closing '
+      while (i < command.length && command[i] !== "'") value += command[i++]!;
+      if (i < command.length) i += 1;
       tokens.push(value);
       continue;
     }
@@ -418,38 +467,24 @@ function tokenizeShell(command: string): string[] {
           i += 2;
           continue;
         }
-        value += command[i]!;
-        i += 1;
+        value += command[i++]!;
       }
       if (i < command.length) i += 1;
       tokens.push(value);
       continue;
     }
-    // Operators as their own tokens when not fused with a path.
     if (ch === ">" || ch === "<" || ch === "&") {
       let op = ch;
       i += 1;
-      if (ch === ">" && i < command.length && (command[i] === ">" || command[i] === "|")) {
-        op += command[i]!;
-        i += 1;
-      } else if (ch === "&" && i < command.length && command[i] === ">") {
+      if (ch === ">" && i < command.length && (command[i] === ">" || command[i] === "|")) op += command[i++]!;
+      else if (ch === "&" && i < command.length && command[i] === ">") {
         op += ">";
         i += 1;
-        if (i < command.length && command[i] === ">") {
-          op += ">";
-          i += 1;
-        }
-      } else if (ch === "<" && i < command.length && command[i] === "<") {
-        op += "<";
-        i += 1;
-      }
-      // Fused path after operator without space: >file
-      if ((op === ">" || op === ">>" || op === ">|" ) && i < command.length && !/\s/.test(command[i]!) && command[i] !== "&") {
+        if (i < command.length && command[i] === ">") op += command[i++]!;
+      } else if (ch === "<" && i < command.length && command[i] === "<") op += command[i++]!;
+      if ((op === ">" || op === ">>" || op === ">|") && i < command.length && !/\s/.test(command[i]!) && command[i] !== "&") {
         let path = "";
-        while (i < command.length && !/\s/.test(command[i]!) && !"<>&|;".includes(command[i]!)) {
-          path += command[i]!;
-          i += 1;
-        }
+        while (i < command.length && !/\s/.test(command[i]!) && !"<>&|;".includes(command[i]!)) path += command[i++]!;
         tokens.push(op);
         if (path.length > 0) tokens.push(path);
         continue;
@@ -464,11 +499,14 @@ function tokenizeShell(command: string): string[] {
         i += 2;
         continue;
       }
-      value += command[i]!;
-      i += 1;
+      value += command[i++]!;
     }
     if (value.length > 0) tokens.push(value);
   }
   return tokens;
 }
 
+/** @internal test aid — lexicalResolve kept available for contrast cases. */
+export function lexicalResolveForTest(raw: string, cwd: string): string {
+  return lexicalResolve(cwd, raw);
+}
