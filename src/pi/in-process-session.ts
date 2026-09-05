@@ -254,13 +254,15 @@ export async function openPiInstitutionalSession(
     const fallbackApi = providerDefaultModel?.api
       ?? (childProvider as any)?.api
       ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
+    // Fallback model facts come from the provider surface only — never derive
+    // reasoning (or any capability) from the thinking string (#683 pass-through).
     const modelToUse = foundModel ?? {
       id: selection.model,
       name: selection.model,
       api: fallbackApi as any,
       provider: selection.provider,
       baseUrl: providerDefaultModel?.baseUrl ?? "",
-      reasoning: selection.thinking !== undefined && selection.thinking !== "off",
+      reasoning: providerDefaultModel?.reasoning ?? false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
