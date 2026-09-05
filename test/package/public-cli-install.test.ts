@@ -4,9 +4,9 @@
  * - Shared tarball via installPackedArtifactIntoPiNpm → getSharedIsolatedPack (R5).
  * - Discovery case owns the real `pi install` + settings write path (including
  *   repeated install) and the pi-invocation identity contract.
- * - Admits/negatives matrix moved to public-cli-cold-matrix t1 (#420: one cold
- *   install hosts all seven roles plus the install-unique grammar).
- * - Full-role argv smoke is owned by public-cli-cold-matrix (M2).
+ * - #685: public-cli-cold-matrix culled. Admits/negatives and full-role argv smoke
+ *   live on ordinary public-cli-* tracers; this file keeps the install-surface
+ *   shortest tracer only (pi install, repeat install, bin discovery, identity).
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
