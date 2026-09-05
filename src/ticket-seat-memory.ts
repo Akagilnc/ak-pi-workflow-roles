@@ -14,7 +14,8 @@ import { pathToFileURL } from "node:url";
 
 import {
   homeFromRunDirectory,
-  pathContainedIn,
+  physicalPathIdentity,
+  physicallyContainedIn,
 } from "./activation-ledger-topology.ts";
 import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 import type {
@@ -105,20 +106,39 @@ export function isTicketSeatMemoryBound(input: {
 }
 
 /**
- * Actual memory-binding fact: the sealed principal already points at the shared
- * ticket-seat nest (session outside the run directory), not a still-private
- * per-run volume. Host-transition / last-host authority and nest write-back use
- * this — never seat eligibility alone (#637 class 1).
+ * Actual memory-binding fact: the sealed principal already points at the
+ * ticket-seat nest computed by subject topology — never "directory outside the
+ * run ⇒ shared nest" guessing (#637 class 1 / r4–r5). Host-transition /
+ * last-host authority and nest write-back use this; seat eligibility alone is
+ * not proof. Old private per-run principals stay off this path.
  */
 export function isPrincipalOnTicketSeatNest(input: {
-  readonly runDirectory: string;
   readonly sessionDirectory: string;
   readonly sessionFile: string;
+  readonly ticketNumber: number;
+  readonly seat: TicketSeatMemorySeat;
+  readonly projectRoot: string;
+  /** Prefer principal session file so home path-derives from the sealed volume. */
+  readonly ledgerAnchorSessionFile?: string;
+  readonly home?: string;
 }): boolean {
-  return (
-    !pathContainedIn(input.runDirectory, input.sessionDirectory) &&
-    !pathContainedIn(input.runDirectory, input.sessionFile)
-  );
+  const expectedNest = ticketSeatMemorySessionDirectory({
+    ticketNumber: input.ticketNumber,
+    seat: input.seat,
+    cwd: input.projectRoot,
+    ...(input.ledgerAnchorSessionFile === undefined
+      ? {}
+      : { parentSessionFile: input.ledgerAnchorSessionFile }),
+    ...(input.home === undefined ? {} : { home: input.home }),
+  });
+  if (
+    physicalPathIdentity(input.sessionDirectory) !==
+    physicalPathIdentity(expectedNest)
+  ) {
+    return false;
+  }
+  // Session file must live under the same nest (not a foreign pointer).
+  return physicallyContainedIn(expectedNest, input.sessionFile);
 }
 
 function isEnoent(error: unknown): boolean {
@@ -364,13 +384,14 @@ export async function rebindAdmittedToTicketSeatMemory(input: {
   // Anchor under the already-issued run principal so ledger home path-derives
   // from the package home that issued admission (never ambient passwd home).
   const anchor = input.principalAuthority.decode(input.admitted.principal);
+  // Open/seal the nest only. Per-run binding markers are appended once on the
+  // dispatch path under the writer-lease envelope so resume recovery rebind does
+  // not double-mark before the actual write attempt (#637 class 3/4/5).
   const opened = await openTicketSeatMemoryCoordinates({
     ticketNumber,
     seat: input.seat,
     cwd: input.admitted.projectRoot,
     ledgerAnchorSessionFile: anchor.sessionFile,
-    // Analyst attributes frame/model/tool to this binding interval only (#636 D).
-    runId: input.admitted.runId,
   });
   const coordinates: DurablePrincipalCoordinates = {
     sessionDirectory: opened.sessionDirectory,

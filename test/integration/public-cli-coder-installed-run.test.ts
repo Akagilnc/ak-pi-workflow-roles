@@ -411,6 +411,10 @@ test(
         // #634: worker shared seam spot-check — real entry summons direct Inspector, no Gatekeeper.
         const gate = await extractGateFactFromSessionDirectory(
           join(runDirectory, "session"),
+          {
+            runDirectory,
+            parentSessionFile: join(runDirectory, "session", "session.jsonl"),
+          },
         );
         assert.ok(gate, "typed gate fact must exist after completed coder");
         assert.deepEqual(gate.actualSeats, ["inspector"]);
