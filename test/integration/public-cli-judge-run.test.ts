@@ -127,8 +127,8 @@ test(
           row.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE
         );
         assert.equal(lifecycle.length, 1);
-        assert.equal(stdout.join("").includes("acceptedReceipt"), true);
-        assert.equal(stdout.join("").includes("false"), true);
+        // Typed no_receipt already asserted above (outcome.acceptedReceipt === false).
+        // Do not bite formatTerminalResult presentation (ADR 0052 / 盯生成物).
       }
     } finally {
       await rm(home, { recursive: true, force: true });

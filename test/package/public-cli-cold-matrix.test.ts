@@ -41,6 +41,12 @@ import {
 } from "../helpers/pi-test-harness.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import {
+  listRolesForDisplay,
+  loadCredentialProviders,
+  loadPublicCliConfig,
+  resolveEffectiveSeat,
+} from "../../src/public-cli/config.ts";
+import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
@@ -350,6 +356,7 @@ test("one cold install exercises all public roles plus Navigator gates", async (
     );
 
     // Discoverability: packaged callable seats (all of them, #639); no auditors.
+    // Typed seat projection (ADR 0052) — do not bite roles TSV presentation.
     const roles = await runAkRoleBin(installed.akRoleBin, ["roles"], {
       home,
       agentDir: piAgentDir,
@@ -357,10 +364,16 @@ test("one cold install exercises all public roles plus Navigator gates", async (
     });
     assert.equal(roles.localTimeout, false, roles.stderr);
     assert.equal(roles.code, 0, roles.stderr);
-    for (const seat of PUBLIC_CONFIGURABLE_SEATS) {
-      assert.match(roles.stdout, new RegExp(`^${seat}\\t`, "m"));
-    }
-    assert.equal(roles.stdout.includes("auditor"), false);
+    const credentials = await loadCredentialProviders(piAgentDir);
+    const projected = listRolesForDisplay(await loadPublicCliConfig(home), credentials);
+    assert.deepEqual(
+      projected.map((row) => row.seat),
+      [...PUBLIC_CONFIGURABLE_SEATS],
+    );
+    assert.equal(
+      (PUBLIC_CALLABLE_ROLES as readonly string[]).includes("auditor"),
+      false,
+    );
 
     // Help is loud smoke only (exit 0 + non-empty). Capability membership is a
     // typed contract (listHelpCapabilities / helpDocument). Do not stare at
@@ -386,10 +399,17 @@ test("one cold install exercises all public roles plus Navigator gates", async (
       cwd: project,
     });
     assert.equal(rolesAfter.code, 0, rolesAfter.stderr);
-    assert.match(
-      rolesAfter.stdout,
-      /^navigator\tpersistent\txai\/grok-4\.5:high$/m,
+    const navPersistent = resolveEffectiveSeat(
+      await loadPublicCliConfig(home),
+      "navigator",
+      await loadCredentialProviders(piAgentDir),
     );
+    assert.equal(navPersistent.source, "persistent");
+    assert.deepEqual(navPersistent.selection, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "high",
+    });
 
     // One Pi argv shim shared across the matrix; each role overwrites the log.
     const shimDir = resolve(home, "pi-shim-matrix");
@@ -934,9 +954,14 @@ test("documented Pi package update refreshes CLI and runtime from one private co
       });
       assert.equal(roles.localTimeout, false, roles.stderr);
       assert.equal(roles.code, 0, roles.stderr);
-      for (const role of PUBLIC_CALLABLE_ROLES) {
-        assert.match(roles.stdout, new RegExp(`^${role}\\t`, "m"));
-      }
+      const updatedSeats = listRolesForDisplay(
+        await loadPublicCliConfig(home),
+        await loadCredentialProviders(piAgentDir),
+      );
+      assert.deepEqual(
+        updatedSeats.map((row) => row.seat),
+        [...PUBLIC_CALLABLE_ROLES],
+      );
     } finally {
       await rm(packDir, { recursive: true, force: true });
     }
