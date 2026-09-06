@@ -611,13 +611,13 @@ test("HEAD-matched calling-repo projectInstructions leave privateActive without 
 });
 
 test("controlled child env disables every compat source with one parameterized rule", async () => {
-  const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
+  const env = controlledGrokChildEnv({ PATH: "/bin", HOME: "/operator/home" }, "/run/grok-home");
   for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
     for (const kind of ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"]) {
       assert.equal(env[`GROK_${vendor}_${kind}_ENABLED`], "false", `${vendor}/${kind}`);
     }
   }
-  assert.equal(env.HOME, "/run/grok-home");
+  assert.equal(env.HOME, "/operator/home");
   assert.equal(env.GROK_HOME, "/run/grok-home");
   assert.equal(env.GROK_MEMORY, "0");
   assert.equal(env.GROK_SUBAGENTS, "0");
