@@ -143,16 +143,16 @@ export async function runPublicDoctorResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableDoctorRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) =>
+    buildTurnRequest: (admitted, effective) =>
       buildDoctorTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: doctorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

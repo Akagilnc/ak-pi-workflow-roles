@@ -24,6 +24,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -72,7 +73,6 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { THINKING_LEVELS } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
 export type FrozenAttachment = {
@@ -316,7 +316,7 @@ async function writeAdmittedRequestPersistence(
 /**
  * Effective provider/model selection recorded on the invocation identity page.
  * thinking is present only when the caller/seat supplied it — bare model omits it.
- * Restored values are bounded to typed PublicThinkingLevel (never arbitrary string).
+ * Thinking is opaque pass-through (#683); no local whitelist filter on restore.
  */
 export type InvocationEffectiveModel = {
   readonly provider: string;
@@ -1028,31 +1028,20 @@ async function freezeAttachments(
 }
 
 /**
- * Read ticketNumber from a retained source run's admitted-request.json,
- * falling back to invocation.json. Same typed integer rules as resume restore.
+ * Freeze summons attachments into an already-retained run (#637 same-ticket resume).
+ * Writes under attachments/summons-<key>/ so prior freeze names stay intact.
+ * Manual resume never calls this — birth attachments keep their original semantics.
  */
-export async function readTicketNumberFromSourceRun(
+export async function freezeAttachmentsIntoRun(
+  attachmentPaths: readonly string[],
   runDirectory: string,
-): Promise<number | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
-    try {
-      const raw = JSON.parse(
-        await readFile(join(runDirectory, page), "utf8"),
-      ) as unknown;
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const ticketNumber = (raw as Record<string, unknown>).ticketNumber;
-      if (
-        typeof ticketNumber === "number" &&
-        Number.isSafeInteger(ticketNumber) &&
-        ticketNumber >= 1
-      ) {
-        return ticketNumber;
-      }
-    } catch {
-      // Missing or unreadable page → try next; unbound if none yield a ticket.
-    }
-  }
-  return undefined;
+  summonsKey: string = `s-${Date.now().toString(36)}`,
+): Promise<readonly FrozenAttachment[]> {
+  if (attachmentPaths.length === 0) return [];
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
+  const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  return freezeAttachments(attachmentPaths, attachmentsDirectory);
 }
 
 function ticketAdmissionFields(
@@ -2390,7 +2379,7 @@ export async function admitNotaryInvocation(options: {
   });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   const ticketFields = ticketAdmissionFields(
-    await readTicketNumberFromSourceRun(sourceRun.runDirectory),
+    await readRunTicketNumber(sourceRun.runDirectory),
   );
 
   const admitted = {

@@ -290,8 +290,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Override thinking level: off|minimal|low|medium|high|xhigh|max.",
-      zh: "覆盖 thinking 档位：off|minimal|low|medium|high|xhigh|max。",
+      en: "Override thinking level (opaque pass-through to Pi; e.g. off|minimal|low|medium|high|xhigh|max).",
+      zh: "覆盖 thinking 档位（原样透传给 Pi；例如 off|minimal|low|medium|high|xhigh|max）。",
     },
   },
   {

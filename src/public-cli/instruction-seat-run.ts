@@ -81,18 +81,20 @@ function instructionSeatAdapters() {
     trySettle: (
       admitted: AdmittedInstructionSeatInvocation,
       authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
     ) => {
       switch (admitted.role) {
         case "gatekeeper":
-          return trySettleGatekeeperTerminalResult(admitted, authority);
+          return trySettleGatekeeperTerminalResult(admitted, authority, scope);
         case "navigator":
-          return trySettleNavigatorTerminalResult(admitted, authority);
+          return trySettleNavigatorTerminalResult(admitted, authority, scope);
         case "auditor":
           return trySettleAuditorTerminalResult(admitted, authority);
         case "evidence-child":
           return trySettleEvidenceChildTerminalResult(admitted, authority);
       }
     },
+    // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
     // #675 / #357 T2: failInfrastructure abort after engine-detour tool failure must not
     // wash the durable toolResult diagnostic (same seam as reviewer-run / judge-run).
@@ -142,14 +144,14 @@ export async function runPublicInstructionSeatResume(
     request,
     env,
     io,
-    load: () => loadResumableInstructionSeatRun(
+    load: (effective) => loadResumableInstructionSeatRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) => buildInstructionSeatTurnRequest(
+    buildTurnRequest: (admitted, effective) => buildInstructionSeatTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: instructionSeatAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

@@ -3,10 +3,17 @@
  * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
  * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
  * with gate-province dispatch; this module is the direct command face.
+ * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import {
+  applyInstructionTicketProbe,
+  probeInstructionTicket,
+  ticketNumberFromProbe,
+  tryResumeSameTicketSeatRun,
+} from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
@@ -14,6 +21,7 @@ import {
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -24,6 +32,7 @@ import {
   loadResumableInspectorRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -67,9 +76,52 @@ export async function runPublicInspector(
   admitted?: AdmittedInspectorInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseInspectorArgvResult;
+  try {
+    parsed = parseInspectorArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #637: same ticket → resume prior inspector run with this summons' materials.
+  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
+  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
+  const projectRoot = parsed.project ?? env.cwd;
+  const ticketProbe = await probeInstructionTicket(
+    parsed.instruction,
+    projectRoot,
+    env,
+  );
+  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
+  if (probedTicketNumber !== undefined) {
+    const summons: SameTicketSummonsMaterials = {
+      instruction: parsed.instruction,
+      instructionEmpty: parsed.instruction.trim() === "",
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role: "inspector",
+      ticketNumber: probedTicketNumber,
+      summons,
+      resume: (runId, materials) =>
+        runPublicInspectorResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+  }
+
   let admitted: AdmittedInspectorInvocation;
   try {
-    const parsed = parseInspectorArgv(argv);
     admitted = await admitInspectorInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -91,6 +143,10 @@ export async function runPublicInspector(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
   const turnRequest = buildInspectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -103,13 +159,7 @@ export async function runPublicInspector(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildInspectorTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
+      prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
     },
   });
 
@@ -118,20 +168,34 @@ export async function runPublicInspector(
     env,
     io,
     request: turnRequest,
-    adapters: inspectorAdapters(),
+    adapters: inspectorAdapters({
+      beforeDispatch: async (admittedSeat) => {
+        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
+        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
-function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
+function inspectorAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedInspectorInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedInspectorInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) => trySettleInspectorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
 /**
- * Resume a previously admitted Inspector run (#633); the session principal reopens.
+ * Resume a previously admitted Inspector run (#633 / #637); the session principal reopens.
+ * Same-ticket summons deliver this turn's instruction + frozen attachments; manual
+ * resume keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicInspectorResume(
   request: PublicResumeRequest,
@@ -146,17 +210,27 @@ export async function runPublicInspectorResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableInspectorRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildInspectorTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
+        env.home,
+        effective.runId,
+        env.principalAuthority,
+      ),
+    buildTurnRequest: async (admitted, effective) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        effective.summons,
+      );
+      return buildInspectorTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

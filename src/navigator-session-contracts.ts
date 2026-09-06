@@ -10,7 +10,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
 
 

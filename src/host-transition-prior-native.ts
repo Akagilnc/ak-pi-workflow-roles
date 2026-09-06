@@ -71,6 +71,9 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
  * Project one hostTransition only for a real switch between known hosts.
  * Unknown host names → undefined (no inject). Empty native volume still
  * yields a typed switch (empty path list).
+ *
+ * Grok native home lives under the live run that wrote it (#617 DK-4 / #637
+ * same-run resume). No cross-run previousRunDirectory override.
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;

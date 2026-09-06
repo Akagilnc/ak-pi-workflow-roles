@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
+  pathContainedIn,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -26,6 +27,7 @@ import {
   extractSessionToolIntervals,
   LedgerSessionJsonlError,
   readLedgerSessionJsonl,
+  type LedgerSessionRow,
   type SessionToolInterval,
 } from "./ledger-session-read.ts";
 import {
@@ -201,6 +203,87 @@ async function resolveSessionFile(
   return join(runDirectory, "session", "session.jsonl");
 }
 
+/**
+ * Attribute session rows to one run.
+ * Private run volumes (session under runDirectory) keep the whole file.
+ * External volumes stay honest missing — never silent full ownership.
+ */
+function attributeSessionRowsForRun(input: {
+  readonly rows: readonly LedgerSessionRow[];
+  readonly sessionFile: string;
+  readonly runDirectory: string;
+  readonly runId: string;
+}):
+  | {
+      readonly kind: "attributed";
+      readonly rows: readonly LedgerSessionRow[];
+      readonly closed: boolean;
+    }
+  | { readonly kind: "missing-boundary"; readonly reason: string } {
+  if (pathContainedIn(input.runDirectory, input.sessionFile)) {
+    return { kind: "attributed", rows: input.rows, closed: false };
+  }
+  return {
+    kind: "missing-boundary",
+    reason: "session volume is outside the run directory",
+  };
+}
+
+/**
+ * Admit frame span (and partial edges) from already-attributed session rows.
+ * Shared by the clean parse path and closed-interval damage recovery.
+ */
+function admitFrameSpanFromRows(rows: readonly LedgerSessionRow[]): {
+  readonly frameSpan?: AnalystRunFrameSpan;
+  readonly missingReason?: string;
+  readonly partialFirstFrameAt: AnalystFirstFrameAt;
+  readonly partialLastFrameAt: AnalystOptionalTimestamp;
+  readonly models: readonly string[];
+} {
+  const models = extractSessionModelSequence(rows);
+  const span = extractSessionTimestampSpan(rows);
+  let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
+  let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
+  if (span.startedAt === undefined || span.endedAt === undefined) {
+    if (span.startedAt !== undefined) {
+      partialFirstFrameAt = { status: "present", at: span.startedAt };
+    }
+    if (span.endedAt !== undefined) {
+      partialLastFrameAt = { status: "present", at: span.endedAt };
+    }
+    return {
+      models,
+      partialFirstFrameAt,
+      partialLastFrameAt,
+      missingReason: "session timeline has no usable timestamps",
+    };
+  }
+  const startedMs = Date.parse(span.startedAt);
+  const endedMs = Date.parse(span.endedAt);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
+    return {
+      models,
+      partialFirstFrameAt: { status: "present", at: span.startedAt },
+      partialLastFrameAt: { status: "present", at: span.endedAt },
+      missingReason: "session timeline timestamps are not parseable instants",
+    };
+  }
+  if (endedMs < startedMs) {
+    return {
+      models,
+      partialFirstFrameAt: { status: "present", at: span.startedAt },
+      partialLastFrameAt: { status: "present", at: span.endedAt },
+      missingReason: "session timeline end is earlier than start",
+    };
+  }
+  return {
+    models,
+    frameSpan: { startedAt: span.startedAt, endedAt: span.endedAt },
+    partialFirstFrameAt: { status: "present", at: span.startedAt },
+    partialLastFrameAt: { status: "present", at: span.endedAt },
+  };
+}
+
 /** Session first/last usable timestamps retained for B-wave wall-clock kernels. */
 export type AnalystRunFrameSpan = {
   readonly startedAt: string;
@@ -277,55 +360,66 @@ async function classifyScopedRun(input: {
   let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
   let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
 
-  // 1) session timeline
+  // 1) session timeline from the run-private volume.
   const sessionFile = await resolveSessionFile(input.runDirectory);
-  let rows: Awaited<ReturnType<typeof readLedgerSessionJsonl>> | undefined;
-  try {
-    rows = await readLedgerSessionJsonl(sessionFile);
-    models = extractSessionModelSequence(rows);
-    const span = extractSessionTimestampSpan(rows);
-    if (span.startedAt === undefined || span.endedAt === undefined) {
+  let rows: readonly LedgerSessionRow[] | undefined;
+  const admitAttributed = (
+    attributedRows: readonly LedgerSessionRow[],
+  ): void => {
+    rows = attributedRows;
+    const admitted = admitFrameSpanFromRows(attributedRows);
+    models = admitted.models;
+    partialFirstFrameAt = admitted.partialFirstFrameAt;
+    partialLastFrameAt = admitted.partialLastFrameAt;
+    if (admitted.frameSpan !== undefined) {
+      frameSpan = admitted.frameSpan;
+    } else if (admitted.missingReason !== undefined) {
       missingSources.push("session-timeline");
-      reasons.push("session timeline has no usable timestamps");
-      // Span incomplete, but any usable timestamp remains a typed partial fact.
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-      }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
+      reasons.push(admitted.missingReason);
+    }
+  };
+  try {
+    const rawRows = await readLedgerSessionJsonl(sessionFile);
+    const attributed = attributeSessionRowsForRun({
+      rows: rawRows,
+      sessionFile,
+      runDirectory: input.runDirectory,
+      runId: input.runId,
+    });
+    if (attributed.kind === "missing-boundary") {
+      missingSources.push("session-timeline");
+      reasons.push(attributed.reason);
     } else {
-      // frameSpan gate: both edges must parse and end must not precede start.
-      // Damaged spans stay page-local unreadable — never throw or emit negative/NaN wallMs.
-      const startedMs = Date.parse(span.startedAt);
-      const endedMs = Date.parse(span.endedAt);
-      if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs)) {
-        missingSources.push("session-timeline");
-        reasons.push("session timeline timestamps are not parseable instants");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      } else if (endedMs < startedMs) {
-        missingSources.push("session-timeline");
-        reasons.push("session timeline end is earlier than start");
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      } else {
-        frameSpan = { startedAt: span.startedAt, endedAt: span.endedAt };
-      }
+      admitAttributed(attributed.rows);
     }
   } catch (error) {
-    missingSources.push("session-timeline");
-    reasons.push(errorText(error));
-    // Single parse kernel: recover first/last frame and models from rows read before the loud line.
+    // Single parse kernel: attribute the prefix, then decide by binding closure.
+    // Closed shared interval → full frame/model/tool (damage belongs to a later run).
+    // Open interval / private volume / missing boundary → honest missing + partial edges.
     if (error instanceof LedgerSessionJsonlError) {
-      const span = extractSessionTimestampSpan(error.prefixRows);
-      if (span.startedAt !== undefined) {
-        partialFirstFrameAt = { status: "present", at: span.startedAt };
+      const attributed = attributeSessionRowsForRun({
+        rows: error.prefixRows,
+        sessionFile,
+        runDirectory: input.runDirectory,
+        runId: input.runId,
+      });
+      if (attributed.kind === "attributed" && attributed.closed) {
+        admitAttributed(attributed.rows);
+      } else if (attributed.kind === "attributed") {
+        missingSources.push("session-timeline");
+        reasons.push(errorText(error));
+        const admitted = admitFrameSpanFromRows(attributed.rows);
+        models = admitted.models;
+        partialFirstFrameAt = admitted.partialFirstFrameAt;
+        partialLastFrameAt = admitted.partialLastFrameAt;
+      } else {
+        missingSources.push("session-timeline");
+        reasons.push(errorText(error));
+        // missing-boundary on damaged prefix: no partial ownership of sibling runs.
       }
-      if (span.endedAt !== undefined) {
-        partialLastFrameAt = { status: "present", at: span.endedAt };
-      }
-      models = extractSessionModelSequence(error.prefixRows);
+    } else {
+      missingSources.push("session-timeline");
+      reasons.push(errorText(error));
     }
   }
 
@@ -401,8 +495,10 @@ async function classifyScopedRun(input: {
   // nested JSONL is page-local unreadable — never silently under-count rounds.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
+    const parentSessionFile = join(input.runDirectory, "session", "session.jsonl");
     gateCycles = await readAnalystGateCyclesFromAuditorRoles(
       join(input.runDirectory, "session", "auditor-roles"),
+      { parentSessionFile },
     );
   } catch (error) {
     return {

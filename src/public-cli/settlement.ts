@@ -12,6 +12,7 @@ import {
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
+
 import {
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
@@ -170,30 +171,73 @@ function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
   return homeFromRunDirectory(admitted.runDirectory);
 }
 
-async function sealedLedgerOutcome(admitted: AdmittedRoleInvocation): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
-  return readSealedSubmission(admitted.projectRoot, admitted.runId, sealedLedgerHome(admitted));
+/**
+ * Court-turn settlement scope (#637 same-ticket re-summons).
+ * When courtAttemptId is set, ledger reads only that attempt so a prior seal
+ * cannot present as this turn's result. Omit for manual resume idempotent
+ * run-scoped sealed reads (no new court).
+ */
+export type SettlementCourtScope = {
+  readonly courtAttemptId?: string;
+};
+
+function ledgerReadScope(
+  admitted: AdmittedRoleInvocation,
+  scope?: SettlementCourtScope,
+): { home: string; attemptId?: string } {
+  return {
+    home: sealedLedgerHome(admitted),
+    ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
+      ? {}
+      : { attemptId: scope.courtAttemptId }),
+  };
+}
+
+async function sealedLedgerOutcome(
+  admitted: AdmittedRoleInvocation,
+  scope?: SettlementCourtScope,
+): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
+  return readSealedSubmission(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted, scope));
 }
 
 /**
- * Shared sealed-accepted detection for all resumable adapters (#648).
- * Ledger projection is the sole authority — not optional per-role adapter wiring.
+ * Shared sealed-acceptance redispatch disposition for resume entrypoints
+ * (#648 sealed authority; #672 / ADR 0080 single-settlement-disposition).
+ * Owns the fail-closed gate auto and manual resume previously rebuilt beside
+ * the shared sealed query: sealed → block; authority throw → block with
+ * preserved cause; otherwise allow. Callers present entry-specific terminals;
+ * they must not re-derive this judgment. Ledger projection remains the sole
+ * seal truth — this is disposition over that read, not a second state.
+ * Always run-scoped (no court attempt filter): any retained seal blocks bare resume.
  */
-export async function hasSealedAcceptedProjection(
+export type SealedAcceptanceRedispatchDisposition =
+  | { readonly kind: "allow" }
+  | { readonly kind: "block"; readonly reason: "sealed-accepted" }
+  | { readonly kind: "block"; readonly reason: "authority-failed"; readonly cause: unknown };
+
+export async function sealedAcceptanceRedispatchDisposition(
   admitted: AdmittedRoleInvocation,
-): Promise<boolean> {
-  // Ledger authority must not wash read failure into "unsealed" (#648).
-  // Callers treat throw as fail-closed: preserve true cause, never redispatch.
-  return (await sealedLedgerOutcome(admitted)) !== undefined;
+): Promise<SealedAcceptanceRedispatchDisposition> {
+  try {
+    if ((await sealedLedgerOutcome(admitted)) !== undefined) {
+      return { kind: "block", reason: "sealed-accepted" };
+    }
+    return { kind: "allow" };
+  } catch (cause) {
+    // Ledger authority must not wash read failure into "unsealed" (#648).
+    return { kind: "block", reason: "authority-failed", cause };
+  }
 }
 
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
+  scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
   const projection = await readAuditEscalationSubmission(
     admitted.projectRoot,
     admitted.runId,
-    sealedLedgerHome(admitted),
+    ledgerReadScope(admitted, scope),
   );
   if (projection?.role !== role) return undefined;
   return projection;
@@ -202,11 +246,12 @@ async function auditEscalationLedgerOutcome(
 async function closedLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
+  scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
+  const sealed = await sealedLedgerOutcome(admitted, scope);
   return sealed?.role === role
     ? sealed
-    : auditEscalationLedgerOutcome(admitted, role);
+    : auditEscalationLedgerOutcome(admitted, role, scope);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -428,6 +473,110 @@ function isTypedActivationError(
   );
 }
 
+/** Flatten nested AggregateError leaves; non-aggregate values stay as one fact. */
+function flattenThrownFailureLeaves(error: unknown): unknown[] {
+  if (!(error instanceof AggregateError)) {
+    return [error];
+  }
+  const leaves: unknown[] = [];
+  for (const item of error.errors) {
+    leaves.push(...flattenThrownFailureLeaves(item));
+  }
+  return leaves;
+}
+
+/**
+ * Project one thrown value into a ControlledFailure leaf.
+ * Sole owner for thrown-leaf identity/diagnostic mapping.
+ * AggregateError nesting is handled by classifyThrownFailure.
+ */
+export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
+  if (isTypedActivationError(error)) {
+    const identity = thrownIdentity(error);
+    if (error.failureCode !== undefined && identity.code === undefined) {
+      identity.code = error.failureCode;
+    }
+    return {
+      cause: error.knownCause,
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+      ...(error.details === undefined ? {} : { details: error.details }),
+    };
+  }
+  if (error instanceof Error) {
+    const identity = thrownIdentity(error);
+    return {
+      cause: "unrecognized",
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+    };
+  }
+  return {
+    cause: "unrecognized",
+    diagnostic: String(error),
+  };
+}
+
+/**
+ * Concurrent thrown failures (host + cleanup, etc.):
+ * primary leaf owns cause/diagnostic/identity; remaining leaves stay as
+ * details.concurrentFailures so neither fact covers the other.
+ */
+function classifyThrownFailure(error: unknown): ControlledFailure {
+  if (!(error instanceof AggregateError)) {
+    return projectThrownFailureLeaf(error);
+  }
+  const leaves = flattenThrownFailureLeaves(error);
+  if (leaves.length === 0) {
+    // Empty aggregate — retain the aggregate shell rather than invent a cause.
+    return projectThrownFailureLeaf(error);
+  }
+  const primary = projectThrownFailureLeaf(leaves[0]);
+  if (leaves.length === 1) {
+    return primary;
+  }
+  const priorConcurrent = Array.isArray(primary.details?.concurrentFailures)
+    ? primary.details.concurrentFailures
+    : [];
+  const concurrentFailures = [
+    ...priorConcurrent,
+    ...leaves.slice(1).map((leaf) => {
+      const secondary = projectThrownFailureLeaf(leaf);
+      return {
+        cause: secondary.cause,
+        diagnostic: secondary.diagnostic,
+        ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
+        ...(secondary.details === undefined ? {} : { details: secondary.details }),
+      };
+    }),
+  ];
+  return {
+    cause: primary.cause,
+    diagnostic: primary.diagnostic,
+    ...(primary.identity === undefined ? {} : { identity: primary.identity }),
+    details: {
+      ...(primary.details ?? {}),
+      concurrentFailures,
+    },
+  };
+}
+
+/** Merge caller-owned secondary evidence into a classified failure without washing path facts. */
+function withKnownDetails(
+  failure: ControlledFailure,
+  knownDetails: Readonly<Record<string, unknown>> | undefined,
+): ControlledFailure {
+  if (knownDetails === undefined) return failure;
+  const { timedOut: _knownTimedOut, ...rest } = knownDetails;
+  return {
+    ...failure,
+    details: {
+      ...rest,
+      ...(failure.details ?? {}),
+    },
+  };
+}
+
 /**
  * Classify a controlled post-admission failure without washing unrecognized identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
@@ -435,6 +584,7 @@ function isTypedActivationError(
  * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
  * knownCause precedes timeout so a co-present typed provider/session identity is not
  * washed when the child also timed out. Cause is never inferred from stderr wording.
+ * AggregateError concurrent leaves keep primary identity and secondary facts in details.
  */
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
@@ -464,30 +614,7 @@ export function classifyPostAdmissionFailure(input: {
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   if (Object.hasOwn(input, "thrown")) {
-    const error = input.thrown;
-    if (isTypedActivationError(error)) {
-      const identity = thrownIdentity(error);
-      if (error.failureCode !== undefined && identity.code === undefined) {
-        identity.code = error.failureCode;
-      }
-      return {
-        cause: error.knownCause,
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    if (error instanceof Error) {
-      const identity = thrownIdentity(error);
-      return {
-        cause: "unrecognized",
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    return {
-      cause: "unrecognized",
-      diagnostic: String(error),
-    };
+    return classifyThrownFailure(input.thrown);
   }
   if (input.knownCause !== undefined) {
     const fallback =
@@ -520,39 +647,54 @@ export function classifyPostAdmissionFailure(input: {
     };
   }
   if (input.timedOut) {
-    return {
-      cause: "timeout",
-      diagnostic: "role run timed out",
-      details: { timedOut: true, exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "timeout",
+        diagnostic: "role run timed out",
+        details: { timedOut: true, exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.code !== 0) {
     const fallback = `role run failed with exit ${input.code ?? "null"}`;
-    return {
-      cause: "activation",
-      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "activation",
+        diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+        details: { exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "missing") {
-    return {
-      cause: "session",
-      diagnostic: "role run left no readable session transcript",
-      details: { exitCode: input.code, session: "missing" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: "role run left no readable session transcript",
+        details: { exitCode: input.code, session: "missing" },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "unreadable") {
-    return {
-      cause: "session",
-      diagnostic: input.session.diagnostic,
-      details: { exitCode: input.code, session: "unreadable" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: input.session.diagnostic,
+        details: { exitCode: input.code, session: "unreadable" },
+      },
+      input.knownDetails,
+    );
   }
-  return {
-    cause: "output",
-    diagnostic: "role run completed without a lawful typed terminal result",
-    details: { exitCode: input.code },
-  };
+  return withKnownDetails(
+    {
+      cause: "output",
+      diagnostic: "role run completed without a lawful typed terminal result",
+      details: { exitCode: input.code },
+    },
+    input.knownDetails,
+  );
 }
 
 /** One projection owner for the four audited public runners. */
@@ -903,41 +1045,90 @@ async function loadBoundAuditorVolumes(
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join(dirname(sessionFile), "auditor-roles");
-  let names: string[];
-  try {
-    names = await readdir(childDirectory);
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw sessionReadFailure(error, "failed to read bound auditor session directory");
-  }
+  const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   // Auto-resume seam (owner A): stale check must ignore resume envelope and
   // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
   // first attempt's child after resume advanced latest, losing retentionFailure
   // when retry had no compliance entry. Fix: ignore envelope for staleness and
   // prefer any valid compliance failure before falling back to primary.
   const valid: BoundAuditorVolume[] = [];
-  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
-    let entries: SessionEntry[];
+  let sawAnyDirectory = false;
+  for (const childDirectory of childDirectories) {
+    let names: string[];
     try {
-      entries = await readBoundSessionEntries(join(childDirectory, file));
+      names = await readdir(childDirectory);
+      sawAnyDirectory = true;
     } catch (error) {
-      throw sessionReadFailure(error, "failed to read discovered auditor session");
+      if (isMissingPathError(error)) continue;
+      throw sessionReadFailure(error, "failed to read bound auditor session directory");
     }
-    const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
-    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord(bindingEntry?.data) && isRecord(bindingEntry.data.parent) ? bindingEntry.data.parent : undefined;
-    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
-    const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
-    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    valid.push({
-      entries,
-      parentId,
-      sessionFile,
-      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
-    });
+    for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+      let entries: SessionEntry[];
+      try {
+        entries = await readBoundSessionEntries(join(childDirectory, file));
+      } catch (error) {
+        throw sessionReadFailure(error, "failed to read discovered auditor session");
+      }
+      const header = entries.find((entry) => entry.type === "session");
+      if (!isRecord(header)) continue;
+      // Parent-attempt binding owns its interval on multi-attempt volumes
+      // (never whole-volume provider/compliance).
+      const bindingIndexes: number[] = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        if (entry?.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) {
+          bindingIndexes.push(i);
+        }
+      }
+      const bindingPasses: Array<{ entry: SessionEntry | undefined; start: number; end: number }> =
+        bindingIndexes.length > 0
+          ? bindingIndexes.map((start, idx) => ({
+              entry: entries[start],
+              start,
+              end: idx + 1 < bindingIndexes.length ? bindingIndexes[idx + 1]! : entries.length,
+            }))
+          : [{ entry: undefined, start: 0, end: entries.length }];
+      for (const { entry: bindingEntry, start, end } of bindingPasses) {
+        const bindingParent =
+          bindingEntry !== undefined &&
+          isRecord(bindingEntry.data) &&
+          isRecord(bindingEntry.data.parent)
+            ? bindingEntry.data.parent
+            : undefined;
+        const attemptEntryId =
+          typeof bindingParent?.attemptEntryId === "string"
+            ? bindingParent.attemptEntryId
+            : undefined;
+        const attemptEntryIndex =
+          attemptEntryId === undefined
+            ? -1
+            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+        const boundSessionFile =
+          typeof bindingParent?.sessionFile === "string"
+            ? bindingParent.sessionFile
+            : typeof header.parentSession === "string"
+              ? header.parentSession
+              : undefined;
+        if (boundSessionFile !== sessionFile) continue;
+        if (
+          bindingParent !== undefined &&
+          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
+        ) {
+          continue;
+        }
+        if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
+        valid.push({
+          entries: entries.slice(start, end),
+          parentId,
+          sessionFile,
+          ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+        });
+        // Keep every qualifying interval in the current parent-user range.
+        // A single first-match break drops later same-user summons failures (#636).
+      }
+    }
   }
+  if (!sawAnyDirectory && valid.length === 0) return undefined;
   return valid;
 }
 
@@ -2218,16 +2409,23 @@ export function projectTerminalGateFact(
 }
 
 /**
- * Read gate facts from the run's session/auditor-roles nest via the sole
- * nested-volume reader (#446/#478). Missing directory → undefined (no-gate
- * zero change). Damaged discovered volumes propagate — never wash to "no gate".
+ * Read gate facts from the run's session/auditor-roles nest (#446/#478).
+ * Missing directories → undefined (no-gate zero change).
+ * Damaged discovered volumes propagate — never wash to "no gate".
  */
 export async function extractGateFactFromSessionDirectory(
   sessionDirectory: string,
+  options: {
+    readonly runDirectory?: string;
+    readonly parentSessionFile?: string;
+  } = {},
 ): Promise<TerminalGateFact | undefined> {
-  const rounds = await readAnalystGateCyclesFromAuditorRoles(
-    join(sessionDirectory, "auditor-roles"),
-  );
+  const directories = [join(sessionDirectory, "auditor-roles")];
+  const parentSessionFile =
+    options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
+  const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
+    parentSessionFile,
+  });
   return projectTerminalGateFact(rounds);
 }
 
@@ -2245,7 +2443,14 @@ async function withOptionalGateProjection<
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
   },
->(base: T, sessionDirectory: string): Promise<T & { gate?: TerminalGateFact }> {
+>(
+  base: T,
+  sessionDirectory: string,
+  gateContext: {
+    readonly runDirectory?: string;
+    readonly parentSessionFile?: string;
+  } = {},
+): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
   // accepted gate cycle to project. Re-reading that rejected receipt as an
   // accepted cycle would replace the original failure with a projection error.
@@ -2261,7 +2466,9 @@ async function withOptionalGateProjection<
       || secondaryEvidence.stage === "notary"
     )
   ) return base;
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
+
+  // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
   return gate === undefined ? base : { ...base, gate };
 }
 
@@ -3215,11 +3422,12 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | import("./invocation.ts").AdmittedEvidenceChildInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName);
+  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
     return withOptionalGateProjection(
@@ -3321,6 +3529,7 @@ export type LawfulNotaryRoleOutcome = {
 async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "notary",
@@ -3337,15 +3546,16 @@ async function settleLawfulNotaryTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 /** Settle a lawful Notary Terminal from the admitted session. */
 export async function settleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulNotaryTerminalResult(admitted, authority);
+  const settled = await settleLawfulNotaryTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Notary Role run completed without a lawful typed terminal result",
@@ -3358,8 +3568,9 @@ export async function settleNotaryTerminalResult(
 export async function trySettleNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulNotaryTerminalResult(admitted, authority);
+  return settleLawfulNotaryTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
@@ -3373,6 +3584,7 @@ export type LawfulCountersignRoleOutcome = {
 async function settleLawfulCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
@@ -3389,15 +3601,16 @@ async function settleLawfulCountersignTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 /** Settle a lawful Countersign Terminal from the admitted session. */
 export async function settleCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCountersignTerminalResult(admitted, authority);
+  const settled = await settleLawfulCountersignTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Countersign Role run completed without a lawful typed terminal result",
@@ -3410,8 +3623,9 @@ export async function settleCountersignTerminalResult(
 export async function trySettleCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCountersignTerminalResult(admitted, authority);
+  return settleLawfulCountersignTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
@@ -3425,6 +3639,7 @@ export type LawfulGleanerLeftRoleOutcome = {
 async function settleLawfulGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gleaner-left",
@@ -3441,15 +3656,16 @@ async function settleLawfulGleanerLeftTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 /** Settle a lawful Gleaner-Left Terminal from the admitted session. */
 export async function settleGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority);
+  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Gleaner-Left Role run completed without a lawful typed terminal result",
@@ -3462,8 +3678,9 @@ export async function settleGleanerLeftTerminalResult(
 export async function trySettleGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulGleanerLeftTerminalResult(admitted, authority);
+  return settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */
@@ -3477,6 +3694,7 @@ export type LawfulInspectorRoleOutcome = {
 async function settleLawfulInspectorTerminalResult(
   admitted: AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "inspector",
@@ -3493,14 +3711,15 @@ async function settleLawfulInspectorTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 export async function trySettleInspectorTerminalResult(
   admitted: AdmittedInspectorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulInspectorTerminalResult(admitted, authority);
+  return settleLawfulInspectorTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Gatekeeper accepted outcome (dispatch | pass, #639). */
@@ -3514,6 +3733,7 @@ export type LawfulGatekeeperRoleOutcome = {
 async function settleLawfulGatekeeperTerminalResult(
   admitted: AdmittedGatekeeperInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gatekeeper",
@@ -3530,15 +3750,16 @@ async function settleLawfulGatekeeperTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 /** Try to settle a lawful Gatekeeper Terminal; undefined only for genuine absence. */
 export async function trySettleGatekeeperTerminalResult(
   admitted: AdmittedGatekeeperInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulGatekeeperTerminalResult(admitted, authority);
+  return settleLawfulGatekeeperTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Navigator accepted outcome (route advice, #639). */
@@ -3552,6 +3773,7 @@ export type LawfulNavigatorRoleOutcome = {
 async function settleLawfulNavigatorTerminalResult(
   admitted: AdmittedNavigatorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "navigator",
@@ -3568,15 +3790,16 @@ async function settleLawfulNavigatorTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 /** Try to settle a lawful Navigator Terminal; undefined only for genuine absence. */
 export async function trySettleNavigatorTerminalResult(
   admitted: AdmittedNavigatorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulNavigatorTerminalResult(admitted, authority);
+  return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Auditor accepted outcome (pass/revise/escalate, #675). */

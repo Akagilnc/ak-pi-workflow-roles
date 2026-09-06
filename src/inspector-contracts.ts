@@ -28,12 +28,11 @@ export function validateRecordedInspectorOutput(value: unknown): InspectorOutput
   throw new Error("Inspector output has no execution discriminator");
 }
 
-/** Machine-facing facts from an accepted 察院 release. Findings retained as submitted. */
+/**
+ * Machine-facing facts from an accepted 察院 release.
+ * Lawful free content is retained as submitted (ADR 0025 / 0055) — no field whitelist.
+ * status remains the sole execution discriminator; free fields never derive status.
+ */
 export function inspectorDecisiveFacts(output: InspectorOutput): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  const findings = (output as { findings?: unknown }).findings;
-  if (findings !== undefined) facts.findings = findings;
-  const reason = (output as { reason?: unknown }).reason;
-  if (reason !== undefined) facts.reason = reason;
-  return facts;
+  return { ...(output as Readonly<Record<string, unknown>>) };
 }

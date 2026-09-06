@@ -18,10 +18,16 @@ export const CANONICAL_SOURCE_ROLE = "judge" as const;
 export async function seedCanonicalSourceRun(
   home: string,
   project: string,
+  options: {
+    readonly runId?: string;
+    readonly ticketNumber?: number;
+    readonly sessionContent?: string;
+  } = {},
 ): Promise<string> {
+  const runId = options.runId ?? CANONICAL_SOURCE_RUN_ID;
   const coords = issuePiDurablePrincipalCoordinates({
     cwd: project,
-    runId: CANONICAL_SOURCE_RUN_ID,
+    runId,
     role: CANONICAL_SOURCE_ROLE,
     home,
   });
@@ -29,16 +35,23 @@ export async function seedCanonicalSourceRun(
   const admittedRequestPath = join(coords.runDirectory, "admitted-request.json");
   await writeFile(
     coords.sessionFile,
-    `${JSON.stringify({ type: "message", message: { role: "user", content: "draft" } })}\n`,
+    `${JSON.stringify({
+      type: "message",
+      message: { role: "user", content: options.sessionContent ?? "draft" },
+    })}\n`,
     "utf8",
   );
   await writeFile(
     admittedRequestPath,
-    `${JSON.stringify({ role: CANONICAL_SOURCE_ROLE, runId: CANONICAL_SOURCE_RUN_ID })}\n`,
+    `${JSON.stringify({
+      role: CANONICAL_SOURCE_ROLE,
+      runId,
+      ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
+    })}\n`,
     "utf8",
   );
   await writeRoleRunState(coords.runDirectory, {
-    runId: CANONICAL_SOURCE_RUN_ID,
+    runId,
     role: CANONICAL_SOURCE_ROLE,
     state: "terminal",
     bookKey: coords.bookKey,

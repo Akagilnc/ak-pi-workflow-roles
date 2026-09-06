@@ -31,14 +31,8 @@ export const PUBLIC_CLI_SUPPORT_COMMANDS = [
 
 export type PublicCliSupportCommand = (typeof PUBLIC_CLI_SUPPORT_COMMANDS)[number];
 
-export type PublicThinkingLevel =
-  | "off"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max";
+/** Opaque thinking level string — pass-through to Pi; no local whitelist (#683). */
+export type PublicThinkingLevel = string;
 
 export type ModelRef = {
   provider: string;

@@ -28,6 +28,7 @@ async function driveLedgerProducer(input: {
   readonly home?: string;
   readonly toolCallId: string;
   readonly runDirectory?: string;
+  readonly courtAttemptId?: string;
 }): Promise<void> {
   const toolName = toolNameForRole(input.role);
   let registered: HostToolDefinition | undefined;
@@ -55,8 +56,11 @@ async function driveLedgerProducer(input: {
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
   const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   process.env.AK_ROLE_RUN_DIR =
     input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
+  if (input.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+  else process.env.AK_ROLE_COURT_ATTEMPT = input.courtAttemptId;
   try {
     const context = {
         cwd: input.cwd,
@@ -81,6 +85,8 @@ async function driveLedgerProducer(input: {
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
   }
 }
 
@@ -93,9 +99,18 @@ export async function sealAcceptedSubmission(input: {
   readonly home?: string;
   readonly toolCallId?: string;
   readonly runDirectory?: string;
+  /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
+  readonly courtAttemptId?: string;
 }): Promise<void> {
   // Read under the same machine home the producer writes (not ambient process HOME).
-  if (await readSealedSubmission(input.cwd, input.runId, input.home) !== undefined) return;
+  // A new court attempt may seal again after a prior sealed attempt — only skip when
+  // this exact court turn would collide with an already-present latest seal without id.
+  if (
+    input.courtAttemptId === undefined &&
+    (await readSealedSubmission(input.cwd, input.runId, input.home)) !== undefined
+  ) {
+    return;
+  }
   await driveLedgerProducer({
     cwd: input.cwd,
     runId: input.runId,
@@ -104,6 +119,7 @@ export async function sealAcceptedSubmission(input: {
     toolCallId: input.toolCallId ?? "seal-1",
     ...(input.home === undefined ? {} : { home: input.home }),
     ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
+    ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
   });
 }
 
@@ -128,6 +144,11 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     typeof input.env.HOME === "string" && input.env.HOME.length > 0
       ? input.env.HOME
       : undefined;
+  const courtAttemptId =
+    typeof input.env.AK_ROLE_COURT_ATTEMPT === "string" &&
+    input.env.AK_ROLE_COURT_ATTEMPT.length > 0
+      ? input.env.AK_ROLE_COURT_ATTEMPT
+      : undefined;
   await sealAcceptedSubmission({
     cwd: input.cwd,
     runId,
@@ -136,6 +157,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     details: input.details,
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
+    ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
   });
 }
 

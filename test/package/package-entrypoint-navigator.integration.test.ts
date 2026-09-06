@@ -527,11 +527,11 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       // Auth/quota/transport prose independence lives at navigator-attendance seam; one diagnostic each here.
+      // thinking stick/availability re-check removed (#683); Pi clamps itself.
       const cases = [
         { name: "context", source: "context" },
         { name: "session", source: "session" },
         { name: "model", source: "model" },
-        { name: "thinking", source: "thinking" },
         { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"] },
         { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"] },
         { name: "transport", source: "transport", diagnostics: ["transport unavailable"] },
@@ -557,9 +557,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             const model = faux.getModel();
             const setting = scenario.name === "model"
               ? "missing/provider"
-              : scenario.name === "thinking"
-                ? `${model.provider}/${model.id}:max`
-                : `${model.provider}/${model.id}`;
+              : `${model.provider}/${model.id}`;
+
             await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
             // Institutional Navigator child resolves auth/stream via agentDir models.json
             // mock HTTP (not the parent session provider). Script navigator failures on
