@@ -13,6 +13,7 @@ import {
   MISSING_ARGUMENTS_SUBMISSION,
 } from "../../src/gatekeeper-role.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
+import { stampShapeUnreadableDetails } from "../../src/shape-unreadable-failure.ts";
 import { seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 import { fauxProvider } from "@earendil-works/pi-ai";
 
@@ -128,7 +129,7 @@ test("parent gate receipt book failure is envelope failInfrastructure after lawf
     // (ADR 0018 / #675 r4). Envelope failInfrastructure owns the abort face once.
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { requireGatekeeperPass } = await import("../../src/gatekeeper-role.ts");
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
     const officerRun = join(context.runDirectory, "officer-run");
     await mkdir(join(officerRun, "session"), { recursive: true });
     await writeFile(join(officerRun, "session", "session.jsonl"), "{\"type\":\"session\"}\n", "utf8");
@@ -267,7 +268,12 @@ test("direct officer missing arguments is typed unreadable with serializable sub
       runDirectory: context.runDirectory,
       subject: { kind: "worker_completion" },
       async summonOfficer() {
-        return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
+        // Settlement stamps shapeUnreadable; consumer reads only that marker (#675).
+        return failureTerminal(
+          "inspector",
+          "decision 无显式 pass/bounce/escalate",
+          stampShapeUnreadableDetails(MISSING_ARGUMENTS_SUBMISSION),
+        );
       },
     });
     // ADR 0055 / CLAUDE.md §0: shape-unreadable retains candidate as typed unreadable —
@@ -279,56 +285,6 @@ test("direct officer missing arguments is typed unreadable with serializable sub
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
-  });
-});
-
-test("requireGatekeeperPass parent-stands on shape-unreadable (no NonPass reject)", async () => {
-  await withParent(async (context) => {
-    const { requireGatekeeperPass } = await import("../../src/gatekeeper-role.ts");
-    let nonPassBound = false;
-    await requireGatekeeperPass({
-      context,
-      subject: { kind: "worker_completion" },
-      toolCallId: "unreadable-stand-1",
-      hostActions: {
-        failInfrastructure(error: unknown): never {
-          throw error instanceof Error ? error : new Error(String(error));
-        },
-        bindSubmissionNonPass() {
-          nonPassBound = true;
-        },
-      },
-      async summonOfficer() {
-        return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
-      },
-    });
-    assert.equal(nonPassBound, false, "unreadable must not bind NonPass");
-  });
-});
-
-test("typed infrastructure fact under cause=output stays transport_failure (not shape)", async () => {
-  await withParent(async (context) => {
-    const result = await runGatekeeper({
-      context,
-      runDirectory: context.runDirectory,
-      subject: { kind: "worker_completion" },
-      async summonOfficer() {
-        return failureTerminal("inspector", "pi host could not load its runtime", {
-          cause: "output",
-          diagnostic: "pi host could not load its runtime",
-          secondaryEvidence: {
-            kind: "role_infrastructure_failure",
-            source: "shared-role-lifecycle",
-            reasonCode: "host_failure",
-          },
-        });
-      },
-    });
-    assert.equal(result.status, "transport_failure");
-    if (result.status === "transport_failure") {
-      assert.equal(result.stage, "inspector");
-      assert.equal(result.reason, "pi host could not load its runtime");
-    }
   });
 });
 

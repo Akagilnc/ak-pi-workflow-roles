@@ -23,6 +23,7 @@ import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
+import { stampShapeUnreadableDetails } from "../shape-unreadable-failure.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
@@ -3251,7 +3252,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
         return settleFailureTerminalResult(admitted, {
           cause: "output",
           diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false },
+          details: stampShapeUnreadableDetails(residual.candidate),
         }, authority);
       }
       if (
@@ -3269,7 +3270,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
       return settleFailureTerminalResult(admitted, {
         cause: "output",
         diagnostic: spec.nonUsableDiagnostic,
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+        details: stampShapeUnreadableDetails(acceptedNonUsable),
       }, authority);
     }
     return undefined;
@@ -3280,7 +3281,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
       {
         cause: "output",
         diagnostic: spec.nonUsableDiagnostic,
-        details: { candidate: roleOutcome.decisiveFacts, acceptedReceipt: false },
+        details: stampShapeUnreadableDetails(roleOutcome.decisiveFacts),
       },
       authority,
     );

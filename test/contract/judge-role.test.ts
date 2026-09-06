@@ -26,8 +26,10 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
+  runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
+import { stampShapeUnreadableDetails } from "../../src/shape-unreadable-failure.ts";
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
@@ -339,7 +341,7 @@ function testHostActions(
 /** Lowest seam: requireGatekeeperPass options.summonOfficer (no RoleRuntimeDependencies bridge). */
 function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contracts.ts").RoleHost["requireGatekeeperPass"]> {
   return async (options) => {
-    const { requireGatekeeperPass } = await import("../../src/gatekeeper-role.ts");
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
     await requireGatekeeperPass({
       context: options.context,
       subject: options.subject as import("../../src/gatekeeper-role.ts").GatekeeperSubject,
@@ -496,7 +498,8 @@ async function workerCompletionGatekeeperHarness(options: {
           role: officer,
           cause: "output",
           diagnostic: "decision 无显式 pass/bounce/escalate",
-          decisiveFacts: officerUnusableSubmission,
+          // Settlement marker only — consumers do not re-derive from cause=output (#675).
+          decisiveFacts: stampShapeUnreadableDetails(officerUnusableSubmission),
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
@@ -573,12 +576,47 @@ async function workerCompletionGatekeeperHarness(options: {
       };
       // Real transport failure stays infrastructure (not GatekeeperDecisionError).
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      // Shape-unusable officer decision: parent stands (ADR 0055 / #675) — not NonPass reject,
-      // not transport abort, not forged bounce. runGatekeeper still projects status=unreadable.
-      // Judge may return pending-round-closure; worker may terminate — common contract is no throw.
-      await assert.doesNotReject(
-        () => execute(`${officer}-unusable-release`, output, this.context(`${officer}-unusable-release`, toolName)),
-      );
+      // Shape-unusable: projection retains submission (structured); submit path parent-stands
+      // (ADR 0055 / #675) — not NonPass reject, not transport, not forged bounce.
+      {
+        const projected = await runGatekeeper({
+          context: this.context(`${officer}-unusable-proj`, toolName),
+          subject: officer === "inspector"
+            ? { kind: "worker_completion" }
+            : { kind: "judge_draft" },
+          async summonOfficer() {
+            return {
+              exitCode: 1,
+              terminal: {
+                roleOutcome: {
+                  kind: "failure",
+                  role: officer,
+                  cause: "output",
+                  diagnostic: "decision 无显式 pass/bounce/escalate",
+                  decisiveFacts: stampShapeUnreadableDetails(officerUnusableSubmission),
+                },
+                navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+                artifacts: [],
+                runId: "test-gate-unusable-proj",
+              },
+            } as PublicSummonResult;
+          },
+        });
+        assert.equal(projected.status, "unreadable");
+        if (projected.status === "unreadable") {
+          assert.equal(projected.officer, officer);
+          assert.deepEqual(projected.submission, officerUnusableSubmission);
+        }
+      }
+      // Consume queue unusable via submit path — parent stands (no GatekeeperDecisionError).
+      const stood = await execute(
+        `${officer}-unusable-release`,
+        output,
+        this.context(`${officer}-unusable-release`, toolName),
+      ) as { terminate?: boolean; details?: unknown };
+      assert.equal(stood instanceof GatekeeperDecisionError, false);
+      // Worker terminates; judge may pending-round-closure — both are parent-stand faces.
+      assert.ok(stood !== undefined && stood !== null);
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.equal(error.result.status, "no_receipt");

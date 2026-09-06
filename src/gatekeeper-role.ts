@@ -15,6 +15,7 @@ import {
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import { retainedShapeUnreadableCandidate } from "./shape-unreadable-failure.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -220,44 +221,6 @@ function projectOfficerDecision(
   return shapeUnreadable(officer, decision);
 }
 
-function failureFactsRecord(facts: unknown): Record<string, unknown> | undefined {
-  if (typeof facts !== "object" || facts === null || Array.isArray(facts)) return undefined;
-  return facts as Record<string, unknown>;
-}
-
-/**
- * Shape-unreadable only when settlement retained a shape candidate under cause=output.
- * Typed host infrastructure (role_infrastructure_failure) stays transport_failure even if a
- * residual path still stamps cause=output (#675 producer→settlement→consumer diversion).
- */
-function isShapeUnreadableOfficerFailure(outcome: {
-  readonly cause: string;
-  readonly decisiveFacts: unknown;
-}): boolean {
-  if (outcome.cause !== "output") return false;
-  const facts = failureFactsRecord(outcome.decisiveFacts);
-  if (facts === undefined) return false;
-  const secondary = failureFactsRecord(facts.secondaryEvidence);
-  if (
-    facts.kind === "role_infrastructure_failure"
-    || (secondary !== undefined && secondary.kind === "role_infrastructure_failure")
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function shapeSubmissionFromFailure(facts: unknown): unknown {
-  const record = failureFactsRecord(facts);
-  if (record === undefined) return facts;
-  if (Object.hasOwn(record, "candidate")) return record.candidate;
-  const secondary = failureFactsRecord(record.secondaryEvidence);
-  if (secondary !== undefined && Object.hasOwn(secondary, "candidate")) {
-    return secondary.candidate;
-  }
-  return facts;
-}
-
 /** Map a public-role terminal onto the gate officer result surface. */
 function projectOfficerTerminal(
   officer: "inspector" | "notary",
@@ -285,14 +248,10 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "failure") {
-    // Typed diversion: shape-unreadable vs loud transport (ADR 0055 / #675).
-    // Do not infer bounce from non-empty decisiveFacts (冒签角色决定).
-    if (isShapeUnreadableOfficerFailure(outcome)) {
-      return shapeUnreadable(
-        officer,
-        shapeSubmissionFromFailure(outcome.decisiveFacts),
-        outcome.diagnostic,
-      );
+    // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
+    const shapeCandidate = retainedShapeUnreadableCandidate(outcome.decisiveFacts);
+    if (shapeCandidate !== undefined) {
+      return shapeUnreadable(officer, shapeCandidate, outcome.diagnostic);
     }
     return {
       status: "transport_failure",
@@ -321,7 +280,8 @@ export {
   type DirectOfficerRunPointer,
 } from "./archivist-record-entry.ts";
 
-type GatekeeperSummonProjection = {
+/** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */
+export type GatekeeperProjection = {
   readonly officer: "inspector" | "notary";
   readonly result: GatekeeperResult;
   /** Present only when a public summon actually returned (not transport pre-summon failure). */
@@ -329,47 +289,12 @@ type GatekeeperSummonProjection = {
 };
 
 /**
- * Shared-envelope pointer book under parent session/auditor-roles (ADR 0018 / #675).
- * Role projection never owns mkdir/writeFile or book exception handling.
- * Offline mocks without a real session leave no nested volume (lawful zero).
+ * Summon + project only. Lifecycle book and host abort face live on the shared
+ * submit envelope (`gatekeeper-pass-envelope.ts`, ADR 0018 / #675).
  */
-async function bookDirectOfficerPointer(
-  context: ExtensionContext | HostContext,
-  officer: "inspector" | "notary",
-  result: GatekeeperResult,
-  summoned: PublicSummonResult,
-): Promise<void> {
-  if (
-    result.status !== "pass"
-    && result.status !== "bounce"
-    && result.status !== "escalate"
-    && result.status !== "unreadable"
-  ) {
-    return;
-  }
-  const parentFile = context.sessionManager?.getSessionFile?.();
-  if (typeof parentFile !== "string" || parentFile.trim() === "") return;
-  const { sessionFileFromPublicSummon } = await import("./session-assistant-usage.ts");
-  const sessionFile = sessionFileFromPublicSummon(summoned);
-  if (sessionFile === undefined) {
-    // No independent 正本 to point at — do not synthesize a parallel session.
-    return;
-  }
-  const { bookDirectOfficerRunPointer } = await import("./archivist-record-entry.ts");
-  bookDirectOfficerRunPointer({
-    parentSessionFile: parentFile,
-    officer,
-    sessionFile,
-    ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
-      ? { runDirectory: summoned.runDirectory }
-      : {}),
-  });
-}
-
-/** Summon + project only. No lifecycle book (ADR 0018 — envelope owns that). */
-async function summonAndProjectGatekeeper(
+export async function projectGatekeeperRun(
   options: RunGatekeeperOptions,
-): Promise<GatekeeperSummonProjection> {
+): Promise<GatekeeperProjection> {
   const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
   if (runDirectory === undefined) {
@@ -411,66 +336,8 @@ async function summonAndProjectGatekeeper(
   };
 }
 
-/** Submission-gate summons: subject kind → officer; activation is public role path (#675). Projection only — no book. */
+/** Submission-gate summons: subject kind → officer; activation is public role path (#675). Projection only. */
 export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
-  const { result } = await summonAndProjectGatekeeper(options);
+  const { result } = await projectGatekeeperRun(options);
   return result;
-}
-
-/**
- * Shared submit-path envelope: project gate result, book officer pointer, map onto host actions.
- * Book lifecycle + its failure face live here once (ADR 0018) — not in role projection.
- * unreadable = parent stands with typed fact (ADR 0055); never mechanical NonPass reject.
- */
-export async function requireGatekeeperPass(options: {
-  readonly context: ExtensionContext | HostContext;
-  readonly subject: GatekeeperSubject;
-  readonly signal?: AbortSignal;
-  readonly hostActions: GatekeeperPassHostActions;
-  readonly toolCallId: string;
-  /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
-  readonly summonOfficer?: GateOfficerSummon;
-}): Promise<void> {
-  const projected = await summonAndProjectGatekeeper({
-    context: options.context,
-    subject: options.subject,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.summonOfficer === undefined ? {} : { summonOfficer: options.summonOfficer }),
-  });
-  const gatekeeper = projected.result;
-  // Envelope-owned pointer book. Failure is host infrastructure — single face, no role catch layer.
-  if (projected.summoned !== undefined) {
-    try {
-      await bookDirectOfficerPointer(
-        options.context,
-        projected.officer,
-        gatekeeper,
-        projected.summoned,
-      );
-    } catch (error) {
-      options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-    }
-  }
-  if (gatekeeper.status === "pass") return;
-  // ADR 0055 / #675: shape-unreadable officer output must not mechanically reject parent submission.
-  // Pointer already booked above when a 正本 existed; parent work stands.
-  if (gatekeeper.status === "unreadable") return;
-  if (gatekeeper.status === "transport_failure") {
-    // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
-      stage: typeof gatekeeper.stage;
-      reason: string;
-      submission?: unknown;
-    };
-    error.stage = gatekeeper.stage;
-    error.reason = gatekeeper.reason;
-    if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
-    options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-  }
-  if (gatekeeper.status === "escalate") {
-    throw new GatekeeperEscalationError(gatekeeper);
-  }
-  // bounce / no_receipt: typed non-pass — envelope owns execute→tool_result bridge.
-  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
-  throw new GatekeeperDecisionError(gatekeeper);
 }

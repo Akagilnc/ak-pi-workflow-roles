@@ -6,6 +6,7 @@ import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import { retainedShapeUnreadableCandidate } from "./shape-unreadable-failure.ts";
 
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
 export type ComplianceAuditObservation =
@@ -149,50 +150,6 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
   return usageFromPublicSummon(summoned);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function extractFailureCandidate(outcome: {
-  readonly decisiveFacts?: unknown;
-}): unknown | undefined {
-  const facts = isRecord(outcome.decisiveFacts) ? outcome.decisiveFacts : undefined;
-  const secondary = facts !== undefined && isRecord(facts.secondaryEvidence)
-    ? facts.secondaryEvidence
-    : undefined;
-  if (facts !== undefined && Object.hasOwn(facts, "candidate")) return facts.candidate;
-  if (secondary !== undefined && Object.hasOwn(secondary, "candidate")) return secondary.candidate;
-  return undefined;
-}
-
-/**
- * Shape-unreadable marker from settlement seat path (cause=output + retained candidate).
- * Typed host infrastructure (role_infrastructure_failure fact) is NEVER shape — even if a
- * residual path still stamps cause=output (#675 producer→settlement→consumer diversion).
- */
-function isShapeUnreadableOutputFailure(outcome: {
-  readonly cause: string;
-  readonly decisiveFacts?: unknown;
-}): boolean {
-  if (outcome.cause !== "output") return false;
-  const facts = isRecord(outcome.decisiveFacts) ? outcome.decisiveFacts : undefined;
-  if (facts === undefined) return false;
-  const secondary = isRecord(facts.secondaryEvidence) ? facts.secondaryEvidence : undefined;
-  // Infrastructure fact rides details → secondaryEvidence (settleFailureTerminalResult).
-  if (
-    facts.kind === "role_infrastructure_failure"
-    || (secondary !== undefined && secondary.kind === "role_infrastructure_failure")
-  ) {
-    return false;
-  }
-  // Seat settlement shape path retains candidate (+ acceptedReceipt:false).
-  if (extractFailureCandidate(outcome) !== undefined) return true;
-  if (secondary !== undefined && secondary.acceptedReceipt === false) return true;
-  // cause=output with neither infra nor candidate: treat decision bytes as shape candidate
-  // (mock/direct terminals may place the unreadable decision at decisiveFacts root).
-  return true;
-}
-
 function observationFromUnreadableCandidate(candidate: unknown): ComplianceAuditObservation {
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
     return {
@@ -241,11 +198,10 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    // Typed diversion (ADR 0055 / #675): shape-unreadable only when settlement retained a
-    // shape candidate under cause=output. Host infrastructure / provider / session stay loud.
-    if (isShapeUnreadableOutputFailure(outcome)) {
-      const candidate = extractFailureCandidate(outcome) ?? outcome.decisiveFacts;
-      return unreadableDecision(candidate, usage);
+    // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
+    const shapeCandidate = retainedShapeUnreadableCandidate(outcome.decisiveFacts);
+    if (shapeCandidate !== undefined) {
+      return unreadableDecision(shapeCandidate, usage);
     }
     throw new Error(outcome.diagnostic);
   }

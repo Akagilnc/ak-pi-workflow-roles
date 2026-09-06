@@ -7,7 +7,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
-import { requireGatekeeperPass, type GatekeeperNonPassResult, type GatekeeperSubject } from "../gatekeeper-role.ts";
+import type { GatekeeperNonPassResult, GatekeeperSubject } from "../gatekeeper-role.ts";
+import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
