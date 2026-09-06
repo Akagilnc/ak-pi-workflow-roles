@@ -303,9 +303,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Per-invoke queue: nested public auditor + navigator on the same faux server.
-          // Measured minimum for one real nested path (see packaged-workers crosses): 9.
-          luna.setResponses(Array.from({ length: 9 }, () => response));
+          // Per-invoke queue: nested public auditor/notary + parent navigator share Luna.
+          // Each successful invoke: parent prepare+rebind + nested officers' navigator prepares.
+          luna.setResponses(Array.from({ length: 12 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -389,13 +389,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // Contract: every Navigator prepare stays on the configured Luna model — no fallback provider.
-        // Prepare count varies with unrestricted tool surface + settlement rebind (#675); do not pin length.
-        assert.ok(modelRequests.length >= 6, `expected Navigator prepares, got ${modelRequests.length}`);
-        assert.equal(
-          modelRequests.every((entry) => entry === "openai-codex/gpt-5.6-luna"),
-          true,
-          `unsupported configuration must not fall back or dispatch another model: ${JSON.stringify(modelRequests)}`,
+        // Exact Luna stream count for 3 successful invokes under public nested officers:
+        // each invoke runs parent navigator prepare+rebind and nested notary/auditor
+        // navigator attendance on the same navigator-model.json Luna setting (6 streams).
+        // Unsupported invoke adds 0. No other provider may appear.
+        assert.deepEqual(
+          modelRequests,
+          Array.from({ length: 18 }, () => "openai-codex/gpt-5.6-luna"),
+          "unsupported configuration must not fall back or dispatch another model",
         );
         assert.equal(lifecycle[0]?.event.disposition, "recommendation");
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");

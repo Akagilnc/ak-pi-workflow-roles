@@ -632,10 +632,19 @@ export async function openPiInProcessSession(
     }
 
     // 7. Create AgentSession
-    // Host params passthrough only — no map/validate/default of thinking (#675 ⑥).
-    // After open, re-apply seat model/thinking: Pi createAgentSession can restore
-    // from an existing session file and cover the selection (#675 ⑤ / #697).
+    // Host thinking passthrough when present; bare selection omits thinkingLevel so
+    // Pi defaults apply (#675 ⑥). When reusing a session file, re-apply seat model
+    // after open so Pi cannot restore a stale model over selection (#675 ⑤ / #697).
     const requestedThinking = selection.thinking;
+    const priorEntries =
+      typeof (sessionManager as { getEntries?: () => readonly unknown[] }).getEntries === "function"
+        ? (sessionManager as { getEntries: () => readonly unknown[] }).getEntries()
+        : [];
+    const reusedSession = priorEntries.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const type = (entry as { type?: unknown }).type;
+      return type === "message" || type === "model_change" || type === "thinking_level_change";
+    });
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
@@ -649,21 +658,23 @@ export async function openPiInProcessSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    try {
-      await session.setModel(effectiveModel);
-      if (requestedThinking !== undefined) {
-        session.setThinkingLevel(requestedThinking as any);
+    if (reusedSession) {
+      try {
+        await session.setModel(effectiveModel);
+        if (requestedThinking !== undefined) {
+          session.setThinkingLevel(requestedThinking as any);
+        }
+      } catch (error) {
+        session.dispose();
+        throw withTypedReason(
+          error instanceof Error
+            ? error
+            : new Error(
+              `${label} failed to apply seat model/thinking for ${selection.provider}/${selection.model}`,
+            ),
+          requestedThinking !== undefined ? "thinking" : "model",
+        );
       }
-    } catch (error) {
-      session.dispose();
-      throw withTypedReason(
-        error instanceof Error
-          ? error
-          : new Error(
-            `${label} failed to apply seat model/thinking for ${selection.provider}/${selection.model}`,
-          ),
-        requestedThinking !== undefined ? "thinking" : "model",
-      );
     }
     if (
       requestedThinking !== undefined

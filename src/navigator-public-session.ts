@@ -120,15 +120,17 @@ export function createNativeNavigatorSessionFactory(
       }
     };
 
-    // Same in-process open seam public roles use — no tools allowlist / noTools fork (#675).
-    // Prepare tool is registered as a custom tool on the unrestricted surface.
+    // Same in-process open seam public roles use (#675): default coding tools + prepare
+    // terminating tool. No noTools:"all" / prepare-only allowlist fork.
     const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
     let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
     try {
       opened = await openPiInProcessSession({
         cwd: context.cwd,
         selection,
-        systemPrompt: "",
+        systemPrompt:
+          `You are Navigator attendance on this parent run. Submit direction via the ${NAVIGATOR_PREPARE_TOOL_NAME} tool in one call. Do not call other tools before that submission.`,
+        toolsAllowlist: ["read", "bash", "edit", "write", NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
         sessionManager,
         label: "Navigator",
