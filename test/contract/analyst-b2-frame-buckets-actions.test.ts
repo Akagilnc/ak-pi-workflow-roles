@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #326 analyst-B2 — two-bucket full partition + action board tracer.
  *
@@ -7,7 +8,6 @@
  */
 import assert from "node:assert/strict";
 import { cp, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   type AnalystB2RunMetrics,
 } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -161,13 +162,10 @@ function assertRunMetrics(actual: AnalystB2RunMetrics, expected: AnalystB2RunMet
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-b2-home-"));
-  try {
+  return withTempRoot("analyst-b2-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 /**

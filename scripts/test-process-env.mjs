@@ -1,31 +1,49 @@
 /**
- * Build an environment for test-owned processes without inheriting machine
- * role-ledger or Pi-home pointers. Right-hand masks survive downstream env
- * remerges; Node spawn omits undefined values.
- *
- * Default (#549): HOME + XDG_* point at a per-process temp directory so
- * fixtures that resolve through $HOME cannot touch the host ~/.pi tree.
- * Explicit options.home wins over that default.
- *
- * Default home is process-owned under tmpdir. Callers that pass options.home
- * own that path themselves. Tests may clean up only the temp trees they create;
- * never touch the real machine home or another workspace.
- *
- * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
- * @returns {NodeJS.ProcessEnv}
+ * #549 HOME redirect + #685 worktree-internal default home with exit cleanup.
+ * Owner 2026-09-06: may only delete inside this worktree; default home is a
+ * self-owned sibling root under the worktree (no shared .test-tmp parent);
+ * #612: process exit removes the default home so the worktree returns to pre-run state.
  */
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** Per-process default temp HOME for this test run (Scope 1). Not exported. */
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
 let defaultTestHome;
-/** Process-owned PATH bin with default hermes stub (#635 seat ticket resolution). */
+let defaultTestHomeCleanupRegistered = false;
 let sharedHermesBinDir;
+
+function registerDefaultTestHomeCleanup() {
+  if (defaultTestHomeCleanupRegistered) return;
+  defaultTestHomeCleanupRegistered = true;
+  // #612 / failure-honesty: cleanup failure must not exit green. exit listeners
+  // cannot block termination; mark a non-zero exitCode and land the cause on stderr.
+  process.on("exit", () => {
+    if (defaultTestHome === undefined) return;
+    try {
+      rmSync(defaultTestHome, { recursive: true, force: true });
+    } catch (error) {
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      try {
+        process.stderr.write(
+          `[test-process-env] failed to remove default test home ${defaultTestHome}: ${detail}\n`,
+        );
+      } catch {
+        // stderr may already be closed during process teardown
+      }
+      if (typeof process.exitCode !== "number" || process.exitCode === 0) {
+        process.exitCode = 1;
+      }
+    }
+  });
+}
 
 function defaultIsolatedTestHome() {
   if (defaultTestHome === undefined) {
-    defaultTestHome = mkdtempSync(join(tmpdir(), "ak-roles-test-home-"));
+    // Self-owned sibling root — no shared parent other processes try to rmdir.
+    defaultTestHome = mkdtempSync(join(PACKAGE_ROOT, ".test-tmp-ak-roles-test-home-"));
+    registerDefaultTestHomeCleanup();
   }
   return defaultTestHome;
 }
@@ -37,38 +55,24 @@ function redirectHomeEnv(env, home) {
   env.XDG_CACHE_HOME = join(home, ".cache");
 }
 
-/**
- * Default hermes stub matching installHermesFixture resolver default
- * (`{"assertion":"true-unbound"}`). Seat self-ticket (#635) makes hermes a
- * four-seat runtime dependency; CI/Pi-only dispatch surfaces get this stub on
- * PATH once per process. Tests that need a different face still prepend their
- * own installHermesFixture bin ahead of this entry.
- */
 function ensureSharedHermesFixtureBin() {
   if (sharedHermesBinDir !== undefined) return sharedHermesBinDir;
   const home = defaultIsolatedTestHome();
   sharedHermesBinDir = join(home, ".ak-test-path-bin");
   mkdirSync(sharedHermesBinDir, { recursive: true });
   const hermesPath = join(sharedHermesBinDir, "hermes");
-  writeFileSync(
-    hermesPath,
-    `#!/usr/bin/env node
+  writeFileSync(hermesPath, `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ assertion: "true-unbound" }));
 process.exit(0);
-`,
-    "utf8",
-  );
+`, "utf8");
   chmodSync(hermesPath, 0o755);
   return sharedHermesBinDir;
 }
 
 function withSharedHermesOnPath(env) {
-  // PATH omitted → leave omitted so spawn keeps Node platform-default lookup
-  // (explicit-internal PI_BINARY=bash case). Only decorate an already-present PATH.
   if (env.PATH === undefined) return;
   const bin = ensureSharedHermesFixtureBin();
   const prior = env.PATH;
-  // Keep an existing leading installHermesFixture bin ahead of the shared stub.
   if (prior.split(delimiter).includes(bin)) return;
   env.PATH = prior.length > 0 ? `${bin}${delimiter}${prior}` : bin;
 }
@@ -79,20 +83,13 @@ export function isolatedTestProcessEnv(options = {}) {
     AK_ROLE_RUN_DIR: undefined,
     PI_CODING_AGENT_DIR: undefined,
   };
-  const home =
-    options.home !== undefined ? options.home : defaultIsolatedTestHome();
+  const home = options.home !== undefined ? options.home : defaultIsolatedTestHome();
   redirectHomeEnv(env, home);
   if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
   withSharedHermesOnPath(env);
   return env;
 }
 
-/**
- * Apply {@link isolatedTestProcessEnv} onto the current process.env.
- * Used by the bare `node --test` preload so daily entries share the same source.
- *
- * @param {{ env?: NodeJS.ProcessEnv, home?: string, agentDir?: string }} [options]
- */
 export function applyIsolatedTestProcessEnv(options = {}) {
   const next = isolatedTestProcessEnv(options);
   process.env.HOME = next.HOME;
@@ -101,13 +98,8 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   process.env.XDG_CACHE_HOME = next.XDG_CACHE_HOME;
   if (next.PATH === undefined) delete process.env.PATH;
   else process.env.PATH = next.PATH;
-
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
-
-  if (next.PI_CODING_AGENT_DIR === undefined) {
-    delete process.env.PI_CODING_AGENT_DIR;
-  } else {
-    process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
-  }
+  if (next.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
 }

@@ -20,7 +20,8 @@ opencode run -m opencode-go/glm-5.2 "YOUR_LABOR_PROMPT"
   `opencode models` first** — provider prefixes migrate (verified 2026-08-21:
   GLM lives under `opencode-go/`, e.g. `opencode-go/glm-5.2`; the older
   `zai/glm-5.2` id errors with "Unexpected server error").
-- `--format json` gives structured output; `--auto` auto-approves non-denied
-  permissions for unattended runs (both per official docs).
+- Plain text output only (never `--format json` for labor — the returned body
+  goes back into the seat's context); `--auto` auto-approves non-denied
+  permissions for unattended runs (per official docs).
 - Output goes to stdout; long prompts may be passed via shell heredoc or a
   file read into the argument — follow the installed CLI's actual interface.

@@ -5,14 +5,7 @@ import type { DoctorCase, DoctorCaseCost, DoctorCount, DoctorEvidenceEntry } fro
 import { AcceptedDetailsContractError, acceptedFacts, isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.ts";
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-/**
- * Grok controlled-home ledger directory under a run (ADR 0077 / #594).
- * Native journals (e.g. updates.jsonl) are retained for dossier parity but are
- * not Pi session records — walking them into deriveSession yields false incomplete
- * legs. Explicit skip is the leave-trace exclusion until a grok parser exists.
- */
-const GROK_HOME_DIR_NAME = "grok-home";
-async function discoverCaseFiles(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) { if (item.name === GROK_HOME_DIR_NAME) continue; await walk(path, depth + 1); } else if (item.isFile() && (item.name.endsWith(".jsonl") || (item.name === "stderr.log" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
+async function discoverCaseFiles(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) { await walk(path, depth + 1); } else if (item.isFile() && (item.name.endsWith(".jsonl") || (item.name === "stderr.log" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
 function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
 function accumulate(metric: DoctorCount, value: number, source: string) { metric.count += value; if (value) metric.sources.push(source); }
 function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }

@@ -326,6 +326,7 @@ export async function runPublicInstructionSeat(
           projectRoot,
           role,
           ticketNumber: probedTicketNumber,
+          freshSummons: env.freshSummons,
           summons,
           resume: (runId, materials) =>
             runPublicInstructionSeatResume(

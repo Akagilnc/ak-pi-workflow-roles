@@ -18,8 +18,8 @@ zcode --prompt 'YOUR_LABOR_PROMPT' --cwd /path/to/worktree
 
 `--prompt` defaults to permission mode `yolo` (no TTY permission stalls).
 Useful extras measured from `zcode --help`: `--attach <path>` (repeatable),
-`--mode build|edit|plan|yolo`, `--resume <sess_...>`, `--json` where
-supported. Prefer `zcode --help` on the host over any remembered flag set.
+`--mode build|edit|plan|yolo`, `--resume <sess_...>`. Never `--json` for
+labor (the returned body goes back into the seat's context as plain text). Prefer `zcode --help` on the host over any remembered flag set.
 
 ## Realm and model traps (host-verified 2026-08-29, all three hit in sequence)
 

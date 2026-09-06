@@ -1,9 +1,9 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -18,17 +18,15 @@ import {
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
-  try {
+  return withTempRoot("ak-public-cli-explicit-internal-", async (home) => {
     seedGitRepository(home);
     return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {

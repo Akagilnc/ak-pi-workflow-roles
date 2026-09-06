@@ -300,6 +300,11 @@ export type CliEnv = {
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
   createRunId?: () => string;
+  /**
+   * #724: set by the `new` support verb before role dispatch; seat runners
+   * skip same-ticket auto-resume. Not a public flag — the verb is the choice.
+   */
+  freshSummons?: true;
 };
 
 /** Compose the Pi turn host for one role dispatch (sole public-cli → pi contact). */
@@ -443,6 +448,7 @@ function createRoleEnvironment(
     ...(options.config?.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
+    ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
   };
 }
 
@@ -1090,12 +1096,14 @@ export async function runAkRole(
       packageRoot: await realpath(env.packageRoot),
       principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority,
     };
-    const parsed = parseArgv(argv);
-    // Host/engine axes: callable roles + resume (#617 DK-3: resume shares seat axes).
+    let parsed = parseArgv(argv);
+    // Host/engine axes: callable roles + resume + new (#617 DK-3; #724 new shares seat axes).
     // Support commands (roles/config/…) still refuse both flags.
     const acceptsSeatAxes =
       parsed.command !== undefined &&
-      (isPublicCallableRole(parsed.command) || parsed.command === "resume");
+      (isPublicCallableRole(parsed.command) ||
+        parsed.command === "resume" ||
+        parsed.command === "new");
     if (
       parsed.host !== undefined &&
       !parsed.help &&
@@ -1166,6 +1174,24 @@ export async function runAkRole(
       };
     }
 
+    // #724 explicit fresh summons: `ak-role new <role> …` — same role argv, always mint.
+    // Rewrites onto the role command with freshSummons; auto-resume and resume stay intact.
+    if (parsed.command === "new") {
+      const role = parsed.args[0];
+      if (role === undefined) {
+        throw new CliUsageError("usage: ak-role new <role> …");
+      }
+      if (!isPublicCallableRole(role)) {
+        throw new CliUsageError(`usage: ak-role new <role> …; unknown role: ${role}`);
+      }
+      parsed = {
+        ...parsed,
+        command: role,
+        args: parsed.args.slice(1),
+      };
+      env = { ...env, freshSummons: true };
+    }
+
     // Resume reopens an exact Role run (#416): caller decides; session principal
     // must still exist. Seat and dispatch follow the durable admitted role.
     // #471: unique parser owns {runId, message?}; five role paths only consume it.
@@ -1208,7 +1234,10 @@ export async function runAkRole(
       return cliResultFromRoleRun(result);
     }
 
-    if (isPublicCliSupportCommand(parsed.command)) {
+    if (
+      parsed.command !== undefined &&
+      isPublicCliSupportCommand(parsed.command)
+    ) {
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 

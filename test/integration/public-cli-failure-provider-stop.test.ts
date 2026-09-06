@@ -6,9 +6,8 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
@@ -18,17 +17,11 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorPrepareTool, NavigatorUnavailableError } from "../../src/navigator-attendance.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
-  persistActivationSessionFile,
-  withHermeticHome,
-  withInstitutionalProviderFixture,
 } from "../helpers/pi-test-harness.ts";
-import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import {
   withTempHome,
   captureIo,

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
@@ -102,7 +102,7 @@ import {
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { scriptedGatekeeperModelRegistry } from "../helpers/faux-gatekeeper.ts";
-import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInProcessPi, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, withActivationHome, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 
 // Gatekeeper children resolve their run binding from AK_ROLE_RUN_DIR (the
 // tool.execute seam carries no explicit runDirectory option), so this local
@@ -368,16 +368,6 @@ function installRoleRuntime(
   armGateSummonOnHost(adapter.host);
   createRoleRuntimeExtension(deps)(adapter);
   return adapter;
-}
-
-/** Factory form for withInProcessPi.extensionFactories — arms gate on the host only. */
-function createArmedRoleRuntimeExtension(
-  deps: Parameters<typeof createRoleRuntimeExtension>[0],
-  options: { transcriptFromContext?: (ctx: ExtensionContext) => string } = {},
-): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    installRoleRuntime(pi, deps, options);
-  };
 }
 
 function toolCallContext(
@@ -2160,107 +2150,6 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       );
     });
   }
-});
-
-test("coder missing skill-expansion evidence persists typed non-pass on real host session", async () => {
-  // Lowest reachable real ExtensionRunner path: session.prompt → tool execute → durable session file.
-  await withActivationHome({ prefix: "ak-coder-expansion-durable-" }, async ({ home, agentDir }) => {
-    const work = resolve(home, "work");
-    await mkdir(work, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: work, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "coder-expansion@test.local"], { cwd: work, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Coder Expansion"], { cwd: work, stdio: "ignore" });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: work, stdio: "ignore" });
-
-    const taskPath = resolve(home, "approved-task.md");
-    await writeFile(taskPath, "# Approved task\n\nImplement the first vertical slice.\n");
-    const toolCallId = "coder-expansion-missing";
-    const completed = {
-      status: "completed" as const,
-      report: "TDD evidence and self-check three are recorded here.",
-    };
-    const expected = { code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE };
-    const faux = fauxProvider({
-      api: "ak-coder-expansion-durable",
-      provider: "ak-coder-expansion-durable",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-
-    await withInProcessPi({
-      activationLedgerSession: true,
-      cwd: work,
-      agentDir,
-      faux,
-      noExtensions: true,
-      noTools: "builtin",
-      // noSkills default true: host skill expansion yields no matching evidence.
-      systemPrompt: "CODER EXPANSION DURABLE",
-      mode: "print",
-      flags: {
-        "ak-role": "coder",
-        "ak-coder-phase": "apply",
-        "ak-coder-task": taskPath,
-      },
-      extensionFactories: [
-        createArmedRoleRuntimeExtension({
-          loadJudgeSoul: async () => "JUDGE LAW",
-          loadCoderSoul: async () => "CODER LAW",
-          loadCoderTask: async (path) => readFile(path, "utf8"),
-          loadCanonicalSkillBinding: async () => tddBinding(),
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        }),
-      ],
-    }, async ({ session, sessionManager }) => {
-      faux.setResponses([
-        fauxAssistantMessage(
-          fauxToolCall(CODER_OUTPUT_TOOL_NAME, completed, { id: toolCallId }),
-          { stopReason: "toolUse" },
-        ),
-        fauxAssistantMessage("coder expansion durable idle"),
-      ]);
-      await session.prompt("Implement the approved slice without host expansion evidence.");
-
-      const sessionFile = sessionManager.getSessionFile();
-      assert.ok(sessionFile, "activation session must materialize a durable session file");
-      const sessionLines = (await readFile(sessionFile, "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as {
-          type?: string;
-          message?: {
-            role?: string;
-            toolName?: string;
-            toolCallId?: string;
-            isError?: boolean;
-            details?: unknown;
-            content?: unknown;
-          };
-        });
-
-      const toolResults = sessionLines.filter(
-        (entry) =>
-          entry.type === "message" &&
-          entry.message?.role === "toolResult" &&
-          entry.message.toolName === CODER_OUTPUT_TOOL_NAME,
-      );
-      assert.equal(toolResults.length, 1, "exactly one coder output toolResult must be recorded");
-      const recorded = toolResults[0]!;
-      assert.equal(recorded.message?.toolCallId, toolCallId);
-      assert.equal(recorded.message?.isError, true);
-      assert.deepEqual(recorded.message?.details, expected);
-
-      // No accepted receipt: no successful coder toolResult.
-      const accepted = sessionLines.find(
-        (entry) =>
-          entry.type === "message" &&
-          entry.message?.role === "toolResult" &&
-          entry.message.toolName === CODER_OUTPUT_TOOL_NAME &&
-          entry.message.isError === false,
-      );
-      assert.equal(accepted, undefined);
-    });
-  });
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {

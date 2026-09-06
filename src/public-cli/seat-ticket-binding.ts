@@ -149,22 +149,26 @@ export async function resolveSeatTicketBinding(
 }
 
 /**
- * Shared same-ticket → resume decision (#637).
+ * Sole same-ticket → resume decision (#637 / #724).
  * Looks up the latest retained run for seat+ticket; when found, runs resume with
  * this summons' materials. Lookup/resume failures propagate (失败诚实) — never
- * wash into a fresh mint. Returns undefined only when no prior run exists.
+ * wash into a fresh mint. Returns undefined when the caller declared an explicit
+ * fresh summons (`ak-role new`) or when no prior run exists; both mint new.
+ * freshSummons is required so no seat can drift back into its own skip branch.
  */
 export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
   readonly ticketNumber: number;
+  readonly freshSummons: true | undefined;
   readonly summons?: SameTicketSummonsMaterials;
   readonly resume: (
     runId: string,
     summons: SameTicketSummonsMaterials | undefined,
   ) => Promise<T>;
 }): Promise<T | undefined> {
+  if (input.freshSummons === true) return undefined;
   const previousRunId = await findLatestRunIdForSeatTicket({
     home: input.home,
     bookKey: resolveBookKeyFromGit(input.projectRoot),

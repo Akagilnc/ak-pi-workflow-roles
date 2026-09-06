@@ -110,6 +110,11 @@ export type PostAdmissionEnv = {
   sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
   createRunId?: () => string;
+  /**
+   * #724 explicit fresh summons (`ak-role new <role>`): skip same-ticket auto-resume
+   * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
+   */
+  freshSummons?: true;
 };
 
 /**
@@ -294,7 +299,6 @@ export async function dispatchPostAdmissionTurn<
           ? await projectHostTransitionPriorNative({
               previousHost,
               liveHost,
-              runDirectory: admitted.runDirectory,
               piSessionFile: principalCoordinates.sessionFile,
             })
           : undefined;

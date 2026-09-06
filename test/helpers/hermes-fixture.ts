@@ -53,6 +53,9 @@ export async function installHermesFixture(
       ? undefined
       : Number(options.defaultExitCode);
 
+  // Explicit CommonJS (.cjs): package root is "type":"module"; bare `hermes`
+  // without extension inherits ESM and rejects require(). Fixture must reach
+  // the staged-query face, not die on module boundary.
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
@@ -89,7 +92,14 @@ if (isCollector) {
 process.stdout.write(${embedJson(resolverDefault)});
 process.exit(0);
 `;
-  await writeFile(hermesPath, script, "utf8");
+  // Write as hermes.cjs then symlink `hermes` so PATH resolution stays bare-name
+  // while Node reads the file as CommonJS regardless of package "type".
+  const hermesCjsPath = join(binDir, "hermes.cjs");
+  await writeFile(hermesCjsPath, script, "utf8");
+  await chmod(hermesCjsPath, 0o755);
+  // Wrapper keeps the production-facing bare name on PATH.
+  const wrapper = `#!/usr/bin/env bash\nexec "$(dirname "$0")/hermes.cjs" "$@"\n`;
+  await writeFile(hermesPath, wrapper, "utf8");
   await chmod(hermesPath, 0o755);
   return binDir;
 }
@@ -121,6 +131,7 @@ export async function installGhFixture(
 ): Promise<string> {
   await mkdir(binDir, { recursive: true });
   const ghPath = join(binDir, "gh");
+  // Same ESM package-boundary fix as hermes: bare name on PATH, .cjs body.
   const script = `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const path =
@@ -207,7 +218,11 @@ if (issueMatch) {
 
 reply(404, "Not Found", { message: "Not Found" });
 `;
-  await writeFile(ghPath, script, "utf8");
+  const ghCjsPath = join(binDir, "gh.cjs");
+  await writeFile(ghCjsPath, script, "utf8");
+  await chmod(ghCjsPath, 0o755);
+  const wrapper = `#!/usr/bin/env bash\nexec "$(dirname "$0")/gh.cjs" "$@"\n`;
+  await writeFile(ghPath, wrapper, "utf8");
   await chmod(ghPath, 0o755);
   return binDir;
 }

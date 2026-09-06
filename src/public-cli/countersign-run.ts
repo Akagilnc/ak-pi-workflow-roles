@@ -122,6 +122,7 @@ export async function runPublicCountersign(
       projectRoot,
       role: "countersign",
       ticketNumber: probedTicketNumber,
+      freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
         runPublicCountersignResume(

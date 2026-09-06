@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #648 — same-identity concurrent writers must not duplicate canonical rows.
  * One platform-neutral two-process mainline: real appendSitianRecord entry →
@@ -7,7 +8,6 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
@@ -30,18 +30,15 @@ function waitChildExit(child: ChildProcess): Promise<number | null> {
 
 async function settleSpawnedChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // already exiting
-  }
-  await waitChildExit(child).catch(() => undefined);
+  // Failures propagate into PAC cleanup: kill/wait must not swallow the true cause.
+  child.kill("SIGTERM");
+  await waitChildExit(child);
 }
 
 async function withHermeticLedgerRoot<T>(
   run: (ctx: { home: string; cwd: string }) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "sitian-identity-claim-"));
+  const root = await mkdtemp(worktreeTempPrefix("sitian-identity-claim-"));
   return withPrimaryAwareCleanup(
     async () => {
       const home = join(root, "home");
