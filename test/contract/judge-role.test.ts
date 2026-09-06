@@ -27,6 +27,7 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
+  MISSING_ARGUMENTS_SUBMISSION,
   runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
@@ -585,33 +586,44 @@ async function workerCompletionGatekeeperHarness(options: {
       // Shape-unusable: projection retains submission (structured); submit path parent-stands
       // (ADR 0055 / #675) — not NonPass reject, not transport, not forged bounce.
       {
-        const projected = await runGatekeeper({
-          context: this.context(`${officer}-unusable-proj`, toolName),
-          subject: officer === "inspector"
-            ? { kind: "worker_completion" }
-            : { kind: "judge_draft" },
-          async summonOfficer() {
-            return {
-              exitCode: 1,
-              terminal: {
-                roleOutcome: {
-                  kind: "failure",
-                  role: officer,
-                  cause: "output",
-                  diagnostic: "decision 无显式 pass/bounce/escalate",
-                  decisiveFacts: stampShapeUnreadableDetails(officerUnusableSubmission),
+        const projectUnusable = async (id: string, candidate: unknown) =>
+          await runGatekeeper({
+            context: this.context(id, toolName),
+            subject: officer === "inspector"
+              ? { kind: "worker_completion" }
+              : { kind: "judge_draft" },
+            async summonOfficer() {
+              return {
+                exitCode: 1,
+                terminal: {
+                  roleOutcome: {
+                    kind: "failure",
+                    role: officer,
+                    cause: "output",
+                    diagnostic: "decision 无显式 pass/bounce/escalate",
+                    decisiveFacts: stampShapeUnreadableDetails(candidate),
+                  },
+                  navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+                  artifacts: [],
+                  runId: id,
                 },
-                navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-                artifacts: [],
-                runId: "test-gate-unusable-proj",
-              },
-            } as PublicSummonResult;
-          },
-        });
+              } as PublicSummonResult;
+            },
+          });
+        const projected = await projectUnusable(`${officer}-unusable-proj`, officerUnusableSubmission);
         assert.equal(projected.status, "unreadable");
         if (projected.status === "unreadable") {
           assert.equal(projected.officer, officer);
           assert.deepEqual(projected.submission, officerUnusableSubmission);
+        }
+        // Marker presence decides, not the candidate value: an omitted-arguments officer
+        // call stays a stood-on unreadable decision whose retained submission is the
+        // serializable missing-args fact — never an infrastructure rethrow (#675 T15).
+        const omitted = await projectUnusable(`${officer}-unusable-omitted`, undefined);
+        assert.equal(omitted.status, "unreadable");
+        if (omitted.status === "unreadable") {
+          assert.equal(omitted.officer, officer);
+          assert.deepEqual(omitted.submission, MISSING_ARGUMENTS_SUBMISSION);
         }
       }
       // Consume queue unusable via submit path — parent stands (no GatekeeperDecisionError).

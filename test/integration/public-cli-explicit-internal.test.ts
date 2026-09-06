@@ -348,6 +348,10 @@ setInterval(() => {}, 1000);
     const parent = new AbortController();
     const resultPromise = host.executeTurn({
       ...minimalTurnRequest(home, runDirectory),
+      // The production runner has no default wall clock (ADR 0010), so the caller
+      // supplies the budget: a child that outlives a dropped abort is reaped by it
+      // in under a second and reports timedOut, instead of hanging this test.
+      timeoutMs: 750,
       signal: parent.signal,
     });
     await waitForFile(ready, resultPromise);
