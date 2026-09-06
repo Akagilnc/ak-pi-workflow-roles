@@ -40,16 +40,22 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
+  clearCurrentCourt,
   clearTypedProviderHttpObservation,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
+  readCurrentCourt,
+  recordCurrentCourt,
   renderResumeCommand,
   RunWriterLeaseHeldError,
+  type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
+import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import { readSealedSubmission } from "../submission-ledger.ts";
 import {
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
@@ -387,6 +393,17 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
+      // This court sealed — drop open-court pointer so bare resume is run-scoped idempotent.
+      if (
+        settled.roleOutcome.kind === "accepted" &&
+        request.courtAttemptId !== undefined &&
+        request.courtAttemptId.length > 0
+      ) {
+        const open = await readCurrentCourt(admitted.runDirectory);
+        if (open?.courtAttemptId === request.courtAttemptId) {
+          await clearCurrentCourt(admitted.runDirectory);
+        }
+      }
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
@@ -540,17 +557,78 @@ export async function runPostAdmissionSeatResume<
   // Same-ticket re-summons carry materials → new court turn on the retained run.
   // forceContinuation skips sealed short-circuit; courtAttemptId opens a fresh
   // submission-ledger attempt so sole-final applies per turn (old seals kept).
-  const forceContinuation = input.request.summons !== undefined;
-  const turnRequest = await input.buildTurnRequest(loaded.admitted);
-  const request =
-    forceContinuation && turnRequest.courtAttemptId === undefined
-      ? { ...turnRequest, courtAttemptId: randomUUID() }
-      : turnRequest;
+  // Bare resume with an unsealed currentCourt continues that court (not prior seal).
+  const summonsFace = input.request.summons !== undefined;
+  let forceContinuation = summonsFace;
+  let turnRequest = await input.buildTurnRequest(loaded.admitted);
+  let admitted = loaded.admitted;
+
+  if (summonsFace) {
+    const courtAttemptId =
+      turnRequest.courtAttemptId !== undefined && turnRequest.courtAttemptId.length > 0
+        ? turnRequest.courtAttemptId
+        : randomUUID();
+    turnRequest = { ...turnRequest, courtAttemptId };
+    const summons = input.request.summons!;
+    const court: CurrentCourtState = {
+      courtAttemptId,
+      ...(summons.instruction === undefined ? {} : { instruction: summons.instruction }),
+      ...(summons.instructionEmpty === undefined
+        ? {}
+        : { instructionEmpty: summons.instructionEmpty }),
+      ...(summons.attachmentPaths === undefined || summons.attachmentPaths.length === 0
+        ? {}
+        : { frozenAttachmentPaths: summons.attachmentPaths }),
+      ...(summons.sourceRunPath === undefined ? {} : { sourceRunPath: summons.sourceRunPath }),
+      ...(summons.sourceRun === undefined ? {} : { sourceRun: summons.sourceRun }),
+    };
+    await recordCurrentCourt(admitted.runDirectory, court);
+  } else {
+    const openCourt = await readCurrentCourt(admitted.runDirectory);
+    if (openCourt !== undefined) {
+      const sealedForOpen = await readSealedSubmission(
+        admitted.projectRoot,
+        admitted.runId,
+        {
+          home: homeFromRunDirectory(admitted.runDirectory),
+          attemptId: openCourt.courtAttemptId,
+        },
+      );
+      if (sealedForOpen === undefined) {
+        // Continue the unsealed current court — materials from run-state, not birth page.
+        forceContinuation = true;
+        turnRequest = { ...turnRequest, courtAttemptId: openCourt.courtAttemptId };
+        if (
+          openCourt.sourceRunPath !== undefined &&
+          openCourt.sourceRun !== undefined &&
+          turnRequest.activation.role === "notary"
+        ) {
+          admitted = {
+            ...admitted,
+            sourceRunPath: openCourt.sourceRunPath,
+            sourceRun: openCourt.sourceRun,
+          } as A;
+          turnRequest = {
+            ...turnRequest,
+            activation: {
+              ...turnRequest.activation,
+              role: "notary",
+              sourceRun: openCourt.sourceRunPath,
+            },
+          };
+        }
+      } else {
+        // Open court already sealed — drop pointer; bare resume stays run-scoped.
+        await clearCurrentCourt(admitted.runDirectory);
+      }
+    }
+  }
+
   return await runPostAdmissionManualResume({
-    admitted: loaded.admitted,
+    admitted,
     env: input.env,
     io: input.io,
-    request,
+    request: turnRequest,
     adapters: input.adapters,
     ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
     ...(forceContinuation ? { forceContinuation: true as const } : {}),
