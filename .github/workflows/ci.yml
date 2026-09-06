@@ -3,7 +3,7 @@ on:
   push:
     # Allowlist sole source of truth for publish eligibility (issue #555).
     # Downstream publish-registry must not copy this list.
-    branches: [main, feat/505-three-layer]
+    branches: [main]
   pull_request:
 jobs:
   test:
