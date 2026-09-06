@@ -19,9 +19,8 @@ import {
 } from "../helpers/navigator-attendance-kit.ts";
 
 // #685: host-neutral native AgentSession prompt cases culled — providerFailure/
-// terminal-less classification is host surface. No named @navigator production
-// run — C3 未结 (docs/research/issue-685-c3-deleted-contract-handoff.md).
-// Remaining cases are call-input / route memory without createAgentSession.
+// terminal-less. C3 §I: 无具名 @navigator 卷，不得用异常面总称结清
+// (docs/research/issue-685-c3-deleted-contract-handoff.md). Call-input remains.
 
 test("persistent model edits are immediate and have no fallback", async () => {
   const root = await mkdtemp(worktreeTempPrefix("navigator-model-setting-"));

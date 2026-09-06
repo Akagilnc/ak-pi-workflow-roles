@@ -1,5 +1,6 @@
-// #685 C1: withInProcessPi/createAgentSession host legs culled; C3 handoff:
-// docs/research/issue-685-c3-deleted-contract-handoff.md (keepalive 异常面 未结).
+// #685 C1: withInProcessPi host legs culled. C3 §I: e2e 双窗 refresh / shutdown 零
+// tick / unexpired 零网络 / production setting seam 未结（非笼统「异常面」）；
+// docs/research/issue-685-c3-deleted-contract-handoff.md.
 /**
  * #351 kimi-coding OAuth keepalive — required automatic tracers.
  *

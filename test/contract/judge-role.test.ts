@@ -1,6 +1,7 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-// #685 C1: withInProcessPi/createAgentSession host legs culled; C3 handoff:
+// #685 C1: withInProcessPi host legs culled. C3 handoff:
 // docs/research/issue-685-c3-deleted-contract-handoff.md
+// (§I coder missing skill-expansion 宿主 non-pass 未结; §K 盯文 transcript/soul 锁合法删)
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
