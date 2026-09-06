@@ -127,7 +127,7 @@
 | shared cold install 嵌套未跟踪字节变化时重建 | `shared-cold-install-construction.test.ts` | 删 | 无 | **未结** |
 | Doctor：fresh Pi 加载已装 extension 并 **完成一次 audited output**（soul/audit/closure/ledger） | `doctor-package-lifecycle.test.ts` | 删 | `BOOK/01a06625-5bfd-738f-8214-d402cb84a5f1@doctor`（public-cli，terminal，status=refused）只证入口+拒绝 settle | 入口/拒绝 **部分旁证**；audited 完成轨迹 **未结** |
 | Collector 冷装默认 **gh transport** 出 receipt | `collector-package-lifecycle.test.ts` | 删 | 健康 collector 不证 gh transport 冷装矩阵 | lifecycle/gh **未结** |
-| Reviewer 已装 tarball：**Reviewer→Judge 链** + truncated report/evidence | `reviewer-package-lifecycle.test.ts` | 删 | 健康 reviewer/judge 分卷并存 ≠ 原冷装链式案 | 链专用 **未结** |
+| Reviewer 已装 tarball：**Reviewer→Judge 链** + frozen report/evidence | `reviewer-package-lifecycle.test.ts` | 删 | 健康 reviewer/judge 分卷并存 ≠ 原冷装链式案 | 链专用 **未结** |
 | tool-execution observation：stderr JSONL、永不打 Navigator prepare；无 `--ak-role` 则零记录 | `package-entrypoint-observation.integration.test.ts` | 删 | 无 | **未结** |
 | package-owned tool idle **已移除**（silent tool 越过原 183s backstop 仍 pending） | `package-tool-idle-removed.test.ts` | 删 | 留存：`engine-detour-cancel-idle.test.ts`「silent detour child is not cut by package-owned tool idle backstop」= detour 路径 call-input，**部分**旁证移除 | package-owned idle 移除（detour 路径）**部分已结**；原 183s **角色注册**宿主时序 **未结** |
 | compliance **stream idle** 有限重试，耗尽后 typed tool `isError`（`StreamIdleTimeoutError`；非 package-owned idle） | `package-tool-idle-removed.test.ts:190–320`（删行为） | 删 | 留存 detour cancel-idle **不**含 compliance child stream 重试/耗尽。`stream-idle-guard` unit 只锁默认 183s 常数与 guard 本身，**不是** compliance 耗尽→judge tool isError | **未结**（专用；与 package-owned idle 移除分列） |
