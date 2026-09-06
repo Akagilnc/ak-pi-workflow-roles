@@ -1,13 +1,12 @@
 /**
- * Production composition for the grok-build RoleTurnHost adapter (#580 / #522 / #717).
- * Owns injectables around the S6 true adapter; does not alter S6 adapter behavior.
+ * Production composition for the generic ACP RoleTurnHost adapter (#732).
+ * Owns injectables around the S6 true adapter; does not alter adapter behavior.
  *
- * Grok CLI uses the operator home (`~/.grok`) and credentials in place. The
- * factory does not create a run-scoped grok home, does not rewrite HOME, and
- * does not copy or scrub auth.json. Sititian records on the run are the dossier.
+ * The agent runs against the operator home and its credentials in place. The
+ * factory does not create a run-scoped agent home, does not rewrite HOME, and
+ * does not copy or scrub credentials. Sitian records on the run are the dossier.
  */
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../canonical-skill-binding.ts";
@@ -25,35 +24,23 @@ import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
-import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
-import {
-  connectGrokAcpStdio,
-  controlledGrokChildEnv,
-} from "./role-turn-host.ts";
-import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
+import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
+import { createComposedAcpRoleTurnHost } from "./role-envelope.ts";
+import { connectAcpStdio } from "./role-turn-host.ts";
+import { createAcpSessionIdentityAuthority } from "./session-identity.ts";
 
-export type ProductionGrokHostOptions = Readonly<{
+export type ProductionAcpHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
+  description: AcpHostDescription;
 }>;
-
-function resolveGrokBinary(operatorHome: string): string {
-  return join(operatorHome, ".grok", "bin", "grok");
-}
-
-function childEnv(packageRoot: string): NodeJS.ProcessEnv {
-  return {
-    ...controlledGrokChildEnv(process.env),
-    AK_PACKAGE_ROOT: packageRoot,
-  };
-}
 
 const navigatorRoutePlaybookPath = fileURLToPath(
   new URL("../../resources/navigator-route-playbook.md", import.meta.url),
 );
 
-/** Host-neutral packaged role runtime deps for the Grok parent-process envelope. */
-export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
+/** Host-neutral packaged role runtime deps for the ACP parent-process envelope. */
+export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const judgeAuditor = createPiJudgeAuditor();
   const doctorAuditor = createPiDoctorAuditor();
   const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
@@ -120,22 +107,28 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
 }
 
 /**
- * Assemble the production grok-build RoleTurnHost from the S6 true adapter.
- * Grok subprocesses inherit the operator home; the run directory is sitian-only.
+ * Assemble a production ACP RoleTurnHost from the S6 true adapter for one host
+ * description. Agent subprocesses inherit the operator home; the run directory
+ * is sitian-only.
  */
-export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
-  const { packageRoot, principalAuthority } = options;
-  const env = childEnv(packageRoot);
+export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOptions): RoleTurnHost {
+  const { packageRoot, principalAuthority, description } = options;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...description.childEnv,
+    AK_PACKAGE_ROOT: packageRoot,
+  };
 
-  return createComposedGrokRoleTurnHost({
-    sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
-    roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
+  return createComposedAcpRoleTurnHost({
+    sessionIdentity: createAcpSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
+    boundResume: description.boundResume,
+    roleRuntimeDependencies: createAcpRoleRuntimeDependencies(packageRoot),
     async connect(request) {
-      return connectGrokAcpStdio({
-        binary: resolveGrokBinary(request.home),
+      return connectAcpStdio({
+        binary: resolveAcpBinary(description, request.home),
+        args: acpStdioArgs(description, request.model),
         cwd: request.cwd,
         env,
-        ...(request.model === undefined ? {} : { model: request.model.model }),
       });
     },
   });

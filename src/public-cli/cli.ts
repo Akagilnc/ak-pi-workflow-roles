@@ -38,8 +38,9 @@ import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
-import type { RoleTurnHost } from "../host-contracts.ts";
-import { loadProductionGrokHostFactory } from "./load-production-grok-host.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { packagedExternalHostNames } from "../host-descriptions.ts";
+import { loadProductionAcpHostFactory } from "./load-production-acp-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -325,19 +326,19 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
-  // Composition-root unique adapter table (#522 / #580): pi + S6 grok-build true adapter.
-  const adapters = env.hostAdapters ?? [
+  // Composition-root adapter table: pi (in-process default) + one ACP adapter per description-table key.
+  const adapters: readonly NamedRoleTurnHostAdapter[] = env.hostAdapters ?? [
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
-    {
-      name: "grok-build",
+    ...packagedExternalHostNames().map((name) => ({
+      name,
       create: () => {
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
         let hostPromise: Promise<RoleTurnHost> | undefined;
         return {
           ok: true as const,
           host: {
-            executeTurn: async (request) => {
-              hostPromise ??= loadProductionGrokHostFactory(env.packageRoot).then((create) =>
+            executeTurn: async (request: RoleTurnRequest) => {
+              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot, name).then((create) =>
                 create({
                   packageRoot: env.packageRoot,
                   principalAuthority: options.principalAuthority,
@@ -348,7 +349,7 @@ function resolveRoleTurnHost(
           },
         };
       },
-    },
+    })),
   ];
   const hostName = options.seat.host;
   const adapter = adapters.find((candidate) => candidate.name === hostName);

@@ -145,12 +145,14 @@ export type RoleTurnModelConfig = {
 
 /**
  * Typed cross-host resume handoff (#617 DK-4).
- * Present only when post-admission projects a real switch between known hosts.
- * Cross-host prior volume: previous native record paths for the live host (DK-7).
+ * Present only when post-admission projects a real host switch.
+ * priorNativeKind names the record family the paths belong to — Pi's own
+ * session file, or sitian run records (ADR 0077) — so a consuming adapter
+ * reads the handoff without knowing which host wrote it.
  * Target host reads those files itself; projector never copies bytes.
  */
 export type RoleTurnHostTransition = {
-  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativeKind: "pi-native" | "sitian";
   readonly priorNativePaths: readonly string[];
 };
 

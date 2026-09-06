@@ -4,6 +4,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { assertRegisteredHostName, DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
@@ -218,7 +219,8 @@ export function setPersistentSeatHost(
     }
     return { ...config, seats: { ...config.seats, [seat]: rest } };
   }
-  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
+  const registered = assertRegisteredHostName(host);
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host: registered } } };
 }
 
 /**
@@ -295,7 +297,7 @@ export function setAutoResumeLimit(
  * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
  * engine names need only path-safety syntax (no closed material catalog;
  * #376 / #378 / #391 / ADR 0069). Syntax authority = assertLegalEngineName
- * (no injected duplicate).
+ * (no injected duplicate). Persistent host must be pi or a description-table key (#510 / #731).
  */
 export function validatePublicCliConfigAxes(
   config: PublicCliConfig,
@@ -303,14 +305,25 @@ export function validatePublicCliConfigAxes(
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if (row?.engine === undefined) continue;
-    try {
-      assertLegalEngineName(row.engine);
-    } catch (error) {
-      throw new Error(
-        `config seat ${seat} engine is illegal: ${row.engine}`,
-        { cause: error },
-      );
+    if (row?.engine !== undefined) {
+      try {
+        assertLegalEngineName(row.engine);
+      } catch (error) {
+        throw new Error(
+          `config seat ${seat} engine is illegal: ${row.engine}`,
+          { cause: error },
+        );
+      }
+    }
+    if (row?.host !== undefined) {
+      try {
+        assertRegisteredHostName(row.host);
+      } catch (error) {
+        throw new Error(
+          `config seat ${seat} host is unregistered: ${row.host}`,
+          { cause: error },
+        );
+      }
     }
   }
 }
@@ -550,7 +563,7 @@ function attachHostAxis(
   if (invocation?.host !== undefined) return { ...seat, host: invocation.host, hostSource: "invocation" };
   const persistent = config.seats[seat.seat]?.host;
   if (persistent !== undefined) return { ...seat, host: persistent, hostSource: "persistent" };
-  return { ...seat, host: "pi", hostSource: "default" };
+  return { ...seat, host: DEFAULT_ROLE_TURN_HOST, hostSource: "default" };
 }
 
 function attachEngineAxis(
