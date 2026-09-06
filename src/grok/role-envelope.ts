@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requireGatekeeperPass } from "../gatekeeper-role.ts";
+import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
