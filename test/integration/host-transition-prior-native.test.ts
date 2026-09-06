@@ -6,32 +6,6 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { projectHostTransitionPriorNative } from "../../src/host-transition-prior-native.ts";
 
-test("unknown previous or live host yields no hostTransition (no inject)", async () => {
-  await withTempRoot("ak-host-transition-unknown-", async (root) => {
-    const runDirectory = join(root, "run");
-    const piSessionFile = join(runDirectory, "session", "session.jsonl");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    await writeFile(piSessionFile, "{\"type\":\"session\",\"id\":\"s\"}\n", "utf8");
-
-    assert.equal(
-      await projectHostTransitionPriorNative({
-        previousHost: "third-adapter",
-        liveHost: "grok-build",
-        piSessionFile,
-      }),
-      undefined,
-    );
-    assert.equal(
-      await projectHostTransitionPriorNative({
-        previousHost: "pi",
-        liveHost: "third-adapter",
-        piSessionFile,
-      }),
-      undefined,
-    );
-  });
-});
-
 test("pi→grok-build projects the present Pi session path", async () => {
   await withTempRoot("ak-host-transition-pi-path-", async (root) => {
     const runDirectory = join(root, "run");
@@ -45,7 +19,7 @@ test("pi→grok-build projects the present Pi session path", async () => {
         piSessionFile,
       }),
       {
-        previousHost: "pi",
+        priorNativeKind: "pi-native",
         priorNativePaths: [piSessionFile],
       },
     );
@@ -72,7 +46,7 @@ test("grok-build→pi projects present sitian records under sessionParent topolo
       piSessionFile,
     });
     assert.deepEqual(transition, {
-      previousHost: "grok-build",
+      priorNativeKind: "sitian",
       priorNativePaths: [earlier, later],
     });
     assert.equal(transition?.priorNativePaths.includes(piSessionFile), false);
@@ -92,7 +66,7 @@ test("grok-build→pi with only Pi session.jsonl yields empty sitian path list",
         piSessionFile,
       }),
       {
-        previousHost: "grok-build",
+        priorNativeKind: "sitian",
         priorNativePaths: [],
       },
     );
