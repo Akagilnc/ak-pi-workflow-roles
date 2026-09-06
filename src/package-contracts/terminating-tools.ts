@@ -36,6 +36,7 @@ import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOu
 import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
 import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
+import { DIARIST_ACCEPTED_TEXT, DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -75,6 +76,7 @@ export {
   validateRecordedNavigatorOutput,
   validateRecordedAuditorOutput,
   validateRecordedEvidenceChildOutput,
+  validateRecordedDiaristOutput,
 };
 export type {
   CollectorReceipt,
@@ -93,6 +95,7 @@ export type {
   NavigatorAdvice,
   AuditorOutput,
   EvidenceChildOutput,
+  DiaristOutput,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -111,6 +114,7 @@ export const TERMINATING_TOOL_NAMES = [
   NAVIGATOR_OUTPUT_TOOL_NAME,
   AUDITOR_OUTPUT_TOOL_NAME,
   EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+  DIARIST_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -129,7 +133,8 @@ export type AcceptedDetails =
   | GatekeeperDirectOutput
   | NavigatorAdvice
   | AuditorOutput
-  | EvidenceChildOutput;
+  | EvidenceChildOutput
+  | DiaristOutput;
 
 export function isTerminatingToolName(
   name: string,
@@ -169,6 +174,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return AUDITOR_ACCEPTED_TEXT;
     case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
       return EVIDENCE_CHILD_ACCEPTED_TEXT;
+    case DIARIST_OUTPUT_TOOL_NAME:
+      return DIARIST_ACCEPTED_TEXT;
   }
 }
 
@@ -229,6 +236,7 @@ export function validateAcceptedDetails(
     [NAVIGATOR_OUTPUT_TOOL_NAME]: ["advice"],
     [AUDITOR_OUTPUT_TOOL_NAME]: ["pass", "revise", "escalate"],
     [EVIDENCE_CHILD_OUTPUT_TOOL_NAME]: [],
+    [DIARIST_OUTPUT_TOOL_NAME]: ["completed"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   // Evidence-child: any object is a candidate body — no report-field presence gate (#675 / ADR 0055).
@@ -279,6 +287,8 @@ export function validateAcceptedDetails(
       return validateRecordedAuditorOutput(details);
     case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
       return validateRecordedEvidenceChildOutput(details);
+    case DIARIST_OUTPUT_TOOL_NAME:
+      return validateRecordedDiaristOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -304,6 +314,15 @@ export function validateAcceptedLifecycle(
     }
     const { cost: _runtimeCost, ...projected } = receipt;
     if (!deepEqual(testimony, projected)) throw new Error("accepted tool lifecycle details mismatch");
+    return details;
+  }
+  if (toolName === DIARIST_OUTPUT_TOOL_NAME) {
+    // Envelope-owned mechanical sitian facts are runtime-bound on details only
+    // (same shape as the Doctor runtime cost); the submitted arguments carry the
+    // role's own selections. Machine facts never come from model self-report.
+    const { sitian: _mechanical, ...submitted } = details as DiaristOutput & { sitian?: unknown };
+    const testimony = validateAcceptedDetails(toolName, argumentsValue);
+    if (!deepEqual(testimony, submitted)) throw new Error("accepted tool lifecycle details mismatch");
     return details;
   }
   const argumentsDetails = validateAcceptedDetails(toolName, argumentsValue);
@@ -332,6 +351,7 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
       return { status: (details as { status: string }).status };
     case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
       return { status: "report" };
+    case DIARIST_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
     case MERGER_OUTPUT_TOOL_NAME: {

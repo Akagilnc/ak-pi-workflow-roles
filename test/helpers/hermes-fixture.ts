@@ -1,29 +1,16 @@
 /**
  * Shared Hermes / gh PATH executable fixtures (#582 / ADR 0075).
- * Real subprocess fixtures for countersign pre-court + diarist — NOT production APIs.
- * Install-time options only; no env/control dual channels.
+ * Real subprocess fixtures for the shared seat ticket resolver and the GitHub
+ * issue face — NOT production APIs. Install-time options only; no env/control
+ * dual channels.
  */
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type HermesFixtureOptions = {
-  /**
-   * Resolver stdout when staged body has no `candidates` array.
-   * Default: `{"assertion":"true-unbound"}`.
-   */
+  /** Resolver stdout. Default: `{"assertion":"true-unbound"}`. */
   resolverResponse?: unknown;
-  /**
-   * Collector stdout when staged body includes `candidates`.
-   * Default: `{"selections":[]}`.
-   * Ignored when `selectAllCandidates` is true.
-   */
-  collectorResponse?: unknown;
-  /**
-   * Collector face: one selection per staged candidate, full transcript as quote
-   * (passes mechanical verbatim check → durable volume sourceKind/sourceRef).
-   */
-  selectAllCandidates?: boolean;
-  /** Force non-zero exit (both faces). */
+  /** Force non-zero exit. */
   defaultExitCode?: number;
 };
 
@@ -43,11 +30,6 @@ export async function installHermesFixture(
     options.resolverResponse === undefined
       ? { assertion: "true-unbound" }
       : options.resolverResponse;
-  const collectorDefault =
-    options.collectorResponse === undefined
-      ? { selections: [] }
-      : options.collectorResponse;
-  const selectAll = options.selectAllCandidates === true;
   const exitCode =
     options.defaultExitCode === undefined
       ? undefined
@@ -62,32 +44,12 @@ const args = process.argv.slice(2);
 const qIdx = args.indexOf("--query-file");
 const queryFile = qIdx >= 0 ? args[qIdx + 1] : undefined;
 
-let staged = null;
 // Production always stages --query-file; missing/bad JSON throws → non-zero (no wash).
 if (typeof queryFile === "string" && queryFile.length > 0) {
-  staged = JSON.parse(fs.readFileSync(queryFile, "utf8"));
+  JSON.parse(fs.readFileSync(queryFile, "utf8"));
 }
-
-const isCollector = staged !== null && Array.isArray(staged.candidates);
 
 ${exitCode !== undefined ? `process.exit(${exitCode});` : ""}
-
-if (isCollector) {
-  ${
-    selectAll
-      ? `const selections = staged.candidates.map((c, i) => {
-    const transcript = typeof c.transcript === "string" ? c.transcript : "";
-    return {
-      candidateIndex: typeof c.candidateIndex === "number" ? c.candidateIndex : i,
-      quotes: transcript.length > 0 ? [transcript] : [],
-    };
-  });
-  process.stdout.write(JSON.stringify({ selections }));
-  process.exit(0);`
-      : `process.stdout.write(${embedJson(collectorDefault)});
-  process.exit(0);`
-  }
-}
 
 process.stdout.write(${embedJson(resolverDefault)});
 process.exit(0);

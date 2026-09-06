@@ -109,6 +109,9 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
   // #675: auditor / evidence-child public seats — no package startup; caller configures.
   auditor: [],
   "evidence-child": [],
+  // #708 `diarist-seat-default`: owner-set initial value; changed in the seat
+  // table like any other seat. No engine axis, package-default host.
+  diarist: [{ provider: "xai", model: "grok-4.5", thinking: "medium" }],
 };
 
 export function publicStartupCandidates(

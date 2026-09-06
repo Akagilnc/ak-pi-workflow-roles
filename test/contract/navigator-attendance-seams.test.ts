@@ -348,6 +348,7 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "navigator", outputTool: "ak_navigator_output" },
         { role: "auditor", outputTool: "ak_auditor_output" },
         { role: "evidence-child", outputTool: "ak_evidence_child_output" },
+        { role: "diarist", outputTool: "ak_diarist_output" },
       ],
     );
 

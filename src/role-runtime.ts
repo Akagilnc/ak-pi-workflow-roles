@@ -71,6 +71,20 @@ import {
 } from "./inspector-role.ts";
 import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
 import {
+  DIARIST_TOOL_SPEC,
+  type DiaristRuntimeDependencies,
+} from "./diarist-role.ts";
+import {
+  DIARIST_ACCEPTED_TEXT,
+  DIARIST_SOURCES_FLAG,
+  projectDiaristSelections,
+} from "./diarist-contracts.ts";
+import {
+  commitDiaristSelections,
+  loadDiaristSourceCatalog,
+  type DiaristSourceCatalog,
+} from "./diarist.ts";
+import {
   GATEKEEPER_TOOL_SPEC,
   type GatekeeperRuntimeDependencies,
 } from "./gatekeeper-role.ts";
@@ -166,6 +180,14 @@ const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: GLEANER_LEFT_BASE_FLAG.name,
     definition: GLEANER_LEFT_BASE_FLAG.definition,
+  }),
+] as const);
+
+/** Diarist private transport: frozen source catalog path (ADR 0018 / #708). */
+const DIARIST_TRANSPORT_FLAGS = Object.freeze([
+  Object.freeze({
+    name: DIARIST_SOURCES_FLAG.name,
+    definition: DIARIST_SOURCES_FLAG.definition,
   }),
 ] as const);
 
@@ -454,6 +476,7 @@ type ActivationRuntime = {
   navigator: { activate(): Promise<void> };
   auditor: { activate(): Promise<void> };
   evidenceChild: { activate(): Promise<void> };
+  diarist: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -504,6 +527,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
     case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
     case "evidence-child": return { id: "load-and-install", run: async () => runtime.evidenceChild.activate() };
+    case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -613,6 +637,7 @@ export type RoleRuntimeDependencies = {
   loadNavigatorSoul?(): Promise<string>;
   loadAuditorSoul?(): Promise<string>;
   loadEvidenceChildSoul?(): Promise<string>;
+  loadDiaristSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -726,13 +751,17 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-/** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
+/**
+ * Optional pre-accept hook on the shared filed-officer envelope (ADR 0075).
+ * May return a details projection (envelope-owned machine facts recorded next to
+ * the submitted parameters); undefined keeps the parameters as submitted.
+ */
 type FiledOfficerBeforeAccept = (input: {
   readonly toolCallId: string;
   readonly parameters: unknown;
   readonly signal: AbortSignal | undefined;
   readonly ctx: HostContext;
-}) => Promise<void>;
+}) => Promise<unknown>;
 
 /**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
@@ -768,14 +797,15 @@ function createFiledOfficerRuntime(
           parameters: spec.tool.parameters as never,
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            if (spec.beforeAccept !== undefined) {
-              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            }
+            const projected =
+              spec.beforeAccept === undefined
+                ? undefined
+                : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
               content: [{ type: "text" as const, text: spec.acceptedText }],
-              details: parameters,
+              details: projected === undefined ? parameters : projected,
               terminate: true as const,
             };
           },
@@ -903,6 +933,73 @@ export function createAuditorRoleRuntime(
   };
 }
 
+/**
+ * #708: 起居郎 public seat on the shared filed-officer envelope.
+ * Semantic collection happened in this role's own turn; the accept hook runs the
+ * mechanical band (verbatim reverse-verify → idempotent sitian append →
+ * watermark) and records the resulting sitian facts next to the receipt.
+ * Machine facts never come from model self-report (锚定宪法).
+ */
+export function createDiaristRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: DiaristRuntimeDependencies,
+  getSourcesFlag: () => unknown,
+) {
+  // This turn's catalog, snapshotted at activate: the candidateIndexes the role
+  // saw and the rows accept commits are the same bytes. Accept never re-reads
+  // the file, so anything written to it mid-turn cannot become a diary entry.
+  let catalog: DiaristSourceCatalog | undefined;
+  const runtime = createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "diarist",
+      tool: DIARIST_TOOL_SPEC,
+      acceptedText: DIARIST_ACCEPTED_TEXT,
+      soulTag: "diarist",
+      beforeAccept: async ({ parameters }) => {
+        const submitted =
+          parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+            ? (parameters as Record<string, unknown>)
+            : undefined;
+        // True-unbound summons: no ticket, no catalog, no diary committed — so
+        // this turn produced no sitian facts. A self-reported `sitian` is not
+        // one (锚定宪法); drop it rather than let it ride into decisiveFacts.
+        // Carrying the field is not a reason to bounce the receipt (第 0 条).
+        if (catalog === undefined) {
+          if (submitted === undefined || !("sitian" in submitted)) return undefined;
+          const stripped = { ...submitted };
+          delete stripped.sitian;
+          return stripped;
+        }
+        const facts = await commitDiaristSelections({
+          catalog,
+          selections: projectDiaristSelections(parameters),
+        });
+        return { ...(submitted ?? { receipt: parameters }), sitian: facts };
+      },
+    },
+    dependencies,
+  );
+  return {
+    async activate() {
+      catalog = loadFrozenDiaristCatalog(getSourcesFlag);
+      return runtime.activate();
+    },
+  };
+}
+
+/** Envelope-owned decode + one-shot load of the frozen catalog (ADR 0018). */
+function loadFrozenDiaristCatalog(
+  getFlag: () => unknown,
+): DiaristSourceCatalog | undefined {
+  const raw = getFlag();
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new Error("Diarist source catalog flag must be a nonempty path");
+  }
+  return loadDiaristSourceCatalog(raw);
+}
+
 /** #675: public evidence-child seat on the shared filed-officer envelope. */
 export function createEvidenceChildRoleRuntime(
   roleHost: RoleHost,
@@ -974,6 +1071,9 @@ export function createRoleRuntimeExtension(
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
+    for (const flag of DIARIST_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 
@@ -1451,6 +1551,16 @@ export function createRoleRuntimeExtension(
         return dependencies.loadEvidenceChildSoul();
       },
     });
+    const diarist = createDiaristRoleRuntime(
+      roleHost,
+      {
+        async loadSoul() {
+          if (!dependencies.loadDiaristSoul) throw new Error("Diarist runtime dependencies are not configured");
+          return dependencies.loadDiaristSoul();
+        },
+      },
+      () => envelopeHost.host.getFlag(DIARIST_SOURCES_FLAG.name),
+    );
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1658,6 +1768,7 @@ export function createRoleRuntimeExtension(
         navigator,
         auditor,
         evidenceChild,
+        diarist,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);

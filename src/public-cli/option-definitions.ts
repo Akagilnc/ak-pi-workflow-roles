@@ -36,6 +36,7 @@ export type OptionOwner =
   | "navigator"
   | "auditor"
   | "evidence-child"
+  | "diarist"
   | "analyst";
 
 /**
@@ -467,6 +468,11 @@ const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const DIARIST_OPTIONS = [
+  bindOwner("diarist", SHARED_PROJECT_SEMANTICS),
+  bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const CODER_OPTIONS = [
   {
     id: "phase",
@@ -826,6 +832,7 @@ export const PUBLIC_OPTION_TABLE = {
   navigator: NAVIGATOR_OPTIONS,
   auditor: AUDITOR_OPTIONS,
   "evidence-child": EVIDENCE_CHILD_OPTIONS,
+  diarist: DIARIST_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -848,6 +855,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "navigator",
   "auditor",
   "evidence-child",
+  "diarist",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1260,6 +1268,16 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role evidence-child [options] [instruction]"],
     examples: [
       'ak-role evidence-child "查：本工作树 diff 与票面是否一致。"',
+    ],
+  },
+  diarist: {
+    command: "diarist",
+    summary:
+      "Direct Diarist (起居郎) pass: gather and organize this case's decision basis into its 起居录.",
+    usage: ["ak-role diarist [options] [instruction]"],
+    examples: [
+      'ak-role diarist "整理 #708 的本案依据。"',
+      'ak-role diarist --attach ./design.md "补录本轮设计修订。"',
     ],
   },
   notary: {
