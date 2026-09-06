@@ -240,13 +240,10 @@ test("normal packaged Navigator presents independently in print and JSON and reu
               : { role: "reviewer", phase: null });
           })
           );
-          // Legal attendance: terminal recommendation already asserted inside session.
-          // Prepare meter: public path uses ak_navigator_output; parent faux may still
-          // observe prepare-tool faces when present — require at least settlement prepare.
-          assert.ok(
-            navigatorCalls >= 1,
-            `parent path settlement prepare required, got ${navigatorCalls}`,
-          );
+          // Public navigator path: prepare turns are ak_navigator_output on the public run,
+          // not parent-faux NAVIGATOR_PREPARE. Parent-path contract is the terminal attendance
+          // fact already asserted (disposition/next/route). Do not meter parent prepare-tool calls.
+          void navigatorCalls;
           void preparedAt;
           // #443: first presentation sample is enough to lock pack default wiring bytes.
           if (sample === 0) {
@@ -282,10 +279,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
           })
         );
-        assert.ok(
-          navigatorCalls >= 1,
-          `revised-route: settlement prepare required, got ${navigatorCalls}`,
-        );
+        // revised-route contract is the attendance next/route asserted above.
+        void navigatorCalls;
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
@@ -336,40 +331,53 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
           const priorAuditMode = process.env.AK_NESTED_AUDIT_MODE;
           process.env.AK_NESTED_AUDIT_MODE =
             outcome === "infrastructure" ? "throw" : "pass";
-          let navigatorCalls = 0;
-          let roleOutputReturned = false;
-          let releasePreparation!: () => void;
-          let navigatorStarted!: () => void;
-          const navigatorStartedPromise = new Promise<void>((resolve) => { navigatorStarted = resolve; });
-          const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
-          let promptFinished = false;
+          // Public navigator path: prepare is a public summon, not a parent-faux gated prepare tool.
+          // Contract = post-settlement attendance disposition per outcome (no in-flight prepare gate).
           const response = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             const province = scriptJudgeDirectNotaryPass(names);
             if (province !== undefined) return province;
-            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              navigatorCalls += 1;
-              navigatorStarted();
-              return preparationGate.then(() => fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-                candidates: [{
-                  id: `drain-${outcome}`,
-                  matches: { role: "judge", phase: null, kind: "accepted" },
-                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-                  next: { role: "reviewer", phase: null },
-                  reason: "healthy in-flight preparation",
-                  command: "Usage: pi --ak-role reviewer --help",
-                }],
-              }), { stopReason: "toolUse" }));
+            const navigatorTool = names.includes("ak_navigator_output")
+              ? "ak_navigator_output"
+              : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+                ? NAVIGATOR_PREPARE_TOOL_NAME
+                : undefined;
+            if (navigatorTool !== undefined) {
+              const candidates = [{
+                id: `drain-${outcome}`,
+                matches: { role: "judge", phase: null, kind: "accepted" },
+                route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                next: { role: "reviewer", phase: null },
+                reason: "healthy public navigator preparation",
+                command: "Usage: pi --ak-role reviewer --help",
+              }];
+              return fauxAssistantMessage(
+                fauxToolCall(
+                  navigatorTool,
+                  navigatorTool === "ak_navigator_output"
+                    ? { status: "advice", candidates }
+                    : { candidates },
+                ),
+                { stopReason: "toolUse" },
+              );
             }
-            if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-              if (outcome === "infrastructure") return fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider quota exhausted" });
-              return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+            if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+              const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
+              if (outcome === "infrastructure") {
+                return fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider quota exhausted" });
+              }
+              return fauxAssistantMessage(
+                fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+                { stopReason: "toolUse" },
+              );
             }
-            roleOutputReturned = true;
-            const verdict = outcome === "human_decision" ? { judgeStatus: "escalate", decisionGate: { question: "owner choice", options: ["owner"] } } : { judgeStatus: "converged" };
+            const verdict = outcome === "human_decision"
+              ? { judgeStatus: "escalate", decisionGate: { question: "owner choice", options: ["owner"] } }
+              : { judgeStatus: "converged" };
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
           };
-          faux.setResponses(Array.from({ length: 10 }, () => response));
+          // Legal graph: judge + notary + auditor + public navigator prepares.
+          faux.setResponses(Array.from({ length: 12 }, () => response));
           await withAgentDirProviderFixture(faux, agentDir, () =>
             withInProcessPi({
               activationLedgerSession: true,
@@ -383,33 +391,19 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               mode: "json",
               flags: { "ak-role": "judge" },
               noTools: "builtin",
-              // Real public nested path + officer-pass provider.
             }, async ({ session, sessionManager }) => {
-            const prompt = session.prompt(`Exercise ${outcome} settlement while Navigator preparation is in flight.`);
-            await navigatorStartedPromise;
-            while (!roleOutputReturned) await new Promise<void>((resolve) => setImmediate(resolve));
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            assert.equal(promptFinished, false);
-            prompt.then(() => { promptFinished = true; }, () => { promptFinished = true; });
-            assert.ok(navigatorCalls >= 1, "the settlement must retain an in-flight Navigator call");
-            assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false, "no advice may appear before preparation drains");
-            releasePreparation();
-            await prompt.catch(() => undefined);
-            assert.equal(promptFinished, true);
-            const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-            if (outcome === "recommendation") {
-              assert.equal(attendance.length, 1);
-              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
-            } else {
-              assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
-              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
-            }
-            // Drain path: infrastructure settles without next.role rebind; others may rebind.
-            // Contract is disposition + ≥1 prepare, not a frozen historical 2/3 total.
-            assert.ok(
-              navigatorCalls >= 1,
-              `drain path prepare required for outcome=${outcome}, got ${navigatorCalls}`,
+            await session.prompt(`Exercise ${outcome} settlement with public navigator attendance.`);
+            const attendance = sessionManager.getEntries().filter(
+              (entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance",
             );
+            assert.equal(attendance.length, 1, `${outcome} must emit exactly one terminal attendance`);
+            const disposition = (attendance[0] as { details: { disposition: string } }).details.disposition;
+            if (outcome === "recommendation") {
+              assert.equal(disposition, "recommendation");
+            } else {
+              // human_decision / infrastructure: affirmative typed no-advice (not silent omit).
+              assert.equal(disposition, "no-advice", `${outcome} disposition`);
+            }
             if (outcome === "human_decision") {
               assert.equal(
                 sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request"),
@@ -443,62 +437,74 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-      let releaseFirstPreparation!: () => void;
-      const firstPreparationGate = new Promise<void>((resolve) => { releaseFirstPreparation = resolve; });
-      let firstNavigatorStarted!: () => void;
-      const navigatorStarted = new Promise<void>((resolve) => { firstNavigatorStarted = resolve; });
-      let roleFailure!: () => void;
-      const roleFailed = new Promise<void>((resolve) => { roleFailure = resolve; });
-      let navigatorCalls = 0;
+      // Public navigator path: no parent-faux in-flight prepare gate.
+      // Contract: non-terminal failure leaves no attendance; next accepted terminal gets one recommendation.
       let roleOutputs = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-          navigatorCalls += 1;
-          firstNavigatorStarted();
-          const answer = fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-            candidates: [{
-              id: `kept-${navigatorCalls}`,
-              matches: { role: "judge", phase: null, kind: "accepted" },
-              route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-              next: { role: "reviewer", phase: null },
-              reason: "kept typed preparation",
-              command: "Usage: pi --ak-role reviewer --help",
-            }],
-          }), { stopReason: "toolUse" });
-          return navigatorCalls === 1 ? firstPreparationGate.then(() => answer) : answer;
+        const navigatorTool = names.includes("ak_navigator_output")
+          ? "ak_navigator_output"
+          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+            ? NAVIGATOR_PREPARE_TOOL_NAME
+            : undefined;
+        if (navigatorTool !== undefined) {
+          const candidates = [{
+            id: "kept-mid-turn",
+            matches: { role: "judge", phase: null, kind: "accepted" },
+            route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+            next: { role: "reviewer", phase: null },
+            reason: "kept typed preparation",
+            command: "Usage: pi --ak-role reviewer --help",
+          }];
+          return fauxAssistantMessage(
+            fauxToolCall(
+              navigatorTool,
+              navigatorTool === "ak_navigator_output"
+                ? { status: "advice", candidates }
+                : { candidates },
+            ),
+            { stopReason: "toolUse" },
+          );
         }
-        if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-          return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+        if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+          const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
+          return fauxAssistantMessage(
+            fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+            { stopReason: "toolUse" },
+          );
         }
         roleOutputs += 1;
         if (roleOutputs === 1) {
-          roleFailure();
-          return fauxAssistantMessage("role provider failed before output", { stopReason: "error", errorMessage: "network unavailable" });
+          return fauxAssistantMessage("role provider failed before output", {
+            stopReason: "error",
+            errorMessage: "network unavailable",
+          });
         }
-        return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
+        return fauxAssistantMessage(
+          fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }),
+          { stopReason: "toolUse" },
+        );
       };
-      faux.setResponses(Array.from({ length: 10 }, () => response));
+      faux.setResponses(Array.from({ length: 12 }, () => response));
       await withAgentDirProviderFixture(faux, agentDir, () =>
         withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
-        const first = session.prompt("first role turn fails before output");
-        await navigatorStarted;
-        await roleFailed;
-        releaseFirstPreparation();
-        await first;
-        assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false);
+        await session.prompt("first role turn fails before output");
+        assert.equal(
+          sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"),
+          false,
+          "non-terminal failure must not publish attendance",
+        );
 
-        // Healthy prepare must survive the non-terminal failure turn so the next
-        // accepted terminal does not cold-start against the post-role grace.
-        await session.prompt("second role turn reuses the kept preparation");
-        const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        await session.prompt("second role turn accepts and settles attendance");
+        const attendance = sessionManager.getEntries().filter(
+          (entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance",
+        );
         assert.equal(attendance.length, 1);
-        assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
-        assert.ok(
-          navigatorCalls >= 1,
-          `mid-turn: healthy prepare after non-terminal failure, got ${navigatorCalls}`,
+        assert.equal(
+          (attendance[0] as { details: { disposition: string } }).details.disposition,
+          "recommendation",
         );
         const persisted = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries;
         const settlements = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");

@@ -316,9 +316,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Parent judge + nested officers share this faux; public navigator prepares
-          // hit seat-table providers (not necessarily this Luna prepare tool face).
-          luna.setResponses(Array.from({ length: 16 }, () => response));
+          // Legal graph per invoke: judge + notary + auditor + public nav prepares ≈ 8.
+          luna.setResponses(Array.from({ length: 12 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -369,12 +368,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
             if (event?.disposition !== "recommendation") return;
             const observed = await uniqueObservedNavigatorSession(home, resolve(issueRoot), issueRoot);
             const persisted = observed.entries;
-            // Public navigator path books invocation/context on the nest; prepare toolResult
-            // may be absent (advice arrives via ak_navigator_output on the public run).
-            const prepared = [...persisted].reverse().find((entry) =>
-              (entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME)
-              || (entry.type === "custom" && entry.customType === "ak-navigator-invocation")
-              || (entry.type === "custom" && entry.customType === "ak-navigator-context"),
+            // Public navigator path: nest books ak-navigator-invocation at prepare start.
+            const prepared = [...persisted].reverse().find(
+              (entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation",
             );
             const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
             const preparedAt = prepared?.timestamp;
@@ -423,36 +419,27 @@ test("cold-installed live help follows the loaded extension and changes on the n
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
         // Structured contracts (#675 r3 / public navigator path):
-        // seat-table drives attendance — recommendation while navigator seat is Luna,
-        // unavailable/model when seat is missing; no silent fallback to another model.
-        // Parent Luna prepare-tool modelRequests are not the public-path meter.
-        void modelRequests;
+        // 3 successful seat-table navigator configs → recommendation;
+        // missing provider → unavailable (no silent fallback to recommendation).
         assert.equal(lifecycle.length, 4, "four seat-edit invokes");
-        assert.equal(
-          lifecycle[0]?.event.disposition,
-          "recommendation",
-          JSON.stringify(lifecycle[0]?.event),
-        );
-        assert.equal(
-          lifecycle[1]?.event.disposition,
-          "recommendation",
-          JSON.stringify(lifecycle[1]?.event),
-        );
-        assert.equal(
-          lifecycle[2]?.event.disposition,
-          "recommendation",
-          JSON.stringify(lifecycle[2]?.event),
-        );
+        assert.equal(lifecycle[0]?.event.disposition, "recommendation");
+        assert.equal(lifecycle[1]?.event.disposition, "recommendation");
+        assert.equal(lifecycle[2]?.event.disposition, "recommendation");
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
-        // Missing provider fails closed — source may be model (seat resolve) or session
-        // (public summon open); never falls back to a working recommendation.
-        assert.ok(
-          lifecycle[3]?.event.unavailableSource === "model"
-          || lifecycle[3]?.event.unavailableSource === "session"
-          || lifecycle[3]?.event.unavailableSource === "transport",
-          JSON.stringify(lifecycle[3]?.event),
+        // Public summon of missing provider fails at session open (not model-seat resolve).
+        assert.equal(lifecycle[3]?.event.unavailableSource, "session");
+        // No-fallback: unsupported seat must not dispatch any model request under missing/*.
+        assert.equal(
+          modelRequests.some((m) => m.startsWith("missing/")),
+          false,
+          `unsupported must not fall back; modelRequests=${JSON.stringify(modelRequests)}`,
         );
-        // Timestamps: preparation ≤ settlement ≤ visible for each successful recommendation.
+        // Successful configs did dispatch navigator turns (public path via shared mock).
+        assert.ok(
+          modelRequests.length > 0,
+          "successful navigator seats must record at least one model request",
+        );
+        // Nest books invocation before settlement; settlement before visible attendance.
         for (const sample of lifecycle.slice(0, 3)) {
           assert.ok(sample.timestamps, `${sample.label} must record prepare/settle/visible`);
           const { preparedAt, settledAt, persistedVisibleAt } = sample.timestamps!;
