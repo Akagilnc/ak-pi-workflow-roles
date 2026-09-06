@@ -9,9 +9,8 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
-  ticketNumberFromProbe,
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -88,17 +87,15 @@ export async function runPublicInspector(
   }
 
   // #637: same ticket → resume prior inspector run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709: identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveKnownTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+    home: env.home,
+  });
+  if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -108,7 +105,7 @@ export async function runPublicInspector(
       home: env.home,
       projectRoot,
       role: "inspector",
-      ticketNumber: probedTicketNumber,
+      ticketNumber: reusedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -171,8 +168,8 @@ export async function runPublicInspector(
     request: turnRequest,
     adapters: inspectorAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

@@ -1,7 +1,9 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #635 — seat self-ticket from public CLI true entry (no --ticket / no frontmatter).
- * Asserts typed ticketNumber on admitted-request.json + invocation.json only.
+ * #635 / #709 — seat ticket identity from the public CLI true entry
+ * (no --ticket / no frontmatter / no seat model call): the number is reused from
+ * records this book already holds. Asserts typed ticketNumber on
+ * admitted-request.json + invocation.json only.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -42,6 +44,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -110,9 +113,9 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
+    await installHermesFixture(join(home, "bin"));
+    // #709: #582 is a ticket this book already records — seats reuse that identity.
+    ensureTicketProvenanceVolume(582, project, home);
     await run({ home, project });
   });
 }
@@ -160,7 +163,7 @@ async function assertDurableTicket(
   assert.equal(invocation.ticketNumber, expected);
 }
 
-test("public coder without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public coder without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
@@ -181,7 +184,7 @@ test("public coder without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public fixer without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public fixer without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicFixer(
       ["apply", "Repair the regression on ticket #582."],
@@ -202,7 +205,7 @@ test("public fixer without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public judge without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public judge without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicJudge(
       ["Adjudicate whether ticket #582 may proceed."],
@@ -223,7 +226,7 @@ test("public judge without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public countersign without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public countersign without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],

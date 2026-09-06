@@ -28,6 +28,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   RoleTurnHost,
+  RoleTurnContinuation,
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
@@ -79,6 +80,18 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import { runWithAutoResumeLoop } from "./auto-resume.ts";
+import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+
+/** Append one system section to a continuation prompt, keeping its kind. */
+function appendContinuationSection(
+  continuation: RoleTurnContinuation,
+  section: string,
+): RoleTurnContinuation {
+  const prompt = `${continuation.prompt}\n\n${section}`;
+  return continuation.kind === "initial"
+    ? { kind: "initial", prompt }
+    : { kind: "resume", prompt };
+}
 
 /** Previous main-session host recorded on invocation.json, if any. */
 async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
@@ -291,10 +304,10 @@ export async function dispatchPostAdmissionTurn<
       admitted.principal === undefined
         ? undefined
         : env.principalAuthority.decode(admitted.principal);
-    let turnRequest: RoleTurnRequest;
+    let hostTransition: RoleTurnRequest["hostTransition"];
     try {
       previousHost = await readInvocationHost(admitted.runDirectory);
-      const hostTransition =
+      hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
           ? await projectHostTransitionPriorNative({
               previousHost,
@@ -302,10 +315,6 @@ export async function dispatchPostAdmissionTurn<
               piSessionFile: principalCoordinates.sessionFile,
             })
           : undefined;
-      turnRequest = request;
-      if (hostTransition !== undefined) {
-        turnRequest = { ...turnRequest, hostTransition };
-      }
     } catch (error) {
       // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return (await presentControlledFailure(
@@ -343,6 +352,29 @@ export async function dispatchPostAdmissionTurn<
           io,
         )) as { exitCode: number; admitted: A; terminal: T };
       }
+    }
+
+    // Turn request is assembled after beforeDispatch so this turn sees whatever it
+    // settled — the seat's ticket bind re-projection and, for countersign, the diary
+    // station's own writes. Case dossier delivery (ADR 0081) rides here for every
+    // public entry: first call, same-ticket re-summons and manual resume alike.
+    // System refs append their own neutral section; caller frozen attachments and
+    // the seat's own prompt bytes are never rewritten.
+    let turnRequest: RoleTurnRequest =
+      hostTransition === undefined ? request : { ...request, hostTransition };
+    const dossierSection = await projectCaseDossierPointerSection({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+    });
+    if (dossierSection !== undefined) {
+      turnRequest = {
+        ...turnRequest,
+        continuation: appendContinuationSection(
+          turnRequest.continuation,
+          dossierSection,
+        ),
+      };
     }
 
     let result: RoleTurnResult;

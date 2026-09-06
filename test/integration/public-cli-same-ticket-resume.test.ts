@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -408,9 +409,9 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     await mkdir(binDir, { recursive: true });
     // Worktree-owned home walks up to package.json type:module; force CJS for fixture bins.
     await writeFile(join(binDir, "package.json"), '{"type":"commonjs"}\n', "utf8");
-    await installHermesFixture(binDir, {
-      resolverResponse: { assertion: "ticket", ticketNumber: 637 },
-    });
+    await installHermesFixture(binDir);
+    // #709: same-ticket resume reuses an identity this book already records.
+    ensureTicketProvenanceVolume(637, project, home);
     await installGhFixture(binDir, {
       issues: { 637: { body: "#637 materials court", comments: [] } },
     });
