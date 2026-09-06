@@ -120,6 +120,26 @@ export type PublicResumeRequest = {
   readonly runId: string;
   /** Present when the caller supplied the post-runId argv (including empty string). */
   readonly message?: string;
+  /**
+   * Same-ticket re-summons materials (#637). Present only when a public seat
+   * re-enters via the summons face — never from `ak-role resume`.
+   * Manual resume keeps package envelope / caller message semantics unchanged.
+   */
+  readonly summons?: SameTicketSummonsMaterials;
+};
+
+/**
+ * Materials delivered on same-ticket re-summons while reusing the same-run resume seam.
+ * Instruction seats freeze new attachments into the retained run and ride the transport prompt;
+ * notary overrides the source-run activation pointer for this turn only.
+ */
+export type SameTicketSummonsMaterials = {
+  readonly instruction?: string;
+  readonly instructionEmpty?: boolean;
+  readonly attachmentPaths?: readonly string[];
+  /** Notary: this summons' resolved source-run locator (activation pointer). */
+  readonly sourceRunPath?: string;
+  readonly sourceRun?: NotarySourceRunLocator;
 };
 
 /**
@@ -834,6 +854,7 @@ export async function findRunDirectoryById(
  * Locate the latest retained run for one seat+ticket under a book (#637).
  * Same walk surface as findRunDirectoryById; ticket identity from durable pages.
  * runId is UUIDv7 — lexicographic max is latest. No parallel index.
+ * Only a truly missing runs directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
@@ -841,12 +862,6 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly role: RoleRunRecord["role"];
   readonly ticketNumber: number;
 }): Promise<string | undefined> {
-  if (
-    !Number.isSafeInteger(input.ticketNumber) ||
-    input.ticketNumber < 1
-  ) {
-    return undefined;
-  }
   const ledgerHome = resolveActivationLedgerHome(input.home);
   const runsDir = join(
     activationBookDirectory(ledgerHome, input.bookKey),
@@ -855,8 +870,9 @@ export async function findLatestRunIdForSeatTicket(input: {
   let entries: string[];
   try {
     entries = await readdir(runsDir);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
   const suffix = `@${input.role}`;
   let best: string | undefined;

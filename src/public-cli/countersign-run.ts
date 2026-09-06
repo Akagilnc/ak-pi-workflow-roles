@@ -5,7 +5,6 @@
  * Diarist is a prior station on the court pipeline, not a countersign call.
  * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
  */
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   createDiaristIssueFaceFetcher,
@@ -28,20 +27,21 @@ import {
 } from "./invocation.ts";
 import {
   resolveInstructionTicket,
-  resolveSeatTicketBinding,
+  tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  findLatestRunIdForSeatTicket,
   loadResumableCountersignRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -100,31 +100,34 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  // #637: same ticket → resume prior countersign run before minting a new one.
-  // Probe failures fall through to fresh admit so beforeDispatch can settle them
-  // as controlled failures (same face as pre-#637).
+  // #637: same ticket → resume prior countersign run with this summons' materials.
+  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  let ticketResolution: Awaited<ReturnType<typeof resolveInstructionTicket>> | undefined;
-  try {
-    ticketResolution = await resolveInstructionTicket(
-      parsed.instruction,
+  const ticketResolution = await resolveInstructionTicket(
+    parsed.instruction,
+    projectRoot,
+    env,
+  );
+  if (ticketResolution.kind === "ticket") {
+    const summons: SameTicketSummonsMaterials = {
+      instruction: parsed.instruction,
+      instructionEmpty: parsed.instruction.trim() === "",
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
       projectRoot,
-      env,
-    );
-    if (ticketResolution.kind === "ticket") {
-      const previousRunId = await findLatestRunIdForSeatTicket({
-        home: env.home,
-        bookKey: resolveBookKeyFromGit(projectRoot),
-        role: "countersign",
-        ticketNumber: ticketResolution.ticketNumber,
-      });
-      if (previousRunId !== undefined) {
-        return await runPublicCountersignResume({ runId: previousRunId }, env, io);
-      }
-    }
-  } catch {
-    // Leave ticketResolution undefined — fresh path re-resolves in beforeDispatch.
-    ticketResolution = undefined;
+      role: "countersign",
+      ticketNumber: ticketResolution.ticketNumber,
+      summons,
+      resume: (runId, materials) =>
+        runPublicCountersignResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
   }
 
   let admitted: AdmittedCountersignInvocation;
@@ -182,10 +185,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635: reuse successful probe; otherwise resolve here so failures settle.
-        if (probedTicket === undefined) {
-          await resolveSeatTicketBinding(admitted, env);
-        } else if (probedTicket.kind === "ticket") {
+        // #635: reuse the pre-admit ticket probe (already resolved above).
+        if (probedTicket.kind === "ticket") {
           await bindAdmittedTicketNumber(admitted, probedTicket.ticketNumber);
         } else {
           await recordTrueUnboundTicketResolution(admitted);
@@ -218,8 +219,11 @@ function countersignAdapters(options?: {
 }
 
 /**
- * Resume a previously admitted Countersign run (#599 / DK-3).
- * Restores role/ticket/attachments/session identity; diarist does not re-run.
+ * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
+ * Restores role/ticket/session identity. Every court re-entry runs the diarist
+ * station first (ADR 0075 refresh-every-court). Same-ticket summons deliver this
+ * turn's instruction + frozen attachments on the resume prompt; manual resume
+ * keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicCountersignResume(
   request: PublicResumeRequest,
@@ -236,16 +240,30 @@ export async function runPublicCountersignResume(
     io,
     load: () =>
       loadResumableCountersignRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildCountersignTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
-    adapters: countersignAdapters(),
+        env.home,
+        request.runId,
+        env.principalAuthority,
+      ),
+    buildTurnRequest: async (admitted) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        request.summons,
+      );
+      return buildCountersignTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          request,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
+    adapters: countersignAdapters({
+      beforeDispatch: async (admitted) => {
+        await runCountersignDiaristStation(admitted, env);
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

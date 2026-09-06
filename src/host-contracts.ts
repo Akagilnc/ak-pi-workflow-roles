@@ -165,13 +165,6 @@ export type RoleTurnRequest = {
   readonly timeoutMs?: number;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
-  /**
-   * Optional Grok native isolation run directory override. Absent → isolate under
-   * runDirectory. Same-run resume (#637) keeps the live run home.
-   */
-  readonly nativeHomeRunDirectory?: string;
-  /** Production Grok isolation may note the actual open event after bind succeeds. */
-  readonly noteNativeHomeOpened?: (runDirectory: string) => void;
 };
 
 /** Turn result — only fields upper layers currently consume. */

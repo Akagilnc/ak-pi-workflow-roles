@@ -5,11 +5,13 @@
  * with gate-province dispatch; this module is the direct command face.
  * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { resolveInstructionTicket, resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
+import {
+  resolveInstructionTicket,
+  tryResumeSameTicketSeatRun,
+} from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   bindAdmittedTicketNumber,
@@ -19,6 +21,7 @@ import {
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -26,10 +29,10 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  findLatestRunIdForSeatTicket,
   loadResumableInspectorRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -84,30 +87,34 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #637: same ticket → resume prior inspector run before minting a new one.
-  // Probe failures fall through; fresh path re-resolves so the failure face stays
-  // on the admitted run (same as pre-#637 bind-before-mark).
+  // #637: same ticket → resume prior inspector run with this summons' materials.
+  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  let ticketResolution: Awaited<ReturnType<typeof resolveInstructionTicket>> | undefined;
-  try {
-    ticketResolution = await resolveInstructionTicket(
-      parsed.instruction,
+  const ticketResolution = await resolveInstructionTicket(
+    parsed.instruction,
+    projectRoot,
+    env,
+  );
+  if (ticketResolution.kind === "ticket") {
+    const summons: SameTicketSummonsMaterials = {
+      instruction: parsed.instruction,
+      instructionEmpty: parsed.instruction.trim() === "",
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
       projectRoot,
-      env,
-    );
-    if (ticketResolution.kind === "ticket") {
-      const previousRunId = await findLatestRunIdForSeatTicket({
-        home: env.home,
-        bookKey: resolveBookKeyFromGit(projectRoot),
-        role: "inspector",
-        ticketNumber: ticketResolution.ticketNumber,
-      });
-      if (previousRunId !== undefined) {
-        return await runPublicInspectorResume({ runId: previousRunId }, env, io);
-      }
-    }
-  } catch {
-    ticketResolution = undefined;
+      role: "inspector",
+      ticketNumber: ticketResolution.ticketNumber,
+      summons,
+      resume: (runId, materials) =>
+        runPublicInspectorResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
   }
 
   let admitted: AdmittedInspectorInvocation;
@@ -131,10 +138,8 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #635: reuse successful probe; otherwise resolve before admitted mark.
-  if (ticketResolution === undefined) {
-    await resolveSeatTicketBinding(admitted, env);
-  } else if (ticketResolution.kind === "ticket") {
+  // #635: reuse the pre-admit ticket probe (already resolved above).
+  if (ticketResolution.kind === "ticket") {
     await bindAdmittedTicketNumber(admitted, ticketResolution.ticketNumber);
   } else {
     await recordTrueUnboundTicketResolution(admitted);
@@ -179,7 +184,9 @@ function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation>
 }
 
 /**
- * Resume a previously admitted Inspector run (#633); the session principal reopens.
+ * Resume a previously admitted Inspector run (#633 / #637); the session principal reopens.
+ * Same-ticket summons deliver this turn's instruction + frozen attachments; manual
+ * resume keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicInspectorResume(
   request: PublicResumeRequest,
@@ -196,15 +203,25 @@ export async function runPublicInspectorResume(
     io,
     load: () =>
       loadResumableInspectorRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildInspectorTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
+        env.home,
+        request.runId,
+        env.principalAuthority,
+      ),
+    buildTurnRequest: async (admitted) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        request.summons,
+      );
+      return buildInspectorTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          request,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
