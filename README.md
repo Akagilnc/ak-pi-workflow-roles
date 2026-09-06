@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `diarist`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -115,6 +115,9 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 
 # navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
+
+# diarist — gather and organize this case's decision basis into its per-ticket 起居录
+ak-role diarist "整理 #708 的本案依据。"
 
 # countersign — ticket-court five questions; ticket recognition via instruction
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"

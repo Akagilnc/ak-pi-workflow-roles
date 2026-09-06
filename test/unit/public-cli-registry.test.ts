@@ -125,6 +125,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
+  {
+    role: "diarist",
+    phases: [null],
+    outputTool: "ak_diarist_output",
+    inputFlag: "ak-diarist-sources",
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
 ] as const;
 
 test("public registry exposes callable roles with no automatic/classifiable distinction", () => {
@@ -140,6 +148,7 @@ test("public registry exposes callable roles with no automatic/classifiable dist
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("countersign"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("inspector"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("diarist"), true);
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
     [...PUBLIC_CALLABLE_ROLES],
@@ -202,6 +211,10 @@ test("startup model candidates follow #11 package defaults per seat", () => {
   assert.deepEqual(publicStartupCandidates("navigator"), [
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
+  ]);
+  // #708 `diarist-seat-default`: owner-set initial value, no special-casing.
+  assert.deepEqual(publicStartupCandidates("diarist"), [
+    { provider: "xai", model: "grok-4.5", thinking: "medium" },
   ]);
   // #620: subordinate province officers have no package startup — inherit gatekeeper instead.
   assert.deepEqual(publicStartupCandidates("inspector"), []);

@@ -125,7 +125,12 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector" }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" };
+  | { readonly role: "navigator" }
+  | {
+      readonly role: "diarist";
+      /** Frozen source-catalog path; absent for a true-unbound summons (#708). */
+      readonly sourcesPath?: string;
+    };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
