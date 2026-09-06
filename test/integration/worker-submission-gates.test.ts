@@ -1,5 +1,6 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
+// #685 C1: withInProcessPi/createAgentSession host legs culled; C3 handoff:
+// docs/research/issue-685-c3-deleted-contract-handoff.md
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */

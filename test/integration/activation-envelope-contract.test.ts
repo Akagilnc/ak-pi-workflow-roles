@@ -402,9 +402,9 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
 });
 
 // #685: two real multi-process ledger race cases culled (8+8 O_APPEND mixed producers;
-// 16-worker first-time mkdir race). Host/concurrency surface → production ledger
-// append under ~/.ak-roles/books (C3 handoff). Symlink escape matrix below stays
-// as deterministic call-input negative without multi-worker spawn.
+// 16-worker first-time mkdir race). Race-dedicated production proof 未结 — see
+// docs/research/issue-685-c3-deleted-contract-handoff.md. Symlink escape matrix
+// below stays as deterministic call-input negative without multi-worker spawn.
 
 // Symlink escape matrix (#420 整改并一)：四条同根同形「ledger append 拒绝符号链接
 // 逃逸且不写出界」——root home 链、跨簿 waiting.jsonl、跨簿目录、books 组件——

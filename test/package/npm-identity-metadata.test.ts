@@ -275,7 +275,8 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
  * sources, compiled dist modules, packets, and the closed fixer-repair.json
  * negative); internal flag/schema shapes stay deleted (schema passthrough in
  * contract/fixer-prerequisite-contract). Install/cold-matrix argv tracers
- * culled under #685 — host install face → production dossiers.
+ * culled under #685 — see docs/research/issue-685-c3-deleted-contract-handoff.md
+ * (installed-package load face named; install process / cold-matrix 未结).
  */
 test("packed artifact ships the release inventory: souls, methods, runtime entrypoints, packets", async () => {
   for (const soul of RELEASE_SOUL_INVENTORY) {
@@ -353,7 +354,7 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
 
 // #685: private npm install of packed artifact culled — host install surface.
 // Peer optional/* declarations stay as pack-metadata call-input asserts.
-// Live install non-materialization → production pack/install runs (C3 handoff).
+// C3: docs/research/issue-685-c3-deleted-contract-handoff.md (install process 未结).
 test("packed artifact declares Pi host peers as optional star peers", () => {
   for (const name of HOST_PEERS) {
     assert.equal(extracted.packageJson.peerDependencies?.[name], "*");

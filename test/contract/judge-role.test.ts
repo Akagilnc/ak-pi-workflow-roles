@@ -1,5 +1,6 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
+// #685 C1: withInProcessPi/createAgentSession host legs culled; C3 handoff:
+// docs/research/issue-685-c3-deleted-contract-handoff.md
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";

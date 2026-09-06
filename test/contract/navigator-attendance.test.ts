@@ -421,4 +421,5 @@ test("model settings are exact and typed settlement projection ignores prose and
 
 // #685: host-neutral native createAgentSession factory cases culled (opens/
 // HTTP classify/institutional seat). Same class as routes native prompt legs —
-// host surface → production navigator seat runs. Call-input cases above remain.
+// navigator dedicated production run 未结 (issue-685-c3-deleted-contract-handoff).
+// Call-input cases above remain.
