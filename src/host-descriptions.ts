@@ -1,38 +1,40 @@
 /**
  * Packaged host description table (#729 / #731).
- * Key = seat-table `host` value. pi is the in-process default, not a row.
+ * Key = seat-table `host` value; the row is the generic ACP factory's input.
+ * pi is the in-process default, not a row.
  * Unregistered names fail closed (#510); this table does not fallback.
  */
-export type HostResumeBinding = "session/load" | "session/new";
+import type { AcpHostDescription } from "./acp-host/description.ts";
 
-export type HostDescription = Readonly<{
-  /** CLI binary basename. */
-  readonly binary: string;
-  /** Operator-home-relative path to the binary. */
-  readonly relativeBinary: string;
-  /** ACP stdio argv; the adapter inserts model/thinking flags. */
-  readonly argv: readonly string[];
-  /** Argv flag for model id; omitted when the host has none. */
-  readonly modelFlag?: string;
-  /** Argv flag for thinking/档位; omitted when the host has none. */
-  readonly thinkingFlag?: string;
-  /** Bound same-host resume ACP method. */
-  readonly resume: HostResumeBinding;
-}>;
+/** Grok CLI reads vendor-private compat surfaces unless each is disabled by name. */
+const PRIVATE_COMPAT_ENV = Object.fromEntries(
+  ["CLAUDE", "CURSOR", "CODEX"].flatMap((vendor) =>
+    ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"].map((kind) =>
+      [`GROK_${vendor}_${kind}_ENABLED`, "false"] as const)),
+);
 
 export const DEFAULT_ROLE_TURN_HOST = "pi" as const;
 
-export const HOST_DESCRIPTIONS: Readonly<Record<string, HostDescription>> = Object.freeze({
+export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = Object.freeze({
+  /** Operator home `~/.grok`, native session/load resume, `agent [--model X] stdio`. */
   "grok-build": Object.freeze({
-    binary: "grok",
-    relativeBinary: ".grok/bin/grok",
-    argv: Object.freeze(["agent", "stdio"]),
-    modelFlag: "--model",
-    resume: "session/load",
+    binaryFromHome: Object.freeze([".grok", "bin", "grok"]),
+    argv: Object.freeze({
+      prefix: Object.freeze(["agent"]),
+      suffix: Object.freeze(["stdio"]),
+      modelFlag: "--model",
+    }),
+    boundResume: "session/load",
+    sessionBindingFile: "grok-acp-session.json",
+    childEnv: Object.freeze({
+      ...PRIVATE_COMPAT_ENV,
+      GROK_MEMORY: "0",
+      GROK_SUBAGENTS: "0",
+    }),
   }),
 });
 
-export function lookupHostDescription(host: string): HostDescription | undefined {
+export function lookupHostDescription(host: string): AcpHostDescription | undefined {
   return Object.hasOwn(HOST_DESCRIPTIONS, host) ? HOST_DESCRIPTIONS[host] : undefined;
 }
 

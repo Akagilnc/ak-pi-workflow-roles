@@ -334,7 +334,7 @@ function resolveRoleTurnHost(
           ok: true as const,
           host: {
             executeTurn: async (request: RoleTurnRequest) => {
-              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot).then((create) =>
+              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot, name).then((create) =>
                 create({
                   packageRoot: env.packageRoot,
                   principalAuthority: options.principalAuthority,

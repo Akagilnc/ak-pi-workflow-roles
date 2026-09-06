@@ -227,11 +227,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             });
           }
 
-          // #617 DK-7: hand the Pi native session path once; the host reads the file itself.
+          // #617 DK-7 / #732: hand the projected prior-native session paths once,
+          // whichever record family they came from; the host reads the files itself.
           const priorNativePaths =
             continuation.kind === "resume"
-            && request.hostTransition?.priorNativeKind === "pi-native"
-              ? request.hostTransition.priorNativePaths
+              ? request.hostTransition?.priorNativePaths
               : undefined;
           if (continuation.kind === "resume" && config.boundResume === "session/load") {
             // Same-host resume reuses the native ACP session via session/load.
