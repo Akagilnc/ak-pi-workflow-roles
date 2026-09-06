@@ -38,6 +38,7 @@ import type {
   HostInstitutionalSessionOptions,
   HostSessionUsage,
 } from "../host-contracts.ts";
+import { resolvePiDefaultThinkingLevel } from "./pi-default-thinking-level.ts";
 import {
   createStreamIdleGuard,
   isStreamIdleTimeoutError,
@@ -637,13 +638,15 @@ export async function openPiInstitutionalSession(
     // unsupported levels itself; we do not re-check or invent a local whitelist.
     // #637/#697: createAgentSession restores model/thinking from an existing
     // session when options omit them. Seat-table values must win: always pass
-    // model; when seat omits thinking, apply Pi settings default (else Pi's
-    // DEFAULT_THINKING_LEVEL "medium") so resume cannot keep stale session thinking.
+    // model; when seat omits thinking, apply sole Pi-default resolver so resume
+    // cannot keep stale session thinking (same authority as CLI host argv path).
     const seatThinking = options.selection.thinking;
+    const settingsDefault = settings.getDefaultThinkingLevel();
     const thinkingForOpen =
       seatThinking ??
-      settings.getDefaultThinkingLevel() ??
-      ("medium" as const);
+      (await resolvePiDefaultThinkingLevel({
+        ...(settingsDefault === undefined ? {} : { settingsDefault }),
+      }));
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
