@@ -286,6 +286,26 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             });
           }
 
+          // hermes-agent 0.20.6: session/set_model rebuilds the session agent
+          // (providers/session.set_session_model → _make_agent) and the rebuild
+          // derives its toolset from hermes-config MCP servers only, dropping the
+          // ACP-injected AK mcpServers (2026-09-07 probe: after set_model the
+          // model reported NO_AK_TOOLS and enumerated a nameless toolset).
+          // Re-binding the session with the same mcpServers re-registers the
+          // relay server and restores the role tool surface. session/load is the
+          // spec-valid re-bind verb (hermes also re-registers on load/resume).
+          if (
+            config.modelPassing === "set_model"
+            && sessionId !== undefined
+          ) {
+            await connection.request("session/load", {
+              sessionId,
+              cwd: request.cwd,
+              mcpServers: prepared.mcpServers,
+              _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+            });
+          }
+
           let prompt =
             priorNativePaths !== undefined && priorNativePaths.length > 0
               ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
