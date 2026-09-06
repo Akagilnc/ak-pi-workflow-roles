@@ -25,6 +25,12 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
 
 ## Process shape
 
+- The returned labor body is the final answer text only. Never return an
+  event stream, verbose log, or NDJSON deltas: the body is fed back into the
+  seat's context, and one 12-minute Opus labor returned as `stream-json` was
+  957k chars and killed the seat (712k-token request, #675, 2026-09-06).
+  Progress observability is the runner's job (process watch), not the body's.
+
 - Once an engine is selected, start exactly one subprocess per labor
   invocation by calling that engine's local CLI, with argv assembled from the
   engine note plus these dispatch rules; return the stdout labor content to
