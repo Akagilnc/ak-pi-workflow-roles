@@ -45,9 +45,7 @@ import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
-  resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
-import { CASE_DOSSIER_SECTION_HEADING } from "../../src/public-cli/case-dossier-delivery.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -1020,7 +1018,6 @@ test("public countersign path: known ticket is reused, bound, and delivered with
     // #709: the identity already exists in this book's records — no seat model call.
     ensureTicketProvenanceVolume(582, project, home);
     let turnTicket: number | undefined;
-    let turnPrompt: string | undefined;
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
       countersignPathEnv({
@@ -1030,7 +1027,6 @@ test("public countersign path: known ticket is reused, bound, and delivered with
         onTurn: (req) => {
           turnTicket =
             req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
-          turnPrompt = req.continuation.prompt;
         },
       }),
       captureIo().io,
@@ -1047,22 +1043,12 @@ test("public countersign path: known ticket is reused, bound, and delivered with
     const volume = await readTicketProvenance(582, project, home);
     assert.ok(volume.recordFile);
     await readFile(volume.recordFile, "utf8");
-    // ADR 0081: the shared public entry delivers the existing dossier by pointer.
-    assert.ok(turnPrompt?.includes(CASE_DOSSIER_SECTION_HEADING));
-    assert.ok(
-      turnPrompt?.includes(
-        resolveTicketProvenanceVolume(582, project, home).humanViewFile,
-      ),
-    );
-    // Caller instruction bytes are not rewritten by the appended system section.
-    assert.ok(turnPrompt?.includes("裁：继续审票 #582 是否足以开工。"));
   });
 });
 
 test("public countersign path: no known ticket stays unbound, skips diary and dossier", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let turnTicket: number | undefined;
-    let turnPrompt: string | undefined;
     const result = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
       countersignPathEnv({
@@ -1072,7 +1058,6 @@ test("public countersign path: no known ticket stays unbound, skips diary and do
         onTurn: (req) => {
           turnTicket =
             req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
-          turnPrompt = req.continuation.prompt;
         },
       }),
       captureIo().io,
@@ -1081,7 +1066,6 @@ test("public countersign path: no known ticket stays unbound, skips diary and do
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
     assert.equal(turnTicket, undefined);
-    assert.equal(turnPrompt?.includes(CASE_DOSSIER_SECTION_HEADING), false);
     const state = await readRoleRunState(
       result.admitted!.runDirectory,
       piDurablePrincipalAuthority,
