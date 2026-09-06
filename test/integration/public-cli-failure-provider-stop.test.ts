@@ -17,6 +17,7 @@ import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -999,8 +1000,7 @@ test("#307 SDK structured payload: confirmed remote status+body reaches error.js
   });
 });
 test("#307 2xx clears prior typed HTTP observation rather than persisting success", async () => {
-  const runDir = await mkdtemp(worktreeTempPrefix("http-2xx-clear-"));
-  try {
+  await withTempRoot("http-2xx-clear-", async (runDir) => {
     // Single shortest real tracer: production after_provider_response only.
     await observeTyped429ViaProductionHandler({
       runDirectory: runDir,
@@ -1017,9 +1017,7 @@ test("#307 2xx clears prior typed HTTP observation rather than persisting succes
       httpStatus: 200,
     });
     assert.equal(await readLatestTypedProviderHttpObservation(runDir), undefined);
-  } finally {
-    await rm(runDir, { recursive: true, force: true });
-  }
+    });
 });
 test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep real cause", async () => {
   await withTempHome(async (home) => {

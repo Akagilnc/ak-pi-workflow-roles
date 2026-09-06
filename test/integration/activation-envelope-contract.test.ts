@@ -53,6 +53,7 @@ import {
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
@@ -292,9 +293,8 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
   }
 }
 
-test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
-  const root = mkdtempSync(worktreeTempPrefix("ak-book-topo-"));
-  try {
+test("book key follows git common-dir host basename across worktrees, rename, and basename collision", async () => {
+  return await withTempRoot("ak-book-topo-", async (root) => {
     const main = join(root, "project-alpha");
     mkdirSync(main);
     execFileSync("git", ["init", "-b", "main"], { cwd: main, stdio: "ignore" });
@@ -347,14 +347,11 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       if (previousGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
       else process.env.GIT_WORK_TREE = previousGitWorkTree;
     }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    });
 });
 
-test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
-  const root = mkdtempSync(worktreeTempPrefix("ak-book-infra-"));
-  try {
+test("git spawn infrastructure failures retain identity and do not masquerade as non-git", async () => {
+  return await withTempRoot("ak-book-infra-", async (root) => {
     // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
     // Second acquire stays inside try so a failure still hits root's finally.
     const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
@@ -397,9 +394,7 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
         return true;
       },
     );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    });
 });
 
 // #685: host legs culled — inventory/admission 计数/拒绝矩阵、8+8 O_APPEND、16-worker

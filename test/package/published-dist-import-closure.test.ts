@@ -12,6 +12,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { materializePackageTree } from "../helpers/pi-test-harness.ts";
 
@@ -95,8 +96,7 @@ async function missingRelativeImports(distRoot: string): Promise<
 test(
   "fresh-build published dist relative-import graph is closed",
   async () => {
-    const root = await mkdtemp(worktreeTempPrefix("ak-dist-closure-"));
-    try {
+    await withTempRoot("ak-dist-closure-", async (root) => {
       await materializePackageTree(root, { nodeModules: "symlink" });
       await execFileAsync("npm", ["run", "build"], {
         cwd: root,
@@ -119,8 +119,6 @@ test(
       await import(
         pathToFileURL(resolve(distRoot, "navigator-attendance.js")).href
       );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+        });
   },
 );

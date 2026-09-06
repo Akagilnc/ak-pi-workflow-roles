@@ -8,7 +8,7 @@ import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { worktreePackageRoot } from "../helpers/worktree-temp.ts";
 
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const relayPath = join(packageRoot, "src/grok/mcp-relay.mjs");
 
@@ -27,6 +27,8 @@ async function withRelay(
   let child: ReturnType<typeof spawn> | undefined;
   let lines: ReturnType<typeof createInterface> | undefined;
   // Acquire nothing before cleanup ownership: server/child only inside body.
+  // Listener/child/cleanup share worktreePackageRoot as the socket base while
+  // keeping a short relative sun_path (do not listen on the absolute path).
   return withPrimaryAwareCleanup(
     async () => {
       server = createServer((socket) => {
@@ -36,9 +38,11 @@ async function withRelay(
           handleUpstream(message, socket);
         });
       });
-      await new Promise<void>((resolve, reject) => {
-        server!.once("error", reject);
-        server!.listen(socketName, resolve);
+      await withProcessCwd(worktreePackageRoot, async () => {
+        await new Promise<void>((resolve, reject) => {
+          server!.once("error", reject);
+          server!.listen(socketName, resolve);
+        });
       });
       child = spawn(process.execPath, [relayPath], {
         cwd: worktreePackageRoot,

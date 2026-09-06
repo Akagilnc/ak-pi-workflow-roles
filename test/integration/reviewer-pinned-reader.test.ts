@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import { promisify } from "node:util";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
@@ -86,8 +87,7 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
 });
 
 test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", async (t) => {
-  const root = await mkdtemp(worktreeTempPrefix("reviewer-sha256-"));
-  try {
+  await withTempRoot("reviewer-sha256-", async (root) => {
     try { await git(root, "init", "--object-format=sha256"); }
     catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
     await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
@@ -105,9 +105,7 @@ test("SHA-256 pins full and abbreviated commits, range, and ref snapshots", asyn
     assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {

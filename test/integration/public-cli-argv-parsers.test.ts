@@ -26,16 +26,12 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
 } from "../../src/public-cli/config.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtempFs(worktreeTempPrefix("ak-public-cli-parsers-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-parsers-", scenario);
 }
 
 function seedGitProject(root: string): void {

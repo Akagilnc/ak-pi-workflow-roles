@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   createAuditorDossierTool,
@@ -52,9 +53,8 @@ function memoryToolCallLeaf(args: Record<string, unknown>) {
   };
 }
 
-test("persistGateSubmissionCandidate writes memory tool-call leaf to run artifact", () => {
-  const runDirectory = mkdtempSync(worktreeTempPrefix("ak-gate-candidate-"));
-  try {
+test("persistGateSubmissionCandidate writes memory tool-call leaf to run artifact", async () => {
+  await withTempRoot("ak-gate-candidate-", async (runDirectory) => {
     headerOnlySession(runDirectory);
     const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
     const context = {
@@ -68,14 +68,11 @@ test("persistGateSubmissionCandidate writes memory tool-call leaf to run artifac
     const written = readFileSync(path!, "utf8");
     assert.equal(written.includes(MARKER), true);
     assert.deepEqual(JSON.parse(written), leaf);
-  } finally {
-    rmSync(runDirectory, { recursive: true, force: true });
-  }
+    });
 });
 
 test("dossier locator prefers persisted leaf over header-only session.jsonl", async () => {
-  const runDirectory = mkdtempSync(worktreeTempPrefix("ak-gate-dossier-"));
-  try {
+  await withTempRoot("ak-gate-dossier-", async (runDirectory) => {
     const sessionFile = headerOnlySession(runDirectory);
     const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
     const path = persistGateSubmissionCandidate(runDirectory, {
@@ -93,14 +90,11 @@ test("dossier locator prefers persisted leaf over header-only session.jsonl", as
     // Header-only durable principal is still on disk but is not the candidate pointer.
     assert.equal(readFileSync(sessionFile, "utf8").includes(MARKER), false);
     assert.equal(readFileSync(sessionFile, "utf8").includes('"type":"session"'), true);
-  } finally {
-    rmSync(runDirectory, { recursive: true, force: true });
-  }
+    });
 });
 
 test("mutation: without persist, parentSessionCandidate stays header-only (blind)", async () => {
-  const runDirectory = mkdtempSync(worktreeTempPrefix("ak-gate-blind-"));
-  try {
+  await withTempRoot("ak-gate-blind-", async (runDirectory) => {
     const sessionFile = headerOnlySession(runDirectory);
     const leaf = memoryToolCallLeaf({ status: "completed", report: MARKER });
     // Leaf only in memory — same Grok booking shape; no artifact write.
@@ -113,12 +107,10 @@ test("mutation: without persist, parentSessionCandidate stays header-only (blind
     const pointed = readFileSync(located.details!.parentSessionCandidate, "utf8");
     assert.equal(pointed.includes(MARKER), false, "header-only pointer must not carry candidate body");
     assert.equal(pointed.includes('"type":"session"'), true);
-  } finally {
-    rmSync(runDirectory, { recursive: true, force: true });
-  }
+    });
 });
 
-test("readLatestToolCallLeaf returns the last assistant toolCall entry", () => {
+test("readLatestToolCallLeaf returns the last assistant toolCall entry", async () => {
   const older = memoryToolCallLeaf({ status: "old" });
   const newer = memoryToolCallLeaf({ status: "new", report: MARKER });
   const found = readLatestToolCallLeaf({
@@ -134,16 +126,13 @@ test("readLatestToolCallLeaf returns the last assistant toolCall entry", () => {
   assert.deepEqual(found, newer);
 });
 
-test("persist returns undefined when session books have no toolCall leaf", () => {
-  const runDirectory = mkdtempSync(worktreeTempPrefix("ak-gate-empty-"));
-  try {
+test("persist returns undefined when session books have no toolCall leaf", async () => {
+  await withTempRoot("ak-gate-empty-", async (runDirectory) => {
     const path = persistGateSubmissionCandidate(runDirectory, {
       sessionManager: {
         getEntries: () => [{ type: "message", message: { role: "user", content: "only user" } }],
       },
     });
     assert.equal(path, undefined);
-  } finally {
-    rmSync(runDirectory, { recursive: true, force: true });
-  }
+    });
 });

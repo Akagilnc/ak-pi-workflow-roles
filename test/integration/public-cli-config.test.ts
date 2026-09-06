@@ -23,14 +23,10 @@ import {
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-config-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-config-", scenario);
 }
 
 test("bulk persistent configuration survives a new process boundary", async () => {

@@ -10,6 +10,7 @@ import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { isolatedTestProcessEnv } from "../../scripts/test-process-env.mjs";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -19,9 +20,8 @@ const REPO_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const PROCESS_ENV_MODULE = join(REPO_ROOT, "scripts/test-process-env.mjs");
 
 /** AC5: explicit options.home wins over default and over env.HOME. */
-test("isolatedTestProcessEnv: options.home wins over default and env.HOME", () => {
-  const custom = mkdtempSync(worktreeTempPrefix("ak-549-explicit-home-"));
-  try {
+test("isolatedTestProcessEnv: options.home wins over default and env.HOME", async () => {
+  await withTempRoot("ak-549-explicit-home-", async (custom) => {
     const env = isolatedTestProcessEnv({
       env: { ...process.env, HOME: HOST_HOME },
       home: custom,
@@ -32,16 +32,14 @@ test("isolatedTestProcessEnv: options.home wins over default and env.HOME", () =
     assert.equal(env.XDG_CACHE_HOME, join(custom, ".cache"));
     assert.equal(env.AK_ROLE_RUN_DIR, undefined);
     assert.equal(env.PI_CODING_AGENT_DIR, undefined);
-  } finally {
-    rmSync(custom, { recursive: true, force: true });
-  }
+    });
 });
 
 /**
  * #612 DK-1: default isolated HOME is a temporary root owned by the process —
  * create under temp, delete on exit. Books written under it must not survive.
  */
-test("isolatedTestProcessEnv: default home is removed when owning process exits", () => {
+test("isolatedTestProcessEnv: default home is removed when owning process exits", async () => {
   const child = spawnSync(
     process.execPath,
     [
@@ -67,9 +65,8 @@ process.stdout.write(env.HOME);
 });
 
 /** Explicit options.home is caller-owned — process exit must not delete it. */
-test("isolatedTestProcessEnv: explicit options.home is not deleted on process exit", () => {
-  const custom = mkdtempSync(worktreeTempPrefix("ak-612-explicit-survive-"));
-  try {
+test("isolatedTestProcessEnv: explicit options.home is not deleted on process exit", async () => {
+  await withTempRoot("ak-612-explicit-survive-", async (custom) => {
     const child = spawnSync(
       process.execPath,
       [
@@ -84,7 +81,5 @@ isolatedTestProcessEnv({ home: ${JSON.stringify(custom)} });
     );
     assert.equal(child.status, 0, child.stderr);
     assert.equal(existsSync(custom), true, "caller-owned home must survive child exit");
-  } finally {
-    rmSync(custom, { recursive: true, force: true });
-  }
+    });
 });

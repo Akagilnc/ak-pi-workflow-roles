@@ -12,6 +12,7 @@ import {
 import { isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { Value } from "typebox/value";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   ACCEPTED_ACTIVATION_EVENT,
@@ -41,7 +42,7 @@ import {
   type ReconciliationOutcome,
 } from "../../src/activation-reconciliation.ts";
 
-test("accepted-activation fact is closed at the typed API and omits injected content keys", () => {
+test("accepted-activation fact is closed at the typed API and omits injected content keys", async () => {
   const closed: AcceptedActivationFact = {
     event: ACCEPTED_ACTIVATION_EVENT,
     role: "judge",
@@ -80,7 +81,7 @@ test("accepted-activation fact is closed at the typed API and omits injected con
   );
 });
 
-test("resolved ledger home rejects relative process home before filesystem writes", () => {
+test("resolved ledger home rejects relative process home before filesystem writes", async () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
     assert.throws(
       () => resolveActivationLedgerHome(relativeHome),
@@ -97,8 +98,7 @@ test("resolved ledger home rejects relative process home before filesystem write
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 
-  const root = mkdtempSync(worktreeTempPrefix("ak-ledger-rel-home-"));
-  try {
+  return await withTempRoot("ak-ledger-rel-home-", async (root) => {
     const relativeLedgerHome = "relative-ledger-home";
     assert.equal(isAbsolute(relativeLedgerHome), false);
     assert.throws(
@@ -121,9 +121,7 @@ test("resolved ledger home rejects relative process home before filesystem write
     );
     assert.equal(existsSync(join(root, relativeLedgerHome)), false);
     assert.equal(existsSync(resolve(relativeLedgerHome)), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    });
 });
 
 function dispatchStub(input: {

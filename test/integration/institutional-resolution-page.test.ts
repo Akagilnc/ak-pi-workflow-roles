@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   INSTITUTIONAL_RESOLUTION_FILE,
@@ -13,8 +14,7 @@ import {
 } from "../../src/institutional-resolution.ts";
 
 test("resolution page write, read, missing-seat, resume rewrite, and corruption failures", async () => {
-  const runDir = await mkdtemp(worktreeTempPrefix("ak-test-resolution-page-"));
-  try {
+  return await withTempRoot("ak-test-resolution-page-", async (runDir) => {
     const pageV1: InstitutionalResolutionPage = {
       version: 1,
       seats: {
@@ -71,9 +71,7 @@ test("resolution page write, read, missing-seat, resume rewrite, and corruption 
         return true;
       },
     );
-  } finally {
-    await rm(runDir, { recursive: true, force: true });
-  }
+    });
 });
 
 test("run-lifecycle dispatch-resume seam refreshes institutional resolution and preserves effective model on engine update", async () => {
@@ -284,8 +282,7 @@ test("public CLI dispatch-resume entrypoint refreshes institutional resolution f
 });
 
 test("readInstitutionalSeatSelection reasons: missing-page, missing-seat, corrupted", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-inst-reason-"));
-  try {
+  await withTempRoot("ak-inst-reason-", async (root) => {
     await assert.rejects(
       () => readInstitutionalSeatSelection(join(root, "absent"), "navigator"),
       (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-page",
@@ -306,7 +303,5 @@ test("readInstitutionalSeatSelection reasons: missing-page, missing-seat, corrup
       () => readInstitutionalSeatSelection(runDirectory, "navigator"),
       (error: unknown) => error instanceof InstitutionalResolutionError && error.reason === "missing-seat",
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

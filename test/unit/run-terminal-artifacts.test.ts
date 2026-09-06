@@ -8,20 +8,18 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 
 async function withTempRunsRoot<T>(
   scenario: (runsRoot: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix("ak-run-terminal-"));
-  try {
+  return await withTempRoot("ak-run-terminal-", async (root) => {
     const runsRoot = join(root, "runs");
     await mkdir(runsRoot, { recursive: true });
     return await scenario(runsRoot);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 }
 
 function uniqueErrorName(uuid: string): string {

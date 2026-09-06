@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
@@ -95,8 +96,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
 
 test("provenance without immutable upstream commit is rejected", async () => {
   await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(worktreeTempPrefix("ak-method-no-commit-"));
-    try {
+    await withTempRoot("ak-method-no-commit-", async (tempRoot) => {
       const packageRootTemp = join(tempRoot, "pkg");
       const methodDir = join(packageRootTemp, "resources/methods/tdd");
       await cp(join(packageRoot, "resources/methods/tdd"), methodDir, {
@@ -112,9 +112,7 @@ test("provenance without immutable upstream commit is rejected", async () => {
         () => loadPackagedMethodSkillMaterial(packageRootTemp, "tdd"),
         /upstream\.commit/,
       );
-    } finally {
-      await rm(tempRoot, { recursive: true, force: true });
-    }
+        });
   });
 });
 

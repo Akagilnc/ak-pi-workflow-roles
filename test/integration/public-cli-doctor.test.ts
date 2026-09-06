@@ -43,14 +43,10 @@ import {
   sampleCompletedDoctorOutput,
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-doctor-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-doctor-", scenario);
 }
 
 function captureIo() {

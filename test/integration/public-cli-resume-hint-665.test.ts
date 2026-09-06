@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -20,8 +21,7 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 
 test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
-  const home = await mkdtemp(worktreeTempPrefix("ak-665-resume-hint-"));
-  try {
+  await withTempRoot("ak-665-resume-hint-", async (home) => {
     const runId = "run-665-uniform-429";
     const runDirectory = join(home, "runs", `${runId}@doctor`);
     const sessionDirectory = join(runDirectory, "session");
@@ -85,7 +85,5 @@ test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", asyn
       httpStatus: 429,
       provider: "openai-codex",
     });
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });

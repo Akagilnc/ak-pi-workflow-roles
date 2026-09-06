@@ -31,6 +31,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
@@ -505,8 +506,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
 });
 
 test("empty authority at prepare is honest context unavailable", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-empty-authority-"));
-  try {
+  await withTempRoot("navigator-empty-authority-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const events: any[] = [];
@@ -533,9 +533,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
     assert.equal(events[0].unavailableCause, "context");
     assert.equal(events[0].next, undefined);
     assert.notEqual(events[0].unavailableReason, undefined);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
