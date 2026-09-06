@@ -99,6 +99,11 @@ import {
   validateRecordedGleanerLeftOutput,
 } from "../gleaner-left-contracts.ts";
 import {
+  DIARIST_OUTPUT_TOOL_NAME,
+  diaristDecisiveFacts,
+  validateRecordedDiaristOutput,
+} from "../diarist-contracts.ts";
+import {
   INSPECTOR_OUTPUT_TOOL_NAME,
   inspectorDecisiveFacts,
   validateRecordedInspectorOutput,
@@ -145,6 +150,7 @@ import {
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
+  type AdmittedDiaristInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedGatekeeperInvocation,
@@ -3360,7 +3366,8 @@ type SeatAcceptedSettlementSpec = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "diarist";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
   readonly projectAccepted: (
@@ -3387,7 +3394,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGleanerLeftInvocation
     | AdmittedInspectorInvocation
     | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation,
+    | AdmittedNavigatorInvocation
+    | AdmittedDiaristInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3649,6 +3657,46 @@ export async function trySettleGleanerLeftTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
+}
+
+/** Lawful Diarist accepted outcome (completed 入录选择, #708). */
+export type LawfulDiaristRoleOutcome = {
+  kind: "accepted";
+  role: "diarist";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulDiaristTerminalResult(
+  admitted: AdmittedDiaristInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "diarist",
+    toolName: DIARIST_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "起居郎回执无显式 completed",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedDiaristOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedDiaristOutput(sealed.decisiveFacts);
+      const accepted: LawfulDiaristRoleOutcome = {
+        kind: "accepted",
+        role: "diarist",
+        status: sealed.status,
+        decisiveFacts: diaristDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  }, scope);
+}
+
+/** Try to settle a lawful Diarist Terminal; undefined only for genuine absence. */
+export async function trySettleDiaristTerminalResult(
+  admitted: AdmittedDiaristInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulDiaristTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */

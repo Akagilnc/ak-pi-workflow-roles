@@ -106,6 +106,9 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  // #708 `diarist-seat-default`: owner-set initial value; changed in the seat
+  // table like any other seat. No engine axis, package-default host.
+  diarist: [{ provider: "xai", model: "grok-4.5", thinking: "medium" }],
 };
 
 export function publicStartupCandidates(

@@ -78,7 +78,8 @@ export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string,
       : "packetPath" in activation ? activation.packetPath
         : "casePath" in activation ? activation.casePath
           : "inputPath" in activation ? activation.inputPath
-            : "sourceRun" in activation ? activation.sourceRun : undefined;
+            : "sourceRun" in activation ? activation.sourceRun
+              : "sourcesPath" in activation ? activation.sourcesPath : undefined;
     if (path !== undefined) flags.set(inputFlag, path);
   }
   if (activation.role === "fixer" && activation.prerequisitesPath !== undefined) flags.set("ak-fixer-prerequisites", activation.prerequisitesPath);

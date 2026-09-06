@@ -34,6 +34,7 @@ export type OptionOwner =
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "diarist"
   | "analyst";
 
 /**
@@ -427,6 +428,11 @@ const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const DIARIST_OPTIONS = [
+  bindOwner("diarist", SHARED_PROJECT_SEMANTICS),
+  bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const CODER_OPTIONS = [
   {
     id: "phase",
@@ -784,6 +790,7 @@ export const PUBLIC_OPTION_TABLE = {
   inspector: INSPECTOR_OPTIONS,
   gatekeeper: GATEKEEPER_OPTIONS,
   navigator: NAVIGATOR_OPTIONS,
+  diarist: DIARIST_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -804,6 +811,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "inspector",
   "gatekeeper",
   "navigator",
+  "diarist",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1199,6 +1207,16 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role navigator [options] [instruction]"],
     examples: [
       'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
+    ],
+  },
+  diarist: {
+    command: "diarist",
+    summary:
+      "Direct Diarist (起居郎) pass: gather and organize this case's decision basis into its 起居录.",
+    usage: ["ak-role diarist [options] [instruction]"],
+    examples: [
+      'ak-role diarist "整理 #708 的本案依据。"',
+      'ak-role diarist --attach ./design.md "补录本轮设计修订。"',
     ],
   },
   notary: {
