@@ -225,13 +225,15 @@ export function parseNavigatorModelSetting(value: string): {
 }
 
 /**
- * Navigator model selection: public seat table first (#675 / #617 DK-3), then
- * the legacy navigator-model.json file for local overrides.
+ * Navigator model selection from the public seat table only (#675 / #617 DK-3).
+ * No legacy navigator-model.json fallback — missing seat is a real model failure.
+ * Host/engine axes ride the shared public summons path; attendance open consumes
+ * model/thinking here and defers host selection to the shared envelope when present.
  */
 export async function resolveNavigatorSeatSelection(
   context: HostContext,
-  modelSettingPath: string | undefined,
-  defaultModelSettingPath: string,
+  _modelSettingPath: string | undefined,
+  _defaultModelSettingPath: string,
 ): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel?: string }> {
   try {
     const { loadPublicCliConfig } = await import("./public-cli/config.ts");
@@ -249,46 +251,36 @@ export async function resolveNavigatorSeatSelection(
           : packageMachineHome();
     const config = await loadPublicCliConfig(home);
     const modelOnly = seatModelOnly(config.seats.navigator);
-    if (modelOnly !== undefined) {
-      // Host params passthrough only — no map/validate/default (#675 ⑥).
-      const thinkingRaw = modelOnly.thinking;
-      const configuredLabel =
-        thinkingRaw === undefined
-          ? `${modelOnly.provider}/${modelOnly.model}`
-          : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
+    // Seat table is the only model authority — no legacy navigator-model.json.
+    // Bare missing seat uses the package default constant (not a file path).
+    if (modelOnly === undefined) {
+      const parsed = parseNavigatorModelSetting(NAVIGATOR_DEFAULT_MODEL);
       return {
         selection: {
-          provider: modelOnly.provider,
-          model: modelOnly.model,
-          ...(thinkingRaw === undefined ? {} : { thinking: thinkingRaw }),
+          provider: parsed.provider,
+          model: parsed.model,
+          ...(parsed.thinkingLevel === undefined ? {} : { thinking: parsed.thinkingLevel }),
         },
-        configuredLabel,
-        ...(thinkingRaw === undefined ? {} : { thinkingLevel: thinkingRaw }),
+        configuredLabel: NAVIGATOR_DEFAULT_MODEL,
+        ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
       };
     }
+    // Host params passthrough only — no map/validate/default (#675 ⑥).
+    const thinkingRaw = modelOnly.thinking;
+    const configuredLabel =
+      thinkingRaw === undefined
+        ? `${modelOnly.provider}/${modelOnly.model}`
+        : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
+    return {
+      selection: {
+        provider: modelOnly.provider,
+        model: modelOnly.model,
+        ...(thinkingRaw === undefined ? {} : { thinking: thinkingRaw }),
+      },
+      configuredLabel,
+      ...(thinkingRaw === undefined ? {} : { thinkingLevel: thinkingRaw }),
+    };
   } catch (error) {
-    // Seat table unreadable is a real failure — do not swallow into legacy file path.
     throw navigatorUnavailableError("model", error);
   }
-  let configured: string;
-  try {
-    configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
-  } catch (error) {
-    throw navigatorUnavailableError("model", error);
-  }
-  let parsed: ReturnType<typeof parseNavigatorModelSetting>;
-  try {
-    parsed = parseNavigatorModelSetting(configured);
-  } catch (error) {
-    throw navigatorUnavailableError("model", error);
-  }
-  return {
-    selection: {
-      provider: parsed.provider,
-      model: parsed.model,
-      ...(parsed.thinkingLevel === undefined ? {} : { thinking: parsed.thinkingLevel }),
-    },
-    configuredLabel: configured,
-    ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
-  };
 }

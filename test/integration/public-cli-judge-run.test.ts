@@ -169,7 +169,7 @@ test(
 );
 
 test(
-  "ak-role Judge settles retained unreadable compliance on the failure channel",
+  "ak-role Judge parent stands when nested compliance candidate is shape-unreadable",
   { timeout: 120_000 },
   async () => {
     const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-unreadable-"));
@@ -234,23 +234,15 @@ test(
         },
       );
 
-      assert.equal(result.exitCode, 1, stderr.join("") || "unreadable audit unexpectedly succeeded");
-      assert.equal(stdout.length, 1);
+      // ADR 0055 / CLAUDE.md §0: shape-unreadable auditor candidate must not abort parent.
+      // Parent Judge work stands; candidate is retained on the independent auditor run.
+      assert.equal(result.exitCode, 0, stderr.join("") || "unreadable audit must not abort parent Judge");
       assert.ok(result.terminal);
       const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "failure");
-      if (outcome.kind !== "failure") throw new Error("expected failure outcome");
+      assert.equal(outcome.kind, "accepted");
+      if (outcome.kind !== "accepted") throw new Error("expected accepted outcome");
       assert.equal(outcome.role, "judge");
-      // Unreadable compliance is infrastructure/output failure, not a judgment status (#475).
-      assert.equal(outcome.cause, "output");
-      assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
-        kind: "role_infrastructure_failure",
-        source: "shared-role-lifecycle",
-        reasonCode: "host_failure",
-        observation: { kind: "object-status-unreadable", status: "unknown" },
-        candidate: { status: "mystery", retained: "raw auditor candidate" },
-        exitCode: 1,
-      });
+      assert.equal(outcome.status, "converged");
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDir = join(
@@ -266,33 +258,18 @@ test(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as any);
-      // #675: public auditor is its own run; parent no longer retains child assistant
-      // responses on the parent sitian stream. Failure terminal is the contract.
-      // No accepted judge receipt for the unreadable audit path.
-      assert.equal(rows.some(
-        (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false && row.message?.details?.judgeStatus === "converged",
-      ), false);
-      const errorRef = result.terminal!.artifacts.find(
-        (artifact) => artifact.kind === "error",
+      // Accepted path may seal via pending-round-closure then submission-closure; either
+      // the toolResult details or the sealed closure must carry judgeStatus converged.
+      const hasToolResult = rows.some(
+        (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false
+          && (row.message?.details?.judgeStatus === "converged"
+            || row.message?.details?.submissionDisposition === "pending-round-closure"),
       );
-      assert.ok(errorRef, "failure channel must publish error artifact");
-      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-        kind: string;
-        role: string;
-        cause: string;
-        details?: Record<string, unknown>;
-      };
-      assert.equal(errorBody.kind, "error");
-      assert.equal(errorBody.role, "judge");
-      assert.equal(errorBody.cause, "output");
-      assert.deepEqual(errorBody.details, {
-        kind: "role_infrastructure_failure",
-        source: "shared-role-lifecycle",
-        reasonCode: "host_failure",
-        observation: { kind: "object-status-unreadable", status: "unknown" },
-        candidate: { status: "mystery", retained: "raw auditor candidate" },
-        exitCode: 1,
-      });
+      const hasClosure = rows.some(
+        (row) => row.type === "custom" && row.customType === "ak-role-submission-closure"
+          && row.data?.details?.judgeStatus === "converged",
+      );
+      assert.equal(hasToolResult || hasClosure, true, "parent Judge accepted receipt must stand after unreadable audit");
     } finally {
       // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }

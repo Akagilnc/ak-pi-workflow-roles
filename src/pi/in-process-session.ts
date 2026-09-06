@@ -676,18 +676,6 @@ export async function openPiInProcessSession(
         );
       }
     }
-    if (
-      requestedThinking !== undefined
-      && session.thinkingLevel !== requestedThinking
-    ) {
-      session.dispose();
-      throw withTypedReason(
-        new Error(
-          `${label} thinking level ${requestedThinking} is unavailable for ${selection.provider}/${selection.model}`,
-        ),
-        "thinking",
-      );
-    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();

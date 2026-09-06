@@ -257,11 +257,6 @@ export async function prepareGrokRoleEnvelope(options: {
           failInfrastructure: (error, _context, toolCallId) =>
             options.hostActions.failInfrastructure(error, options.context, toolCallId),
           bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
-          ...(options.hostActions.summonOfficer === undefined
-            ? {}
-            : {
-                summonOfficer: options.hostActions.summonOfficer as import("../gatekeeper-role.ts").GateOfficerSummon,
-              }),
         },
         toolCallId: options.toolCallId,
       });

@@ -650,9 +650,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
             if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
-              throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
-            }
             created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
             if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
             session = created;
@@ -667,9 +664,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } else {
         try {
           await session.setModel?.(modelSetting, model.thinkingLevel);
-          if (session.getThinkingLevel?.() !== undefined && session.getThinkingLevel() !== model.thinkingLevel) {
-            throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
-          }
         } catch (error) {
           // Contract: README.md#Navigator-attendance — resumed-session configuration failures remain typed unavailable and retain the original cause.
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);

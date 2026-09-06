@@ -233,8 +233,9 @@ export function validateAcceptedDetails(
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const evidenceChildDiscriminator =
     toolName === EVIDENCE_CHILD_OUTPUT_TOOL_NAME
-    && typeof candidate?.report === "string"
-    && candidate.report.trim() !== "";
+    && candidate !== null
+    && typeof candidate === "object"
+    && Object.hasOwn(candidate, "report");
   const baseDiscriminator = discriminator;
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||

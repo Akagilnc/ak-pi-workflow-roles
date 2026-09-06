@@ -18,18 +18,6 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import type { Usage } from "@earendil-works/pi-ai";
-
-function emptyUsage(): Usage {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-}
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -128,8 +116,7 @@ export function createNativeNavigatorSessionFactory(
       opened = await openPiInProcessSession({
         cwd: context.cwd,
         selection,
-        systemPrompt:
-          `You are Navigator attendance on this parent run. Submit direction via the ${NAVIGATOR_PREPARE_TOOL_NAME} tool in one call. Do not call other tools before that submission.`,
+        systemPrompt: "",
         customTools: [tool],
         sessionManager,
         label: "Navigator",
@@ -230,20 +217,14 @@ export function createNativeNavigatorSessionFactory(
             `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
           );
         }
-        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
-          throw new NavigatorUnavailableError(
-            "thinking",
-            `Navigator thinking level ${nextThinking ?? "(none)"} is unavailable for ${next}`,
-          );
-        }
+        // Pure host passthrough (#675 / #697): no package-side thinking equality reject.
+        const appliedThinking = nextThinking ?? nextParsed.thinkingLevel;
         selection = {
           provider: nextParsed.provider,
           model: nextParsed.model,
-          ...(nextParsed.thinkingLevel === undefined
-            ? {}
-            : { thinking: nextParsed.thinkingLevel }),
+          ...(appliedThinking === undefined ? {} : { thinking: appliedThinking }),
         };
-        thinkingLevel = nextParsed.thinkingLevel;
+        thinkingLevel = appliedThinking;
         configuredLabel = next;
       },
       getThinkingLevel: () => thinkingLevel,

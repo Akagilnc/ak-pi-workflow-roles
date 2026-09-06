@@ -169,6 +169,7 @@ export async function runPublicInstructionSeat(
 }> {
   let admitted: AdmittedInstructionSeatInvocation;
   let auditorSubject: "judge" | "doctor" | undefined;
+  let auditorSourceRun: string | undefined;
   try {
     const parsed = parseArgv(argv);
     if (role === "auditor") {
@@ -177,6 +178,26 @@ export async function runPublicInstructionSeat(
         throw new CliUsageError("auditor --subject requires judge|doctor");
       }
       auditorSubject = parsed.subject;
+      // Source-run is the same input surface for direct and nested summons (#675).
+      const source = typeof parsed.sourceRun === "string" ? parsed.sourceRun.trim() : "";
+      if (source === "") {
+        throw new CliUsageError("auditor --source-run requires a run locator");
+      }
+      // Resolve locator → absolute run directory once here (shared with notary path).
+      const { resolveNotarySourceRunLocator } = await import("../notary-source-run.ts");
+      const projectRoot = parsed.project ?? env.cwd;
+      try {
+        const resolved = await resolveNotarySourceRunLocator({
+          projectRoot,
+          sourceRun: source,
+          home: env.home,
+        });
+        auditorSourceRun = resolved.runDirectory;
+      } catch (error) {
+        throw new CliUsageError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
     admitted = await admitInstructionSeat(role, {
       home: env.home,
@@ -197,11 +218,15 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  // Scope subject env to this auditor turn so materials match direct and nested path.
-  const { AK_ROLE_AUDITOR_SUBJECT_ENV } = await import("../auditor-soul.ts");
+  // Scope subject + source-run env to this auditor turn (same face for direct/nested).
+  const { AK_ROLE_AUDITOR_SUBJECT_ENV, AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("../auditor-soul.ts");
   const priorSubject = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+  const priorSource = process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV];
   if (auditorSubject !== undefined) {
     process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = auditorSubject;
+  }
+  if (auditorSourceRun !== undefined) {
+    process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] = auditorSourceRun;
   }
   try {
     await markRunAdmitted(admitted, env.principalAuthority);
@@ -240,6 +265,10 @@ export async function runPublicInstructionSeat(
     if (auditorSubject !== undefined) {
       if (priorSubject === undefined) delete process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
       else process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = priorSubject;
+    }
+    if (auditorSourceRun !== undefined) {
+      if (priorSource === undefined) delete process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV];
+      else process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] = priorSource;
     }
   }
 }

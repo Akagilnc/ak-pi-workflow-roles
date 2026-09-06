@@ -247,7 +247,7 @@ test("direct officer settlement without a receipt stays loud and typed", async (
   });
 });
 
-test("direct officer missing arguments is transport failure with serializable submission", async () => {
+test("direct officer missing arguments bounces with serializable submission (shape, not transport)", async () => {
   await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
@@ -257,9 +257,10 @@ test("direct officer missing arguments is transport failure with serializable su
         return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
       },
     });
-    assert.equal(result.status, "transport_failure");
-    if (result.status === "transport_failure") {
-      assert.equal(result.stage, "inspector");
+    // ADR 0055 / CLAUDE.md §0: shape-unreadable officer decision is bounce, not transport_failure abort.
+    assert.equal(result.status, "bounce");
+    if (result.status === "bounce") {
+      assert.equal(result.officer, "inspector");
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);

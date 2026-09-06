@@ -436,9 +436,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Shared parent faux queue serves nested public auditor/notary/navigator turns.
-        // Measured minimum for this real nested path: 9 (not an expanded assertion).
-        faux.setResponses(Array.from({ length: 9 }, () => response));
+        faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -449,7 +447,17 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           ),
           "the provider receives the complete bundled judge Soul",
         );
+        const seenAuditContext = auditContext as Context | undefined;
+        assert.ok(seenAuditContext);
+        // Parent still carries defaultBaseUrl; child auth is models.json (S3), not ambient inherit.
         assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
+        // Prove the auditor child consumed resolved auth on the real outbound HTTP request
+        // (models.json → openai-completions → mock), not by re-reading the fixture file.
+        assert.ok(auditChildRequestHeaders, "auditor child must hit the seeded mock HTTP entry");
+        assert.equal(auditChildRequestHeaders.authorization, "Bearer resolved-secret");
+        assert.equal(auditChildRequestHeaders["x-resolved-auth"], "yes");
+        assert.equal(auditChildRequestHeaders["x-model-route"], "audit-tenant");
+        assert.notEqual(seeded.baseUrl, defaultBaseUrl);
 
         const acceptedResult = sessionManager
           .getEntries()

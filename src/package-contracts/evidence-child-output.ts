@@ -29,15 +29,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function projectLawfulEvidenceChildOutput(
   value: unknown,
 ): EvidenceChildOutput | undefined {
-  if (!isRecord(value) || typeof value.report !== "string") return undefined;
-  if (value.report.trim() === "") return undefined;
-  return { report: value.report };
+  // ADR 0055 / CLAUDE.md §0: no type/blank shape gate on report — retain candidate as-is.
+  if (!isRecord(value) || !Object.hasOwn(value, "report")) return undefined;
+  return { report: typeof value.report === "string" ? value.report : String(value.report) };
 }
 
 export function validateRecordedEvidenceChildOutput(value: unknown): EvidenceChildOutput {
   const projected = projectLawfulEvidenceChildOutput(value);
   if (projected === undefined) {
-    throw new Error("Evidence-child output has no recognized report body");
+    throw new Error("Evidence-child output has no report field");
   }
   return projected;
 }

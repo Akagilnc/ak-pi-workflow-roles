@@ -94,8 +94,6 @@ export type GatekeeperPassHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
   bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
-  /** Same seam as runGatekeeper options — offline tracers only. */
-  summonOfficer?: GateOfficerSummon;
 };
 
 /**
@@ -159,17 +157,20 @@ function retainedSubmission(decision: unknown): unknown {
 }
 
 /**
- * No usable explicit release is infrastructure failure, not a judgment status.
- * Original submission is retained for the failure channel (#475).
+ * No usable explicit release (shape-unreadable officer decision).
+ * Retain submission and bounce for rewrite — do NOT map shape onto transport_failure
+ * parent abort (CLAUDE.md §0 / ADR 0055). Real provider/engine/disk failures stay
+ * transport_failure elsewhere.
  */
-function noUsableReleaseFailure(
-  stage: "inspector" | "notary",
+function noUsableRelease(
+  officer: "inspector" | "notary",
   decision: unknown,
-): Extract<GatekeeperResult, { status: "transport_failure" }> {
+): Extract<GatekeeperResult, { status: "bounce" }> {
   return {
-    status: "transport_failure",
-    stage,
-    reason: "decision 无显式 pass/bounce/escalate",
+    status: "bounce",
+    officer,
+    disposition: "rewrite",
+    findings: [],
     submission: retainedSubmission(decision),
   };
 }
@@ -184,7 +185,7 @@ function projectOfficerDecision(
   decision: unknown,
 ): GatekeeperResult {
   const record = readRecord(decision);
-  if (record === undefined) return noUsableReleaseFailure(officer, decision);
+  if (record === undefined) return noUsableRelease(officer, decision);
   if (record.status === "bounce") {
     return {
       status: "bounce",
@@ -210,7 +211,7 @@ function projectOfficerDecision(
       submission: retainedSubmission(decision),
     };
   }
-  return noUsableReleaseFailure(officer, decision);
+  return noUsableRelease(officer, decision);
 }
 
 /** Map a public-role terminal onto the gate officer result surface. */
@@ -240,6 +241,17 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "failure") {
+    const facts = outcome.decisiveFacts;
+    const record =
+      typeof facts === "object" && facts !== null && !Array.isArray(facts)
+        ? (facts as Record<string, unknown>)
+        : undefined;
+    // Retained shape/submission on the failure channel → bounce, not parent abort (ADR 0055).
+    // Real provider/engine failures carry empty or absent decisiveFacts.
+    if (record !== undefined && Object.keys(record).length > 0) {
+      const submission = Object.hasOwn(record, "candidate") ? record.candidate : record;
+      return noUsableRelease(officer, submission);
+    }
     return {
       status: "transport_failure",
       stage: officer,
@@ -261,22 +273,15 @@ function projectOfficerTerminal(
   };
 }
 
-/** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
-export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as const;
-
-export type DirectOfficerRunPointer = {
-  readonly version: 1;
-  readonly kind: typeof DIRECT_OFFICER_RUN_POINTER_KIND;
-  readonly officer: "inspector" | "notary";
-  /** Absolute path to the officer session.jsonl 正本. */
-  readonly sessionFile: string;
-  /** Officer run directory when known. */
-  readonly runDirectory?: string;
-};
+/** Re-export shared pointer contract (persistence owned by direct-officer-run-pointer). */
+export {
+  DIRECT_OFFICER_RUN_POINTER_KIND,
+  type DirectOfficerRunPointer,
+} from "./direct-officer-run-pointer.ts";
 
 /**
- * Book a typed pointer under parent session/auditor-roles to the independent
- * officer run 正本. Never fabricates user/assistant/toolResult rows (#675).
+ * Project + request shared archivist to book a typed pointer under parent
+ * session/auditor-roles. Role module owns no mkdir/writeFile (ADR 0018 / #675).
  * Offline mocks without a real session leave no nested volume (lawful zero).
  */
 async function bookDirectOfficerPointer(
@@ -296,24 +301,15 @@ async function bookDirectOfficerPointer(
     // No independent 正本 to point at — do not synthesize a parallel session.
     return;
   }
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { dirname, join } = await import("node:path");
-  const nest = join(dirname(parentFile), "auditor-roles");
-  await mkdir(nest, { recursive: true });
-  const pointer: DirectOfficerRunPointer = {
-    version: 1,
-    kind: DIRECT_OFFICER_RUN_POINTER_KIND,
+  const { bookDirectOfficerRunPointer } = await import("./direct-officer-run-pointer.ts");
+  await bookDirectOfficerRunPointer({
+    parentSessionFile: parentFile,
     officer,
     sessionFile,
     ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
       ? { runDirectory: summoned.runDirectory }
       : {}),
-  };
-  await writeFile(
-    join(nest, `${officer}-${Date.now().toString(36)}.pointer.json`),
-    `${JSON.stringify(pointer)}\n`,
-    "utf8",
-  );
+  });
 }
 
 /** Submission-gate summons: subject kind → officer; activation is public role path (#675). */
@@ -368,15 +364,14 @@ export async function requireGatekeeperPass(options: {
   readonly signal?: AbortSignal;
   readonly hostActions: GatekeeperPassHostActions;
   readonly toolCallId: string;
-  /** Same seam as runGatekeeper options — offline tracers only. */
+  /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
 }): Promise<void> {
-  const summonOfficer = options.summonOfficer ?? options.hostActions.summonOfficer;
   const gatekeeper = await runGatekeeper({
     context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(summonOfficer === undefined ? {} : { summonOfficer }),
+    ...(options.summonOfficer === undefined ? {} : { summonOfficer: options.summonOfficer }),
   });
   if (gatekeeper.status === "pass") return;
   if (gatekeeper.status === "transport_failure") {

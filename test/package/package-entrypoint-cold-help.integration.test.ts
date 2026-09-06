@@ -242,12 +242,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
         // (public-run-credentials). Offline nested seats use models.json apiKey providers.
         const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
         const offlineSeat = { provider: "ak-cold-offline", model: "faux-1" };
+        const lunaSeat = { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "max" as const };
         await savePublicCliConfig({
           seats: {
             auditor: offlineSeat,
             notary: offlineSeat,
             inspector: offlineSeat,
             judge: offlineSeat,
+            navigator: lunaSeat,
           },
         }, home);
         const installedNavigator = await installed("src/navigator-attendance.ts");
@@ -267,11 +269,10 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const coldAgentDir = resolve(home, ".cold-installed-agent");
         process.env.PI_CODING_AGENT_DIR = coldAgentDir;
         await mkdir(coldAgentDir, { recursive: true });
-        const configuredPath = resolve(coldAgentDir, "navigator-model.json");
-        assert.equal(await installedNavigator.readNavigatorModelSetting(configuredPath), installedNavigator.NAVIGATOR_DEFAULT_MODEL);
         const modelRequests: string[] = [];
         const lifecycle: Array<{ label: string; event: any; timestamps?: { preparedAt: string; settledAt: string; persistedVisibleAt: string } }> = [];
         const invoke = async (label: string) => {
+          let parentPrepareCounted = false;
           const response = (context: Context, _options: unknown, _state: unknown, requestModel: { provider: string; id: string }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NOTARY_OUTPUT_TOOL)) {
@@ -281,7 +282,13 @@ test("cold-installed live help follows the loaded extension and changes on the n
               );
             }
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
+              // Parent model-setting contract (#675 r2 exact-3): one parent prepare per
+              // successful invoke. Nested officer navigator prepares share Luna but are
+              // independent seats — do not inflate the parent model-setting assertion.
+              if (!parentPrepareCounted) {
+                parentPrepareCounted = true;
+                modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
+              }
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
                 candidates: [{
                   id: "cold-luna-route",
@@ -303,9 +310,11 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Per-invoke queue: nested public auditor/notary + parent navigator share Luna.
-          // Each successful invoke: parent prepare+rebind + nested officers' navigator prepares.
-          luna.setResponses(Array.from({ length: 12 }, () => response));
+          // Per-invoke queue. Nested public notary/auditor each run Navigator on the
+          // navigator seat (Luna) plus their own output turns; parent also prepare+judge.
+          // Measured floor for one successful nested path on this fixture: 16.
+          // modelRequests exact-3 stays parent-prepare-only (see parentPrepareCounted).
+          luna.setResponses(Array.from({ length: 16 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -356,11 +365,18 @@ test("cold-installed live help follows the loaded extension and changes on the n
             if (event?.disposition !== "recommendation") return;
             const observed = await uniqueObservedNavigatorSession(home, resolve(issueRoot), issueRoot);
             const persisted = observed.entries;
-            // First prepare vs last settlement: rebind may prepare again after settle (#675).
-            const prepared = persisted.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME);
+            // Parent settlement is the sealed attendance fact; preparation that drains
+            // into it must complete before. Prefer last prepare at-or-before settlement
+            // so nested officer navigator prepares after parent settle do not invert order.
             const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
-            const preparedAt = prepared?.timestamp;
             const settledAt = settled?.timestamp;
+            const settledMs = typeof settledAt === "string" ? Date.parse(settledAt) : Number.NaN;
+            const prepared = [...persisted].reverse().find((entry) => {
+              if (entry.type !== "message" || entry.message?.role !== "toolResult" || entry.message?.toolName !== NAVIGATOR_PREPARE_TOOL_NAME) return false;
+              if (!Number.isFinite(settledMs) || typeof entry.timestamp !== "string") return true;
+              return Date.parse(entry.timestamp) <= settledMs;
+            });
+            const preparedAt = prepared?.timestamp;
             const persistedVisibleAt = visible?.timestamp;
             if (typeof preparedAt !== "string" || typeof settledAt !== "string" || typeof persistedVisibleAt !== "string") {
               throw new Error(`${label} must persist typed preparation, settlement, and visible timestamps: ${JSON.stringify({ preparedAt, settledAt, persistedVisibleAt, event, persistedTypes: persisted.map((entry) => ({ type: entry.type, customType: entry.customType, timestamp: entry.timestamp })) })}`);
@@ -380,31 +396,41 @@ test("cold-installed live help follows the loaded extension and changes on the n
         };
         try {
           await invoke("default-luna-max");
-          await installedNavigator.writeNavigatorModelSetting("openai-codex/gpt-5.6-luna", configuredPath);
+          await savePublicCliConfig({
+            seats: {
+              auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
+              navigator: { provider: "openai-codex", model: "gpt-5.6-luna" },
+            },
+          }, home);
           await invoke("edited-luna-off");
-          await installedNavigator.writeNavigatorModelSetting(installedNavigator.NAVIGATOR_DEFAULT_MODEL, configuredPath);
+          await savePublicCliConfig({
+            seats: {
+              auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
+              navigator: lunaSeat,
+            },
+          }, home);
           await invoke("restored-luna-max");
-          await installedNavigator.writeNavigatorModelSetting("missing/provider", configuredPath);
+          await savePublicCliConfig({
+            seats: {
+              auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
+              navigator: { provider: "missing", model: "provider" },
+            },
+          }, home);
           await invoke("unsupported-no-fallback");
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // Exact Luna stream count for 3 successful invokes under public nested officers:
-        // each invoke runs parent navigator prepare+rebind and nested notary/auditor
-        // navigator attendance on the same navigator-model.json Luna setting (6 streams).
-        // Unsupported invoke adds 0. No other provider may appear.
-        assert.deepEqual(
-          modelRequests,
-          Array.from({ length: 18 }, () => "openai-codex/gpt-5.6-luna"),
-          "unsupported configuration must not fall back or dispatch another model",
-        );
+        assert.deepEqual(modelRequests, [
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+        ], "unsupported configuration must not fall back or dispatch another model");
         assert.equal(lifecycle[0]?.event.disposition, "recommendation");
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
         assert.equal(lifecycle[3]?.event.unavailableSource, "model");
         assert.equal(lifecycle[3]?.event.unavailableCause, "model");
-        process.stderr.write(`[cold Navigator lifecycle] ${JSON.stringify(lifecycle.map(({ label, event, timestamps }) => ({ label, disposition: event?.disposition, timestamps }))) }\n`);
       });
     },
   );

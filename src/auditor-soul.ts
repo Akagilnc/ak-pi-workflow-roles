@@ -23,6 +23,13 @@ export type AuditorSoulRole = (typeof AUDITOR_SOUL_ROLES)[number];
  */
 export const AK_ROLE_AUDITOR_SUBJECT_ENV = "AK_ROLE_AUDITOR_SUBJECT" as const;
 
+/**
+ * Audited source-run input for public 审刑院 (#675):
+ * same --source-run face for direct `ak-role auditor` and nested compliance summons.
+ * Never falls back to the auditor's own run directory.
+ */
+export const AK_ROLE_AUDITOR_SOURCE_RUN_ENV = "AK_ROLE_AUDITOR_SOURCE_RUN" as const;
+
 function auditorSoulRelativePath(role: AuditorSoulRole): string {
   return `souls/${role}-auditor.md`;
 }
