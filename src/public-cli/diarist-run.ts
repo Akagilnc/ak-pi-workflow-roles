@@ -1,18 +1,26 @@
 /**
- * Public Countersign Role run: admit ticket materials → shared post-admission
- * coordinator → settle Terminal result (#572 / ADR 0074). #599: manual resume
- * continues the exact session. Unbound admission resolves its ticket via the
- * shared seat LLM bind (#635). Who runs 起居郎, and when, is the caller's
- * composition (ADR 0010 / ADR 0075 `no-call-rule`) — not this seat's business.
+ * Public Diarist (起居郎) Role run — #708 / ADR 0075 `diarist-is-role`.
+ * Same admit → post-admission → settle shape as the other instruction seats.
+ * Semantic collection is the role's own turn; this seat only freezes the
+ * mechanical source catalog the turn selects from (`diarist-collector-is-own-turn`).
+ * Who calls it and in what order is the caller's business (ADR 0010 `no-call-rule`).
  */
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
+import {
+  loadDiaristIssueFace,
+  prepareDiaristSourceCatalog,
+  serializeDiaristSourceCatalog,
+} from "../diarist.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  admitCountersignInvocation,
-  buildCountersignTransportPrompt,
-  type AdmittedCountersignInvocation,
-  type ParseCountersignArgvResult,
+  admitDiaristInvocation,
+  buildInstructionTransportPrompt,
+  type AdmittedDiaristInvocation,
+  type ParseDiaristArgvResult,
 } from "./invocation.ts";
 import {
   applyInstructionTicketProbe,
@@ -23,19 +31,20 @@ import {
 import {
   prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
-  type PostAdmissionEnv,
   runPostAdmissionSeatResume,
   resumeTurnRequestProjectionOptions,
+  type PostAdmissionAdapters,
+  type PostAdmissionEnv,
 } from "./post-admission.ts";
 import {
-  loadResumableCountersignRun,
+  loadResumableDiaristRun,
   markRunAdmitted,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
-  trySettleCountersignTerminalResult,
+  trySettleDiaristTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult } from "./terminal.ts";
@@ -44,44 +53,103 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 
-export type CountersignRunEnv = PostAdmissionEnv & {
+export type DiaristRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
 };
 
+/** Frozen catalog filename inside the run dossier (durable material, not argv). */
+const DIARIST_SOURCE_CATALOG_FILE = "diarist-sources.json" as const;
+
+/** Neutral path identifier only (ADR 0073) — catalog bytes stay on disk. */
+function withDiaristCatalogPath(
+  prompt: string,
+  sourcesPath: string | undefined,
+): string {
+  if (sourcesPath === undefined || sourcesPath.trim() === "") return prompt;
+  return `${prompt}\n\n已冻结来源目录（路径）：\n- ${sourcesPath}`;
+}
+
 /** Project admitted invocation onto the host-neutral turn request. */
-export function buildCountersignTurnRequest(
-  admitted: AdmittedCountersignInvocation,
+export function buildDiaristTurnRequest(
+  admitted: AdmittedDiaristInvocation,
   options: RoleTurnRequestProjectionOptions,
+  sourcesPath?: string,
 ): RoleTurnRequest {
+  const continuation =
+    sourcesPath === undefined
+      ? options.continuation
+      : {
+          ...options.continuation,
+          prompt: withDiaristCatalogPath(options.continuation.prompt, sourcesPath),
+        };
   return projectRoleTurnRequest(
     admitted,
     {
       activation: {
-        role: "countersign" as const,
-        // Admitted typed binding rides the turn activation seam to the Notary gate.
-        ...(admitted.ticketNumber === undefined
-          ? {}
-          : { ticketNumber: admitted.ticketNumber }),
+        role: "diarist" as const,
+        ...(sourcesPath === undefined ? {} : { sourcesPath }),
       },
     },
-    options,
+    { ...options, continuation },
   );
 }
 
-export async function runPublicCountersign(
+/**
+ * Mechanical source enumeration for a bound summons: establish the per-ticket
+ * volume, freeze this turn's candidate catalog into the run dossier.
+ * A true-unbound summons has no ticket, so no diary is minted — undefined.
+ */
+async function freezeDiaristSourceCatalog(
+  admitted: AdmittedDiaristInvocation,
+  env: Pick<DiaristRunEnv, "cwd" | "home">,
+): Promise<string | undefined> {
+  if (admitted.ticketNumber === undefined) return undefined;
+  const issueFace = await loadDiaristIssueFace({
+    ticketNumber: admitted.ticketNumber,
+    projectRoot: admitted.projectRoot,
+    home: env.home,
+  });
+  const catalog = await prepareDiaristSourceCatalog({
+    ticketNumber: admitted.ticketNumber,
+    cwd: admitted.projectRoot,
+    home: env.home,
+    issueFace,
+    sessionCwds: [admitted.projectRoot, env.cwd],
+  });
+  const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
+  await writeFile(path, serializeDiaristSourceCatalog(catalog), "utf8");
+  return path;
+}
+
+function diaristAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedDiaristInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedDiaristInvocation> {
+  return {
+    trySettle: (admitted, authority, scope) =>
+      trySettleDiaristTerminalResult(admitted, authority, scope),
+    shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
+  };
+}
+
+export async function runPublicDiarist(
   argv: readonly string[],
-  env: CountersignRunEnv,
+  env: DiaristRunEnv,
   io: CliIo,
-  parseCountersignArgv: (args: readonly string[]) => ParseCountersignArgvResult,
+  parseDiaristArgv: (args: readonly string[]) => ParseDiaristArgvResult,
 ): Promise<{
   exitCode: number;
-  admitted?: AdmittedCountersignInvocation;
+  admitted?: AdmittedDiaristInvocation;
   terminal?: TerminalResult;
 }> {
-  let parsed: ParseCountersignArgvResult;
+  let parsed: ParseDiaristArgvResult;
   try {
-    parsed = parseCountersignArgv(argv);
+    parsed = parseDiaristArgv(argv);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -90,10 +158,9 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  // #637: same ticket → resume prior countersign run with this summons' materials.
+  // #637: same ticket → resume this seat's prior run with this summons' materials.
   // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
   // controlled failure (bare pre-admit throw skips terminal settlement).
-  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
   const ticketProbe = await probeInstructionTicket(
     parsed.instruction,
@@ -110,12 +177,12 @@ export async function runPublicCountersign(
     const resumed = await tryResumeSameTicketSeatRun({
       home: env.home,
       projectRoot,
-      role: "countersign",
+      role: "diarist",
       ticketNumber: probedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
-        runPublicCountersignResume(
+        runPublicDiaristResume(
           { runId, ...(materials === undefined ? {} : { summons: materials }) },
           env,
           io,
@@ -124,9 +191,9 @@ export async function runPublicCountersign(
     if (resumed !== undefined) return resumed;
   }
 
-  let admitted: AdmittedCountersignInvocation;
+  let admitted: AdmittedDiaristInvocation;
   try {
-    admitted = await admitCountersignInvocation({
+    admitted = await admitDiaristInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
@@ -159,7 +226,7 @@ export async function runPublicCountersign(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildCountersignTransportPrompt(
+      prompt: buildInstructionTransportPrompt(
         admitted,
         engineSessionMaterialFromOptions({
           ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -168,21 +235,21 @@ export async function runPublicCountersign(
       ),
     },
   };
-  // Mutable shell: ticket bind re-projects activation before executeTurn.
-  const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
+  // Mutable shell: ticket bind + catalog freeze re-project activation before executeTurn.
+  const turnRequest = buildDiaristTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
     admitted,
     env,
     io,
     request: turnRequest,
-    adapters: countersignAdapters({
-      beforeDispatch: async (admitted) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admitted, ticketProbe);
+    adapters: diaristAdapters({
+      beforeDispatch: async (admittedSeat) => {
+        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+        const sourcesPath = await freezeDiaristSourceCatalog(admittedSeat, env);
         Object.assign(
           turnRequest,
-          buildCountersignTurnRequest(admitted, turnProjection),
+          buildDiaristTurnRequest(admittedSeat, turnProjection, sourcesPath),
         );
       },
     }),
@@ -190,38 +257,18 @@ export async function runPublicCountersign(
   });
 }
 
-function countersignAdapters(options?: {
-  beforeDispatch?: (
-    admitted: AdmittedCountersignInvocation,
-  ) => void | Promise<void>;
-}) {
-  return {
-    trySettle: (
-      admitted: AdmittedCountersignInvocation,
-      authority: DurablePrincipalAuthority,
-      scope?: { readonly courtAttemptId?: string },
-    ) => trySettleCountersignTerminalResult(admitted, authority, scope),
-    // Accepted receipts and failure terminals both present via shared path.
-    shouldPresentSettled: () => true,
-    ...(options?.beforeDispatch === undefined
-      ? {}
-      : { beforeDispatch: options.beforeDispatch }),
-  };
-}
-
 /**
- * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
- * Restores role/ticket/session identity. Same-ticket summons deliver this turn's
- * instruction + frozen attachments on the resume prompt; manual resume keeps
- * package-envelope / caller-message semantics and birth attachments.
+ * Resume a previously admitted Diarist run (#708 / ADR 0079 同票传召 = resume).
+ * Each re-entry re-enumerates fresh sources; the offered watermark keeps the
+ * pass incremental so already-seen blocks are not re-offered.
  */
-export async function runPublicCountersignResume(
+export async function runPublicDiaristResume(
   request: PublicResumeRequest,
-  env: CountersignRunEnv,
+  env: DiaristRunEnv,
   io: CliIo,
 ): Promise<{
   exitCode: number;
-  admitted?: AdmittedCountersignInvocation;
+  admitted?: AdmittedDiaristInvocation;
   terminal?: TerminalResult;
 }> {
   return await runPostAdmissionSeatResume({
@@ -229,17 +276,14 @@ export async function runPublicCountersignResume(
     env,
     io,
     load: (effective) =>
-      loadResumableCountersignRun(
-        env.home,
-        effective.runId,
-        env.principalAuthority,
-      ),
+      loadResumableDiaristRun(env.home, effective.runId, env.principalAuthority),
     buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(
         admitted.runDirectory,
         effective.summons,
       );
-      return buildCountersignTurnRequest(
+      const sourcesPath = await freezeDiaristSourceCatalog(admitted, env);
+      return buildDiaristTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
           admitted,
@@ -247,9 +291,10 @@ export async function runPublicCountersignResume(
           env,
           summonsPrepared,
         ),
+        sourcesPath,
       );
     },
-    adapters: countersignAdapters(),
+    adapters: diaristAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
