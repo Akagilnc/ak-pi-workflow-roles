@@ -943,7 +943,7 @@ async function freezeRegularFileAttachment(
   };
 }
 
-/** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
+/** Freeze attachments only — ticket identity is reused post-admission (#635 / #709). */
 async function freezeAttachments(
   attachmentPaths: readonly string[],
   attachmentsDirectory: string,
@@ -1007,7 +1007,7 @@ export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
  * Shared instruction-seat admission for Judge and Inspector: project check,
  * principal/placement issue, attachment freeze, admitted-request and invocation
  * ledger write. CorrelationId is projected only when supplied (Inspector).
- * Ticket binding is post-admission via shared seat LLM path (#635).
+ * Ticket identity is reused post-admission from records this book already holds (#709).
  */
 async function admitStandardMaterialInvocation<
   R extends "judge" | "inspector" | "gatekeeper" | "navigator",
@@ -1208,7 +1208,7 @@ export async function admitCountersignInvocation(
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-  // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
+  // Ticket identity is reused post-admission (#709); admission stays unbound.
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
