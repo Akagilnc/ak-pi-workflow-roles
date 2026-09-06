@@ -36,9 +36,12 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-coder-", scenario);
+  return withTempRoot("ak-public-cli-coder-", (home) =>
+    withHermesFixtureOnPath(home, () => scenario(home)),
+  );
 }
 
 function captureIo() {

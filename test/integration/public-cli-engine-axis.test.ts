@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { installHermesFixture } from "../helpers/hermes-fixture.ts";
+import { installHermesFixture, withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
@@ -76,7 +76,9 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", scenario);
+  return withTempRoot("ak-engine-axis-", (home) =>
+    withHermesFixtureOnPath(home, () => scenario(home)),
+  );
 }
 
 function captureIo() {

@@ -50,8 +50,11 @@ import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-resume-four-seats-", scenario);
+  return withTempRoot("ak-resume-four-seats-", (home) =>
+    withHermesFixtureOnPath(home, () => scenario(home)),
+  );
 }
 
 

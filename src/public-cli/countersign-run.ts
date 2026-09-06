@@ -100,15 +100,26 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // #709: the 起居郎 round names the ticket before any run is minted, so the same
-  // identity picks the session to resume and, on a first summons, mints the volume.
-  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
+  // #709: one 起居郎 round names the ticket (and collects the case) before any
+  // run is minted. Failures are held until after admit so terminal settlement runs.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveSummonsTicketIdentity({
-    instruction: parsed.instruction,
-    projectRoot,
-    env,
-  });
+  let reusedTicketNumber: number | undefined;
+  let summonsIdentityError: unknown;
+  try {
+    reusedTicketNumber = await resolveSummonsTicketIdentity({
+      instruction: parsed.instruction,
+      projectRoot,
+      env,
+      loadIssueFace: (ticketNumber) =>
+        loadTicketIssueFace({
+          ticketNumber,
+          projectRoot,
+          home: env.home,
+        }),
+    });
+  } catch (error) {
+    summonsIdentityError = error;
+  }
   if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
@@ -127,6 +138,7 @@ export async function runPublicCountersign(
           { runId, ...(materials === undefined ? {} : { summons: materials }) },
           env,
           io,
+          { skipDiaristStation: true },
         ),
     });
     if (resumed !== undefined) return resumed;
@@ -186,10 +198,9 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635/#709: bind the resolved identity inside the controlled-failure boundary,
-        // then re-project activation once the station has settled whatever it binds.
+        if (summonsIdentityError !== undefined) throw summonsIdentityError;
+        // The 起居郎 round already ran for this summons; bind its typed key only.
         await bindReusedTicketNumber(admitted, reusedTicketNumber);
-        await runCountersignDiaristStation(admitted, env);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
@@ -230,6 +241,7 @@ export async function runPublicCountersignResume(
   request: PublicResumeRequest,
   env: CountersignRunEnv,
   io: CliIo,
+  options?: { readonly skipDiaristStation?: true },
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedCountersignInvocation;
@@ -260,11 +272,15 @@ export async function runPublicCountersignResume(
         ),
       );
     },
-    adapters: countersignAdapters({
-      beforeDispatch: async (admitted) => {
-        await runCountersignDiaristStation(admitted, env);
-      },
-    }),
+    adapters: countersignAdapters(
+      options?.skipDiaristStation === true
+        ? undefined
+        : {
+            beforeDispatch: async (admitted) => {
+              await runCountersignDiaristStation(admitted, env);
+            },
+          },
+    ),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
@@ -312,37 +328,35 @@ export async function runCountersignDiaristStation(
  * ticket-provenance volume, then propagated — never washed into empty face.
  */
 function persistIssueSourceFailure(
-  admitted: AdmittedCountersignInvocation,
-  ticketNumber: number,
+  input: {
+    readonly ticketNumber: number;
+    readonly projectRoot: string;
+    readonly home?: string;
+  },
   error: DiaristIssueSourceError,
 ): never {
-  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
   appendIssueSourceFailureDiagnostic({
-    ticketNumber,
-    cwd: admitted.projectRoot,
-    ...(home === undefined ? {} : { home }),
+    ticketNumber: input.ticketNumber,
+    cwd: input.projectRoot,
+    ...(input.home === undefined ? {} : { home: input.home }),
     cause: error.message,
     reason: error.reason,
   });
   throw error;
 }
 
-async function loadBoundIssueFace(
-  admitted: AdmittedCountersignInvocation,
-): Promise<DiaristIssueFace> {
-  const ticketNumber = admitted.ticketNumber;
-  if (ticketNumber === undefined) {
-    throw new Error("loadBoundIssueFace requires a bound ticketNumber");
-  }
-
-  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
+async function loadTicketIssueFace(input: {
+  readonly ticketNumber: number;
+  readonly projectRoot: string;
+  readonly home?: string;
+}): Promise<DiaristIssueFace> {
+  const origin = resolveDiaristGithubOrigin(input.projectRoot);
   if (origin === undefined) {
     persistIssueSourceFailure(
-      admitted,
-      ticketNumber,
+      input,
       new DiaristIssueSourceError(
         "origin-unresolved",
-        `bound ticket #${ticketNumber} issue face requires a resolvable github.com origin remote`,
+        `bound ticket #${input.ticketNumber} issue face requires a resolvable github.com origin remote`,
       ),
     );
   }
@@ -353,7 +367,7 @@ async function loadBoundIssueFace(
     face = await fetcher({
       owner: origin.owner,
       repo: origin.repo,
-      ticketNumber,
+      ticketNumber: input.ticketNumber,
     });
   } catch (error) {
     const typed =
@@ -361,20 +375,34 @@ async function loadBoundIssueFace(
         ? error
         : new DiaristIssueSourceError(
             "issue-unavailable",
-            `issue face fetch failed for ${origin.owner}/${origin.repo}#${ticketNumber}`,
+            `issue face fetch failed for ${origin.owner}/${origin.repo}#${input.ticketNumber}`,
             { cause: error },
           );
-    persistIssueSourceFailure(admitted, ticketNumber, typed);
+    persistIssueSourceFailure(input, typed);
   }
   if (face === undefined) {
     persistIssueSourceFailure(
-      admitted,
-      ticketNumber,
+      input,
       new DiaristIssueSourceError(
         "issue-unavailable",
-        `issue face unavailable for ${origin.owner}/${origin.repo}#${ticketNumber}`,
+        `issue face unavailable for ${origin.owner}/${origin.repo}#${input.ticketNumber}`,
       ),
     );
   }
   return face;
+}
+
+async function loadBoundIssueFace(
+  admitted: AdmittedCountersignInvocation,
+): Promise<DiaristIssueFace> {
+  const ticketNumber = admitted.ticketNumber;
+  if (ticketNumber === undefined) {
+    throw new Error("loadBoundIssueFace requires a bound ticketNumber");
+  }
+  const home = tryHomeFromAkRolesPath(admitted.runDirectory);
+  return await loadTicketIssueFace({
+    ticketNumber,
+    projectRoot: admitted.projectRoot,
+    ...(home === undefined ? {} : { home }),
+  });
 }

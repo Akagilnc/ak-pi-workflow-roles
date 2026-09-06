@@ -10,7 +10,7 @@
  * No CLI --ticket and no attachment frontmatter binding.
  */
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { runDiarist } from "../diarist.ts";
+import { runDiarist, type DiaristIssueFace } from "../diarist.ts";
 import {
   bindAdmittedTicketNumber,
   type AdmittedRoleInvocation,
@@ -38,6 +38,10 @@ export async function resolveSummonsTicketIdentity(input: {
   readonly instruction: string;
   readonly projectRoot: string;
   readonly env: SeatTicketBindingEnv;
+  /** Countersign court round loads the issue face in this same invocation. */
+  readonly loadIssueFace?: (
+    ticketNumber: number,
+  ) => Promise<DiaristIssueFace>;
 }): Promise<number | undefined> {
   const result = await runDiarist({
     instruction: input.instruction,
@@ -45,6 +49,9 @@ export async function resolveSummonsTicketIdentity(input: {
     home: input.env.home,
     sessionCwds: [input.projectRoot, input.env.cwd],
     packageRoot: input.env.packageRoot,
+    ...(input.loadIssueFace === undefined
+      ? {}
+      : { loadIssueFace: input.loadIssueFace }),
   });
   return result.ticketNumber;
 }
