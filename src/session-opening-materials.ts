@@ -3,7 +3,7 @@
  * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS (including
  * gatekeeper and navigator). Province map reuses that public gatekeeper record
  * plus officer material constants (notary shared). Auditor composition stays in
- * loadAuditorSoul; loaders share joinPackageMaterials.
+ * loadAuditorSoul(subject); loaders share joinPackageMaterials.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";

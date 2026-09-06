@@ -11,7 +11,6 @@ import test from "node:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { createComplianceDecisionTool, runComplianceAudit } from "../../src/compliance-transport.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -61,23 +60,25 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         const sessionFile = join(sessionDir, "session.jsonl");
-        const faux = fauxProvider({ provider: "openai-codex" });
-        faux.setResponses(Array.from({ length: 3 }, () =>
-          fauxAssistantMessage([], { stopReason: "error", errorMessage: "WebSocket error" }),
-        ));
-        // Production retain writes Sitian (kind=auditor) under sessionParent — not session custom entries.
-        await assert.rejects(withInstitutionalProviderFixture(faux, () => runComplianceAudit({
-          tool: createComplianceDecisionTool(`ak_${role}_audit_decision`, "Submit audit decision."),
-          systemPrompt: "Audit.", serializedInput: "Audit role output.", roleLabel: `${role} auditor`, invalidDecisionLabel: "invalid audit decision",
-          runDirectory: join(project, "run"),
-          context: {
-            cwd: project, model: faux.getModel(), thinkingLevel: "off",
-            sessionManager: {
-              getSessionFile() { return sessionFile; },
-              getSessionDir() { return sessionDir; },
+        // #675: compliance is public auditor summon — inject the bound provider-stop
+        // fact the settlement layer reads (no retired institutional audit options).
+        const { sitianReport } = await import("../../src/sitian-facade.ts");
+        sitianReport({
+          level: "event",
+          kind: "auditor",
+          cwd: project,
+          sessionParent: sessionFile,
+          payload: {
+            version: 1,
+            response: {
+              stopReason: "error",
+              errorMessage: "WebSocket error",
+              provider: "openai-codex",
+              model: "faux-1",
             },
-          } as unknown as ExtensionContext,
-        })));
+          },
+          source: "test-injected-auditor-stop",
+        });
         const retainedStop = await readSessionProviderStop(sessionFile);
         assert.equal(retainedStop?.stopReason, "error");
         // Parent framing only — retained stop lives in Sitian; native aborted must not outrank it.

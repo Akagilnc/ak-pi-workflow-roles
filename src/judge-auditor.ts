@@ -22,9 +22,8 @@ export type JudgeAuditOptions = {
 };
 
 /**
- * Judge compliance via public auditor activation (#675 / ADR 0062).
- * 审刑院 is an independent role — not a re-summon of judge (no self-audit recursion).
- * Auditor materials = direct `ak-role auditor` assembly (auditor.md).
+ * Judge compliance via public auditor activation (#675 / ADR 0062 / owner r11).
+ * 审刑院 is an independent role; subject=judge selects souls/judge-auditor.md.
  */
 export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -34,6 +33,7 @@ export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
+      subject: "judge",
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined
         ? {}

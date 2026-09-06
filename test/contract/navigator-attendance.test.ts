@@ -220,6 +220,9 @@ test("live help changes the next hint without a static template or fabricated ta
 
 test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
   const root = await mkdtemp(join(tmpdir(), "navigator-route-"));
+  // Hermetic HOME without navigator seat so legacy model.json path is the authority.
+  const priorHome = process.env.HOME;
+  process.env.HOME = root;
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/one" }));
@@ -249,15 +252,19 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.deepEqual(events[2].route, revised.candidates[0]!.route);
+    // #675 ⑥: bare provider/model has no invented thinking default.
     assert.deepEqual(harness.modelSettings, [
-      { model: "provider/one", thinkingLevel: "off" },
-      { model: "provider/two", thinkingLevel: "off" },
-      { model: "provider/three", thinkingLevel: "off" },
+      { model: "provider/one" },
+      { model: "provider/two" },
+      { model: "provider/three" },
     ]);
     assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
+  } finally {
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
   }
   await cleanupTempDir(root);
 });
@@ -411,8 +418,9 @@ test("navigator open failures classify typed reason/status/code, not Error.messa
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
   assert.deepEqual(parseNavigatorModelSetting("openai-codex/gpt-5.6-luna:max"), { provider: "openai-codex", model: "gpt-5.6-luna", thinkingLevel: "max" });
-  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
-  assert.throws(() => parseNavigatorModelSetting("provider/model:backup"));
+  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model" });
+  // #675 ⑥: thinking suffix is passthrough — no max/off whitelist.
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:backup"), { provider: "provider", model: "model", thinkingLevel: "backup" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);

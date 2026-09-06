@@ -31,10 +31,16 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/gate-output-guide.md",
 ] as const;
 
-/** Public 审刑院 materials — direct `ak-role auditor` only (#675). */
+/**
+ * Public 审刑院 shipping roster (#675 owner).
+ * Runtime assembly is subject-selected via AUDITOR_SESSION_MATERIALS
+ * (judge-auditor.md / doctor-auditor.md) — never a generic auditor.md.
+ * This list is the union of files that must ship; load path is loadAuditorSoul(subject).
+ */
 export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "CLAUDE.md",
-  "souls/auditor.md",
+  "souls/judge-auditor.md",
+  "souls/doctor-auditor.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
 ] as const;

@@ -43,7 +43,7 @@ export async function cleanupTempDir(root: string, primaryFailure?: unknown): Pr
 
 export function sessionHarness() {
   const entries: unknown[] = [];
-  const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
+  const modelSettings: Array<{ model: string; thinkingLevel?: string }> = [];
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
@@ -71,7 +71,11 @@ export function sessionHarness() {
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
     providerFailure: () => providerFailure,
-    async setModel(model, thinkingLevel) { modelSettings.push({ model, thinkingLevel }); },
+    async setModel(model, thinkingLevel) {
+      modelSettings.push(
+        thinkingLevel === undefined ? { model } : { model, thinkingLevel },
+      );
+    },
     recordPointer: () => "/fixture/navigator-record",
     dispose() {},
   };

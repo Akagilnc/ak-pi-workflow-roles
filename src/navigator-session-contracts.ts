@@ -159,8 +159,8 @@ export type NavigatorPreparationSession = {
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   providerFailure?(): NavigatorProviderFailureFact | undefined;
-  setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
-  getThinkingLevel?(): string;
+  setModel?(model: string, thinkingLevel?: string): Promise<void>;
+  getThinkingLevel?(): string | undefined;
   recordPointer(): string;
   dispose(): void | Promise<void>;
 };
@@ -201,22 +201,27 @@ export async function writeNavigatorModelSetting(model: string, path = navigator
 export function parseNavigatorModelSetting(value: string): {
   provider: string;
   model: string;
-  thinkingLevel: "off" | "max";
+  /** Host thinking passthrough — omit when bare provider/model (#675 ⑥). */
+  thinkingLevel?: string;
 } {
   const slash = value.indexOf("/");
   if (slash <= 0 || slash === value.length - 1) {
-    throw new Error("Navigator model setting must be provider/model[:max]");
+    throw new Error("Navigator model setting must be provider/model[:thinking]");
   }
   const provider = value.slice(0, slash);
   const modelWithThinking = value.slice(slash + 1);
   const colon = modelWithThinking.lastIndexOf(":");
   const suffix = colon < 0 ? undefined : modelWithThinking.slice(colon + 1);
-  if (suffix !== undefined && suffix !== "max") {
-    throw new Error("Navigator model setting must use :max or omit the thinking suffix");
-  }
   const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
   if (model === "") throw new Error("Navigator model setting must include a model");
-  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
+  if (suffix !== undefined && suffix.trim() === "") {
+    throw new Error("Navigator model setting thinking suffix must be non-blank");
+  }
+  return {
+    provider,
+    model,
+    ...(suffix === undefined ? {} : { thinkingLevel: suffix }),
+  };
 }
 
 /**
@@ -227,7 +232,7 @@ export async function resolveNavigatorSeatSelection(
   context: HostContext,
   modelSettingPath: string | undefined,
   defaultModelSettingPath: string,
-): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
+): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel?: string }> {
   try {
     const { loadPublicCliConfig } = await import("./public-cli/config.ts");
     const { seatModelOnly } = await import("./public-cli/registry.ts");
@@ -245,14 +250,12 @@ export async function resolveNavigatorSeatSelection(
     const config = await loadPublicCliConfig(home);
     const modelOnly = seatModelOnly(config.seats.navigator);
     if (modelOnly !== undefined) {
-      // Host params passthrough only — no map/validate/default (#675 owner).
+      // Host params passthrough only — no map/validate/default (#675 ⑥).
       const thinkingRaw = modelOnly.thinking;
       const configuredLabel =
         thinkingRaw === undefined
           ? `${modelOnly.provider}/${modelOnly.model}`
           : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
-      const thinkingLevel: "off" | "max" =
-        thinkingRaw === "max" ? "max" : "off";
       return {
         selection: {
           provider: modelOnly.provider,
@@ -260,7 +263,7 @@ export async function resolveNavigatorSeatSelection(
           ...(thinkingRaw === undefined ? {} : { thinking: thinkingRaw }),
         },
         configuredLabel,
-        thinkingLevel,
+        ...(thinkingRaw === undefined ? {} : { thinkingLevel: thinkingRaw }),
       };
     }
   } catch (error) {
@@ -283,9 +286,9 @@ export async function resolveNavigatorSeatSelection(
     selection: {
       provider: parsed.provider,
       model: parsed.model,
-      thinking: parsed.thinkingLevel,
+      ...(parsed.thinkingLevel === undefined ? {} : { thinking: parsed.thinkingLevel }),
     },
     configuredLabel: configured,
-    thinkingLevel: parsed.thinkingLevel,
+    ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
   };
 }
