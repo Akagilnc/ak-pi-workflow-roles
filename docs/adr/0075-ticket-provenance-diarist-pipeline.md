@@ -6,7 +6,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 
 本 ADR **修正** [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 的 `record-scope-phase-two=pi-session-records-only`：二期 scope 在「Pi session 记录」之外，新增 kind `ticket-provenance`，收录 cc session 誊录块 / issue 面 / ADR 锚。历史 ADR 正文不回改；承继关系由本票记载（同 [ADR 0074](0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 先例）。appender 内核 / 落盘拓扑 / `--source-run` / submission ledger **零改动**——`kind` 本为开放集，subject 哈希分区既有。
 
-## Decision keys（逐条绑 owner 原话；真源票面 #582）
+## Decision keys（逐条绑 owner 原话；真源票面 #582 r1，2026-09-06 起为 #708 r2 修订节；#582 已关）
 
 | key | 值 | 绑定原话（逐字） |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 | `cc-sessions-first` | 对话源 v1＝cc session 卷优先 | 「基本上设计都在cc。可以先翻cc的。」 |
 | `notary-inner-gate` | 符宝郎挂给事中交卷闸 | 「1 肯定是a」 |
 | `no-global-ticket-flag` | 不加全局 --ticket；给事中/符宝郎可有 | 「我认为不需要改目前的调用方式也能知道做的是哪张票。只有给事中这种明确审票的衙门才需要这个参数。符宝郎也可以要」 |
-| `diarist-is-role` | 起居郎＝LLM 角色：soul、席位表一行、公开入口、交卷工具、同一调用路径同一卷宗；「非公开席」表述作废（2026-09-06） | 「起居录的生成我觉得应该是一个机械角色/llm角色。 起居郎」（08-31）＋「老子是不是说过一切都是角色！你们又给我造出一个不是角色的角色！」＋「肯定是llm」（09-06，卷 47ef0224 L107612 / L108267） |
+| `diarist-is-role` | 起居郎＝LLM 角色：soul、席位表一行、公开入口、交卷工具、同一调用路径同一卷宗；「非公开席」表述作废（2026-09-06） | 「起居录的生成我觉得应该是一个机械角色/llm角色。 起居郎」（08-31）＋「老子是不是说过一切都是角色！你们又给我造出一个不是角色的角色！」＋「肯定是llm」（09-06，卷 47ef0224 L107237 / L108267） |
 | `no-call-rule` | 不规定谁调用起居郎、不规定先后，组合与顺序归调用者（[ADR 0010](0010-callers-own-role-composition-and-repetition.md)）；原 `diarist-before-countersign` 键删除（2026-09-06） | 「不准规定调用，理论上任何角色都可以被调用。没有什么不能调用这种规矩」＋「不需要写这个顺序。这个顺序是调用者决定的…以后我要改到别的地方还要来改adr吗？」（09-06，L108274 / L108315） |
 | `refresh-every-court` | 每次过庭都跑（增量幂等） | （对「每次受理都跑」荐案）「行。先这样。派给事中审票吧」 |
 | `no-backfill` | 存量票不补档 | 「8 不补了」 |
