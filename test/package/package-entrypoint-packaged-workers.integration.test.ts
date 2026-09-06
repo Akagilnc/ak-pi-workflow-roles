@@ -436,7 +436,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        faux.setResponses(Array.from({ length: 8 }, () => response));
+        // Response pool sized for parent + nested public officers/auditor + navigator prepares.
+        // Count is capacity, not a locked prepare/settlement contract (#675 r3).
+        faux.setResponses(Array.from({ length: 24 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -586,8 +588,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
         mode: "print",
         flags: { "ak-role": "judge" },
         noTools: "builtin",
-        // Default nestedSummonInject arms real nested public path + officer-pass provider;
-        // AK_NESTED_AUDIT_MODE=escalate scripts the public auditor decision.
+        // Nested public path + officer-pass provider; AK_NESTED_AUDIT_MODE=escalate
+        // scripts the public auditor decision.
       }, async ({ session, sessionManager }) => {
         const escalateRespond = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];

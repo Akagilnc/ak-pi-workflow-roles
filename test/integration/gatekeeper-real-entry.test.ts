@@ -120,10 +120,11 @@ test("worker completion directly summons Inspector via public path", async () =>
   });
 });
 
-test("parent gate receipt book failure is typed transport_failure after lawful officer pass", async () => {
+test("parent gate receipt book failure throws to shared envelope after lawful officer pass", async () => {
   await withParent(async (context) => {
     // Force pointer book mkdir to ENOTDIR: parent session under /dev/null.
     // Officer 正本 must exist so booking is attempted (no 正本 → no-op, not failure).
+    // Role module no longer self-catches book failure (ADR 0018 / #675 r3).
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const officerRun = join(context.runDirectory, "officer-run");
@@ -135,30 +136,20 @@ test("parent gate receipt book failure is typed transport_failure after lawful o
         getSessionFile: () => "/dev/null/session.jsonl",
       },
     };
-    const result = await runGatekeeper({
-      context: poisoned,
-      runDirectory: context.runDirectory,
-      subject: { kind: "judge_draft" },
-      async summonOfficer() {
-        return {
-          ...acceptedTerminal("notary", "pass", { findings: [] }),
-          runDirectory: officerRun,
-        };
-      },
-    });
-    assert.equal(result.status, "transport_failure");
-    if (result.status !== "transport_failure") assert.fail("expected transport_failure");
-    assert.equal(result.stage, "notary");
-    assert.equal(
-      result.reason.startsWith("parent gate receipt book failed:"),
-      true,
-      result.reason,
+    await assert.rejects(
+      () => runGatekeeper({
+        context: poisoned,
+        runDirectory: context.runDirectory,
+        subject: { kind: "judge_draft" },
+        async summonOfficer() {
+          return {
+            ...acceptedTerminal("notary", "pass", { findings: [] }),
+            runDirectory: officerRun,
+          };
+        },
+      }),
+      (error: unknown) => error instanceof Error,
     );
-    assert.deepEqual(result.submission, {
-      status: "pass",
-      officer: "notary",
-      findings: [],
-    });
   });
 });
 
@@ -247,7 +238,7 @@ test("direct officer settlement without a receipt stays loud and typed", async (
   });
 });
 
-test("direct officer missing arguments bounces with serializable submission (shape, not transport)", async () => {
+test("direct officer missing arguments is typed unreadable with serializable submission (shape, not transport or forged bounce)", async () => {
   await withParent(async (context) => {
     const result = await runGatekeeper({
       context,
@@ -257,10 +248,12 @@ test("direct officer missing arguments bounces with serializable submission (sha
         return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
       },
     });
-    // ADR 0055 / CLAUDE.md §0: shape-unreadable officer decision is bounce, not transport_failure abort.
-    assert.equal(result.status, "bounce");
-    if (result.status === "bounce") {
+    // ADR 0055 / CLAUDE.md §0: shape-unreadable retains candidate as typed unreadable —
+    // not transport abort, not forged bounce.
+    assert.equal(result.status, "unreadable");
+    if (result.status === "unreadable") {
       assert.equal(result.officer, "inspector");
+      assert.equal(result.reason, "decision 无显式 pass/bounce/escalate");
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);

@@ -13,13 +13,24 @@ export type ComplianceAuditObservation =
   | { kind: "object-status-unreadable"; status: "missing" | "unknown" }
   | DossierObservation;
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
-export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceNoReceipt;
+/** Shape-unreadable audit leg — parent work stands with typed fact, never forged pass (ADR 0055). */
+export type ComplianceUnreadable = {
+  readonly status: "unreadable";
+  readonly observation: ComplianceAuditObservation;
+  readonly candidate: unknown;
+  readonly usage?: Usage;
+};
+export type ComplianceDecision =
+  | { status: "pass"; usage?: Usage }
+  | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
+  | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
+  | ComplianceNoReceipt
+  | ComplianceUnreadable;
 
 /**
  * Unreadable compliance candidate observation carrier.
  * Shape-unreadable must not abort the parent run (CLAUDE.md §0 / ADR 0055).
- * Callers that still need the observation+candidate pair read these fields;
- * parent compliance projection maps unreadable to parent-stands pass.
+ * Callers read observation+candidate; projection keeps typed unreadable — never forged pass.
  */
 export class ComplianceCandidateUnreadableError extends Error {
   readonly observation: ComplianceAuditObservation;
@@ -153,11 +164,37 @@ function extractFailureCandidate(outcome: {
   return undefined;
 }
 
+function observationFromUnreadableCandidate(candidate: unknown): ComplianceAuditObservation {
+  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+    return {
+      kind: "non-object-arguments",
+      type: candidate === null ? "null" : Array.isArray(candidate) ? "array" : typeof candidate as ComplianceArgumentRootType,
+    };
+  }
+  const status = (candidate as Record<string, unknown>).status;
+  return {
+    kind: "object-status-unreadable",
+    status: status === undefined ? "missing" : "unknown",
+  };
+}
+
+function unreadableDecision(
+  candidate: unknown,
+  usage: Usage | undefined,
+): ComplianceUnreadable {
+  return {
+    status: "unreadable",
+    observation: observationFromUnreadableCandidate(candidate),
+    candidate,
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
 /**
  * Project a public auditor terminal onto the parent compliance decision.
- * Lawful pass/revise/escalate/no-receipt flow through; shape-unreadable candidate
- * is retained on the child terminal and parent stands (ADR 0055 / CLAUDE.md §0).
- * Real provider/engine/disk failures (no retained candidate) stay loud.
+ * Lawful pass/revise/escalate/no-receipt flow through.
+ * Shape-unreadable keeps original candidate + typed observation (ADR 0055 / §0) —
+ * never forged pass, never parent abort. Real provider/engine/disk failures stay loud.
  * Accepted audits always carry real session usage when present (#675 metering).
  */
 async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
@@ -175,22 +212,23 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const candidate = extractFailureCandidate(outcome);
-    if (candidate !== undefined) {
-      // Shape-unreadable candidate stays on the child failure terminal.
-      // Parent work stands — do not throw into failInfrastructure (ADR 0055).
-      return { status: "pass", ...(usage === undefined ? {} : { usage }) };
+    // Settlement marks shape-unreadable with cause=output + retained candidate.
+    // Other causes (provider/engine/session/…) stay loud infrastructure failures.
+    if (outcome.cause === "output") {
+      const candidate = extractFailureCandidate(outcome) ?? outcome.decisiveFacts;
+      return unreadableDecision(candidate, usage);
     }
     throw new Error(outcome.diagnostic);
   }
   if (outcome.kind === "accepted") {
-    const projected = tryReadComplianceCandidate({
+    const candidate = {
       status: outcome.status,
       ...outcome.decisiveFacts,
-    }, usage);
+    };
+    const projected = tryReadComplianceCandidate(candidate, usage);
     if (projected !== undefined) return projected;
-    // Accepted-once but not a lawful release: candidate retained on child; parent stands.
-    return { status: "pass", ...(usage === undefined ? {} : { usage }) };
+    // Accepted-once but not a lawful release: retain candidate as typed unreadable.
+    return unreadableDecision(candidate, usage);
   }
   throw new Error("Auditor public summon returned unusable terminal kind");
 }
@@ -221,7 +259,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,
-        nestedSummon: true,
       });
     });
   const summoned = await summon(subject, runDirectory);

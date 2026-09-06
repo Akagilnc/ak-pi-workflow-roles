@@ -216,9 +216,10 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
   // Route by active tool surface so scripted province pass runs before auditor legs.
-  // Fatal path used a fixed 3-slot queue; province children need two more turns
-  // or MALFORMED is spent on Gatekeeper instead of auditor.
-  faux.setResponses(Array.from({ length: 8 }, () => response));
+  // Shared agentDir mock serves parent + nested public officers/auditor + their
+  // Navigator prepares on one faux queue (#675 r3 — no nested-env skip). Capacity
+  // only; not a locked prepare/settlement count contract.
+  faux.setResponses(Array.from({ length: 48 }, () => response));
 
   const model = faux.getModel();
   const provider: Provider = {

@@ -10,8 +10,8 @@ export type ReviewerAmendments = Readonly<Partial<Record<"standards" | "spec", s
 export type ReviewerIntent =
   | Readonly<{ status: "completed"; amendments?: ReviewerAmendments }>
   | Readonly<{ status: "refused"; diagnostic: string; amendments?: ReviewerAmendments }>;
-/** Child report is plain text — no length/digest identity shell (ADR 0031). */
-export type VerbatimChildReport = Readonly<{ text: string }>;
+/** Child report body retained as delivered — no type/blank reshape (ADR 0031 / 0055 / #675). */
+export type VerbatimChildReport = Readonly<{ text: unknown }>;
 /** Prompt projection on the receipt face is plain text (ADR 0031). */
 export type ReviewerReceiptPrompt = Readonly<{ text: string }>;
 /** Canonical Skill content on the receipt face is plain text (ADR 0031/0032). */

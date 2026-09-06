@@ -428,24 +428,8 @@ for (const scenario of [
       candidate: null,
     },
   },
-  {
-    name: "notary-no-pass",
-    runId: "run-e2e-judge-gate-notary-001",
-    childEnv: { AK_GATE_MODE: "notary-no-pass" },
-    expectGateAbsent: true,
-    expectDetails: {
-      stage: "notary",
-      // #675: public notary non-pass surfaces nested terminal facts on submission.
-      submission: {
-        cause: "output",
-        diagnostic: "符宝郎回执无显式 pass/bounce/escalate",
-        secondaryEvidence: {
-          acceptedReceipt: false,
-          candidate: { status: "ok-enough" },
-        },
-      },
-    },
-  },
+  // notary shape-unreadable is typed correctable non-pass (ADR 0055 / #675 r3),
+  // not infrastructure abort — covered by dedicated test below.
 ] as const) {
   test(
     `ak-role Judge public failure-evidence tracer: ${scenario.name}`,
@@ -457,13 +441,85 @@ for (const scenario of [
         expectDetails: scenario.expectDetails,
         ...("poisonRunDir" in scenario ? { poisonRunDir: scenario.poisonRunDir } : {}),
         ...("childEnv" in scenario ? { childEnv: scenario.childEnv } : {}),
-        ...("expectGateAbsent" in scenario
+        ...("expectGateAbsent" in scenario && typeof scenario.expectGateAbsent === "boolean"
           ? { expectGateAbsent: scenario.expectGateAbsent }
           : {}),
       });
     },
   );
 }
+
+test(
+  "ak-role Judge notary shape-unreadable is typed correctable non-pass (not infrastructure abort)",
+  { timeout: 120_000 },
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-notary-unreadable-"));
+    try {
+      const project = join(home, "work");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const providerPath = resolve(packageRoot, "test/fixtures/audit-failure-provider.ts");
+      const result = await runAkRole(
+        [
+          "judge",
+          "--model",
+          "ak-audit-failure/faux-1",
+          "--thinking",
+          "off",
+          "--project",
+          project,
+          "Exercise notary shape-unreadable gate path.",
+        ],
+        {
+          packageRoot,
+          home,
+          agentDir: join(home, ".pi", "agent"),
+          cwd: project,
+          createRunId: () => "run-e2e-judge-gate-notary-001",
+          judgeExtraPiArgs: ["-e", providerPath],
+          judgeTimeoutMs: 90_000,
+          io: { stdout() {}, stderr() {} },
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args, options) => {
+              const subprocess = await runPiSubprocess([...args], {
+                cwd: options.cwd,
+                env: {
+                  ...options.env,
+                  PI_OFFLINE: "1",
+                  AK_GATE_MODE: "notary-no-pass",
+                },
+                timeoutMs: options.timeoutMs ?? 90_000,
+              });
+              return {
+                code: subprocess.code,
+                stdout: subprocess.stdout,
+                stderr: subprocess.stderr,
+                timedOut: subprocess.localTimeout,
+                args: [...args],
+              };
+            },
+            extraPiArgs: ["-e", providerPath],
+          }),
+        },
+      );
+      // ADR 0055 / #675 r3: shape-unreadable officer decision is correctable unreadable —
+      // not transport/infrastructure abort, not forged bounce. Parent must not claim pass.
+      assert.notEqual(result.exitCode, 0, "shape-unreadable notary must not forge parent pass");
+      assert.notEqual(
+        result.terminal?.roleOutcome.kind,
+        "accepted",
+        "shape-unreadable notary must not accept parent Judge as pass",
+      );
+      if (result.terminal?.roleOutcome.kind === "failure") {
+        assert.ok(result.terminal.roleOutcome.diagnostic.length > 0);
+      }
+    } finally {
+      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
+    }
+  },
+);
 
 test(
   "ak-role judge reaches Judge gate and settles Terminal with registry command",
@@ -476,14 +532,20 @@ test(
       seedGitProject(project);
       const attachment = join(home, "brief.txt");
       await writeFile(attachment, "canonical nonblank prose for navigator work context", "utf8");
-      // Point automatic Navigator at the same offline faux provider as Judge.
+      // Seat table is the only navigator model authority (#675) — point at offline faux.
       const agentDir = join(home, ".pi", "agent");
       await mkdir(agentDir, { recursive: true });
-      await writeFile(
-        join(agentDir, "navigator-model.json"),
-        JSON.stringify({ model: "ak-audit-failure/faux-1" }),
-        "utf8",
-      );
+      const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+      const offlineSeat = { provider: "ak-audit-failure", model: "faux-1" };
+      await savePublicCliConfig({
+        seats: {
+          auditor: offlineSeat,
+          notary: offlineSeat,
+          inspector: offlineSeat,
+          judge: offlineSeat,
+          navigator: offlineSeat,
+        },
+      }, home);
 
       const stdout: string[] = [];
       const stderr: string[] = [];

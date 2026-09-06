@@ -1629,14 +1629,9 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        // Nested public summons (gate/compliance children) must not re-attach the
-        // Navigator sidecar — parent work run already owns attendance (#675).
-        // Direct CLI / top-level runs keep automatic attendance (every run).
-        const { AK_ROLE_NESTED_PUBLIC_SUMMON_ENV } = await import("./public-role-summons.ts");
-        const nestedPublicSummon =
-          typeof process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV] === "string"
-          && process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV].trim() === "1";
-        if (dependencies.createNavigatorAttendance !== undefined && !nestedPublicSummon) {
+        // Same public activation face for every role (#675 / owner 09-06): no nested-env
+        // skip, no work-role whitelist. Attendance attaches when the envelope supplies it.
+        if (dependencies.createNavigatorAttendance !== undefined) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

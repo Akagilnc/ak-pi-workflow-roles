@@ -5,6 +5,9 @@ function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
     const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
     return `门下省打回重写，findings：${findings}`;
   }
+  if (result.status === "unreadable") {
+    return `门下省官回执形状不可读（${result.officer}）：${result.reason}`;
+  }
   return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
 }
 
