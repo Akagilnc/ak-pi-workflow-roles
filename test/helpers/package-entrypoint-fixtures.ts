@@ -172,6 +172,18 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
       // seats page at the run directory (dirname of the role session dir).
       await writeFile(resolve(issueRoot, "authority.md"), "owner authority for ordinary Navigator observation\n", "utf8");
       await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
+      // Public navigator path reads seat table only (#675).
+      const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+      const offlineSeat = { provider: "ak-audit-failure", model: "faux-1" };
+      await savePublicCliConfig({
+        seats: {
+          navigator: offlineSeat,
+          judge: offlineSeat,
+          notary: offlineSeat,
+          inspector: offlineSeat,
+          auditor: offlineSeat,
+        },
+      }, home);
       const args = [
         "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
         "--session-dir", sessionDirectory,

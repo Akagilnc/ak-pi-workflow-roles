@@ -1257,6 +1257,9 @@ export async function createMockProviderServer(
         }
         // 2xx SSE with an error object: SDK folds the original message into
         // error-stop without a non-success HTTP status (no synthetic 5xx testimony).
+        // Preserve scripted diagnostics so transport classification stays typed
+        // through the public-navigator mock round-trip (#675).
+        const scriptedDiagnostics = (message as { diagnostics?: unknown }).diagnostics;
         res.writeHead(200, {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
@@ -1264,6 +1267,7 @@ export async function createMockProviderServer(
         });
         res.write(`data: ${JSON.stringify({
           error: { message: message.errorMessage ?? message.stopReason },
+          ...(scriptedDiagnostics === undefined ? {} : { diagnostics: scriptedDiagnostics }),
         })}\n\ndata: [DONE]\n\n`);
         res.end();
         return;

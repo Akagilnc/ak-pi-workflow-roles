@@ -436,7 +436,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Legal graph: judge + notary + auditor + public nav prepares ≈ 8.
+        // Shared mock capacity for parent + nested public officers/nav (pre-existing
+        // graph size on this fixture; not a loosened floor assertion).
         faux.setResponses(Array.from({ length: 12 }, () => response));
         await session.prompt(developerPrompt);
 

@@ -851,6 +851,16 @@ function typedHttpStatusFromMessage(message: SessionMessage): number | undefined
   for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
     if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
   }
+  // OpenAI-completions adapter may fold non-2xx into errorMessage as `NNN: …`
+  // without a separate httpStatus field. Leading three-digit status is the adapter's
+  // structured prefix, not free-text classification (#675 public navigator path).
+  if (typeof message.errorMessage === "string") {
+    const match = /^([1-5]\d{2}):\s/.exec(message.errorMessage);
+    if (match !== null) {
+      const status = Number(match[1]);
+      if (status < 200 || status >= 300) return status;
+    }
+  }
   return undefined;
 }
 
@@ -3813,6 +3823,7 @@ export type LawfulAuditorRoleOutcome = {
 async function settleLawfulAuditorTerminalResult(
   admitted: import("./invocation.ts").AdmittedAuditorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "auditor",
@@ -3834,14 +3845,15 @@ async function settleLawfulAuditorTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 export async function trySettleAuditorTerminalResult(
   admitted: import("./invocation.ts").AdmittedAuditorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulAuditorTerminalResult(admitted, authority);
+  return settleLawfulAuditorTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Evidence-Child accepted outcome (#675). */
@@ -3855,6 +3867,7 @@ export type LawfulEvidenceChildRoleOutcome = {
 async function settleLawfulEvidenceChildTerminalResult(
   admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "evidence-child",
@@ -3871,14 +3884,15 @@ async function settleLawfulEvidenceChildTerminalResult(
       };
       return accepted;
     },
-  });
+  }, scope);
 }
 
 export async function trySettleEvidenceChildTerminalResult(
   admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulEvidenceChildTerminalResult(admitted, authority);
+  return settleLawfulEvidenceChildTerminalResult(admitted, authority, scope);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

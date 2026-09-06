@@ -8,13 +8,59 @@
 import { sitianReport } from "./sitian-facade.ts";
 import {
   NavigatorUnavailableError,
+  navigatorProviderFailureFromDiagnostics,
   navigatorProviderFailureFromError,
+  navigatorProviderFailureFromStatus,
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   resolveNavigatorSeatSelection,
   type NavigatorProviderFailureFact,
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
+
+/**
+ * Classify a public-navigator failure terminal onto attendance unavailable axes.
+ * Prefer structured decisiveFacts (httpStatus / diagnostics / secondaryEvidence)
+ * over diagnostic prose — same authority the in-process path used (#675 / #617).
+ */
+function providerFailureFromPublicTerminal(outcome: {
+  readonly cause: string;
+  readonly diagnostic: string;
+  readonly decisiveFacts: Readonly<Record<string, unknown>>;
+}): NavigatorProviderFailureFact {
+  const facts = outcome.decisiveFacts;
+  const secondary =
+    typeof facts.secondaryEvidence === "object" && facts.secondaryEvidence !== null
+      ? (facts.secondaryEvidence as Record<string, unknown>)
+      : undefined;
+  const httpStatus =
+    typeof secondary?.httpStatus === "number"
+      ? secondary.httpStatus
+      : typeof facts.httpStatus === "number"
+        ? facts.httpStatus
+        : typeof facts.errorCode === "number"
+          ? facts.errorCode
+          : undefined;
+  const fromStatus = navigatorProviderFailureFromStatus(httpStatus);
+  if (fromStatus !== undefined) return fromStatus;
+  const diagnostics = secondary?.diagnostics ?? facts.diagnostics;
+  const fromDiagnostics = navigatorProviderFailureFromDiagnostics(diagnostics);
+  if (fromDiagnostics !== undefined) return fromDiagnostics;
+  // Reconstruct a carrier with typed fields so status/code walks still work.
+  const carrier: Record<string, unknown> = {
+    message: outcome.diagnostic,
+    ...(httpStatus === undefined ? {} : { statusCode: httpStatus }),
+    ...(typeof secondary?.code === "string" || typeof secondary?.code === "number"
+      ? { code: secondary.code }
+      : {}),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+  };
+  const fromError = navigatorProviderFailureFromError(Object.assign(new Error(outcome.diagnostic), carrier));
+  if (fromError !== undefined) return fromError;
+  // Provider-class stop without typed auth/quota/transport evidence → transport.
+  if (outcome.cause === "provider") return { source: "transport", cause: "transport" };
+  return { source: "session", cause: "session" };
+}
 
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
@@ -87,11 +133,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             );
           }
           if (outcome.kind === "failure") {
-            const fact = navigatorProviderFailureFromError(new Error(outcome.diagnostic));
-            providerFailure = fact ?? {
-              source: outcome.cause === "provider" ? "transport" : "session",
-              cause: outcome.cause === "provider" ? "transport" : "session",
-            };
+            providerFailure = providerFailureFromPublicTerminal(outcome);
             throw navigatorUnavailableError(
               providerFailure.source,
               new Error(outcome.diagnostic),

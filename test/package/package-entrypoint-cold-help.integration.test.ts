@@ -316,8 +316,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Legal graph per invoke: judge + notary + auditor + public nav prepares ≈ 8.
-          luna.setResponses(Array.from({ length: 12 }, () => response));
+          // Resume topology: first fresh run + nested officers + one public nav prepare.
+          // Pool is the legal graph capacity (not an expanded floor).
+          luna.setResponses(Array.from({ length: 8 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -418,7 +419,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // Structured contracts (#675 r3 / public navigator path):
+        // Structured contracts (#675 / public navigator path + resume topology):
         // 3 successful seat-table navigator configs → recommendation;
         // missing provider → unavailable (no silent fallback to recommendation).
         assert.equal(lifecycle.length, 4, "four seat-edit invokes");
@@ -428,16 +429,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
         // Public summon of missing provider fails at session open (not model-seat resolve).
         assert.equal(lifecycle[3]?.event.unavailableSource, "session");
-        // No-fallback: unsupported seat must not dispatch any model request under missing/*.
-        assert.equal(
-          modelRequests.some((m) => m.startsWith("missing/")),
-          false,
-          `unsupported must not fall back; modelRequests=${JSON.stringify(modelRequests)}`,
-        );
-        // Successful configs did dispatch navigator turns (public path via shared mock).
-        assert.ok(
-          modelRequests.length > 0,
-          "successful navigator seats must record at least one model request",
+        // Exact model table from public-path topology (3 successful invokes):
+        // each invoke runs warm+settle+rebind public navigator prepares on the shared
+        // faux (mock stream model id = openai-codex/gpt-5.6-luna). Unsupported adds 0.
+        // No missing/* and no other provider — seat edits must not fall back.
+        assert.deepEqual(
+          modelRequests,
+          Array.from({ length: 9 }, () => "openai-codex/gpt-5.6-luna"),
+          `exact navigator prepares; no fallback: ${JSON.stringify(modelRequests)}`,
         );
         // Nest books invocation before settlement; settlement before visible attendance.
         for (const sample of lifecycle.slice(0, 3)) {

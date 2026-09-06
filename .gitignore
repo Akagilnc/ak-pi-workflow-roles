@@ -6,3 +6,4 @@ dist/
 # Claude Code session dir (local only)
 .claude/
 
+.tmp-same-ticket-resume/
