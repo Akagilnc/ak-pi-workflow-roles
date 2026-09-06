@@ -72,6 +72,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let disposed = false;
+    let inFlightPrompt: Promise<unknown> | undefined;
 
     const resolveHome = async (): Promise<string | undefined> => {
       const parentFile = context.sessionManager?.getSessionFile?.();
@@ -104,6 +105,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
         }
         providerFailure = undefined;
+        const run = (async () => {
         try {
           const { summonPublicRole } = await import("./public-role-summons.ts");
           const home = await resolveHome();
@@ -161,6 +163,13 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           providerFailure = fact ?? { source: "transport", cause: "transport" };
           throw navigatorUnavailableError(providerFailure.source, error, providerFailure.cause);
         }
+        })();
+        inFlightPrompt = run;
+        try {
+          await run;
+        } finally {
+          if (inFlightPrompt === run) inFlightPrompt = undefined;
+        }
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
@@ -209,6 +218,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
       recordPointer: () => sessionManager.getSessionDir(),
       dispose: async () => {
         disposed = true;
+        const pending = inFlightPrompt;
+        if (pending !== undefined) await pending.catch(() => undefined);
       },
     };
   };
