@@ -202,7 +202,7 @@ test("production adapter table registers grok-build and keeps pi selectable", as
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
-    registeredHosts: ["pi", "grok-build"],
+    registeredHosts: ["pi", "grok-build", "hermes"],
   });
   assert.equal(piTurns, 2);
 }));
