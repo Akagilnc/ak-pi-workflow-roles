@@ -1,10 +1,12 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 整改：自 test/contract/factory-board.test.ts 按性质移出（动 owner 真 home 卷宗，
 // 不属开发内环快档）。契约不变：真 home 验收 tracer（#127 已接受轨迹、活跃腿、#130 成本对账）。
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   discoverTrueHomeUnacceptedActiveIssue,
@@ -36,8 +38,7 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     return;
   }
 
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
-  try {
+  return await withTempRoot("factory-board-s3-true-home-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
 
     // 1) Exact true-home #127 bytes — no fixture transplant, no tail deletion/substitution.
@@ -286,7 +287,5 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     assert.equal(tActive["data-last-activity-at"], visibleAct["data-last-activity-at"]);
     assert.equal(tActive["data-last-activity-mtime-ms"], visibleAct["data-last-activity-mtime-ms"]);
     assert.equal(tActive["data-leg-age-ms"], visibleAge["data-leg-age-ms"]);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });

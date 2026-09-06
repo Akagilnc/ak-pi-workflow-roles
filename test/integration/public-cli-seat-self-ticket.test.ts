@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 — seat self-ticket from public CLI true entry (no --ticket / no frontmatter).
  * Asserts typed ticketNumber on admitted-request.json + invocation.json only.
@@ -5,7 +6,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -46,21 +46,23 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome(
   run: (home: string) => Promise<void>,
 ): Promise<void> {
-  const home = await mkdtemp(join(tmpdir(), "ak-seat-self-ticket-"));
-  const binDir = join(home, "bin");
-  const priorPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
-    await run(home);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+  await withTempRoot("ak-seat-self-ticket-", async (home) => {
+    const binDir = join(home, "bin");
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+    await withPrimaryAwareCleanup(
+      () => run(home),
+      async () => {
+        if (priorPath === undefined) delete process.env.PATH;
+        else process.env.PATH = priorPath;
+      },
+    );
+  });
 }
 
 function captureIo() {

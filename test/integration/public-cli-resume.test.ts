@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -8,7 +9,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -40,6 +40,7 @@ import { readSealedSubmission } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -69,12 +70,7 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-resume-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-resume-", scenario);
 }
 
 function captureIo() {
@@ -1587,37 +1583,40 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     const lockPath = join(runDirectory, "writer.lock");
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
-    try {
-      const { io: io2, stdout, stderr } = captureIo();
-      const blocked = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: io2,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+    await withPrimaryAwareCleanup(
+      async () => {
+        const { io: io2, stdout, stderr } = captureIo();
+        const blocked = await runAkRole(["resume", runId], {
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          dispatches += 1;
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-        }),
-      });
-      // Concurrent resume rejected before second dispatch.
-      assert.equal(dispatches, 0);
-      assert.equal(stdout.length, 0);
-      assert.equal(stderr.length >= 1, true);
-      assert.notEqual(blocked.exitCode, 0);
-      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
-    } finally {
-      await lease.release();
-    }
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: io2,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            dispatches += 1;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+          }),
+        });
+        // Concurrent resume rejected before second dispatch.
+        assert.equal(dispatches, 0);
+        assert.equal(stdout.length, 0);
+        assert.equal(stderr.length >= 1, true);
+        assert.notEqual(blocked.exitCode, 0);
+        assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
+      },
+      async () => {
+        await lease.release();
+      },
+    );
 
     // Direct lease double-acquire also fails closed.
     const first = await acquireRunWriterLease(runDirectory);
@@ -1817,12 +1816,15 @@ test("#418 lease release recovery path emits no false diagnostic", async () => {
     const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
     // EACCES unlink → chmod retry recovers; the success path must stay silent.
     await chmod(runDirectory, 0o500);
-    try {
-      await lease.release();
-      assert.equal(diagnostics.length, 0);
-    } finally {
-      await chmod(runDirectory, 0o755);
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        await lease.release();
+        assert.equal(diagnostics.length, 0);
+      },
+      async () => {
+        await chmod(runDirectory, 0o755);
+      },
+    );
   });
 });
 
@@ -1865,20 +1867,27 @@ test("#629 stale reclaim re-autopsies after the EACCES chmod — a contender liv
       setImmediate(spinner);
     };
     setImmediate(spinner);
-    try {
-      await assert.rejects(
-        () => acquireRunWriterLease(runDirectory),
-        (error: unknown) => error instanceof RunWriterLeaseHeldError,
-      );
-      // The contender's live lock must still own the pathname: no blind
-      // post-chmod unlink, and the acquire rejected instead of creating a
-      // second writer.
-      assert.equal(await readFile(lockPath, "utf8"), `${contenderPid}\n`);
-    } finally {
-      injectionArmed = false;
-      await chmod(runDirectory, 0o755);
-      await rm(lockPath, { force: true });
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        await assert.rejects(
+          () => acquireRunWriterLease(runDirectory),
+          (error: unknown) => error instanceof RunWriterLeaseHeldError,
+        );
+        // The contender's live lock must still own the pathname: no blind
+        // post-chmod unlink, and the acquire rejected instead of creating a
+        // second writer.
+        assert.equal(await readFile(lockPath, "utf8"), `${contenderPid}\n`);
+      },
+      async () => {
+        injectionArmed = false;
+      },
+      async () => {
+        await chmod(runDirectory, 0o755);
+      },
+      async () => {
+        await rm(lockPath, { force: true });
+      },
+    );
   });
 });
 
@@ -1898,21 +1907,26 @@ test("#629 persistent EACCES keeps its identity in the stayed-contested refusal"
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
     await writeFile(lockPath, `${stalePid}\n`, "utf8");
     execFileSync("chmod", ["+a", "everyone deny delete", lockPath]);
-    try {
-      const failure = await acquireRunWriterLease(runDirectory).then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-      assert.ok(failure instanceof RunWriterLeaseHeldError);
-      // The refusal must carry the EACCES errno identity, not just the
-      // dead-pid autopsy — otherwise the true cause is laundered away.
-      assert.ok(String(failure.message).includes("EACCES"));
-      // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
-      assert.equal(existsSync(lockPath), true);
-    } finally {
-      execFileSync("chmod", ["-a#", "0", lockPath]);
-      await rm(lockPath, { force: true });
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        const failure = await acquireRunWriterLease(runDirectory).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        assert.ok(failure instanceof RunWriterLeaseHeldError);
+        // The refusal must carry the EACCES errno identity, not just the
+        // dead-pid autopsy — otherwise the true cause is laundered away.
+        assert.ok(String(failure.message).includes("EACCES"));
+        // Fail-closed: the unreclaimable lock stays on disk, never blind-deleted.
+        assert.equal(existsSync(lockPath), true);
+      },
+      async () => {
+        execFileSync("chmod", ["-a#", "0", lockPath]);
+      },
+      async () => {
+        await rm(lockPath, { force: true });
+      },
+    );
   });
 });
 

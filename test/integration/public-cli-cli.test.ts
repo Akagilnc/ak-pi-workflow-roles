@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -32,14 +32,10 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-cli-", scenario);
 }
 
 function captureIo() {

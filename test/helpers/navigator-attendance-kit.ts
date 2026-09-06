@@ -2,8 +2,6 @@
  * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
  * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
  */
-import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 
 export function context() {
@@ -30,15 +28,6 @@ export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
       matches: { ...base.matches!, ...(overrides.matches ?? {}) },
     }],
   };
-}
-
-export async function cleanupTempDir(root: string, primaryFailure?: unknown): Promise<void> {
-  try {
-    await rm(root, { recursive: true, force: true });
-  } catch (cleanupFailure) {
-    if (primaryFailure === undefined) throw cleanupFailure;
-    throw new AggregateError([primaryFailure, cleanupFailure], "Test failed and cleanup failed", { cause: primaryFailure });
-  }
 }
 
 export function sessionHarness() {

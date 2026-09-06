@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   FIXER_BASH_FORBIDDEN_LITERALS,
@@ -28,8 +30,7 @@ import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 test("controlled Grok inspect keeps auth but excludes personalized sources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-inspect-"));
-  try {
+  await withTempRoot("ak-grok-inspect-", async (root) => {
     const sourceHome = join(root, "personalized");
     const controlledHome = join(root, "controlled");
     await mkdir(join(sourceHome, ".grok"), { recursive: true });
@@ -50,13 +51,11 @@ process.stdout.write(JSON.stringify({
     assert.deepEqual(await inspectControlledGrok({ binary: executable, cwd: root, env, packageRoot: "/pkg" }), {
       privateActive: [], akActive: ["skills:ak"],
     });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("ACP stdio preserves spawn failure and rejects later writes", async () => {
-  const connection = await connectGrokAcpStdio({ binary: join(tmpdir(), "missing-grok-binary"), cwd: tmpdir(), env: process.env });
+  const connection = await connectGrokAcpStdio({ binary: worktreeTempPrefix("missing-grok-binary"), cwd: tmpdir(), env: process.env });
   await assert.rejects(connection.request("initialize", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
   await assert.rejects(connection.request("after-error", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
   assert.throws(() => connection.notify("after-error", {}), (error: Error & { code?: string }) => error.code === "acp-process-error");
@@ -64,8 +63,7 @@ test("ACP stdio preserves spawn failure and rejects later writes", async () => {
 });
 
 test("malformed ACP frame terminates the connection and settles every pending request", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-malformed-"));
-  try {
+  await withTempRoot("ak-grok-acp-malformed-", async (root) => {
     const executable = join(root, "grok-malformed.mjs");
     await writeFile(executable, `#!/usr/bin/env node
 import { createInterface } from "node:readline";
@@ -83,14 +81,11 @@ process.on("SIGTERM", () => process.exit(0));
     await assert.rejects(first, typed);
     await assert.rejects(second, typed);
     await assert.rejects(connection.request("after-malformed", {}), typed);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("ACP stdio answers host permission requests through the typed protocol", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-permission-"));
-  try {
+  await withTempRoot("ak-grok-acp-permission-", async (root) => {
     const executable = join(root, "grok-permission.mjs");
     await writeFile(executable, `#!/usr/bin/env node
 import { createInterface } from "node:readline";
@@ -109,14 +104,11 @@ process.on("SIGTERM", () => process.exit(0));
     const connection = await connectGrokAcpStdio({ binary: executable, cwd: root, env: process.env });
     assert.deepEqual(await connection.request("initialize", {}), { outcome: { outcome: "selected", optionId: "once" } });
     await connection.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("ACP stdio pairs framed replies and closes one real child", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-acp-faux-"));
-  try {
+  await withTempRoot("ak-grok-acp-faux-", async (root) => {
     const executable = join(root, "grok-faux.mjs");
     const events = join(root, "events.jsonl");
     const launch = join(root, "launch.json");
@@ -157,9 +149,7 @@ process.on("SIGTERM", () => process.exit(0));
     });
     await assert.rejects(connection.request("after-close", {}), (error: Error & { code?: string }) => error.code === "acp-connection-closed");
     assert.throws(() => connection.notify("after-close", {}), (error: Error & { code?: string }) => error.code === "acp-connection-closed");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 async function runInstalledSeatbeltHook(
@@ -188,8 +178,7 @@ async function runInstalledSeatbeltHook(
 }
 
 test("installed seatbelt hook denies the representative dangerous command and all four ADR literals", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-seatbelt-hook-"));
-  try {
+  await withTempRoot("ak-grok-seatbelt-hook-", async (home) => {
     await installGrokPreToolUseDeny(home);
     assert.deepEqual(await runInstalledSeatbeltHook(home, "rm -rf /tmp/danger"), {
       decision: "deny",
@@ -203,18 +192,16 @@ test("installed seatbelt hook denies the representative dangerous command and al
         literal,
       );
     }
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });
 
 test("executeTurn resume after settle scrubs residual AK seatbelt hooks", async () => {
   // #594 F1: residual AK hooks under controlled home must not survive settle into the
   // next executeTurn. Inspect goes through real inspectControlledGrok → classifyGrokInspection
   // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-resume-hooks-"));
+  return await withTempRoot("ak-grok-resume-hooks-", async (root) => {
   const home = join(root, "controlled");
-  try {
+
     await mkdir(home, { recursive: true });
     const binary = join(root, "grok-inspect-faux.mjs");
     await writeFile(binary, `#!/usr/bin/env node
@@ -330,7 +317,5 @@ process.stdout.write(JSON.stringify({
     });
     assert.equal(resumeResult.code, 0);
     assert.equal(resumeResult.knownFailure, undefined);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

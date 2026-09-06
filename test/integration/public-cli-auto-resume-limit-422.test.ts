@@ -1,4 +1,5 @@
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -11,7 +12,6 @@ import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -29,10 +29,10 @@ import {
 import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(tmpdir(),"ak-422-"));
-  try{return await fn(home);}finally{await rm(home,{recursive:true,force:true});}
+  return withTempRoot("ak-422-", fn);
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","422@test.local"],{cwd:root});execFileSync("git",["config","user.name","422"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}

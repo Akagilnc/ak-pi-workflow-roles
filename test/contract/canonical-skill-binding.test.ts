@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
   loadCanonicalSkillBinding,
@@ -13,13 +13,15 @@ import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 const originalHome = process.env.HOME;
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(resolve(tmpdir(), "ak-canonical-skill-"));
+  const home = await mkdtemp(worktreeTempPrefix("ak-canonical-skill-"));
   process.env.HOME = home;
   return await withPrimaryAwareCleanup(
     () => run(home),
     async () => {
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;
+    },
+    async () => {
       await rm(home, { recursive: true, force: true });
     },
   );
@@ -184,6 +186,7 @@ test("canonical binding fails closed for unavailable and empty Skills", async ()
       /Canonical tdd Skill is unavailable.*SKILL\.md/i,
     );
 
+    // State transition inside self-owned home: directory SKILL.md → file body.
     await rm(missing, { recursive: true, force: true });
     await writeConfiguredSkill(
       home,

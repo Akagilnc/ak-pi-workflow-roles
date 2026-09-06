@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { connectGrokAcpStdio, controlledGrokChildEnv, prepareControlledGrokHome, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const binary = join(homedir(), ".grok", "bin", "grok");
 const auth = join(homedir(), ".grok", "auth.json");
@@ -12,7 +14,7 @@ const auth = join(homedir(), ".grok", "auth.json");
 /** Bare live seam: ACP resume/runtime controls cannot be credibly simulated. */
 test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async (t) => {
   try { await Promise.all([access(binary), access(auth)]); } catch { t.skip("authenticated Grok unavailable"); return; }
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-acp-live-"));
+  await withTempRoot("ak-grok-acp-live-", async (home) => {
   const connections: GrokAcpConnection[] = [];
   const open = async (options: { toolset?: string; onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void } = {}) => {
     const connection = await connectGrokAcpStdio({
@@ -24,7 +26,9 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
     await connection.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
     return connection;
   };
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     await prepareControlledGrokHome(homedir(), home);
     const firstConnection = await open();
     const session = await firstConnection.request("session/new", { cwd: process.cwd(), mcpServers: [], _meta: { yoloMode: false } });
@@ -86,8 +90,8 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
     assert.ok(toolCalls.some((call) => call.rawOutput?.type === "Bash"), "the executed shell tool must report typed Bash rawOutput");
     await configured.request("session/close", { sessionId: configuredId });
     await configured.close();
-  } finally {
-    await Promise.allSettled(connections.map((connection) => connection.close()));
-    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-  }
+        },
+      async () => { await Promise.allSettled(connections.map((connection) => connection.close())); }
+    );
+  });
 });

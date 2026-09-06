@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, DoctorSubmissionContractError, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -269,11 +270,13 @@ test("case identity is repository-relative with an absolute fallback outside rep
     assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/issues/40/runs");
   });
 
-  await withTempRoot("doctor-identity-outside-", async (outside) => {
-    const outsideRuns = homeRuns(outside, 40);
-    await mkdir(outsideRuns, { recursive: true });
-    assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
-  });
+  // Absolute-fallback arm must sit truly outside any git worktree. worktreeTempPrefix
+  // roots live inside this repo, so stableRunsIdentity would return a relative path.
+  // Outside create-and-abandon: owner 2026-09-06 forbids deleting outside the worktree.
+  const outside = await mkdtemp(outsideWorktreeTempPrefix("doctor-identity-outside-"));
+  const outsideRuns = homeRuns(outside, 40);
+  await mkdir(outsideRuns, { recursive: true });
+  assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
 });
 
 test("case identity discovery propagates unexpected filesystem errors", async () => {

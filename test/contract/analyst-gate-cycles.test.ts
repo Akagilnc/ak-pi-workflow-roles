@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #446 analyst gate-cycle metric family — real-entry tracers only.
  *
@@ -9,8 +10,7 @@
  * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -236,13 +237,10 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
-  try {
+  return withTempRoot("analyst-gate-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 function judgeAuditorDir(home: string): string {
@@ -317,6 +315,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
 
     // Rejected/no-result historical terminals do not form rounds.
+    // Clear prior volume so the rejected fixture is the sole auditor state.
     await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({

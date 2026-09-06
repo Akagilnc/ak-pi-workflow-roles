@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -12,7 +13,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -49,14 +49,10 @@ import {
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-notary-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-notary-", scenario);
 }
 
 function captureIo() {

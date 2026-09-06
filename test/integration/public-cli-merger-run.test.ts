@@ -1,27 +1,24 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
  * Covers: accepted (alternate-host sealed→Terminal), post-seal, no-receipt,
- * infrastructure, merger residual Pi faults, and Pi singleton negatives.
+ * and infrastructure. Real-Pi residual/singleton legs culled (#685).
  * Does not substitute createSubmissionLedgerHost unit rows for this seam.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 test.after(() => { process.exitCode = undefined; });
 
 import { installHermesFixture } from "../helpers/hermes-fixture.ts";
-import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { INSPECTOR_OUTPUT_TOOL, NOTARY_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
-import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
@@ -33,20 +30,17 @@ import {
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
   createSubmissionLedgerHost,
   readSealedSubmission,
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
-import { packageRoot, runPiSubprocess, seedAgentDirModelsJsonFromFaux, withActivationHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
-import { seatSelection, writeInstitutionalSeatTable } from "../helpers/institutional-seat-table.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { Type } from "typebox";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 
 const git = (cwd: string, args: string[], input?: string) =>
   execFileSync("git", args, {
@@ -108,21 +102,23 @@ async function conflictedRepository(root: string) {
 }
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-role-table-"));
+  return await withTempRoot("ak-public-role-table-", async (home) => {
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const project = join(home, "work");
     await mkdir(project);
     seedGitProject(project);
     return await run(home, project);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+        },
+      async () => { if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath; }
+    );
+  });
 }
 
 function captureIo() {
@@ -651,213 +647,4 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       assert.equal(await readSealedSubmission(project, runId, home), undefined);
     }
   });
-});
-
-/** Merger residual Pi real-entry (existing §5 case — single-fault residuals). */
-async function tracePublicMerger(residual?: "sole" | "sibling" | "wrong-attempt") {
-  const providerPath = resolve(packageRoot, "test/fixtures/merger-baseline-provider.ts");
-  const home = await mkdtemp(join(tmpdir(), `ak-public-merger-${residual ?? "accepted"}-`));
-  try {
-    const project = join(home, "work");
-    await mkdir(project);
-    const commit = await conflictedRepository(project);
-    return await runAkRole(
-      [
-        "merger",
-        "--model",
-        "ak-merger-baseline/faux-1",
-        "--thinking",
-        "off",
-        "--project",
-        project,
-        "Resolve the ordinary conflict.",
-      ],
-      {
-        packageRoot,
-        home,
-        agentDir: join(home, ".pi", "agent"),
-        cwd: project,
-        createRunId: () => `run-merger-baseline-public-${residual ?? "accepted"}`,
-        mergerExtraPiArgs: ["-e", providerPath],
-        mergerTimeoutMs: 90_000,
-        io: { stdout() {}, stderr() {} },
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args, options) => {
-            const runId = `run-merger-baseline-public-${residual ?? "accepted"}`;
-            const run = await runPiSubprocess([...args], {
-              cwd: options.cwd,
-              timeoutMs: options.timeoutMs ?? 90_000,
-              env: {
-                ...options.env,
-                PI_OFFLINE: "1",
-                AK_MERGER_FIXTURE_COMMIT: commit,
-                AK_MERGER_FIXTURE_ATTEMPT_ID: runId,
-                ...(residual === undefined ? {} : { AK_MERGER_FIXTURE_RESIDUAL: residual }),
-              },
-            });
-            return {
-              code: run.code,
-              stdout: run.stdout,
-              stderr: run.stderr,
-              timedOut: run.localTimeout,
-              args: [...args],
-            };
-          },
-          extraPiArgs: ["-e", providerPath],
-        }),
-      },
-    );
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-}
-
-test("public Merger residual failure precedence stays on the shared table", { timeout: 240_000 }, async () => {
-  for (const residual of ["sole", "sibling", "wrong-attempt"] as const) {
-    const result = await tracePublicMerger(residual);
-    const outcome = result.terminal?.roleOutcome;
-    assert.equal(outcome?.role, "merger", residual);
-    assert.notEqual(result.exitCode, 0, residual);
-    assert.notEqual(outcome?.decisiveFacts.acceptedReceipt, true, residual);
-    assert.equal(outcome?.kind, residual === "sole" ? "incomplete" : "failure", residual);
-  }
-});
-
-test("public Merger accepts a clean completed merge on the shared table", { timeout: 240_000 }, async () => {
-  const result = await tracePublicMerger();
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-  assert.equal(result.terminal?.roleOutcome.status, "completed");
-});
-
-/**
- * Pi real-entry singleton table — deleted judge/fixer direct-execute sole-call
- * negatives graduate here (not collector-only).
- */
-test("Pi real-entry singleton table rejects non-sole-final for packaged roles", { timeout: 120_000 }, async () => {
-  const rows = [
-    {
-      role: "judge" as const,
-      tool: JUDGE_OUTPUT_TOOL_NAME,
-      flags: (home: string) => ({ "ak-role": "judge" }),
-      outputArgs: { judgeStatus: "converged" },
-      extension: () =>
-        createPiRoleRuntimeExtension({
-          loadJudgeSoul: async () => "# Judge\nDecide.",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        }),
-    },
-    {
-      role: "fixer" as const,
-      tool: FIXER_OUTPUT_TOOL_NAME,
-      flags: (home: string) => ({
-        "ak-role": "fixer",
-        "ak-fixer-phase": "plan",
-        "ak-fix-packet": join(home, "fix-packet.md"),
-      }),
-      outputArgs: { status: "planned", report: "plan only" },
-      extension: () =>
-        createPiRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadFixerSoul: async () => "# Fixer\nPlan.",
-          loadFixPacket: async () => "# Repair instructions\n",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        }),
-    },
-  ] as const;
-
-  for (const row of rows) {
-    await withActivationHome({ prefix: `ak-pi-singleton-${row.role}-` }, async ({ agentDir, home }) => {
-      // Fixer needs a git cwd + packet file for activation.
-      const work = join(home, "work");
-      await mkdir(work, { recursive: true });
-      seedGitProject(work);
-      if (row.role === "fixer") {
-        await writeFile(join(home, "fix-packet.md"), "# Repair\n", "utf8");
-      }
-      const faux = fauxProvider({
-        api: `singleton-${row.role}`,
-        provider: `singleton-${row.role}`,
-        tokenSize: { min: 1000, max: 1000 },
-      });
-      const seededModels = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-      await writeInstitutionalSeatTable(work, {
-        gatekeeper: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-        inspector: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-        notary: seatSelection(`singleton-${row.role}`, `singleton-${row.role}`),
-      });
-      const officerTool = row.role === "judge" ? NOTARY_OUTPUT_TOOL : INSPECTOR_OUTPUT_TOOL;
-      let rejectionObservedByModel = false;
-      const retry = async (context: any) => {
-        rejectionObservedByModel = context.messages.filter((message: any) => message.role === "user").length > 1;
-        return fauxAssistantMessage(
-          [fauxToolCall(row.tool, row.outputArgs, { id: "retry-output" })],
-          { stopReason: "toolUse" },
-        );
-      };
-      const initial = fauxAssistantMessage(
-        [
-          fauxToolCall(row.tool, row.outputArgs, { id: "output" }),
-          fauxToolCall("read", { path: "x" }, { id: "sibling" }),
-        ],
-        { stopReason: "toolUse" },
-      );
-      faux.setResponses((row.role === "judge"
-        ? [
-            initial,
-            fauxAssistantMessage(
-              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-1" }),
-              { stopReason: "toolUse" },
-            ),
-            retry,
-            fauxAssistantMessage(
-              fauxToolCall(officerTool, { status: "pass", findings: [] }, { id: "officer-2" }),
-              { stopReason: "toolUse" },
-            ),
-          ]
-        : [initial, retry]) as any);
-      try {
-        await withInProcessPi(
-        {
-          activationLedgerSession: true,
-          home,
-          cwd: work,
-          agentDir,
-          faux,
-          modelsPath: null,
-          extensionFactories: [row.extension()],
-          noExtensions: true,
-          systemPrompt: "BASE",
-          mode: "print",
-          noTools: "builtin",
-          flags: row.flags(home),
-        },
-        async ({ session, sessionManager }) => {
-          await session.prompt("start");
-          const entries = sessionManager.getEntries() as any[];
-          const output = entries.find(
-            (entry) =>
-              entry.type === "message" &&
-              entry.message.role === "toolResult" &&
-              entry.message.toolName === row.tool,
-          );
-          assert.deepEqual(
-            output?.message.details,
-            { submissionDisposition: "pending-round-closure" },
-            `${row.role} remains pending until typed turn closure`,
-          );
-          assert.equal(rejectionObservedByModel, true, `${row.role} receives the rejection before retrying`);
-          const headerId = sessionManager.getHeader?.()?.id;
-          const sealed =
-            headerId === undefined ? undefined : await readSealedSubmission(work, headerId, home);
-          assert.equal(sealed?.role, row.role, `${row.role} retry on the same durable session seals`);
-        },
-        );
-      } finally {
-        await seededModels.close();
-      }
-    });
-  }
 });
