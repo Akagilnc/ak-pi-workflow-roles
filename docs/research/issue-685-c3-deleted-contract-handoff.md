@@ -197,6 +197,37 @@ worktree 内无聚合脚本、无向 `~/.ak-roles/books` 写伪 run 的提交代
 - **保留**：C4 primary-aware-cleanup / hermes 边界；C3 judge-auditor no-call（**仅** provider HTTP 调用数为零，见 J）；engine-detour cancel-idle（**仅** abort/spawn-miss/silent-idle 窄 seam，**不**承接 empty-output / exit23-cause / 公开 CLI 失败表）与 engine-axis 配置案；worker gate 非宿主 arm；activation symlink；oauth 留存 warning/single-flight 等；npm optional peer **元数据** call-input（**不**承接 ordinary install HOST_PEERS ENOENT）。
 - **作废为承接**：r7 自拟聚合摘要；凡「健康 terminal ⇒ 专用契约已结」的跳连；用 `exitCode=0`「本激活内劳务引擎已使用」冒充 reviewer engine 进程失败 cause 贯穿；用 exitCode=1 真错误卷或 cancel-idle seam 合并结清 empty-output / exit23-cause；用 optional peer 元数据或 detour idle 旁证合并结清 HOST_PEERS ENOENT / compliance stream 耗尽。
 
+---
+
+## M. r13 日常 CI 残留真实宿主复演（判官 continue 送修）
+
+原文件：`test/integration/judge-auditor-retention-real-pi.test.ts`（整文件删除）。
+
+调用链（删前实证）：`runAkRole` **未**注入 `roleTurnHost` / `hostAdapters` → `resolveRoleTurnHost` → `createPiRoleTurnHost` → `createDefaultPiSpawnRunner` **真 spawn Pi**；`credentials` 双 true 越过 pre-dispatch；`judgeExtraPiArgs: ["-e", tracer.extension]` 挂真 HTTP provider + session principal 替换注入。专用夹具 `createJudgeAuditorRetentionTracer`（HTTP server、fs.watch、setInterval 恢复、EISDIR 目录替换）仅服务本文件，随文件删除，**无**跨文件共用方。不改生产、不 skip、不迁 adjudication、不造 mock 证明。
+
+| 原案（行为） | 必要性 | 同根 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| Judge 公开入口在 **retention 失败**下仍如实保留真实默认-Pi **auditor provider stop**：`details.httpStatus=500` | 真宿主+真 HTTP 500 wire | provider-stop 族 | 删 | 生产 `BOOK/**/artifacts/error.json` 全扫 **无** `"httpStatus": 500` 与本复合观察同形的 judge auditor stop 卷。留存 `test/integration/public-cli-failure-provider-stop.test.ts` 为 **faux runner / 手构 session custom** 投影（含预置 retentionFailure 形状），**不是**默认 Pi 真 spawn + 真 500 Response 观察 | **未结** |
+| 同上路径 `details.retentionFailure.name=ComplianceResponseRetentionError` | 真宿主 retain 失败面 | 上列 | 删 | 生产 error 卷 **无** `ComplianceResponseRetentionError` 具名 identity。BOOK 内同名字符串仅出现于 admitted-request / 报告附件叙述，**不是** typed error 产物。留存 provider-stop 案手写 `retentionFailure: { name: "ComplianceResponseRetentionError", cause: { code: "EISDIR" } }` 只证 settlement **读已写入 session** 的形状，不证 retainComplianceResponse 真失败 | **未结** |
+| 同上路径 `details.retentionFailure.cause.code=EISDIR`（sitian `auditor/records.jsonl` 被换成目录） | 真宿主 retain errno | 上列 | 删 | 无 EISDIR-on-retain 专用生产 error 卷。留存 provider-stop「typed-HTTP sidecar 为目录 → readFile EISDIR」是 **observation 读路径** 非 absence，与 sitian retain 写路径 **不是同一观察** | **未结** |
+
+### r13 调用链全扫摘要（test/{unit,contract,integration,package} + helper）
+
+按真实调用区分，不按文件名：
+
+| 命中 | 实际路径 | 处置 |
+| --- | --- | --- |
+| `judge-auditor-retention-real-pi.test.ts` | 无 host 注入 + credentials 过门 + 真 spawn + 真 provider | **已删** |
+| `public-cli-failure-real-entry`「default runner empty-auth」 | 无 `roleTurnHost`，但 `credentials` 双 false → `missingCredentialPreDispatchFailure` **先于** `executeTurn`；不 spawn | **留存**（确定性 pre-dispatch） |
+| `public-cli-engine-axis` 无 host 的 judge/roles 案 | 语法非法 engine / 非法 persistent config → exit 2 结构拒，不进 turn | **留存** |
+| `public-cli-notary` / `countersign` 无 host 案 | 入场参数/source-run 结构拒，不进 turn | **留存** |
+| `public-cli-host-axis` | `hostAdapters` 或注入 counting `roleTurnHost` | **留存**（确定性 adapter 表） |
+| 大量 `roleTurnHostFromLegacyPiRunner` / `createMinimalHost` 调用方 | 确定性 faux spawnRunner，不调默认 Pi 二进制 | **留存** |
+| `public-cli-explicit-internal` 用 `createDefaultPiSpawnRunner` | PATH/`PI_BINARY` 指向 **自写 stub 可执行文件**，测 runner 解析/就绪/失败身份，非真 Pi 宿主会话 | **留存** |
+| `package-home-cli-seam` `runAkRole(["roles"])` | 不进 role turn / 不 spawn Pi | **留存** |
+| cold-install / `getSharedIsolatedPack` / `runPiSubprocess` / `installPackedArtifact` | 日常 test 树 **已无** 调用（heavy 空；既有删案见 §H） | 无新增命中 |
+| helper `role-turn-host-fixture` / `failure-settlement-kit` | 共享确定性夹具；本删案无独占 helper 文件 | **留存** |
+
 ### 必要性列全扫（r10）
 
 | 命中 | 处理 |

@@ -463,6 +463,10 @@ export function activationExtensionContext(input: {
       getEntries: () => [],
       getSessionDir: () => sessionDir,
       getSessionFile: () => sessionFile,
+      // Pi adapter projects getHeader without optional chaining; missing method becomes
+      // TypeError before durableSessionPointer. null = no in-memory deferred header
+      // (missing-file arms keep ENOENT cause via ActivationSessionFileMissingError wrap).
+      getHeader: () => null,
     },
   } as unknown as ExtensionContext;
 }

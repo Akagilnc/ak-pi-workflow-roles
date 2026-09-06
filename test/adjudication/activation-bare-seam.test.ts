@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdirSync,
 } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -117,11 +118,15 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
       { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
     );
-    // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
+    // Non-git arm cwd must sit truly outside this worktree's upward Git discovery.
+    // worktreeTempPrefix roots inherit checkout .git; /tmp create-and-abandon only
+    // (owner 2026-09-06: do not delete outside the worktree). Hermetic HOME/ledger
+    // stay under worktree; durable-session arms below seedGitRepository(home).
+    const nonGitCwd = await mkdtemp(join("/tmp", "ak-act-nongit-cwd-"));
     // Pre-create a ledger session so non-git fails on book-key, not session placement.
     const bookKey = activationBookKeyFor(home);
     const ctx = activationExtensionContext({
-      cwd: home,
+      cwd: nonGitCwd,
       home,
       bookKey,
       abort() { aborts++; },
