@@ -1,4 +1,3 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #685 C1: createRecordSession host durability leg culled. C3: resume 后无二次
 // false bounce 未结 — docs/research/issue-685-c3-deleted-contract-handoff.md §C.
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -16,9 +15,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
   fauxAssistantMessage,
@@ -71,17 +72,15 @@ async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
   options?: { seed?: boolean },
 ): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-worker-gate-home-"));
-  const root = await mkdtemp(join(home, "repo-"));
-  git(root, ["init", "-b", "main"]);
-  configureGitUser(root);
-  if (options?.seed !== false) git(root, ["commit", "--allow-empty", "-m", "seed"]);
-  try {
+  // Own home at create seam before git setup can throw past cleanup.
+  return withTempRoot("ak-worker-gate-home-", async (home) => {
+    const root = join(home, "repo");
+    await mkdir(root, { recursive: true });
+    git(root, ["init", "-b", "main"]);
+    configureGitUser(root);
+    if (options?.seed !== false) git(root, ["commit", "--allow-empty", "-m", "seed"]);
     return await fn(root, home);
-  } finally {
-    // home owns the nested repo root; reclaim the outer owned root.
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 function bareGate(home: string) {
@@ -171,8 +170,8 @@ test("unfinished reason gate bounces missing reason up to twice then accepts; re
 test("① completed/partially_completed zero-commit bounces once then confirm; other statuses free; git failure surfaces; unborn is no-commit", async () => {
   await withTempGit(async (root, home) => {
     // bare non-git arm target must sit outside this worktree's upward Git discovery;
-    // /tmp named root is not deleted (owner 2026-09-06 directory boundary).
-    const bare = await mkdtemp(join("/tmp", "ak-worker-gate-bare-"));
+    // outside root is not deleted (owner 2026-09-06 directory boundary).
+    const bare = await mkdtemp(outsideWorktreeTempPrefix("ak-worker-gate-bare-"));
     const gate = bareGate(home);
     gate.arm(root);
     for (const status of ["planned", "refused"] as const) {

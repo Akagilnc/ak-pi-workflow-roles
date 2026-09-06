@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { ensureHostPiRuntimeResolvable, HOST_PROVIDED_PACKAGES } from "../../src/public-cli/host-pi-runtime.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 function writePackage(dir: string, name: string, entryBody: string): string {
   mkdirSync(dir, { recursive: true });
@@ -14,13 +15,14 @@ function writePackage(dir: string, name: string, entryBody: string): string {
 }
 
 /**
- * Fixture root under /tmp (outside this worktree and outside TMPDIR overrides).
- * Ancestor-walk isolation must not see package node_modules as local; os.tmpdir()
- * often sits under a polluted tree or under a worktree-local TMPDIR probe. r12
+ * Fixture root outside this worktree (system tmpdir, not a fixed POSIX /tmp).
+ * Ancestor-walk isolation must not see package node_modules as local. r12
  * forbids deleting outside the worktree — create-and-abandon (OS tmp lifetime).
  */
 function makeIsolatedRoot(): string {
-  return mkdtempSync(join("/tmp", "ak-host-pi-runtime-iso-"));
+  return mkdtempSync(
+    outsideWorktreeTempPrefix("ak-host-pi-runtime-iso-", { isolateNodeAncestors: true }),
+  );
 }
 
 /** A fake host Pi global install: pi-coding-agent with nested pi-ai and typebox, plus a bin shim. */

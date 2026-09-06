@@ -1,4 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
@@ -336,8 +336,8 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
     const before = await snapshotAnalystDir(ledgerHome);
     // Must sit outside this git worktree so analyst sees a true non-repo cwd.
-    // /tmp isolation root is not deleted (r12/r6 outside-worktree rule).
-    const nonGit = await mkdtemp(join("/tmp", "analyst-336-nongit-"));
+    // Outside isolation root is not deleted (r12/r6 outside-worktree rule).
+    const nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-336-nongit-"));
     const previousCwd = process.cwd();
     process.chdir(nonGit);
     try {

@@ -1,4 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #399 analyst book-scope — three defects on the analysis seat (owner-ratified).
  *
@@ -388,11 +388,11 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
   const home = await mkdtemp(worktreeTempPrefix("analyst-399-nongit-home-"));
   const previousCwd = process.cwd();
-  // nonGit must sit outside this git worktree; /tmp isolation root is not deleted.
+  // nonGit must sit outside this git worktree; outside isolation root is not deleted.
   let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      nonGit = await mkdtemp(join("/tmp", "analyst-399-nongit-cwd-"));
+      nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);

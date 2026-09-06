@@ -1,4 +1,4 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #412 r4 + #413 r2 — failure honesty at the single projectRoot→bookKey true source.
  * A *confirmed* no-repository verdict keeps the r4-adjudicated synthetic `root:`
@@ -56,8 +56,8 @@ test("resolveAnalystBookKey: existing plain non-git directory keeps the establis
   // nonzero with its own "not a git repository" diagnostic — a *confirmed*
   // no-repo verdict at the single classification owner — so the legitimate
   // `root:<identity>` fallback applies exactly as adjudicated in r4.
-  // Must live outside this git worktree; /tmp isolation root is not deleted (r12/r6).
-  const dir = mkdtempSync(join("/tmp", "analyst-book-key-nongit-"));
+  // Must live outside this git worktree; outside isolation root is not deleted (r12/r6).
+  const dir = mkdtempSync(outsideWorktreeTempPrefix("analyst-book-key-nongit-"));
   assert.equal(resolveAnalystBookKey(dir), `root:${physicalPathIdentity(dir)}`);
 });
 

@@ -6,7 +6,7 @@
  * including residual auth/hook scrub and symlink refusal (#594 F1/F3/F4).
  */
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -19,8 +19,8 @@ import {
   withProductionGrokIsolation,
 } from "../../src/grok/production-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+
 
 /** Path whose auth.json rm fails — cleanup-failure oracle (errno is platform-local). */
 const UNREMOVABLE_HOME = "/dev/null";
@@ -30,32 +30,19 @@ function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
-async function seedOperatorHome(): Promise<string> {
-  const operatorHome = await mkdtemp(worktreeTempPrefix("ak-grok-op-"));
-  await mkdir(join(operatorHome, ".grok"), { recursive: true });
-  await writeFile(join(operatorHome, ".grok", "auth.json"), "SECRET-AUTH\n", "utf8");
-  return operatorHome;
-}
-
-async function seedRunDirectory(): Promise<string> {
-  return await mkdtemp(worktreeTempPrefix("ak-grok-run-"));
-}
-
 /** Own create→assert→cleanup for operator + run roots (exception path too). */
 async function withGrokFixtureRoots<T>(
   run: (roots: { operatorHome: string; runDirectory: string }) => Promise<T>,
 ): Promise<T> {
-  const operatorHome = await seedOperatorHome();
-  const runDirectory = await seedRunDirectory();
-  return withPrimaryAwareCleanup(
-    () => run({ operatorHome, runDirectory }),
-    async () => {
-      await rm(operatorHome, { recursive: true, force: true });
-    },
-    async () => {
-      await rm(runDirectory, { recursive: true, force: true });
-    },
-  );
+  // Single owned root: mkdir/write setup cannot leak a half-built sibling root.
+  return withTempRoot("ak-grok-fix-", async (root) => {
+    const operatorHome = join(root, "op");
+    const runDirectory = join(root, "run");
+    await mkdir(join(operatorHome, ".grok"), { recursive: true });
+    await writeFile(join(operatorHome, ".grok", "auth.json"), "SECRET-AUTH\n", "utf8");
+    await mkdir(runDirectory, { recursive: true });
+    return run({ operatorHome, runDirectory });
+  });
 }
 
 test("production isolation binding shares one home for GROK_HOME, auth, and binary outside the operator home under runDirectory", async () => {
@@ -158,19 +145,18 @@ test("withProductionGrokIsolation rethrows undefined primary, scrubs auth.json, 
 });
 
 test("openProductionGrokHome does not leak auth when auth copy fails", async () => {
-  const operatorHome = await mkdtemp(worktreeTempPrefix("ak-grok-op-noauth-"));
-  const runDirectory = await seedRunDirectory();
-  try {
+  await withTempRoot("ak-grok-op-noauth-", async (root) => {
+    const operatorHome = join(root, "op");
+    const runDirectory = join(root, "run");
+    await mkdir(operatorHome, { recursive: true });
+    await mkdir(runDirectory, { recursive: true });
     // No .grok/auth.json — prepareControlledGrokHome must fail.
     await assert.rejects(() => openProductionGrokHome(runDirectory, operatorHome));
     // Controlled home under runDirectory has no leaked auth.json.
     await assert.rejects(access(join(runDirectory, "grok-home", "auth.json")));
     // Operator home must not absorb auth.json from the failed open (no .grok was seeded).
     await assert.rejects(access(join(operatorHome, "auth.json")));
-  } finally {
-    await rm(operatorHome, { recursive: true, force: true });
-    await rm(runDirectory, { recursive: true, force: true });
-  }
+  });
 });
 
 test("openProductionGrokHome scrubs crash-window residual auth before recopying", async () => {
@@ -186,27 +172,27 @@ test("openProductionGrokHome scrubs crash-window residual auth before recopying"
 
 test("openProductionGrokHome refuses a symlinked grok-home before auth copy", async () => {
   await withGrokFixtureRoots(async ({ operatorHome, runDirectory }) => {
-    const escapeTarget = await mkdtemp(worktreeTempPrefix("ak-grok-escape-"));
-    try {
-      await symlink(escapeTarget, join(runDirectory, "grok-home"));
-      // Refusal is the contract; message prose is not. open primary + settle both refuse → AggregateError.
-      await assert.rejects(
-        () => openProductionGrokHome(runDirectory, operatorHome),
-        (error: unknown) => error instanceof Error,
-      );
-      // Escape target must not receive operator credentials.
-      await assert.rejects(access(join(escapeTarget, "auth.json")));
-    } finally {
-      await rm(escapeTarget, { recursive: true, force: true });
-    }
+    // Escape target is a sibling under the already-owned fixture root — no second mkdtemp.
+    const escapeTarget = join(runDirectory, "escape-target");
+    await mkdir(escapeTarget, { recursive: true });
+    await symlink(escapeTarget, join(runDirectory, "grok-home"));
+    // Refusal is the contract; message prose is not. open primary + settle both refuse → AggregateError.
+    await assert.rejects(
+      () => openProductionGrokHome(runDirectory, operatorHome),
+      (error: unknown) => error instanceof Error,
+    );
+    // Escape target must not receive operator credentials.
+    await assert.rejects(access(join(escapeTarget, "auth.json")));
   });
 });
 
 test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async () => {
-  const controlledHome = await mkdtemp(worktreeTempPrefix("ak-grok-settle-symlink-"));
-  const escapeTarget = await mkdtemp(worktreeTempPrefix("ak-grok-auth-escape-"));
-  const escapeAuth = join(escapeTarget, "auth.json");
-  try {
+  await withTempRoot("ak-grok-settle-symlink-", async (root) => {
+    const controlledHome = join(root, "controlled");
+    const escapeTarget = join(root, "escape");
+    await mkdir(controlledHome, { recursive: true });
+    await mkdir(escapeTarget, { recursive: true });
+    const escapeAuth = join(escapeTarget, "auth.json");
     await writeFile(escapeAuth, "OUTSIDE-SECRET\n", "utf8");
     await symlink(escapeAuth, join(controlledHome, "auth.json"));
     // Refusal is the contract; message prose is not.
@@ -221,10 +207,7 @@ test("settleProductionGrokHomeCleanup refuses symlinked auth destination", async
     );
     // Outside target must survive — settle must not follow the symlink.
     assert.equal(await readFile(escapeAuth, "utf8"), "OUTSIDE-SECRET\n");
-  } finally {
-    await rm(controlledHome, { recursive: true, force: true });
-    await rm(escapeTarget, { recursive: true, force: true });
-  }
+  });
 });
 
 test("settleProductionGrokHomeCleanup surfaces cleanup failure alone", async () => {

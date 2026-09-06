@@ -70,12 +70,15 @@ esac
   chmodSync(join(bin, "npm"), 0o755);
 }
 
-function runStamp(options: {
-  readonly channel: string;
-  readonly viewHit: boolean;
-  readonly shortSha: string;
-  readonly useRealNpmVersion?: boolean;
-}): {
+function runStamp(
+  root: string,
+  options: {
+    readonly channel: string;
+    readonly viewHit: boolean;
+    readonly shortSha: string;
+    readonly useRealNpmVersion?: boolean;
+  },
+): {
   readonly root: string;
   readonly status: number;
   readonly stderr: string;
@@ -87,7 +90,6 @@ function runStamp(options: {
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(worktreeTempPrefix("ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),
@@ -143,14 +145,15 @@ function runStamp(options: {
 }
 
 function withStamp(
-  options: Parameters<typeof runStamp>[0],
+  options: Parameters<typeof runStamp>[1],
   observe: (result: ReturnType<typeof runStamp>) => void,
 ): void {
-  const result = runStamp(options);
+  // Own the root at the create seam before setup/parse can throw past finally.
+  const root = mkdtempSync(worktreeTempPrefix("ak-publish-registry-"));
   try {
-    observe(result);
+    observe(runStamp(root, options));
   } finally {
-    rmSync(result.root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 }
 

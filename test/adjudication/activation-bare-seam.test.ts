@@ -24,7 +24,7 @@ import {
   withActivationHome,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -119,10 +119,10 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
     );
     // Non-git arm cwd must sit truly outside this worktree's upward Git discovery.
-    // worktreeTempPrefix roots inherit checkout .git; /tmp create-and-abandon only
+    // worktreeTempPrefix roots inherit checkout .git; outside create-and-abandon only
     // (owner 2026-09-06: do not delete outside the worktree). Hermetic HOME/ledger
     // stay under worktree; durable-session arms below seedGitRepository(home).
-    const nonGitCwd = await mkdtemp(join("/tmp", "ak-act-nongit-cwd-"));
+    const nonGitCwd = await mkdtemp(outsideWorktreeTempPrefix("ak-act-nongit-cwd-"));
     // Pre-create a ledger session so non-git fails on book-key, not session placement.
     const bookKey = activationBookKeyFor(home);
     const ctx = activationExtensionContext({
