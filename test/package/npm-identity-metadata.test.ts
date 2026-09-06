@@ -353,8 +353,9 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
 });
 
 // #685: private npm install of packed artifact culled — host install surface.
-// Peer optional/* declarations stay as pack-metadata call-input asserts.
-// C3: docs/research/issue-685-c3-deleted-contract-handoff.md (install process 未结).
+// Peer optional/* declarations stay as pack-metadata call-input asserts only.
+// C3 §H: ordinary npm install 后 HOST_PEERS 路径 ENOENT 未结（不是本元数据案，
+// 也不是 Pi 私有 bin 安装）— docs/research/issue-685-c3-deleted-contract-handoff.md.
 test("packed artifact declares Pi host peers as optional star peers", () => {
   for (const name of HOST_PEERS) {
     assert.equal(extracted.packageJson.peerDependencies?.[name], "*");
