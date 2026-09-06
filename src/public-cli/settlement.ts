@@ -13,6 +13,9 @@ import {
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 import {
+  resolveTicketSeatMemoryNestDirectories,
+} from "../ticket-seat-memory.ts";
+import {
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
   readSealedSubmission,
@@ -432,6 +435,111 @@ function isTypedActivationError(
   );
 }
 
+/** Flatten nested AggregateError leaves; non-aggregate values stay as one fact. */
+function flattenThrownFailureLeaves(error: unknown): unknown[] {
+  if (!(error instanceof AggregateError)) {
+    return [error];
+  }
+  const leaves: unknown[] = [];
+  for (const item of error.errors) {
+    leaves.push(...flattenThrownFailureLeaves(item));
+  }
+  return leaves;
+}
+
+/**
+ * Project one thrown value into a ControlledFailure leaf.
+ * Sole owner for thrown-leaf identity/diagnostic mapping (last-host write concurrent
+ * facts reuse this — do not fork a second leaf mapper).
+ * AggregateError nesting is handled by classifyThrownFailure.
+ */
+export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
+  if (isTypedActivationError(error)) {
+    const identity = thrownIdentity(error);
+    if (error.failureCode !== undefined && identity.code === undefined) {
+      identity.code = error.failureCode;
+    }
+    return {
+      cause: error.knownCause,
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+      ...(error.details === undefined ? {} : { details: error.details }),
+    };
+  }
+  if (error instanceof Error) {
+    const identity = thrownIdentity(error);
+    return {
+      cause: "unrecognized",
+      diagnostic: error.message || error.name || "unrecognized exception",
+      identity,
+    };
+  }
+  return {
+    cause: "unrecognized",
+    diagnostic: String(error),
+  };
+}
+
+/**
+ * Concurrent thrown failures (host + cleanup / last-host write, etc.):
+ * primary leaf owns cause/diagnostic/identity; remaining leaves stay as
+ * details.concurrentFailures so neither fact covers the other.
+ */
+function classifyThrownFailure(error: unknown): ControlledFailure {
+  if (!(error instanceof AggregateError)) {
+    return projectThrownFailureLeaf(error);
+  }
+  const leaves = flattenThrownFailureLeaves(error);
+  if (leaves.length === 0) {
+    // Empty aggregate — retain the aggregate shell rather than invent a cause.
+    return projectThrownFailureLeaf(error);
+  }
+  const primary = projectThrownFailureLeaf(leaves[0]);
+  if (leaves.length === 1) {
+    return primary;
+  }
+  const priorConcurrent = Array.isArray(primary.details?.concurrentFailures)
+    ? primary.details.concurrentFailures
+    : [];
+  const concurrentFailures = [
+    ...priorConcurrent,
+    ...leaves.slice(1).map((leaf) => {
+      const secondary = projectThrownFailureLeaf(leaf);
+      return {
+        cause: secondary.cause,
+        diagnostic: secondary.diagnostic,
+        ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
+        ...(secondary.details === undefined ? {} : { details: secondary.details }),
+      };
+    }),
+  ];
+  return {
+    cause: primary.cause,
+    diagnostic: primary.diagnostic,
+    ...(primary.identity === undefined ? {} : { identity: primary.identity }),
+    details: {
+      ...(primary.details ?? {}),
+      concurrentFailures,
+    },
+  };
+}
+
+/** Merge caller-owned secondary evidence into a classified failure without washing path facts. */
+function withKnownDetails(
+  failure: ControlledFailure,
+  knownDetails: Readonly<Record<string, unknown>> | undefined,
+): ControlledFailure {
+  if (knownDetails === undefined) return failure;
+  const { timedOut: _knownTimedOut, ...rest } = knownDetails;
+  return {
+    ...failure,
+    details: {
+      ...rest,
+      ...(failure.details ?? {}),
+    },
+  };
+}
+
 /**
  * Classify a controlled post-admission failure without washing unrecognized identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
@@ -439,6 +547,7 @@ function isTypedActivationError(
  * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
  * knownCause precedes timeout so a co-present typed provider/session identity is not
  * washed when the child also timed out. Cause is never inferred from stderr wording.
+ * AggregateError concurrent leaves keep primary identity and secondary facts in details.
  */
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
@@ -468,30 +577,7 @@ export function classifyPostAdmissionFailure(input: {
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   if (Object.hasOwn(input, "thrown")) {
-    const error = input.thrown;
-    if (isTypedActivationError(error)) {
-      const identity = thrownIdentity(error);
-      if (error.failureCode !== undefined && identity.code === undefined) {
-        identity.code = error.failureCode;
-      }
-      return {
-        cause: error.knownCause,
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    if (error instanceof Error) {
-      const identity = thrownIdentity(error);
-      return {
-        cause: "unrecognized",
-        diagnostic: error.message || error.name || "unrecognized exception",
-        identity,
-      };
-    }
-    return {
-      cause: "unrecognized",
-      diagnostic: String(error),
-    };
+    return classifyThrownFailure(input.thrown);
   }
   if (input.knownCause !== undefined) {
     const fallback =
@@ -524,39 +610,54 @@ export function classifyPostAdmissionFailure(input: {
     };
   }
   if (input.timedOut) {
-    return {
-      cause: "timeout",
-      diagnostic: "role run timed out",
-      details: { timedOut: true, exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "timeout",
+        diagnostic: "role run timed out",
+        details: { timedOut: true, exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.code !== 0) {
     const fallback = `role run failed with exit ${input.code ?? "null"}`;
-    return {
-      cause: "activation",
-      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { exitCode: input.code },
-    };
+    return withKnownDetails(
+      {
+        cause: "activation",
+        diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+        details: { exitCode: input.code },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "missing") {
-    return {
-      cause: "session",
-      diagnostic: "role run left no readable session transcript",
-      details: { exitCode: input.code, session: "missing" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: "role run left no readable session transcript",
+        details: { exitCode: input.code, session: "missing" },
+      },
+      input.knownDetails,
+    );
   }
   if (input.session?.state === "unreadable") {
-    return {
-      cause: "session",
-      diagnostic: input.session.diagnostic,
-      details: { exitCode: input.code, session: "unreadable" },
-    };
+    return withKnownDetails(
+      {
+        cause: "session",
+        diagnostic: input.session.diagnostic,
+        details: { exitCode: input.code, session: "unreadable" },
+      },
+      input.knownDetails,
+    );
   }
-  return {
-    cause: "output",
-    diagnostic: "role run completed without a lawful typed terminal result",
-    details: { exitCode: input.code },
-  };
+  return withKnownDetails(
+    {
+      cause: "output",
+      diagnostic: "role run completed without a lawful typed terminal result",
+      details: { exitCode: input.code },
+    },
+    input.knownDetails,
+  );
 }
 
 /** One projection owner for the four audited public runners. */
@@ -907,41 +1008,100 @@ async function loadBoundAuditorVolumes(
     latestParentUserIndex = i;
     break;
   }
-  const childDirectory = join(dirname(sessionFile), "auditor-roles");
-  let names: string[];
-  try {
-    names = await readdir(childDirectory);
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw sessionReadFailure(error, "failed to read bound auditor session directory");
-  }
+  const runDirectory = join(dirname(sessionFile), "..");
+  // #636: ticket-seat auditor memory nest via sole discovery helper.
+  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+    runDirectory,
+    seats: ["auditor"],
+  });
+  const childDirectories = [
+    join(dirname(sessionFile), "auditor-roles"),
+    ...memoryNests,
+  ];
   // Auto-resume seam (owner A): stale check must ignore resume envelope and
   // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
   // first attempt's child after resume advanced latest, losing retentionFailure
   // when retry had no compliance entry. Fix: ignore envelope for staleness and
   // prefer any valid compliance failure before falling back to primary.
   const valid: BoundAuditorVolume[] = [];
-  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
-    let entries: SessionEntry[];
+  let sawAnyDirectory = false;
+  for (const childDirectory of childDirectories) {
+    let names: string[];
     try {
-      entries = await readBoundSessionEntries(join(childDirectory, file));
+      names = await readdir(childDirectory);
+      sawAnyDirectory = true;
     } catch (error) {
-      throw sessionReadFailure(error, "failed to read discovered auditor session");
+      if (isMissingPathError(error)) continue;
+      throw sessionReadFailure(error, "failed to read bound auditor session directory");
     }
-    const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
-    const bindingEntry = entries.find((entry) => entry.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE);
-    const bindingParent = isRecord(bindingEntry?.data) && isRecord(bindingEntry.data.parent) ? bindingEntry.data.parent : undefined;
-    const attemptEntryId = typeof bindingParent?.attemptEntryId === "string" ? bindingParent.attemptEntryId : undefined;
-    const attemptEntryIndex = attemptEntryId === undefined ? -1 : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
-    if (bindingParent?.sessionId !== parentId || bindingParent.sessionFile !== sessionFile || attemptEntryIndex < latestParentUserIndex) continue;
-    valid.push({
-      entries,
-      parentId,
-      sessionFile,
-      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
-    });
+    for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+      let entries: SessionEntry[];
+      try {
+        entries = await readBoundSessionEntries(join(childDirectory, file));
+      } catch (error) {
+        throw sessionReadFailure(error, "failed to read discovered auditor session");
+      }
+      const header = entries.find((entry) => entry.type === "session");
+      if (!isRecord(header)) continue;
+      // Ticket-seat continuous memory keeps the first parent's header.parentSession;
+      // binding.parent.sessionFile is the per-summons authority (#636).
+      // Each binding owns only its interval — never whole-volume provider/compliance.
+      const bindingIndexes: number[] = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i];
+        if (entry?.type === "custom" && entry.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE) {
+          bindingIndexes.push(i);
+        }
+      }
+      const bindingPasses: Array<{ entry: SessionEntry | undefined; start: number; end: number }> =
+        bindingIndexes.length > 0
+          ? bindingIndexes.map((start, idx) => ({
+              entry: entries[start],
+              start,
+              end: idx + 1 < bindingIndexes.length ? bindingIndexes[idx + 1]! : entries.length,
+            }))
+          : [{ entry: undefined, start: 0, end: entries.length }];
+      for (const { entry: bindingEntry, start, end } of bindingPasses) {
+        const bindingParent =
+          bindingEntry !== undefined &&
+          isRecord(bindingEntry.data) &&
+          isRecord(bindingEntry.data.parent)
+            ? bindingEntry.data.parent
+            : undefined;
+        const attemptEntryId =
+          typeof bindingParent?.attemptEntryId === "string"
+            ? bindingParent.attemptEntryId
+            : undefined;
+        const attemptEntryIndex =
+          attemptEntryId === undefined
+            ? -1
+            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+        const boundSessionFile =
+          typeof bindingParent?.sessionFile === "string"
+            ? bindingParent.sessionFile
+            : typeof header.parentSession === "string"
+              ? header.parentSession
+              : undefined;
+        if (boundSessionFile !== sessionFile) continue;
+        if (
+          bindingParent !== undefined &&
+          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
+        ) {
+          continue;
+        }
+        if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
+        valid.push({
+          entries: entries.slice(start, end),
+          parentId,
+          sessionFile,
+          ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+        });
+        // Keep every qualifying interval in the current parent-user range.
+        // A single first-match break drops later same-user summons failures (#636).
+      }
+    }
   }
+  if (!sawAnyDirectory && valid.length === 0) return undefined;
   return valid;
 }
 
@@ -2206,16 +2366,32 @@ export function projectTerminalGateFact(
 }
 
 /**
- * Read gate facts from the run's session/auditor-roles nest via the sole
- * nested-volume reader (#446/#478). Missing directory → undefined (no-gate
- * zero change). Damaged discovered volumes propagate — never wash to "no gate".
+ * Read gate facts from the run's session/auditor-roles nest and, when the run
+ * carries a ticket, from #636 ticket-seat memory nests via the sole nested-volume
+ * reader (#446/#478). Missing directories → undefined (no-gate zero change).
+ * Damaged discovered volumes propagate — never wash to "no gate".
  */
 export async function extractGateFactFromSessionDirectory(
   sessionDirectory: string,
+  options: {
+    readonly runDirectory?: string;
+    readonly parentSessionFile?: string;
+  } = {},
 ): Promise<TerminalGateFact | undefined> {
-  const rounds = await readAnalystGateCyclesFromAuditorRoles(
+  const runDirectory = options.runDirectory ?? join(sessionDirectory, "..");
+  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
+    runDirectory,
+    seats: ["inspector", "notary"],
+  });
+  const directories = [
     join(sessionDirectory, "auditor-roles"),
-  );
+    ...memoryNests,
+  ];
+  const parentSessionFile =
+    options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
+  const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {
+    parentSessionFile,
+  });
   return projectTerminalGateFact(rounds);
 }
 
@@ -2233,7 +2409,14 @@ async function withOptionalGateProjection<
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
   },
->(base: T, sessionDirectory: string): Promise<T & { gate?: TerminalGateFact }> {
+>(
+  base: T,
+  sessionDirectory: string,
+  gateContext: {
+    readonly runDirectory?: string;
+    readonly parentSessionFile?: string;
+  } = {},
+): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
   // accepted gate cycle to project. Re-reading that rejected receipt as an
   // accepted cycle would replace the original failure with a projection error.
@@ -2249,7 +2432,9 @@ async function withOptionalGateProjection<
       || secondaryEvidence.stage === "notary"
     )
   ) return base;
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory);
+
+  // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
   return gate === undefined ? base : { ...base, gate };
 }
 
