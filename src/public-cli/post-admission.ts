@@ -400,10 +400,7 @@ export async function dispatchPostAdmissionTurn<
         request.courtAttemptId !== undefined &&
         request.courtAttemptId.length > 0
       ) {
-        const open = await readCurrentCourt(admitted.runDirectory);
-        if (open?.courtAttemptId === request.courtAttemptId) {
-          await clearCurrentCourt(admitted.runDirectory);
-        }
+        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
       }
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
@@ -477,8 +474,10 @@ export function resumeTurnRequestProjectionOptions(
   });
   let prompt: string;
   if (request.message !== undefined) {
-    // Manual resume caller-message semantics stay authoritative for the prompt.
-    // Open-court frozen attachments still continue when present.
+    // Manual resume caller-message semantics stay authoritative for the prompt:
+    // message present → base bytes unchanged (including blank/whitespace).
+    // Open-court frozen attachments still continue when present; attachment
+    // projection must not re-interpret the caller message as instructionEmpty.
     if (
       summonsPrepared !== undefined &&
       summonsPrepared.attachments.length > 0
@@ -486,7 +485,7 @@ export function resumeTurnRequestProjectionOptions(
       prompt = buildInstructionTransportPrompt(
         {
           instruction: request.message,
-          instructionEmpty: request.message.trim() === "",
+          instructionEmpty: false,
           attachments: summonsPrepared.attachments,
         },
         engineMaterial,
@@ -576,9 +575,9 @@ export async function prepareSummonsResumeMaterials(
  * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
  * turn builder, and adapters stay on the seat.
  *
- * Court open transaction (#637): freeze + currentCourt write run after the
- * writer lease is held, and persisted summons carry already-frozen attachment
- * paths so bare resume reuses the accepted snapshot instead of re-freezing.
+ * Court open/recovery transaction (#637): under the existing writer lease,
+ * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
+ * and record. No pre-lease clear or stale court-snapshot consumption.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -597,13 +596,10 @@ export async function runPostAdmissionSeatResume<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
-  // Resolve effective request first: bare resume with unsealed currentCourt
-  // rehydrates summons onto the same request shape the summons face uses.
   let request = input.request;
-  let forceContinuation = request.summons !== undefined;
-  let openCourtAttemptId: string | undefined;
 
-  // Need runDirectory to read currentCourt — load once without rehydrated summons.
+  // Load once for runDirectory / structural rejection; court identity is judged
+  // only after the writer lease is held (below).
   let loaded;
   try {
     loaded = await input.load(request);
@@ -615,116 +611,123 @@ export async function runPostAdmissionSeatResume<
     throw error;
   }
 
-  if (request.summons === undefined) {
-    const openCourt = await readCurrentCourt(loaded.admitted.runDirectory);
-    if (openCourt !== undefined) {
-      const sealedForOpen = await readSealedSubmission(
-        loaded.admitted.projectRoot,
-        loaded.admitted.runId,
-        {
-          home: homeFromRunDirectory(loaded.admitted.runDirectory),
-          attemptId: openCourt.courtAttemptId,
-        },
-      );
-      if (sealedForOpen === undefined) {
-        // Continue open court: same summons materials + existing courtAttemptId.
-        // Caller message (if any) stays on the request — projection keeps it.
-        forceContinuation = true;
-        openCourtAttemptId = openCourt.courtAttemptId;
-        request = {
-          runId: request.runId,
-          ...(request.message === undefined ? {} : { message: request.message }),
-          ...(openCourt.summons === undefined ? {} : { summons: openCourt.summons }),
-        };
-        if (openCourt.summons !== undefined) {
-          try {
-            loaded = await input.load(request);
-          } catch (error) {
-            if (error instanceof CliUsageError) {
-              presentStructuralRejection(error, input.io);
-              return { exitCode: 2 };
-            }
-            throw error;
-          }
-        }
-      } else {
-        // Open court already sealed — drop pointer before run-scoped idempotence.
-        await clearCurrentCourt(loaded.admitted.runDirectory);
-      }
-    }
-  }
-
-  // Non-court path: build eagerly so sealed short-circuit can run before lease.
-  if (!forceContinuation) {
-    const turnRequest = await input.buildTurnRequest(loaded.admitted, request);
+  // Entire court recovery / open path runs after lease. forceContinuation skips
+  // the pre-lease sealed short-circuit; when the after-lease builder leaves no
+  // courtAttemptId, manual resume still presents run-scoped sealed idempotence
+  // under the same held lease.
+  try {
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
       env: input.env,
       io: input.io,
-      request: turnRequest,
       adapters: input.adapters,
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),
-    });
-  }
+      forceContinuation: true,
+      buildRequestAfterLease: async () => {
+        let openCourtAttemptId: string | undefined;
+        // Build uses the admitted judged under this lease (rehydrated when open
+        // court materials ride). Settlement identity stays on the outer admitted.
+        let admittedForBuild = loaded.admitted;
 
-  // Court path: freeze + record currentCourt only after writer lease is held.
-  // Held-lease rejection must not leave a new court identity on disk.
-  return await runPostAdmissionManualResume({
-    admitted: loaded.admitted,
-    env: input.env,
-    io: input.io,
-    adapters: input.adapters,
-    ...(input.effectiveEngine === undefined
-      ? {}
-      : { effectiveEngine: input.effectiveEngine }),
-    forceContinuation: true,
-    buildRequestAfterLease: async () => {
-      // Freeze external paths once; rewrite summons to the frozen identity so
-      // currentCourt + later bare resume reuse the accepted snapshot.
-      if (request.summons !== undefined) {
-        const prepared = await prepareSummonsResumeMaterials(
-          loaded.admitted.runDirectory,
-          request.summons,
-        );
-        if (
-          prepared !== undefined &&
-          (request.summons.attachmentPaths?.length ?? 0) > 0
-        ) {
-          request = {
-            ...request,
-            summons: {
-              ...request.summons,
-              attachmentPaths: prepared.attachments.map(
-                (attachment) => attachment.frozenPath,
-              ),
-            },
-          };
+        // Bare resume: read + seal-judge + bound clear only under the held lease.
+        if (request.summons === undefined) {
+          const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
+          if (openCourt !== undefined) {
+            const sealedForOpen = await readSealedSubmission(
+              admittedForBuild.projectRoot,
+              admittedForBuild.runId,
+              {
+                home: homeFromRunDirectory(admittedForBuild.runDirectory),
+                attemptId: openCourt.courtAttemptId,
+              },
+            );
+            if (sealedForOpen === undefined) {
+              // Continue open court: same summons materials + existing courtAttemptId.
+              // Caller message (if any) stays on the request — projection keeps it.
+              openCourtAttemptId = openCourt.courtAttemptId;
+              request = {
+                runId: request.runId,
+                ...(request.message === undefined
+                  ? {}
+                  : { message: request.message }),
+                ...(openCourt.summons === undefined
+                  ? {}
+                  : { summons: openCourt.summons }),
+              };
+              if (openCourt.summons !== undefined) {
+                const reloaded = await input.load(request);
+                admittedForBuild = reloaded.admitted;
+              }
+            } else {
+              // Open court already sealed — clear only the court id just judged.
+              await clearCurrentCourt(
+                admittedForBuild.runDirectory,
+                openCourt.courtAttemptId,
+              );
+            }
+          }
         }
-      }
 
-      let turnRequest = await input.buildTurnRequest(loaded.admitted, request);
+        // Freeze external paths once; rewrite summons to the frozen identity so
+        // currentCourt + later bare resume reuse the accepted snapshot.
+        if (request.summons !== undefined) {
+          const prepared = await prepareSummonsResumeMaterials(
+            admittedForBuild.runDirectory,
+            request.summons,
+          );
+          if (
+            prepared !== undefined &&
+            (request.summons.attachmentPaths?.length ?? 0) > 0
+          ) {
+            request = {
+              ...request,
+              summons: {
+                ...request.summons,
+                attachmentPaths: prepared.attachments.map(
+                  (attachment) => attachment.frozenPath,
+                ),
+              },
+            };
+          }
+        }
 
-      // New summons court: mint attempt id and persist court+summons on run-state.
-      // Open-court continue: reuse persisted courtAttemptId (do not mint).
-      const courtAttemptId =
-        openCourtAttemptId ??
-        (turnRequest.courtAttemptId !== undefined &&
-        turnRequest.courtAttemptId.length > 0
-          ? turnRequest.courtAttemptId
-          : randomUUID());
-      turnRequest = { ...turnRequest, courtAttemptId };
-      if (openCourtAttemptId === undefined) {
-        const court: CurrentCourtState = {
-          courtAttemptId,
-          ...(request.summons === undefined ? {} : { summons: request.summons }),
-        };
-        await recordCurrentCourt(loaded.admitted.runDirectory, court);
-      }
-      return turnRequest;
-    },
-  });
+        let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+
+        // Court path only when continuing an open court or opening a new summons court.
+        // Bare resume with no open court (or cleared sealed pointer) keeps no
+        // courtAttemptId so run-scoped sealed idempotence can present under lease.
+        if (openCourtAttemptId !== undefined || request.summons !== undefined) {
+          const courtAttemptId =
+            openCourtAttemptId ??
+            (turnRequest.courtAttemptId !== undefined &&
+            turnRequest.courtAttemptId.length > 0
+              ? turnRequest.courtAttemptId
+              : randomUUID());
+          turnRequest = { ...turnRequest, courtAttemptId };
+          if (openCourtAttemptId === undefined) {
+            const court: CurrentCourtState = {
+              courtAttemptId,
+              ...(request.summons === undefined
+                ? {}
+                : { summons: request.summons }),
+            };
+            await recordCurrentCourt(admittedForBuild.runDirectory, court);
+          }
+        }
+        return turnRequest;
+      },
+    });
+  } catch (error) {
+    // Open-court rehydrate load under lease may still surface seat structural
+    // rejection (e.g. notary rejects caller message) — same exit face as pre-lease.
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, input.io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
 }
 
 /**
@@ -946,7 +949,9 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
-  // Court open transaction under the held lease (freeze + currentCourt record).
+  // Court open/recovery transaction under the held lease (read/judge/clear/
+  // freeze/record). When the builder leaves no courtAttemptId, present
+  // run-scoped sealed idempotence under the same lease — do not dispatch.
   if (request === undefined) {
     if (buildRequestAfterLease === undefined) {
       await lease.release();
@@ -959,6 +964,55 @@ export async function runPostAdmissionManualResume<
     } catch (error) {
       await lease.release();
       throw error;
+    }
+
+    if (
+      request.courtAttemptId === undefined ||
+      request.courtAttemptId.length === 0
+    ) {
+      try {
+        const existing = await adapters.trySettle(
+          admitted,
+          env.principalAuthority,
+        );
+        if (
+          existing !== undefined &&
+          existing.roleOutcome.kind === "accepted" &&
+          shouldPresent(existing)
+        ) {
+          await lease.release();
+          (existing as { autoResumeCount?: number }).autoResumeCount = 0;
+          io.stdout(formatTerminalResult(existing));
+          return {
+            exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
+            admitted,
+            terminal: existing,
+            ...(staleWriterLeaseReclaimed === true
+              ? { staleWriterLeaseReclaimed: true as const }
+              : {}),
+          };
+        }
+      } catch (error) {
+        const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
+        if (disposition.kind === "block") {
+          await lease.release();
+          return (await presentControlledFailure(
+            admitted,
+            {
+              timedOut: false,
+              code: null,
+              stderr: "",
+              thrown:
+                disposition.reason === "authority-failed"
+                  ? disposition.cause
+                  : error,
+            },
+            adapters,
+            env.principalAuthority,
+            io,
+          )) as { exitCode: number; admitted: A; terminal: T };
+        }
+      }
     }
   }
 

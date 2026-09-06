@@ -634,10 +634,21 @@ export async function recordCurrentCourt(
 /**
  * Clear open court after this courtAttemptId seals, or when the open court is
  * already sealed and bare resume returns to run-scoped idempotence (#637).
+ * When expectedCourtAttemptId is set, clear only if it still matches — never
+ * drop a different court recorded under the writer lease after our judgment.
  */
-export async function clearCurrentCourt(runDirectory: string): Promise<void> {
+export async function clearCurrentCourt(
+  runDirectory: string,
+  expectedCourtAttemptId?: string,
+): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined || current.currentCourt === undefined) return;
+  if (
+    expectedCourtAttemptId !== undefined &&
+    current.currentCourt.courtAttemptId !== expectedCourtAttemptId
+  ) {
+    return;
+  }
   await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
