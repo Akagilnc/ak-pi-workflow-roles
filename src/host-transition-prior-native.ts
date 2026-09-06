@@ -1,18 +1,12 @@
 /**
  * Single authority for #617 DK-4 cross-host prior-native projection.
- * Closed host discriminators only; unknown previous/live hosts never inject.
+ * Classifies the prior volume into the two record families that exist
+ * (Pi native session file / sitian run records), never by host name.
  */
 import { access, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { RoleTurnHostTransition } from "./host-contracts.ts";
-
-const KNOWN_ROLE_TURN_HOSTS = ["pi", "grok-build"] as const;
-type KnownRoleTurnHost = (typeof KNOWN_ROLE_TURN_HOSTS)[number];
-
-function isKnownRoleTurnHost(value: string): value is KnownRoleTurnHost {
-  return (KNOWN_ROLE_TURN_HOSTS as readonly string[]).includes(value);
-}
 
 function isEnoent(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -59,13 +53,12 @@ async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
 }
 
 /**
- * Project one hostTransition only for a real switch between known hosts.
- * Unknown host names → undefined (no inject). Empty native volume still
- * yields a typed switch (empty path list).
+ * Project one hostTransition only for a real host switch. Empty native volume
+ * still yields a typed switch (empty path list).
  *
- * Pi previous → Pi session.jsonl path.
- * Grok previous → sitian records on the live run (#717). Grok CLI journals
- * stay in the operator grok home; they are not copied here.
+ * Pi wrote its own session.jsonl; every other host's run volume is the sitian
+ * record set on the live run (ADR 0077 `record-scope-phase-two`, #717) — the CLI's
+ * own journals stay in the operator home and are never copied here.
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
@@ -73,20 +66,15 @@ export async function projectHostTransitionPriorNative(input: {
   readonly piSessionFile: string;
 }): Promise<RoleTurnHostTransition | undefined> {
   if (input.previousHost === input.liveHost) return undefined;
-  if (!isKnownRoleTurnHost(input.previousHost) || !isKnownRoleTurnHost(input.liveHost)) {
-    return undefined;
-  }
   if (input.previousHost === "pi") {
-    const paths = await listPiNativeRecordPaths(input.piSessionFile);
     return {
-      previousHost: "pi",
-      priorNativePaths: paths,
+      priorNativeKind: "pi-native",
+      priorNativePaths: await listPiNativeRecordPaths(input.piSessionFile),
     };
   }
-  // previousHost === "grok-build": sitian path handoff only — do not read bytes.
-  const paths = await listSitianRecordPaths(input.piSessionFile);
+  // Sitian path handoff only — do not read bytes.
   return {
-    previousHost: "grok-build",
-    priorNativePaths: paths,
+    priorNativeKind: "sitian",
+    priorNativePaths: await listSitianRecordPaths(input.piSessionFile),
   };
 }
