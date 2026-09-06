@@ -41,7 +41,7 @@ import {
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
 import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
-import { readSitianRecords, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords } from "./sitian-facade.ts";
 import { execFileSync } from "node:child_process";
 
 export type { DiaristIssueFace } from "./diarist-mechanical.ts";
@@ -376,6 +376,16 @@ export function loadDiaristSourceCatalog(path: string): DiaristSourceCatalog {
   return parsed as DiaristSourceCatalog;
 }
 
+/**
+ * 失败真因 — typed causes for submitted rows that never reached the volume.
+ * Names the cause only; the per-row detail stays on the volume diagnostic.
+ */
+export type DiaristFailureCause =
+  /** Row pointed at no candidate in this turn's frozen catalog. */
+  | "unknown-candidate"
+  /** Row's quotes failed verbatim reverse-verify. */
+  | "quote-verify-rejected";
+
 /** Honest machine facts about what this turn actually committed to the volume. */
 export type DiaristCommitFacts = {
   readonly ticketNumber: number;
@@ -389,7 +399,22 @@ export type DiaristCommitFacts = {
   readonly watermarked: number;
   readonly volumeRecordFile: string;
   readonly humanViewFile: string;
-  readonly collectorStatus: "ok" | "empty-selection" | "skipped-no-fresh";
+  /**
+   * What this turn's collection amounted to. A turn whose every row was
+   * dropped is `nothing-appended`, never `empty-selection` — the diarist
+   * selecting nothing and the safeguard band rejecting everything are
+   * different events. Why rows were dropped is `failureCauses`.
+   */
+  readonly collectorStatus:
+    | "ok"
+    | "empty-selection"
+    | "nothing-appended"
+    | "skipped-no-fresh";
+  /**
+   * 失败真因: empty when every submitted row landed. Populated whenever rows
+   * were dropped — including a partial turn whose collectorStatus is `ok`.
+   */
+  readonly failureCauses: readonly DiaristFailureCause[];
 };
 
 /**
@@ -407,13 +432,16 @@ export async function commitDiaristSelections(input: {
   const volumePaths = ensureTicketProvenanceVolume(ticketNumber, cwd, input.catalog.home);
 
   const anchors: DiaristAnchorSet = buildDiaristAnchors({ ticketNumber });
-  const pointers: RecordPointer[] = [];
   const accepted: TicketProvenanceEntry[] = [];
   let rejectedQuotes = 0;
+  let unknownCandidate = false;
 
   for (const selection of input.selections) {
     const block = input.catalog.candidates[selection.candidateIndex];
-    if (block === undefined) continue;
+    if (block === undefined) {
+      unknownCandidate = true;
+      continue;
+    }
     const projected = blockToLlmEntry(block, {
       anchors,
       quotes: selection.quotes,
@@ -422,25 +450,21 @@ export async function commitDiaristSelections(input: {
     if (!projected.ok) {
       rejectedQuotes += 1;
       // Single diagnostic expression — never a disguised diary entry.
-      pointers.push(
-        appendQuoteVerifyFailureDiagnostic({
-          ticketNumber,
-          cwd,
-          ...homeOpt,
-          cause: projected.cause,
-        }),
-      );
-      continue;
-    }
-    pointers.push(
-      appendTicketProvenanceEntry({
+      appendQuoteVerifyFailureDiagnostic({
         ticketNumber,
         cwd,
         ...homeOpt,
-        entry: projected.entry,
-        source: "diarist",
-      }),
-    );
+        cause: projected.cause,
+      });
+      continue;
+    }
+    appendTicketProvenanceEntry({
+      ticketNumber,
+      cwd,
+      ...homeOpt,
+      entry: projected.entry,
+      source: "diarist",
+    });
     accepted.push(projected.entry);
   }
 
@@ -474,8 +498,14 @@ export async function commitDiaristSelections(input: {
     collectorStatus:
       input.catalog.candidates.length === 0
         ? "skipped-no-fresh"
-        : accepted.length === 0
-          ? "empty-selection"
-          : "ok",
+        : accepted.length > 0
+          ? "ok"
+          : input.selections.length === 0
+            ? "empty-selection"
+            : "nothing-appended",
+    failureCauses: [
+      ...(unknownCandidate ? (["unknown-candidate"] as const) : []),
+      ...(rejectedQuotes > 0 ? (["quote-verify-rejected"] as const) : []),
+    ],
   };
 }

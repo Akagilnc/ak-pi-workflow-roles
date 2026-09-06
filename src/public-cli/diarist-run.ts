@@ -67,7 +67,7 @@ function withDiaristCatalogPath(
   sourcesPath: string | undefined,
 ): string {
   if (sourcesPath === undefined || sourcesPath.trim() === "") return prompt;
-  return `${prompt}\n\n已冻结来源目录（路径）：\n- ${sourcesPath}`;
+  return `${prompt}\n\n已冻结来源文件（路径）：\n- ${sourcesPath}`;
 }
 
 /** Project admitted invocation onto the host-neutral turn request. */
