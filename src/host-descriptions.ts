@@ -24,6 +24,7 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       suffix: Object.freeze(["stdio"]),
       modelFlag: "--model",
     }),
+    modelPassing: "argv",
     boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
     childEnv: Object.freeze({
@@ -31,6 +32,24 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       GROK_MEMORY: "0",
       GROK_SUBAGENTS: "0",
     }),
+  }),
+  /** Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
+   * Model arrives as an ACP `session/set_model` RPC with modelId `provider:model`
+   * (seat table provider + model concatenated); reasoning level is the global
+   * `--reasoning` flag placed before the `acp` subcommand (probe 2026-09-07:
+   * `hermes acp --reasoning …` is rejected by argparse, `hermes --reasoning … acp`
+   * starts the ACP server). */
+  "hermes": Object.freeze({
+    binaryFromHome: Object.freeze([".local", "bin", "hermes"]),
+    argv: Object.freeze({
+      prefix: Object.freeze(["acp"]),
+      suffix: Object.freeze([]),
+      thinkingFlag: "--reasoning",
+    }),
+    modelPassing: "set_model",
+    boundResume: "session/load",
+    sessionBindingFile: "hermes-acp-session.json",
+    childEnv: Object.freeze({}),
   }),
 });
 

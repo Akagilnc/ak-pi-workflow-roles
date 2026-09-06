@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
-import type { AcpHostDescription } from "./description.ts";
+import { acpModelId, type AcpHostDescription } from "./description.ts";
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
@@ -64,6 +64,12 @@ export type AcpRoleTurnHostConfig = Readonly<{
   sessionIdentity: AcpSessionIdentityAuthority;
   /** Whether a bound resume reuses the native session or mints a fresh one. */
   boundResume: AcpHostDescription["boundResume"];
+  /**
+   * How the seat model reaches the agent: "set_model" sends an ACP
+   * `session/set_model` RPC with modelId `provider:model` once the session
+   * exists (new or loaded); "argv" leaves it to the connect argv (--model).
+   */
+  modelPassing: AcpHostDescription["modelPassing"];
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
   prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
 }>;
@@ -220,7 +226,8 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
           if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
-            typeof entry === "object" && entry !== null && (entry as { modelId?: unknown }).modelId === request.model?.model)) {
+            typeof entry === "object" && entry !== null
+            && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
             return failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
               provider: request.model.provider,
               model: request.model.model,
@@ -264,6 +271,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               return failure("session", "AcpSessionFailure", "session-id-missing");
             }
             await config.sessionIdentity.bind(request.principal, sessionId);
+          }
+
+          // set_model hosts (hermes) address the seat model by `provider:model`
+          // once the session exists; argv hosts never reach this RPC.
+          if (
+            config.modelPassing === "set_model"
+            && request.model !== undefined
+            && sessionId !== undefined
+          ) {
+            await connection.request("session/set_model", {
+              sessionId,
+              modelId: acpModelId(config.modelPassing, request.model),
+            });
           }
 
           let prompt =
