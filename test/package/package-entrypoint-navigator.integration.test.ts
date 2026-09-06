@@ -484,11 +484,13 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
-            // Measured resume topology: warm + settle + rebind = 3 public prepares
-            // for recommendation / human_decision / infrastructure alike.
+            // Measured public-path prepare trajectory (not a shared 3):
+            // recommendation/human_decision warm+settle+rebind = 3;
+            // infrastructure silent drain stops at 2 (no rebind after role_infrastructure_failure).
+            const expectedPrepares = outcome === "infrastructure" ? 2 : 3;
             assert.equal(
               navigatorCalls,
-              3,
+              expectedPrepares,
               `drain path prepare count must be exact for outcome=${outcome}`,
             );
             if (outcome === "human_decision") {
@@ -629,14 +631,16 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       // thinking stick/availability re-check removed (#683); Pi clamps itself.
+      // Measured faux-response consumption per cause under autoResumeLimit 0.
+      // Pool length === expectedConsumed (legal graph; no hedge ceiling).
       const cases = [
-        { name: "context", source: "context" },
-        { name: "session", source: "session" },
+        { name: "context", source: "context", expectedConsumed: 3 },
+        { name: "session", source: "session", expectedConsumed: 5 },
         // Missing provider: public summon fails closed → session (shared open face).
-        { name: "model", source: "session" },
-        { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"] },
-        { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"] },
-        { name: "transport", source: "transport", diagnostics: ["transport unavailable"] },
+        { name: "model", source: "session", expectedConsumed: 3 },
+        { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"], expectedConsumed: 6 },
+        { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"], expectedConsumed: 15 },
+        { name: "transport", source: "transport", diagnostics: ["transport unavailable"], expectedConsumed: 15 },
       ] as const;
       try {
         for (const [index, scenario] of cases.entries()) {
@@ -728,9 +732,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               }
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            // Measured auth/quota/transport graph under autoResumeLimit 0 (10 starved
-            // quota; 20 was a hedge). 16 is the observed legal capacity.
-            faux.setResponses(Array.from({ length: 16 }, () => response));
+            // Legal graph capacity = measured trajectory; no hedge above expectedConsumed.
+            faux.setResponses(Array.from({ length: scenario.expectedConsumed }, () => response));
             try {
             await withAgentDirProviderFixture(faux, agentDir, () =>
               withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
@@ -738,6 +741,11 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
               assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic} consumed=${consumed}`);
+              assert.equal(
+                consumed,
+                scenario.expectedConsumed,
+                `${scenario.name}:${diagnostic} must consume exactly the measured trajectory`,
+              );
               assert.deepEqual(receipt.message.details, { submissionDisposition: "pending-round-closure" }, `${scenario.name}:${diagnostic}`);
               const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
               assert.equal(closure.length, 1, `${scenario.name}:${diagnostic}`);
