@@ -60,6 +60,8 @@ import {
   parseInspectorArgv,
   parseMergerArgv,
   parseNavigatorArgv,
+  parseAuditorArgv,
+  parseEvidenceChildArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -128,6 +130,8 @@ const RESUME_SEAT_DISPATCH: Record<
   inspector: { seat: "inspector", run: runPublicInspectorResume },
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+  auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
+  "evidence-child": { seat: "evidence-child", run: runPublicInstructionSeatResume },
   diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
@@ -171,6 +175,8 @@ export const PUBLIC_ROLE_ARGV = {
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
+  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
+  "evidence-child": { parse: parseEvidenceChildArgv, options: optionsForOwner("evidence-child") },
   diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
@@ -1539,9 +1545,13 @@ export async function runAkRole(
       };
     }
 
-    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
-    // a role like any other; one parameterized branch for both.
-    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
+    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor / evidence-child.
+    if (
+      parsed.command === "gatekeeper"
+      || parsed.command === "navigator"
+      || parsed.command === "auditor"
+      || parsed.command === "evidence-child"
+    ) {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
@@ -1558,9 +1568,7 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
         parsed.command,
-        parsed.command === "gatekeeper"
-          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
-          : PUBLIC_ROLE_ARGV.navigator.parse,
+        PUBLIC_ROLE_ARGV[parsed.command].parse,
       );
       return {
         exitCode: result.exitCode,

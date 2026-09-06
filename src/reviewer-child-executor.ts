@@ -1,15 +1,28 @@
-import { executeEvidenceChild } from "./evidence-child-executor.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
+import type { Usage } from "@earendil-works/pi-ai";
+
+export type EvidenceChildSummon = (
+  argv: readonly string[],
+  /** Parent cancellation forwarded to the nested activation (#675). */
+  signal?: AbortSignal,
+) => Promise<PublicSummonResult>;
 
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
   credentialScratchParent?: string;
-  /** Run directory carrying the institutional resolution page (#518). Derives
-   * from context when absent. */
+  /** Parent run directory pointer (ADR 0079). */
   runDirectory?: string;
-  /** Package root for optional engine method-material on legs (#378). */
+  /** @deprecated engine rides the public seat table (#675); retained for call-site compatibility. */
   packageRoot?: string;
+  /**
+   * Test seam for public-role summons. Production calls the shared public
+   * activation path (#675).
+   */
+  summonEvidenceChild?: EvidenceChildSummon;
 }>;
 
 /**
@@ -26,15 +39,104 @@ export function projectSharedChildFailure(error: unknown): unknown {
   return error;
 }
 
-/** Reviewer policy adapter over the shared evidence-child lifecycle seam. */
-export async function executeReviewerChild(workspace: string, leg: AcceptedReviewerLeg, context: HostContext, options: ReviewerChildExecuteOptions = {}) {
-  try {
-    return await executeEvidenceChild(workspace, leg.prompt, context, {
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.credentialScratchParent === undefined ? {} : { credentialScratchParent: options.credentialScratchParent }),
-      ...(options.runDirectory === undefined ? {} : { runDirectory: options.runDirectory }),
-      ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+function failureClassification(
+  cause: string | undefined,
+): "provider" | "child" | "unknown" {
+  if (cause === "provider") return "provider";
+  if (
+    cause === "output"
+    || cause === "timeout"
+    || cause === "activation"
+    || cause === "session"
+    || cause === "unrecognized"
+  ) {
+    return "child";
+  }
+  return "unknown";
+}
+
+function reportFromSummon(summoned: PublicSummonResult): unknown {
+  const outcome = summoned.terminal?.roleOutcome;
+  if (outcome === undefined) {
+    throw Object.assign(
+      new Error(`Evidence-child public summon produced no terminal (exit ${summoned.exitCode})`),
+      { evidenceChildFailure: "child" as const },
+    );
+  }
+  if (outcome.kind === "failure") {
+    throw Object.assign(new Error(outcome.diagnostic), {
+      evidenceChildFailure: failureClassification(outcome.cause),
     });
+  }
+  if (outcome.kind === "accepted") {
+    // No field-presence reject (ADR 0055 / #675). Keep original accepted bytes:
+    // report key when present, otherwise the whole decisiveFacts body.
+    const facts = outcome.decisiveFacts;
+    if (Object.hasOwn(facts, "report")) return facts.report;
+    return facts;
+  }
+  throw Object.assign(
+    new Error("Evidence-child public summon returned no accepted report body"),
+    { evidenceChildFailure: "child" as const },
+  );
+}
+
+/** Reviewer evidence leg via the public evidence-child activation path (#675). */
+export async function executeReviewerChild(
+  workspace: string,
+  leg: AcceptedReviewerLeg,
+  context: HostContext,
+  options: ReviewerChildExecuteOptions = {},
+): Promise<{ report: unknown; usage: Usage; prompt: ReviewerPromptText }> {
+  try {
+    if (options.signal?.aborted) {
+      throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
+        evidenceChildFailure: "child" as const,
+      });
+    }
+    const runDirectory = options.runDirectory ?? auditorRunDirectory(context);
+    const pointer =
+      runDirectory === undefined
+        ? ""
+        : `\n卷宗指针：${runDirectory}`;
+    const argv = [`${String(leg.prompt)}${pointer}`];
+    const summon =
+      options.summonEvidenceChild
+      ?? (async (nextArgv: readonly string[], childSignal?: AbortSignal) => {
+        const { summonPublicRole } = await import("./public-role-summons.ts");
+        // Parent run home owns nested public seats; leg workspace cwd is a bare worktree.
+        let home: string | undefined;
+        if (runDirectory !== undefined) {
+          const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
+          // Hard path resolve: fail loud — no packageMachineHome fallback (#604 / #675).
+          home = homeFromRunDirectory(runDirectory);
+        }
+        return summonPublicRole({
+          role: "evidence-child",
+          argv: nextArgv,
+          cwd: workspace,
+          ...(home === undefined ? {} : { home }),
+          ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+          ...(childSignal === undefined ? {} : { signal: childSignal }),
+        });
+      });
+    const summoned = await summon(argv, options.signal);
+    if (options.signal?.aborted) {
+      throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
+        evidenceChildFailure: "child" as const,
+      });
+    }
+    const report = reportFromSummon(summoned);
+    const { usageFromPublicSummon } = await import("./session-assistant-usage.ts");
+    // Real session usage when present; no session → token-zero without inventing cost.
+    const usage = (await usageFromPublicSummon(summoned)) ?? ({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+    } as Usage);
+    return { report, usage, prompt: leg.prompt };
   } catch (error) {
     throw projectSharedChildFailure(error);
   }

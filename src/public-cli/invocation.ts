@@ -73,12 +73,7 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { loadPublicCliConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
-import {
-  resolveInstitutionalSeatSelections,
-  writeInstitutionalResolutionPage,
-} from "../institutional-resolution.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -149,6 +144,14 @@ export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "navigator";
+};
+
+export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "auditor";
+};
+
+export type AdmittedEvidenceChildInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "evidence-child";
 };
 
 export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
@@ -238,6 +241,8 @@ export type AdmittedRoleInvocation =
   | AdmittedInspectorInvocation
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
+  | AdmittedAuditorInvocation
+  | AdmittedEvidenceChildInvocation
   | AdmittedDiaristInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
@@ -367,10 +372,6 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
-  const home = homeFromRunDirectory(source.runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -417,20 +418,6 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
-  const effectiveModel: InvocationEffectiveModel | undefined =
-    typeof next.provider === "string" && typeof next.model === "string"
-      ? {
-          provider: next.provider,
-          model: next.model,
-          ...(typeof next.thinking === "string"
-            ? { thinking: next.thinking }
-            : {}),
-        }
-      : undefined;
-  const home = homeFromRunDirectory(runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
@@ -583,6 +570,10 @@ export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
+  /** Auditor only — audited subject selecting soul materials (#675 owner). */
+  subject?: "judge" | "doctor";
+  /** Auditor source-run locator — same input surface for direct and nested (#675). */
+  sourceRun?: string;
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
@@ -612,10 +603,12 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "diarist",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
+  let subject: "judge" | "doctor" | undefined;
+  let sourceRun: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -637,6 +630,24 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "subject") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw !== "judge" && raw !== "doctor") {
+          throw new CliUsageError(
+            `auditor --subject must be judge|doctor, got ${taken.value ?? "(missing)"}`,
+          );
+        }
+        subject = raw;
+        continue;
+      }
+      if (taken.def.id === "source-run") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw === "") {
+          throw new CliUsageError("auditor --source-run requires a run locator");
+        }
+        sourceRun = raw;
+        continue;
+      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -651,6 +662,8 @@ function parseInstructionArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
+    ...(subject === undefined ? {} : { subject }),
+    ...(sourceRun === undefined ? {} : { sourceRun }),
   };
 }
 
@@ -850,6 +863,17 @@ export function parseGatekeeperArgv(args: readonly string[]): ParseGatekeeperArg
 
 export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvResult {
   return parseInstructionArgv(args, "navigator");
+}
+
+export type ParseAuditorArgvResult = ParseInstructionArgvResult;
+export type ParseEvidenceChildArgvResult = ParseInstructionArgvResult;
+
+export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
+  return parseInstructionArgv(args, "auditor");
+}
+
+export function parseEvidenceChildArgv(args: readonly string[]): ParseEvidenceChildArgvResult {
+  return parseInstructionArgv(args, "evidence-child");
 }
 
 export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
@@ -1064,7 +1088,7 @@ export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
  * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "diarist",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1182,6 +1206,23 @@ export async function admitNavigatorInvocation(
   options: AdmitNavigatorInvocationOptions,
 ): Promise<AdmittedNavigatorInvocation> {
   return admitStandardMaterialInvocation("navigator", options);
+}
+
+export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitEvidenceChildInvocationOptions = AdmitInspectorInvocationOptions;
+
+/** Admit a public 审刑院 run (#675). */
+export async function admitAuditorInvocation(
+  options: AdmitAuditorInvocationOptions,
+): Promise<AdmittedAuditorInvocation> {
+  return admitStandardMaterialInvocation("auditor", options);
+}
+
+/** Admit a public evidence-child run (#675). */
+export async function admitEvidenceChildInvocation(
+  options: AdmitEvidenceChildInvocationOptions,
+): Promise<AdmittedEvidenceChildInvocation> {
+  return admitStandardMaterialInvocation("evidence-child", options);
 }
 
 /**

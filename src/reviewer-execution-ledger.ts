@@ -44,7 +44,7 @@ type ReviewerLegResultEvidenceCommon = Readonly<{
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
 export type ReviewerLegResultEvidence = ReviewerLegResultEvidenceCommon & (
-  | Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never }>
+  | Readonly<{ status: "successful"; report: unknown; usage: ReviewerUsage; failure?: never }>
   | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; report?: never; usage?: never }>
 );
 export type ReviewerEvidenceEvent =
@@ -179,7 +179,8 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       throw new Error("Actual runner prompt does not exactly match compiled prompt text");
     if (!sameReviewerPinnedTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     if (event.status === "successful") {
-      if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined) throw new Error("Successful settlement requires a report");
+      // Report field required; no type/blank reshape gate (ADR 0055 / #675).
+      if (event.report === undefined || event.failure !== undefined) throw new Error("Successful settlement requires a report");
     } else if (event.failure === undefined || event.report !== undefined) {
       throw new Error("Failed settlement requires a bounded failure classification and no report");
     }

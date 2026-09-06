@@ -1,16 +1,11 @@
-import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import {
   auditorRunDirectory,
-  createAuditorDossierTool,
   persistGateSubmissionCandidate,
 } from "./auditor-dossier-tool.ts";
-import { executeAuditorChild, type AuditorDecisionTool } from "./evidence-child-executor.ts";
-import { openToolObject } from "./open-tool-schema.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { loadGatekeeperSessionMaterials } from "./session-opening-materials.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import {
@@ -18,6 +13,9 @@ import {
   gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
+import { retainedShapeUnreadable } from "./shape-unreadable-failure.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -48,6 +46,13 @@ export type GatekeeperResult =
     }
   | { readonly status: "no_receipt"; readonly stage: "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
+      /** Shape-unreadable officer output — typed fact, not a forged bounce (ADR 0055 / §0). */
+      readonly status: "unreadable";
+      readonly officer: "inspector" | "notary";
+      readonly reason: string;
+      readonly submission: unknown;
+    }
+  | {
       readonly status: "transport_failure";
       readonly stage: "inspector" | "notary";
       readonly reason: string;
@@ -57,7 +62,7 @@ export type GatekeeperResult =
 
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "no_receipt" }
+  { status: "bounce" | "no_receipt" | "unreadable" }
 >;
 
 function gateSeatLabel(stage: "inspector" | "notary"): string {
@@ -75,14 +80,24 @@ export class GatekeeperEscalationError extends Error {
   }
 }
 
+export type GateOfficerSummon = (
+  officer: "inspector" | "notary",
+  sourceRunDirectory: string,
+  /** Parent cancellation forwarded to the nested activation (#675). */
+  signal?: AbortSignal,
+) => Promise<PublicSummonResult>;
+
 export type RunGatekeeperOptions = {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly loadSoul?: (role: "inspector" | "notary") => Promise<string>;
-  /** Run directory carrying the institutional resolution page (#518). Derives
-   * from context when absent. */
+  /** Run directory of the parent role (pointer-only summons, ADR 0079). */
   readonly runDirectory?: string;
+  /**
+   * Test seam for public-role summons. Production calls the shared public
+   * activation path (#675); inject only in offline tracers.
+   */
+  readonly summonOfficer?: GateOfficerSummon;
 };
 
 export type GatekeeperPassHostActions = {
@@ -90,15 +105,6 @@ export type GatekeeperPassHostActions = {
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
   bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
 };
-
-// Unknown fields so wrong types/spellings still reach projection (ADR 0055/0057; 仓第 0 条).
-// Opening goes through the sole openToolObject owner — no parallel transport helper.
-const officerDecisionSchema = openToolObject(Type.Object({
-  status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }),
-  reason: Type.Optional(Type.Unknown({ description: "status 为 escalate 时的理由" })),
-  findings: Type.Unknown({ description: "string[] findings，随 pass、bounce 或 escalate 留存" }),
-}));
-
 
 /**
  * Direct-seat decision tool spec (#639). Lifecycle assembly stays on the
@@ -121,28 +127,16 @@ function result(content: string, details: unknown) {
   return { content: [{ type: "text" as const, text: content }], details };
 }
 
-/** Shared officer decision tool — open transport; projection owns legality. */
-export function createOfficerDecisionTool(name: string): AuditorDecisionTool {
-  return {
-    name,
-    description: "提交一份 typed pass/bounce/escalate 决议。",
-    parameters: officerDecisionSchema,
-    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
-  };
-}
-
 /** Gatekeeper province decision tool — open transport; package-contract projection owns legality. */
-export function createGatekeeperOutputTool(): AuditorDecisionTool {
+export function createGatekeeperOutputTool() {
   return {
     name: GATEKEEPER_OUTPUT_TOOL_NAME,
     description: "提交门下省派官决定。",
     parameters: gatekeeperDecisionSchema,
-    async execute(_id, args) { return result(`已收 ${String((args as { status?: unknown })?.status)}`, args); },
+    async execute(_id: string, args: unknown) {
+      return result(`已收 ${String((args as { status?: unknown })?.status)}`, args);
+    },
   };
-}
-
-async function defaultLoadSoul(role: "inspector" | "notary"): Promise<string> {
-  return loadGatekeeperSessionMaterials(role);
 }
 
 function failureReason(error: unknown): string {
@@ -173,17 +167,19 @@ function retainedSubmission(decision: unknown): unknown {
 }
 
 /**
- * No usable explicit release is infrastructure failure, not a judgment status.
- * Original submission is retained for the failure channel (#475).
+ * Shape-unreadable officer decision — retain original candidate + typed reason.
+ * Not a forged bounce, not transport abort (CLAUDE.md §0 / ADR 0055).
+ * Real provider/engine/disk failures stay transport_failure elsewhere.
  */
-function noUsableReleaseFailure(
-  stage: "inspector" | "notary",
+function shapeUnreadable(
+  officer: "inspector" | "notary",
   decision: unknown,
-): Extract<GatekeeperResult, { status: "transport_failure" }> {
+  reason = "decision 无显式 pass/bounce/escalate",
+): Extract<GatekeeperResult, { status: "unreadable" }> {
   return {
-    status: "transport_failure",
-    stage,
-    reason: "decision 无显式 pass/bounce/escalate",
+    status: "unreadable",
+    officer,
+    reason,
     submission: retainedSubmission(decision),
   };
 }
@@ -198,7 +194,7 @@ function projectOfficerDecision(
   decision: unknown,
 ): GatekeeperResult {
   const record = readRecord(decision);
-  if (record === undefined) return noUsableReleaseFailure(officer, decision);
+  if (record === undefined) return shapeUnreadable(officer, decision);
   if (record.status === "bounce") {
     return {
       status: "bounce",
@@ -224,76 +220,121 @@ function projectOfficerDecision(
       submission: retainedSubmission(decision),
     };
   }
-  return noUsableReleaseFailure(officer, decision);
+  return shapeUnreadable(officer, decision);
 }
 
-/** Submission-gate summons: subject kind determines the officer without a province child. */
-export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
-  const loadSoul = options.loadSoul ?? defaultLoadSoul;
+/** Map a public-role terminal onto the gate officer result surface. */
+function projectOfficerTerminal(
+  officer: "inspector" | "notary",
+  summoned: PublicSummonResult,
+): GatekeeperResult {
+  const terminal: TerminalResult | undefined = summoned.terminal;
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) {
+    const detail = summoned.stderr?.trim();
+    return {
+      status: "transport_failure",
+      stage: officer,
+      reason: detail && detail.length > 0
+        ? `${gateSeatLabel(officer)} public summon exit ${summoned.exitCode}: ${detail}`
+        : `${gateSeatLabel(officer)} public summon produced no terminal (exit ${summoned.exitCode})`,
+      submission: summoned,
+    };
+  }
+  if (outcome.kind === "no_receipt") {
+    return {
+      status: "no_receipt",
+      stage: officer,
+      reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`,
+      facts: outcome,
+    };
+  }
+  if (outcome.kind === "failure") {
+    // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
+    const shape = retainedShapeUnreadable(outcome.decisiveFacts);
+    if (shape !== undefined) {
+      return shapeUnreadable(officer, shape.candidate, outcome.diagnostic);
+    }
+    return {
+      status: "transport_failure",
+      stage: officer,
+      reason: outcome.diagnostic,
+      submission: outcome.decisiveFacts,
+    };
+  }
+  if (outcome.kind === "accepted") {
+    return projectOfficerDecision(officer, {
+      status: outcome.status,
+      ...outcome.decisiveFacts,
+    });
+  }
+  return {
+    status: "transport_failure",
+    stage: officer,
+    reason: `${gateSeatLabel(officer)} public summon returned unusable terminal kind`,
+    submission: outcome,
+  };
+}
+
+/** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */
+export type GatekeeperProjection = {
+  readonly officer: "inspector" | "notary";
+  readonly result: GatekeeperResult;
+  /** Present only when a public summon actually returned (not transport pre-summon failure). */
+  readonly summoned?: PublicSummonResult;
+};
+
+/**
+ * Summon + project only. Lifecycle book and host abort face live on the shared
+ * submit envelope (`gatekeeper-pass-envelope.ts`, ADR 0018 / #675).
+ */
+export async function projectGatekeeperRun(
+  options: RunGatekeeperOptions,
+): Promise<GatekeeperProjection> {
   const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
-  // Resolve once so dossier tool and child session share the same run binding (#632).
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
+  if (runDirectory === undefined) {
+    return {
+      officer,
+      result: {
+        status: "transport_failure",
+        stage: officer,
+        reason: `${gateSeatLabel(officer)} requires a parent run directory pointer`,
+      },
+    };
+  }
   // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
   // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  const submissionCandidate =
-    runDirectory === undefined
-      ? undefined
-      : persistGateSubmissionCandidate(runDirectory, options.context);
+  persistGateSubmissionCandidate(runDirectory, options.context);
+  let summoned: PublicSummonResult;
   try {
-    const officerRun = await executeAuditorChild({
-      context: options.context,
-      roleLabel: officer === "inspector" ? "Inspector" : "Notary",
-      gateSeat: officer,
-      systemPrompt: await loadSoul(officer),
-      prompt: "卷宗已受理。",
-      tool: createOfficerDecisionTool(officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL),
-      // Same locator as 审刑院 — run directory + path identifiers only; no receipt body (#632).
-      dossierTool: createAuditorDossierTool(
-        runDirectory,
-        submissionCandidate === undefined ? undefined : { submissionCandidate },
-      ),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(runDirectory === undefined ? {} : { runDirectory }),
-    });
-    if (officerRun.noReceiptLifecycle !== undefined) {
-      return { status: "no_receipt", stage: officer, reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`, facts: officerRun.noReceiptLifecycle };
-    }
-    return projectOfficerDecision(officer, officerRun.decision);
+    const summon =
+      options.summonOfficer
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal) => {
+        const { summonGateOfficer } = await import("./public-role-summons.ts");
+        return summonGateOfficer({
+          officer: nextOfficer,
+          sourceRunDirectory,
+          cwd: options.context.cwd ?? process.cwd(),
+          ...(officerSignal === undefined ? {} : { signal: officerSignal }),
+        });
+      });
+    summoned = await summon(officer, runDirectory, options.signal);
   } catch (error) {
-    return { status: "transport_failure", stage: officer, reason: failureReason(error) };
+    return {
+      officer,
+      result: { status: "transport_failure", stage: officer, reason: failureReason(error) },
+    };
   }
+  return {
+    officer,
+    result: projectOfficerTerminal(officer, summoned),
+    summoned,
+  };
 }
 
-/** Project GatekeeperResult onto a submit path: transport→failInfrastructure; bounce/no_receipt→typed throw; pass silent. */
-export async function requireGatekeeperPass(options: {
-  readonly context: ExtensionContext | HostContext;
-  readonly subject: GatekeeperSubject;
-  readonly signal?: AbortSignal;
-  readonly hostActions: GatekeeperPassHostActions;
-  readonly toolCallId: string;
-}): Promise<void> {
-  const gatekeeper = await runGatekeeper({
-    context: options.context,
-    subject: options.subject,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  if (gatekeeper.status === "pass") return;
-  if (gatekeeper.status === "transport_failure") {
-    // Typed stage/reason/submission ride failInfrastructure → durable tool_result (#475).
-    const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
-      stage: typeof gatekeeper.stage;
-      reason: string;
-      submission?: unknown;
-    };
-    error.stage = gatekeeper.stage;
-    error.reason = gatekeeper.reason;
-    if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
-    options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-  }
-  if (gatekeeper.status === "escalate") {
-    throw new GatekeeperEscalationError(gatekeeper);
-  }
-  // Envelope owns the execute→tool_result bridge; this module only projects + throws.
-  options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
-  throw new GatekeeperDecisionError(gatekeeper);
+/** Submission-gate summons: subject kind → officer; activation is public role path (#675). Projection only. */
+export async function runGatekeeper(options: RunGatekeeperOptions): Promise<GatekeeperResult> {
+  const { result } = await projectGatekeeperRun(options);
+  return result;
 }

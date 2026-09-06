@@ -15,8 +15,10 @@ import {
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
 import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 
+// Run directory leaf: <runId>@<role>. Production uses uuidv7 runIds; offline tracers
+// may use deterministic non-uuid leaves. Role token stays identifier-shaped.
 const RUN_DIR_NAME =
-  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@([A-Za-z][A-Za-z0-9_-]*)$/i;
+  /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
 
 export class NotarySourceRunError extends Error {
   constructor(message: string, options?: ErrorOptions) {

@@ -33,11 +33,15 @@ test("persistent model edits are immediate and have no fallback", async () => {
     assert.equal(Date.now() - started < 5000, true);
     await writeFile(path, JSON.stringify({ model: "provider/one:backup" }));
     const opaqueSuffix = await readNavigatorModelSetting(path);
-    // Suffix is opaque pass-through — no whitelist reject at parse.
+    // Suffix is opaque pass-through — no whitelist reject at parse (#683 / #675 ⑥).
     assert.deepEqual(parseNavigatorModelSetting(opaqueSuffix), {
       provider: "provider",
       model: "one",
-      thinkingLevel: "backup" });
+      thinkingLevel: "backup",
+    });
+    await writeFile(path, JSON.stringify({ model: "provider-only-no-slash" }));
+    const invalid = await readNavigatorModelSetting(path);
+    assert.throws(() => parseNavigatorModelSetting(invalid));
   });
 });
 
@@ -175,6 +179,10 @@ test("dispose during pending createSession drains the created session without pr
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     let releaseCreate!: () => void;
     const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    let markCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolve) => { markCreateStarted = resolve; });
+    let markSessionDisposed!: () => void;
+    const sessionDisposed = new Promise<void>((resolve) => { markSessionDisposed = resolve; });
     let disposeCalls = 0;
     let promptCalls = 0;
     let setModelCalls = 0;
@@ -190,6 +198,7 @@ test("dispose during pending createSession drains the created session without pr
       loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
       modelSettingPath: setting,
       createSession: async () => {
+        markCreateStarted();
         await createGate;
         return {
           async prompt() { promptCalls += 1; },
@@ -198,16 +207,15 @@ test("dispose during pending createSession drains the created session without pr
           async setModel() { setModelCalls += 1; },
           getThinkingLevel: () => "off",
           recordPointer: () => "/fixture/navigator-record",
-          dispose() { disposeCalls += 1; } };
+          dispose() { disposeCalls += 1; markSessionDisposed(); } };
       },
       onEvent: async (event) => { events.push(event); } });
     nav.prepare();
-    while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await createStarted;
     await nav.dispose();
     releaseCreate();
+    await sessionDisposed;
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    // Allow the in-flight initializer to observe disposed and drain.
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     assert.equal(promptCalls, 0, "disposed attendance must not prompt");
     assert.equal(setModelCalls, 0, "disposed attendance must not configure the late session");
     assert.equal(disposeCalls, 1, "created session must be disposed exactly once");

@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requireGatekeeperPass } from "../gatekeeper-role.ts";
+import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -298,7 +298,7 @@ export async function prepareAcpRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "no_receipt"
+      : record.status === "bounce" || record.status === "no_receipt" || record.status === "unreadable"
         ? record.status
         : undefined;
     if (code === undefined) return;

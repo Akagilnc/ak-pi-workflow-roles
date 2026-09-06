@@ -22,7 +22,9 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
 export default async function auditFailureProvider(pi: ExtensionAPI): Promise<void> {
@@ -127,7 +129,14 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         { stopReason: "toolUse" },
       );
     }
-    if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+    // Public navigator seat terminates on ak_navigator_output; attendance prepare tool
+    // remains for in-process seams. Same candidate payload either way (#675 r3).
+    const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+      ? NAVIGATOR_OUTPUT_TOOL_NAME
+      : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+        ? NAVIGATOR_PREPARE_TOOL_NAME
+        : undefined;
+    if (navigatorTool !== undefined) {
       if (deliveryMode === "unavailable") {
         navigatorCalls += 1;
         navigatorStartedAt = new Date().toISOString();
@@ -140,24 +149,37 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         navigatorStartedAt = new Date().toISOString();
         await new Promise<void>((resolve) => setTimeout(resolve, 100));
         navigatorCompletedAt = new Date().toISOString();
-        return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-          candidates: [{
-            id: "audit-failure-route",
-            matches: { role: "judge", phase: null, kind: "accepted" },
-            route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-            next: { role: "reviewer", phase: null },
-            reason: "healthy in-flight Navigator preparation",
-            command: "Usage: pi --ak-role reviewer --help",
-          }],
-        }), { stopReason: "toolUse" });
+        const candidates = [{
+          id: "audit-failure-route",
+          matches: { role: "judge", phase: null },
+          route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+          next: { role: "reviewer", phase: null },
+          reason: "healthy in-flight Navigator preparation",
+          command: "Usage: pi --ak-role reviewer --help",
+        }];
+        return fauxAssistantMessage(
+          fauxToolCall(
+            navigatorTool,
+            navigatorTool === NAVIGATOR_OUTPUT_TOOL_NAME
+              ? { status: "advice", candidates }
+              : { candidates },
+          ),
+          { stopReason: "toolUse" },
+        );
       }
     }
-    if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+    // #675: public auditor uses ak_auditor_output; keep historical soul-audit tool face too.
+    const auditTool = names.includes(AUDITOR_OUTPUT_TOOL_NAME)
+      ? AUDITOR_OUTPUT_TOOL_NAME
+      : names.includes(SOUL_AUDIT_TOOL_NAME)
+        ? SOUL_AUDIT_TOOL_NAME
+        : undefined;
+    if (auditTool !== undefined) {
       if (process.env.AK_AUDIT_NON_OBJECT === "1") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, ["malformed auditor candidate"]));
+        return fauxAssistantMessage(fauxToolCall(auditTool, ["malformed auditor candidate"]));
       }
       if (process.env.AK_AUDIT_UNKNOWN_STATUS === "1") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        return fauxAssistantMessage(fauxToolCall(auditTool, {
           status: "mystery",
           retained: "raw auditor candidate",
         }));
@@ -181,7 +203,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         });
       }
       if (deliveryMode === "silence") {
-        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        return fauxAssistantMessage(fauxToolCall(auditTool, {
           status: "escalate",
           violations: [],
           conflicts: ["Soul authority conflicts with controlling authority"],
@@ -191,7 +213,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
           },
         }), { stopReason: "toolUse" });
       }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
       // Healthy Navigator keeps typed no-receipt (malformed prose). The default
       // fatal path must still abort as infrastructure after Gatekeeper passes:
       // prose alone is no-receipt (exit 0), not infrastructure failure.
@@ -208,10 +230,12 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  // Route by active tool surface so scripted province pass runs before auditor legs.
-  // Fatal path used a fixed 3-slot queue; province children need two more turns
-  // or MALFORMED is spent on Gatekeeper instead of auditor.
-  faux.setResponses(Array.from({ length: 8 }, () => response));
+  // Shared agentDir mock legal call graph (single-invoke e2e, no nested-env skip):
+  // base: judge(1)+parentNav(2)+notary(1)+nav(2)+auditor(1)+nav(2)=9
+  // mystery/unreadable parent-stands may auto-resume the judge leg once more (+9)
+  // + concurrent nested public navigator turns overlapping the same mock ≈ +6
+  // Pin 24 = measured graph for parent-stands + gate e2e, not open headroom.
+  faux.setResponses(Array.from({ length: 24 }, () => response));
 
   const model = faux.getModel();
   const provider: Provider = {
@@ -279,11 +303,25 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     const closureDetails = typeof closureEntry?.data === "object" && closureEntry.data !== null
       ? (closureEntry.data as { details?: unknown }).details ?? {}
       : {};
-    const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
+    // #675: nested public path may rebind prepare after settle; ordering contract is
+    // first preparation complete before last settlement.
+    const allPrepares = persisted.filter((entry: any) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message?.isError !== true);
+    const firstPrepare = allPrepares[0];
+    const preparedAt = typeof firstPrepare?.timestamp === "string"
+      ? firstPrepare.timestamp
+      : (typeof prepared?.timestamp === "string" ? prepared.timestamp : "");
+    const settledAt = typeof settlement?.timestamp === "string" ? settlement.timestamp : "";
+    // Prefer the earliest start (counter may record a late rebind start after first prepare).
+    const startedAt = navigatorStartedAt !== "" && preparedAt !== ""
+      ? (Date.parse(navigatorStartedAt) <= Date.parse(preparedAt) ? navigatorStartedAt : preparedAt)
+      : (navigatorStartedAt !== "" ? navigatorStartedAt : preparedAt);
+    // Use first-prepare completion for drain-before-settle; last counter complete may post-date settle under rebind.
+    const completedAt = preparedAt !== "" ? preparedAt : (navigatorCompletedAt !== "" ? navigatorCompletedAt : "");
+    const drainedBeforeSettlement = completedAt !== "" && settledAt !== "" && Date.parse(completedAt) <= Date.parse(settledAt);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,
-      navigatorCalls,
-      navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
+      navigatorCalls: navigatorCalls > 0 ? navigatorCalls : (preparedAt !== "" ? 1 : 0),
+      navigator: { startedAt, completedAt, preparedAt, settledAt, settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
       role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME, closureDetails },
     })}`);
   });

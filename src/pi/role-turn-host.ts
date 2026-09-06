@@ -146,6 +146,10 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
       return ["--ak-role", "gatekeeper"];
     case "navigator":
       return ["--ak-role", "navigator"];
+    case "auditor":
+      return ["--ak-role", "auditor"];
+    case "evidence-child":
+      return ["--ak-role", "evidence-child"];
     case "diarist":
       return [
         "--ak-role",
@@ -213,6 +217,8 @@ export type PiSpawnRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    /** Parent cancellation; the child gets the same graceful SIGTERM as a budget. */
+    signal?: AbortSignal;
   },
 ) => Promise<{
   code: number | null;
@@ -346,9 +352,17 @@ export function createDefaultPiSpawnRunner(options: {
           child.kill("SIGTERM");
         }, spawnOptions.timeoutMs);
       };
+      // Parent cancellation reaches the nested activation: same graceful SIGTERM,
+      // same single close settlement. SIGKILL stays forbidden (#675 / ADR 0010).
+      const parentSignal = spawnOptions.signal;
+      const terminateForParentAbort = (): void => {
+        child.kill("SIGTERM");
+      };
+      parentSignal?.addEventListener("abort", terminateForParentAbort, { once: true });
       let identityRecorded: Promise<void> = Promise.resolve();
       child.once("spawn", () => {
         hasSpawned = true;
+        if (parentSignal?.aborted === true) terminateForParentAbort();
         armTimeoutAfterChildReady();
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
@@ -371,11 +385,13 @@ export function createDefaultPiSpawnRunner(options: {
           return;
         }
         if (timer !== undefined) clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", terminateForParentAbort);
         settled = true;
         reject(error);
       });
       child.on("close", (code) => {
         if (timer !== undefined) clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", terminateForParentAbort);
         void identityRecorded.then(
           () => {
             if (settled) return;
@@ -447,10 +463,27 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         HOME: request.home,
         PI_CODING_AGENT_DIR: request.agentDir,
         AK_ROLE_RUN_DIR: request.runDirectory,
+        // Nested public summons resolve package root without import.meta under jiti (#675).
+        // Child-process scoped only — not written back onto the parent process.env.
+        AK_ROLE_PACKAGE_ROOT: config.packageRoot,
       };
       if (request.courtAttemptId === undefined) delete env.AK_ROLE_COURT_ATTEMPT;
       else env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
       applyEngineChildEnv(env, request.engine);
+      // Nested auditor dossier tool binds the parent run pointer when published.
+      if (
+        typeof process.env.AK_ROLE_AUDITOR_SOURCE_RUN === "string"
+        && process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim() !== ""
+      ) {
+        env.AK_ROLE_AUDITOR_SOURCE_RUN = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+      }
+      // Audited-subject input selects soul materials (same for nested and direct).
+      if (
+        typeof process.env.AK_ROLE_AUDITOR_SUBJECT === "string"
+        && process.env.AK_ROLE_AUDITOR_SUBJECT.trim() !== ""
+      ) {
+        env.AK_ROLE_AUDITOR_SUBJECT = process.env.AK_ROLE_AUDITOR_SUBJECT;
+      }
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;
       }
@@ -468,6 +501,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         cwd: request.cwd,
         env,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
     },
   };

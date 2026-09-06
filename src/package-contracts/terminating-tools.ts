@@ -29,6 +29,8 @@ import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { GATEKEEPER_ACCEPTED_TEXT, GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT, NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
+import { AUDITOR_ACCEPTED_TEXT, AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
+import { EVIDENCE_CHILD_ACCEPTED_TEXT, EVIDENCE_CHILD_OUTPUT_TOOL_NAME, validateRecordedEvidenceChildOutput, type EvidenceChildOutput } from "./evidence-child-output.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
 import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
@@ -72,6 +74,8 @@ export {
   validateRecordedInspectorOutput,
   validateRecordedGatekeeperOutput,
   validateRecordedNavigatorOutput,
+  validateRecordedAuditorOutput,
+  validateRecordedEvidenceChildOutput,
   validateRecordedDiaristOutput,
 };
 export type {
@@ -89,6 +93,8 @@ export type {
   InspectorOutput,
   GatekeeperDirectOutput,
   NavigatorAdvice,
+  AuditorOutput,
+  EvidenceChildOutput,
   DiaristOutput,
 };
 
@@ -106,6 +112,8 @@ export const TERMINATING_TOOL_NAMES = [
   INSPECTOR_OUTPUT_TOOL_NAME,
   GATEKEEPER_OUTPUT_TOOL_NAME,
   NAVIGATOR_OUTPUT_TOOL_NAME,
+  AUDITOR_OUTPUT_TOOL_NAME,
+  EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
   DIARIST_OUTPUT_TOOL_NAME,
 ] as const;
 
@@ -124,6 +132,8 @@ export type AcceptedDetails =
   | InspectorOutput
   | GatekeeperDirectOutput
   | NavigatorAdvice
+  | AuditorOutput
+  | EvidenceChildOutput
   | DiaristOutput;
 
 export function isTerminatingToolName(
@@ -160,6 +170,10 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return GATEKEEPER_ACCEPTED_TEXT;
     case NAVIGATOR_OUTPUT_TOOL_NAME:
       return NAVIGATOR_ACCEPTED_TEXT;
+    case AUDITOR_OUTPUT_TOOL_NAME:
+      return AUDITOR_ACCEPTED_TEXT;
+    case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
+      return EVIDENCE_CHILD_ACCEPTED_TEXT;
     case DIARIST_OUTPUT_TOOL_NAME:
       return DIARIST_ACCEPTED_TEXT;
   }
@@ -220,16 +234,24 @@ export function validateAcceptedDetails(
     [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce"],
     [GATEKEEPER_OUTPUT_TOOL_NAME]: ["dispatch", "pass"],
     [NAVIGATOR_OUTPUT_TOOL_NAME]: ["advice"],
+    [AUDITOR_OUTPUT_TOOL_NAME]: ["pass", "revise", "escalate"],
+    [EVIDENCE_CHILD_OUTPUT_TOOL_NAME]: [],
     [DIARIST_OUTPUT_TOOL_NAME]: ["completed"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
+  // Evidence-child: any object is a candidate body — no report-field presence gate (#675 / ADR 0055).
+  const evidenceChildDiscriminator =
+    toolName === EVIDENCE_CHILD_OUTPUT_TOOL_NAME
+    && candidate !== null
+    && typeof candidate === "object"
+    && !Array.isArray(candidate);
   const baseDiscriminator = discriminator;
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
     (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
   if (
     runtimeBindingMissing ||
-    (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))
+    (!collectorDiscriminator && !evidenceChildDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))
   ) {
     throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
   }
@@ -261,6 +283,10 @@ export function validateAcceptedDetails(
       return validateRecordedGatekeeperOutput(details);
     case NAVIGATOR_OUTPUT_TOOL_NAME:
       return validateRecordedNavigatorOutput(details);
+    case AUDITOR_OUTPUT_TOOL_NAME:
+      return validateRecordedAuditorOutput(details);
+    case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
+      return validateRecordedEvidenceChildOutput(details);
     case DIARIST_OUTPUT_TOOL_NAME:
       return validateRecordedDiaristOutput(details);
     }
@@ -321,6 +347,10 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case INSPECTOR_OUTPUT_TOOL_NAME:
     case GATEKEEPER_OUTPUT_TOOL_NAME:
     case NAVIGATOR_OUTPUT_TOOL_NAME:
+    case AUDITOR_OUTPUT_TOOL_NAME:
+      return { status: (details as { status: string }).status };
+    case EVIDENCE_CHILD_OUTPUT_TOOL_NAME:
+      return { status: "report" };
     case DIARIST_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
     case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
