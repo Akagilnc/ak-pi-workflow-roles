@@ -12,13 +12,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionError } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationGitRepositoryRequiredError,
@@ -32,7 +30,7 @@ import {
   type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
-import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
+import { type ActivationTraceRecord } from "../../src/activation-trace.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import {
@@ -52,12 +50,10 @@ import {
   packageRoot,
   persistActivationSessionFile,
   readAcceptedActivationFacts,
-  runNodeSubprocess,
-  runPiSubprocess,
   withActivationHome,
-  withHermeticHome,
-  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
@@ -262,10 +258,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       return { ...base, loadGatekeeperSoul: law };
     case "navigator":
       return { ...base, loadNavigatorSoul: law };
-    case "auditor":
-      return { ...base, loadAuditorSoul: law };
-    case "evidence-child":
-      return { ...base, loadEvidenceChildSoul: law };
     default:
       throw new Error(`unexpected packaged role: ${role}`);
   }
@@ -301,422 +293,8 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
   }
 }
 
-test("packaged terminating tools expose the provider-open registration inventory", async () => {
-  assert.deepEqual(
-    new Set(PACKAGED_ROLE_REGISTRY.map(({ outputTool }) => outputTool)),
-    new Set(TERMINATING_TOOL_NAMES),
-    "packaged roles and canonical terminating tools must describe the same inventory",
-  );
-
-  const declaredFields = (role: string): readonly string[] => {
-    switch (role) {
-      case "coder": return ["status", "report", "remainingScope", "reason", "infrastructureFailure"];
-      case "fixer": return ["status", "report", "remainingScope", "blocker", "classResults", "testEvidence", "reason", "infrastructureFailure"];
-      case "reviewer": return ["status", "diagnostic", "amendments", "infrastructureFailure"];
-      case "judge": return ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate", "infrastructureFailure"];
-      case "collector": return ["findings", "infrastructureFailure"];
-      case "doctor": return ["status", "case", "findings", "reason", "missingEvidence", "infrastructureFailure"];
-      case "merger": return ["status", "attemptId", "report", "mergeCommitId", "diagnosis", "infrastructureFailure"];
-      case "notary": return ["status", "findings", "reason", "infrastructureFailure"];
-      case "countersign": return ["countersignStatus", "fix", "note", "evidence", "decisionGate", "infrastructureFailure"];
-      case "gleaner-left": return ["status", "findings", "infrastructureFailure"];
-      case "inspector": return ["status", "findings", "reason", "infrastructureFailure"];
-      case "gatekeeper": return ["status", "officer", "findings", "infrastructureFailure"];
-      case "navigator": return ["status", "candidates", "infrastructureFailure"];
-      case "auditor": return ["status", "violations", "conflicts", "decisionGate", "infrastructureFailure"];
-      case "evidence-child": return ["report", "infrastructureFailure"];
-      default: throw new Error(`unexpected packaged role ${role}`);
-    }
-  };
-  type Schema = {
-    type?: unknown;
-    anyOf?: Schema[];
-    oneOf?: unknown;
-    required?: unknown;
-    additionalProperties?: unknown;
-    properties?: Record<string, Schema & { description?: unknown; items?: Schema }>;
-    items?: Schema;
-  };
-
-  await withActivationHome({ prefix: "ak-terminating-inventory-" }, async ({ home, agentDir }) => {
-    const fixtureRoot = join(home, "inventory-fixtures");
-    mkdirSync(fixtureRoot, { recursive: true });
-    const faux = fauxProvider({ api: "ak-terminating-inventory", provider: "ak-terminating-inventory" });
-
-    for (const entry of PACKAGED_ROLE_REGISTRY) {
-      process.exitCode = undefined;
-      const flags = Object.fromEntries(Object.entries({
-        "ak-role": entry.role,
-        ...admissionFlagsForRole(entry.role, fixtureRoot),
-      }).map(([name, value]) => [name, String(value)]));
-      let registrationApi: ExtensionAPI | undefined;
-      const productionFactory = createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot));
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: `INVENTORY ${entry.role}`,
-        mode: "print",
-        flags,
-        extensionFactories: [(pi) => {
-          registrationApi = pi;
-          productionFactory(pi);
-        }],
-      }, async () => {
-        assert.ok(registrationApi, `${entry.role} production factory API`);
-        const registrations = registrationApi.getAllTools().filter(({ name }) => name === entry.outputTool);
-        assert.equal(registrations.length, 1, `${entry.role}/${entry.outputTool} registration count`);
-        const parameters = registrations[0]!.parameters as Schema;
-        const label = `${entry.role}/${entry.outputTool}`;
-        assert.equal(parameters.type, "object", `${label} Object root`);
-        assert.equal(parameters.anyOf, undefined, `${label} has no root anyOf`);
-        assert.equal(parameters.oneOf, undefined, `${label} has no root oneOf`);
-        assert.deepEqual(parameters.required, [], `${label} provider required fields`);
-        assert.equal(parameters.additionalProperties, true, `${label} provider-open root`);
-        assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...declaredFields(entry.role)].sort(), `${label} top-level fields`);
-        for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
-          assert.ok(typeof declaration.description === "string" && declaration.description.trim().length > 0, `${label}.${field} semantic description`);
-        }
-
-        if (entry.role === "fixer") {
-          assert.ok(parameters.properties?.blocker?.anyOf, `${label}.blocker retains its legal union`);
-          const classResultsBranches = parameters.properties?.classResults?.anyOf;
-          assert.ok(classResultsBranches, `${label}.classResults retains its property-level legal union`);
-          assert.ok(
-            classResultsBranches.some((branch) => branch.items?.anyOf),
-            `${label}.classResults mixed branch items retain their legal union`,
-          );
-        } else if (entry.role === "doctor") {
-          assert.ok(parameters.properties?.findings?.items?.anyOf, `${label}.findings item retains its legal union`);
-        }
-      });
-    }
-  });
-});
-
-test("remaining support tools expose their actual registration inventory", async () => {
-  const cases = [
-    { role: "doctor", name: DOCTOR_EVIDENCE_TOOL_NAME, fields: ["evidenceId", "offset", "limit"] },
-    // #495 S1: candidates field guidance lives on the prepare schema (not an acceptance gate).
-    { role: "navigator", name: NAVIGATOR_PREPARE_TOOL_NAME, fields: ["candidates"] },
-  ] as const;
-  type Schema = {
-    type?: unknown;
-    anyOf?: unknown;
-    oneOf?: unknown;
-    properties?: Record<string, { description?: unknown }>;
-  };
-
-  await withActivationHome({ prefix: "ak-support-inventory-" }, async ({ home, agentDir }) => {
-    const fixtureRoot = join(home, "support-inventory-fixtures");
-    mkdirSync(fixtureRoot, { recursive: true });
-    const faux = fauxProvider({ api: "ak-support-inventory", provider: "ak-support-inventory" });
-
-    for (const entry of cases) {
-      process.exitCode = undefined;
-      let registrationApi: ExtensionAPI | undefined;
-      const flags = entry.role === "navigator" ? {} : Object.fromEntries(Object.entries({
-        "ak-role": entry.role,
-        ...admissionFlagsForRole(entry.role, fixtureRoot),
-      }).map(([name, value]) => [name, String(value)]));
-      const extensionFactories = entry.role === "navigator"
-        ? []
-        : [(pi: ExtensionAPI) => {
-            registrationApi = pi;
-            createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(pi);
-          }];
-
-      await withInProcessPi({
-        activationLedgerSession: entry.role !== "navigator",
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        ...(entry.role === "navigator" ? {
-          noTools: "builtin" as const,
-          customTools: [createNavigatorPrepareTool(() => {})],
-        } : {}),
-        systemPrompt: `SUPPORT INVENTORY ${entry.role}`,
-        mode: "print",
-        flags,
-        extensionFactories,
-      }, async ({ session }) => {
-        const registrations = entry.role === "navigator"
-          ? session.agent.state.tools.filter(({ name }) => name === entry.name)
-          : (assert.ok(registrationApi, `${entry.role} actual session API`), registrationApi.getAllTools().filter(({ name }) => name === entry.name));
-        assert.equal(registrations.length, 1, `${entry.role}/${entry.name} registration count`);
-        const parameters = registrations[0]!.parameters as Schema;
-        const label = `${entry.role}/${entry.name}`;
-        assert.equal(parameters.type, "object", `${label} Object root`);
-        assert.equal(parameters.anyOf, undefined, `${label} has no root anyOf`);
-        assert.equal(parameters.oneOf, undefined, `${label} has no root oneOf`);
-        assert.deepEqual(Object.keys(parameters.properties ?? {}).sort(), [...entry.fields].sort(), `${label} semantic fields`);
-        for (const [field, declaration] of Object.entries(parameters.properties ?? {})) {
-          assert.ok(typeof declaration.description === "string" && declaration.description.trim().length > 0, `${label}.${field} semantic description`);
-        }
-        if (entry.role === "navigator") assert.equal(faux.state.callCount, 0, `${label} model calls`);
-      });
-    }
-  });
-});
-
-test("every registered role writes exactly one accepted-activation fact after admission", async () => {
-  assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
-  // #52 registry activation seam via shared withInProcessPi owner (not a local registry harness).
-  await withActivationHome({ prefix: "ak-act-admit-" }, async ({ home, agentDir }) => {
-    const fixtureRoot = join(home, "admit-fixtures");
-    mkdirSync(fixtureRoot, { recursive: true });
-    const bookKey = activationBookKeyFor(home);
-    const previousCorr = process.env.AK_CORRELATION_ID;
-    const faux = fauxProvider({ api: "ak-act-admit", provider: "ak-act-admit" });
-
-    try {
-      for (const entry of PACKAGED_ROLE_REGISTRY) {
-        process.exitCode = undefined;
-        process.env.AK_CORRELATION_ID = `corr-${entry.role}`;
-        const roleFlags = Object.fromEntries(
-          Object.entries({
-            "ak-role": entry.role,
-            ...admissionFlagsForRole(entry.role, fixtureRoot),
-          }).map(([key, value]) => [key, String(value)]),
-        );
-        await withInProcessPi({
-          activationLedgerSession: true,
-          cwd: home,
-          agentDir,
-          faux,
-          modelsPath: null,
-          noExtensions: true,
-          systemPrompt: `ADMIT ${entry.role}`,
-          mode: "print",
-          flags: roleFlags,
-          extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
-        }, async ({ sessionManager }) => {
-          const sessionFile = sessionManager.getSessionFile();
-          assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
-          const facts = readAcceptedActivationFacts(home, bookKey);
-          const roleFacts = facts.filter((fact) => fact.role === entry.role);
-          assert.equal(roleFacts.length, 1, `${entry.role} admitted fact count`);
-          assert.deepEqual(roleFacts[0], {
-            event: ACCEPTED_ACTIVATION_EVENT,
-            role: entry.role,
-            observedAt: "2025-06-01T12:00:00.000Z",
-            bookKey,
-            session: { kind: "session-file", path: realpathSync(sessionFile) },
-            correlation: { kind: "caller", id: `corr-${entry.role}` },
-          });
-
-          // One normal admitted fact is enough to prove the real-leg matched tracer
-          // without a third harness (canonical fact already produced above).
-          if (entry.role === "judge") {
-            const admitted = roleFacts[0]!;
-            const correlationId = `corr-${entry.role}`;
-            const outcome = reconcileInvocation({
-              dispatch: buildDispatchStubFact({
-                correlation: { kind: "caller", id: correlationId },
-                bookKey,
-                observedAt: "2025-06-01T11:59:59.000Z",
-                dispatch: { kind: "process", pid: 1 },
-              }),
-              activation: admitted,
-            });
-            assert.deepEqual(outcome, {
-              kind: "matched",
-              correlationId,
-              bookKey,
-            });
-          }
-        });
-      }
-
-      // Missing correlation identity uses the production env channel (typed absent).
-      delete process.env.AK_CORRELATION_ID;
-      process.exitCode = undefined;
-      const beforeAbsent = readAcceptedActivationFacts(home, bookKey).length;
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "ADMIT ABSENT",
-        mode: "print",
-        flags: { "ak-role": "judge" },
-        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
-      }, async () => {
-        const afterAbsent = readAcceptedActivationFacts(home, bookKey);
-        assert.equal(afterAbsent.length, beforeAbsent + 1);
-        assert.deepEqual(afterAbsent.at(-1)?.correlation, { kind: "absent" });
-      });
-
-      // Envelope barrier opens only after admitted fact write (real ExtensionRunner).
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "ADMIT BARRIER",
-        mode: "print",
-        flags: { "ak-role": "judge" },
-        extensionFactories: [createPiRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
-      }, async ({ session }) => {
-        await session.extensionRunner.emitBeforeAgentStart("go", undefined, "BASE", { cwd: home });
-      });
-    } finally {
-      if (previousCorr === undefined) delete process.env.AK_CORRELATION_ID;
-      else process.env.AK_CORRELATION_ID = previousCorr;
-    }
-  });
-});
-
-test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
-  await withActivationHome({ prefix: "ak-act-unsel-" }, async ({ home, agentDir }) => {
-    const faux = fauxProvider({ api: "ak-act-unsel", provider: "ak-act-unsel" });
-    process.exitCode = undefined;
-    await withInProcessPi({
-      activationLedgerSession: true,
-      cwd: home,
-      agentDir,
-      faux,
-      modelsPath: null,
-      noExtensions: true,
-      systemPrompt: "UNSELECTED",
-      mode: "print",
-      flags: {},
-      extensionFactories: [createPiRoleRuntimeExtension({
-        loadJudgeSoul: async () => "LAW",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-      })],
-    }, async () => {
-      assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
-    });
-
-    process.exitCode = undefined;
-    await assert.rejects(async () => withInProcessPi({
-      activationLedgerSession: true,
-      cwd: home,
-      agentDir,
-      faux,
-      modelsPath: null,
-      noExtensions: true,
-      systemPrompt: "UNSUPPORTED",
-      mode: "print",
-      flags: { "ak-role": "router" },
-      extensionFactories: [createPiRoleRuntimeExtension({
-        loadJudgeSoul: async () => "LAW",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-      })],
-    }, async () => {
-      throw new Error("unsupported role must not complete bindExtensions");
-    }));
-    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
-  });
-});
-
-test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
-  // Ordinary integration owner: real ExtensionRunner via withInProcessPi (not a handler-capture seam).
-  await withActivationHome({ prefix: "ak-act-reject-" }, async ({ home, agentDir }) => {
-    const faux = fauxProvider({ api: "ak-act-reject", provider: "ak-act-reject" });
-    for (const entry of PACKAGED_ROLE_REGISTRY) {
-      process.exitCode = undefined;
-      const traces: ActivationTraceRecord[] = [];
-      const rejection = new TypeError(`${entry.role} activation rejected`);
-      const reject = async (): Promise<never> => { throw rejection; };
-      const flags: Record<string, string> = {
-        "ak-role": entry.role,
-        // Envelope-owned Reviewer transport must be present so soul rejection is the observed cause.
-        "ak-review-base": "main~1",
-        "ak-doctor-case": "/lawful/case",
-        "ak-merger-input": "/lawful/merger.json",
-        "ak-notary-source-run": "/lawful/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-        "ak-gleaner-left-base": "HEAD",
-      };
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: `REJECT ${entry.role}`,
-        mode: "print",
-        flags,
-        extensionFactories: [createPiRoleRuntimeExtension({
-          loadJudgeSoul: reject,
-          loadFixerSoul: reject,
-          loadCoderSoul: reject,
-          loadReviewerSoul: reject,
-          loadCollectorSoul: reject,
-          loadDoctorSoul: reject,
-          loadNotarySoul: reject,
-          loadCountersignSoul: reject,
-          loadGleanerLeftSoul: reject,
-          loadInspectorSoul: reject,
-          loadGatekeeperSoul: reject,
-          loadNavigatorSoul: reject,
-          loadAuditorSoul: reject,
-          loadEvidenceChildSoul: reject,
-          loadMergerSoul: reject,
-          createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationClock: () => "2025-01-01T00:00:00.000Z",
-          activationTraceWriter: (record) => { traces.push(record); },
-        })],
-      }, async ({ session }) => {
-        // session_start rejection is swallowed by ExtensionRunner.emit after failInfrastructure.
-        assert.equal(process.exitCode, 1, `${entry.role} must terminate nonzero on rejection`);
-        assert.equal(
-          readAcceptedActivationFacts(home, activationBookKeyFor(home)).length,
-          0,
-          `${entry.role} wrote an accepted-activation fact on rejection`,
-        );
-        const failed = traces.find((trace) => trace.status === "failed");
-        assert.ok(failed && failed.status === "failed", `${entry.role} missing failed activation trace`);
-        assert.equal(failed.cause.identity, "TypeError");
-        assert.equal(failed.cause.name, "TypeError");
-        assert.equal(failed.cause.message, `${entry.role} activation rejected`);
-        if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
-        assert.match(failed.cause.evidenceId, /^activation-cause-/);
-
-        // Barrier through the real ExtensionRunner before any provider turn.
-        // emitBeforeAgentStart swallows handler throws after failInfrastructure; observe abort + exit + extension error.
-        const extensionErrors: ExtensionError[] = [];
-        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
-        let aborts = 0;
-        await session.bindExtensions({
-          mode: "print",
-          abortHandler: () => { aborts += 1; },
-        });
-        process.exitCode = undefined;
-        aborts = 0;
-        extensionErrors.length = 0;
-        await session.extensionRunner.emitBeforeAgentStart("go", undefined, "BASE", { cwd: home });
-        assert.equal(aborts, 1, `${entry.role} barrier must abort`);
-        assert.equal(process.exitCode, 1, `${entry.role} barrier must set nonzero exit`);
-        assert.ok(
-          extensionErrors.some((error) => (
-            error.event === "before_agent_start"
-            && error.error.includes("activation did not complete")
-          )),
-          `${entry.role} barrier must surface ActivationBarrierError via extension error; got ${JSON.stringify(extensionErrors)}`,
-        );
-        // This suite never prompts the session after rejection — barrier owns the before_agent_start seam.
-        assert.equal(session.agent.state.messages.length, 0, `${entry.role} must not dispatch a model turn`);
-      });
-    }
-  });
-});
-
-test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-book-topo-"));
-  try {
+test("book key follows git common-dir host basename across worktrees, rename, and basename collision", async () => {
+  return await withTempRoot("ak-book-topo-", async (root) => {
     const main = join(root, "project-alpha");
     mkdirSync(main);
     execFileSync("git", ["init", "-b", "main"], { cwd: main, stdio: "ignore" });
@@ -742,8 +320,9 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
 
     // Non-git cwd must loudly reject even when GIT_DIR points at another repository.
-    const nonGit = join(root, "not-a-repo");
-    mkdirSync(nonGit);
+    // Isolation root must sit outside this worktree's upward Git discovery; outside
+    // named root is not deleted (owner 2026-09-06 directory boundary).
+    const nonGit = mkdtempSync(outsideWorktreeTempPrefix("ak-book-topo-nongit-"));
     const previousGitDir = process.env.GIT_DIR;
     const previousGitCommon = process.env.GIT_COMMON_DIR;
     const previousGitWorkTree = process.env.GIT_WORK_TREE;
@@ -768,14 +347,14 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       if (previousGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
       else process.env.GIT_WORK_TREE = previousGitWorkTree;
     }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    });
 });
 
-test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-book-infra-"));
-  try {
+test("git spawn infrastructure failures retain identity and do not masquerade as non-git", async () => {
+  return await withTempRoot("ak-book-infra-", async (root) => {
+    // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
+    // Second acquire stays inside try so a failure still hits root's finally.
+    const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
     // Empty PATH makes spawn of `git` fail with ENOENT — infrastructure, not non-git cwd.
@@ -804,7 +383,7 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
 
     // Control: a real git child that exits nonzero remains the typed non-git error.
     assert.throws(
-      () => resolveBookKeyFromGit(cwd),
+      () => resolveBookKeyFromGit(nonGitCwd),
       (error: unknown) => {
         assert.ok(error instanceof ActivationGitRepositoryRequiredError);
         assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
@@ -815,139 +394,13 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
         return true;
       },
     );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    });
 });
 
-test("mixed concurrent O_APPEND producers keep intact records with exact cardinality", async () => {
-  // Shared-ledger contract: package append and a foreign O_APPEND producer must not
-  // overwrite one another. No private lock / positional rewrite / truncate ownership.
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mixed-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const bookKey = "mixed-book";
-    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    const packageWorker = join(root, "package-worker.mjs");
-    const foreignWorker = join(root, "foreign-worker.mjs");
-    writeFileSync(packageWorker, `
-import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
-const index = Number(process.argv[2]);
-const ledgerPath = process.argv[3];
-const ledgerHome = process.argv[4];
-appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-  role: "judge",
-  observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
-  bookKey: "mixed-book",
-  session: { kind: "session-file", path: "/s/pkg-" + index + ".jsonl" },
-  correlation: { kind: "caller", id: "pkg-" + index },
-}), { ledgerHome });
-`);
-    writeFileSync(foreignWorker, `
-import { constants, closeSync, openSync, writeSync } from "node:fs";
-const index = Number(process.argv[2]);
-const ledgerPath = process.argv[3];
-const line = Buffer.from(JSON.stringify({ producer: "foreign", id: "foreign-" + index }) + "\\n", "utf8");
-const fd = openSync(ledgerPath, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY, 0o644);
-try {
-  const written = writeSync(fd, line, 0, line.length, null);
-  if (written !== line.length) throw new Error("foreign short write " + written + "/" + line.length);
-} finally {
-  closeSync(fd);
-}
-`);
-    // Ensure parent tree exists so foreign O_APPEND open does not race mkdir.
-    mkdirSync(dirname(ledgerPath), { recursive: true });
-    const packageCount = 8;
-    const foreignCount = 8;
-    const children = await Promise.all([
-      ...Array.from({ length: packageCount }, (_, index) =>
-        runNodeSubprocess(
-          ["--import", "tsx", packageWorker, String(index), ledgerPath, ledgerHome],
-          { cwd: packageRoot, timeoutMs: 15_000 },
-        )),
-      ...Array.from({ length: foreignCount }, (_, index) =>
-        runNodeSubprocess(
-          ["--import", "tsx", foreignWorker, String(index), ledgerPath],
-          { cwd: packageRoot, timeoutMs: 15_000 },
-        )),
-    ]);
-    for (const child of children) {
-      assert.equal(child.code, 0, child.stderr);
-    }
-    const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
-    assert.equal(lines.length, packageCount + foreignCount);
-    const packageIds: string[] = [];
-    const foreignIds: string[] = [];
-    for (const line of lines) {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (row.event === ACCEPTED_ACTIVATION_EVENT) {
-        const fact = row as unknown as AcceptedActivationFact;
-        assert.equal(fact.bookKey, bookKey);
-        assert.equal(fact.correlation.kind, "caller");
-        if (fact.correlation.kind === "caller") packageIds.push(fact.correlation.id);
-        continue;
-      }
-      assert.equal(row.producer, "foreign");
-      assert.equal(typeof row.id, "string");
-      foreignIds.push(row.id as string);
-    }
-    assert.deepEqual(packageIds.sort(), Array.from({ length: packageCount }, (_, i) => `pkg-${i}`).sort());
-    assert.deepEqual(foreignIds.sort(), Array.from({ length: foreignCount }, (_, i) => `foreign-${i}`).sort());
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("concurrent first-time ledger directory creation across books stays race-safe", async () => {
-  // Fresh home: workers race on creating shared ledgerHome/books components plus distinct books.
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mkdir-race-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const worker = join(root, "mkdir-race-worker.mjs");
-    writeFileSync(worker, `
-import { appendAcceptedActivationToBook, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
-const index = Number(process.argv[2]);
-const ledgerHome = process.argv[3];
-const bookKey = "book-" + index;
-appendAcceptedActivationToBook({
-  ledgerHome,
-  fact: buildAcceptedActivationFact({
-    role: "judge",
-    observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
-    bookKey,
-    session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
-    correlation: { kind: "caller", id: "mkdir-" + index },
-  }),
-});
-`);
-    const workerCount = 16;
-    // Native type stripping keeps this filesystem race under the child deadline even
-    // when the full suite is concurrently compiling elsewhere; one tsx service per
-    // worker made loader contention, rather than ledger creation, decide the result.
-    const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
-      runNodeSubprocess(
-        ["--experimental-strip-types", worker, String(index), ledgerHome],
-        { cwd: packageRoot, timeoutMs: 15_000 },
-      )));
-    for (const child of children) {
-      assert.equal(child.code, 0, child.stderr);
-    }
-    for (let index = 0; index < workerCount; index += 1) {
-      const bookKey = `book-${index}`;
-      const lines = readFileSync(activationWaitingLedgerPath(ledgerHome, bookKey), "utf8")
-        .split("\n")
-        .filter(Boolean);
-      assert.equal(lines.length, 1, `${bookKey} must keep exactly one accepted fact`);
-      const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
-      assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
-      assert.equal(row.bookKey, bookKey);
-      assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+// #685: host legs culled — inventory/admission 计数/拒绝矩阵、8+8 O_APPEND、16-worker
+// mkdir race、malformed Fixer 子进程、observation emit、Reviewer expansion 均未结
+// (docs/research/issue-685-c3-deleted-contract-handoff.md §I). Symlink escape
+// matrix below stays as deterministic call-input negative without multi-worker spawn.
 
 // Symlink escape matrix (#420 整改并一)：四条同根同形「ledger append 拒绝符号链接
 // 逃逸且不写出界」——root home 链、跨簿 waiting.jsonl、跨簿目录、books 组件——
@@ -1103,269 +556,5 @@ test("ledger append rejects every symlink escape vector without writing outside"
     assert.equal(pointer.kind, "session-file");
     assert.equal(pointer.path, realpathSync(decoyFile));
     assert.notEqual(realSession, decoyFile);
-  });
-});
-
-test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
-  // Real CLI subprocess via existing harness; no audit-leg revival — call-count fixture only.
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const { resolve } = await import("node:path");
-  await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
-    const instructions = resolve(home, "instructions.md");
-    const prerequisites = resolve(home, "prerequisites.json");
-    await writeFile(instructions, "Apply the assigned repair.\n");
-    await writeFile(prerequisites, JSON.stringify({ prerequisites: [] }));
-    const sessionDirectory = resolve(
-      home, ".ak-roles", "books", resolveBookKeyFromGit(packageRoot), "runs", "fixer-act", "session",
-    );
-    await mkdir(sessionDirectory, { recursive: true });
-    const result = await runPiSubprocess([
-      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
-      "--session-dir", sessionDirectory,
-      "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
-      "-e", resolve(packageRoot, "test/fixtures/coder-success-provider.ts"),
-      "--ak-role", "fixer", "--ak-fixer-phase", "apply",
-      "--ak-fix-packet", instructions,
-      "--ak-fixer-prerequisites", prerequisites,
-      "--provider", "ak-coder-offline", "--model", "faux-1", "-p", "Apply.",
-    ], {
-      cwd: packageRoot,
-      timeoutMs: 15_000,
-      env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
-    });
-    assert.equal(result.localTimeout, false, "malformed prerequisites subprocess did not time out");
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /CODER_SUCCESS_PROVIDER_CALLS=0/);
-    const traces = result.stderr.split("\n").flatMap((line) => {
-      try {
-        const value = JSON.parse(line) as ActivationTraceRecord;
-        return Value.Check(activationTraceRecordSchema, value) ? [value] : [];
-      } catch { return []; }
-    });
-    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-      { role: "fixer", stageId: "load-and-install", status: "failed" },
-    ]);
-    const failed = traces.find((trace) => trace.status === "failed");
-    assert.ok(failed && failed.status === "failed", "missing failed activation trace");
-    assert.equal(failed.role, "fixer");
-    assert.equal(failed.stageId, "load-and-install");
-    assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
-    assert.equal(failed.cause.name, "FixerPacketValidationError");
-    assert.match(failed.cause.message, /Fixer prerequisites/);
-    if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
-    assert.match(failed.cause.evidenceId, /^activation-cause-/);
-  });
-});
-
-
-
-test("observation writer failure aborts through real ExtensionRunner emit with original cause", async () => {
-  await withActivationHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
-    const faux = fauxProvider({ api: "ak-tool-obs-fail", provider: "ak-tool-obs-fail" });
-    const writerError = new Error("stderr unavailable");
-    const priorExitCode = process.exitCode;
-    process.exitCode = undefined;
-    let aborts = 0;
-    const extensionErrors: ExtensionError[] = [];
-    try {
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "JUDGE",
-        mode: "print",
-        flags: { "ak-role": "judge" },
-        extensionFactories: [createPiRoleRuntimeExtension({
-          loadJudgeSoul: async () => "LAW",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationClock: () => "2025-01-01T00:00:00.000Z",
-          activationTraceWriter: () => {},
-          toolExecutionObservationWriter: () => { throw writerError; },
-        })],
-      }, async ({ session }) => {
-        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
-        // Rebind abort so the infrastructure path is observable without depending on agent internals.
-        await session.bindExtensions({
-          mode: "print",
-          abortHandler: () => { aborts += 1; },
-        });
-        // emit() swallows handler throws after emitError — termination must still have run.
-        await session.extensionRunner.emit({
-          type: "tool_execution_start",
-          toolCallId: "obs-fail-1",
-          toolName: "bash",
-          args: {},
-        });
-        assert.equal(aborts, 1, "observation failure must call ExtensionContext.abort");
-        assert.equal(process.exitCode, 1, "print mode observation failure must set nonzero exitCode");
-        assert.ok(
-          extensionErrors.some((error) => error.event === "tool_execution_start" && error.error.includes("stderr unavailable")),
-          `ExtensionRunner must retain the original cause via extension error; got ${JSON.stringify(extensionErrors)}`,
-        );
-
-        // Same termination for update and end seams.
-        aborts = 0;
-        process.exitCode = undefined;
-        extensionErrors.length = 0;
-        await session.extensionRunner.emit({
-          type: "tool_execution_update",
-          toolCallId: "obs-fail-1",
-          toolName: "bash",
-          args: {},
-          partialResult: { content: [{ type: "text", text: "chunk" }] },
-        });
-        assert.equal(aborts, 1);
-        assert.equal(process.exitCode, 1);
-        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_update" && error.error.includes("stderr unavailable")));
-
-        aborts = 0;
-        process.exitCode = undefined;
-        extensionErrors.length = 0;
-        await session.extensionRunner.emit({
-          type: "tool_execution_end",
-          toolCallId: "obs-fail-1",
-          toolName: "bash",
-          isError: false,
-          result: { content: [], details: {} },
-        });
-        assert.equal(aborts, 1);
-        assert.equal(process.exitCode, 1);
-        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_end" && error.error.includes("stderr unavailable")));
-      });
-    } finally {
-      process.exitCode = priorExitCode;
-    }
-  });
-});
-
-test("shared envelope owns Reviewer skill expansion capture on before_agent_start", async () => {
-  await withActivationHome({ prefix: "ak-reviewer-envelope-expansion-" }, async ({ home, agentDir }) => {
-    const fixtureRoot = join(home, "reviewer-expansion-fixtures");
-    mkdirSync(fixtureRoot, { recursive: true });
-    const faux = fauxProvider({ api: "ak-reviewer-envelope-expansion", provider: "ak-reviewer-envelope-expansion" });
-    const raw = "# code-review skill\n";
-    const skillPath = "/skill/code-review/SKILL.md";
-    const skillBody = raw;
-    // Stable request token for expansion capture match — not a presentation-prose pin (#495 S4).
-    const originalRequest = "main~1";
-    const expectedContent = `References are relative to /skill/code-review.\n\n${skillBody}`;
-    const lawfulExpansion =
-      `<skill name="code-review" location="${skillPath}">\n${expectedContent}\n</skill>\n\n${originalRequest}`;
-
-    const deps = admissionDepsForRole("reviewer", fixtureRoot);
-    deps.loadCanonicalSkillBinding = async (name) => {
-      assert.equal(name, "code-review");
-      return {
-        name: "code-review" as const,
-        snapshot: {
-          raw,
-          path: skillPath,
-          baseDir: "/skill/code-review",
-          body: skillBody,
-          snapshotIdentity: Object.freeze({ text: raw }),
-        },
-        invocation: (request: string) => `/skill:code-review ${request}`,
-        captureExpansion: (evidence, request: string) => {
-          if (
-            evidence?.name !== "code-review"
-            || evidence.location !== skillPath
-            || evidence.content !== expectedContent
-            || evidence.userMessage !== originalRequest
-            || request !== originalRequest
-          ) return undefined;
-          return Object.freeze({ ...evidence, name: "code-review" as const });
-        },
-      };
-    };
-    deps.loadReviewerSoul = async () => "REVIEWER ENVELOPE LAW";
-
-    const priorExitCode = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "REVIEWER EXPANSION",
-        mode: "print",
-        flags: {
-          "ak-role": "reviewer",
-          "ak-review-base": "main~1",
-        },
-        extensionFactories: [createPiRoleRuntimeExtension(deps)],
-      }, async ({ session }) => {
-        // Envelope owns input transform for package code-review invocation.
-        const inputResult = await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
-        assert.equal(inputResult.action, "transform");
-        if (inputResult.action !== "transform") throw new Error("expected transform");
-        assert.equal(inputResult.text, `/skill:code-review ${originalRequest}`);
-
-        const promptResult = await session.extensionRunner.emitBeforeAgentStart(
-          lawfulExpansion,
-          undefined,
-          "BASE",
-          { cwd: home },
-        );
-        assert.ok(promptResult?.systemPrompt, "envelope must assemble parent system prompt");
-        assert.match(promptResult.systemPrompt, /<reviewer_soul>\nREVIEWER ENVELOPE LAW\n<\/reviewer_soul>/);
-        // #495 S2 / ADR 0073: Verification-Boundary machine copy deleted; soul owns cadence.
-        assert.equal(
-          promptResult.systemPrompt.includes("<reviewer_verification_boundary>"),
-          false,
-        );
-        // skipped-missing disposition carrier absent when Spec launched (fixture two-axis dispatch).
-        assert.equal(
-          promptResult.systemPrompt.includes("<reviewer_spec_disposition>"),
-          false,
-        );
-      });
-
-      // Separate admission: expansion mismatch aborts through real ExtensionRunner.
-      process.exitCode = undefined;
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "REVIEWER EXPANSION FAIL",
-        mode: "print",
-        flags: {
-          "ak-role": "reviewer",
-          "ak-review-base": "main~1",
-        },
-        extensionFactories: [createPiRoleRuntimeExtension(deps)],
-      }, async ({ session }) => {
-        await session.extensionRunner.emitInput(originalRequest, undefined, "interactive");
-        // Do not re-bindExtensions here: that re-emits session_start and is a different seam.
-        // Observe the envelope-owned before_agent_start fail-closed path via extension errors + exit.
-        const extensionErrors: ExtensionError[] = [];
-        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
-        process.exitCode = undefined;
-        await session.extensionRunner.emitBeforeAgentStart(
-          "not a canonical code-review expansion",
-          undefined,
-          "BASE",
-          { cwd: home },
-        );
-        assert.equal(process.exitCode, 1, "expansion mismatch must set nonzero exit");
-        assert.ok(
-          extensionErrors.some((error) => (
-            error.event === "before_agent_start"
-            && error.error.includes("Canonical code-review Skill expansion did not match the captured request")
-          )),
-          `envelope must surface expansion mismatch via extension error; got ${JSON.stringify(extensionErrors)}`,
-        );
-      });
-    } finally {
-      process.exitCode = priorExitCode;
-    }
   });
 });

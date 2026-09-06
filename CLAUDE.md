@@ -82,6 +82,8 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **票面先过给事中再开工；决策问题上呈陛下。**（ADR 0074：票庭审读由大理寺移交门下省给事中。）
 
+**设计修订后重新过庭。** 施工中实质设计变更须由陛下拍定；拍定后将修订后的票重新送给事中，沿用票庭前序的起居郎工序补录修订依据（ADR 0075），给事中通过后再按新设计继续施工。既定设计内的实现取舍不属设计修订。
+
 丞相编排建议：御史台 findings 宜经大理寺裁决后再派修理腿（劾→判→修）。
 
 没有绑定直接陛下原话与明确 decision keys，不得标作陛下 authority。

@@ -8,3 +8,6 @@ dist/
 
 .tmp-same-ticket-resume/
 .tmp-675-probe/
+# worktree-local test fixture roots (#685 r12 / #612)
+.test-tmp/
+.test-tmp-*

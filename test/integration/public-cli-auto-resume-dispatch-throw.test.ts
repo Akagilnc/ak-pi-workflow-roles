@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Owner 2026-08-23 (immediate order, no separate ticket): a dispatch that exits
  * by throwing must not bypass the auto-resume retry mechanism.
@@ -14,17 +15,16 @@ import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  const home=await mkdtemp(join(tmpdir(),"ak-dispatch-throw-"));
-  try{return await fn(home);}finally{await rm(home,{recursive:true,force:true});}
+  return withTempRoot("ak-dispatch-throw-", fn);
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 
@@ -32,14 +32,16 @@ type LoopDispatchResult={exitCode:number;terminal?:TerminalResult};
 
 function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[]){
   // Mirrors the dispatcher lease contract: release runs even when dispatch throws.
-  return async(_extraArgs:readonly string[], lease:{release():Promise<void>}):Promise<LoopDispatchResult>=>{
-    try{
-      callsRef.n+=1;
-      throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
-    }finally{
-      await lease.release();
-    }
-  };
+  return async(_extraArgs:readonly string[], lease:{release():Promise<void>}):Promise<LoopDispatchResult>=>
+    withPrimaryAwareCleanup(
+      async () => {
+        callsRef.n+=1;
+        throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
+      },
+      async () => {
+        await lease.release();
+      },
+    );
 }
 
 type PointerEntry={data?:{file?:unknown};};

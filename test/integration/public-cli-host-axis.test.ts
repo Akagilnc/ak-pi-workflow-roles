@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -12,6 +12,7 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -29,8 +30,7 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  const home = await mkdtemp(join(tmpdir(), "ak-host-axis-"));
-  try { await fn(home); } finally { await rm(home, { recursive: true, force: true }); }
+  await withTempRoot("ak-host-axis-", fn);
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });
@@ -247,6 +247,41 @@ test("grok-build selection and execution have no provider restriction", async ()
     assert.equal(grokTurns, 1, spec);
     assert.equal(grokProviders[0], spec.split("/")[0], spec);
   }
+}));
+
+test("public grok-build turn inherits operator HOME and leaves sitian-only run records", async () => homeTest(async (home) => {
+  const envDump = join(home, "child-env.json");
+  await mkdir(join(home, ".grok", "bin"), { recursive: true });
+  const binary = join(home, ".grok", "bin", "grok");
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(envDump)}, JSON.stringify(process.env));
+if (process.argv.includes("inspect")) {
+  process.stdout.write(JSON.stringify({
+    skills: [], plugins: [], agents: [], hooks: [], mcpServers: [], projectInstructions: [],
+  }));
+}
+process.exit(0);
+`,
+    { encoding: "utf8" },
+  );
+  await chmod(binary, 0o755);
+  await configureJudge(home, "grok-build");
+  const result = await runAkRole(["judge", "public-grok-sitian"], productionBase(home));
+  assert.equal(result.hostFailure, undefined);
+
+  const booksRoot = join(home, ".ak-roles", "books");
+  const books = await readdir(booksRoot);
+  assert.ok(books.length >= 1);
+  const runsRoot = join(booksRoot, books[0]!, "runs");
+  const runs = await readdir(runsRoot);
+  assert.equal(runs.length, 1);
+  const children = await readdir(join(runsRoot, runs[0]!));
+  assert.equal(children.some((name) => name.endsWith("-home")), false);
+  const dumped = JSON.parse(await readFile(envDump, "utf8")) as NodeJS.Dict<string>;
+  assert.equal(dumped.HOME, process.env.HOME);
 }));
 
 /** #595: birth host is a typed invocation field at admission. */

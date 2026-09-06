@@ -1,49 +1,15 @@
 #!/usr/bin/env node
 // Sole scheduling owner for `npm run test:all` (Issue #160).
-// Discovers test/{unit,contract,integration,package}/**/*.test.ts, partitions
-// the exact heavyweight real-Pi/Navigator manifest into a concurrency=2 child, and
-// runs ordinary files first under default Node file parallelism.
+// Discovers test/{unit,contract,integration,package}/**/*.test.ts and runs
+// them under default Node file parallelism.
+// #685: heavy manifest removed — real-host Pi/install/cold-session cases
+// culled per quality-law (真宿主以真跑为证) and imperial ≤1 real-pi order.
 import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join, relative } from "node:path";
 
 import { isolatedTestProcessEnv } from "./test-process-env.mjs";
-
-const HEAVYWEIGHT_MANIFEST = Object.freeze([
-  "test/integration/audit-failure-subprocess.test.ts",
-  "test/integration/public-cli-judge-run.test.ts",
-  // #541: Judge engine-detour subprocess tracer (code0+error body) spawns a
-  // real CLI child (~41s); keep it concurrency=2 heavy, never duplicating the
-  // subprocess in an ordinary-tier sibling.
-  "test/integration/public-cli-judge-engine-detour.test.ts",
-  // #617: cold-installed coder 429→resume chain — two real Pi processes under
-  // packed install (24–42s / ~17–29% of full wall). Ordinary parallelism misclass;
-  // unique frozen-materials + sealed-accepted proof, not covered by lower resume
-  // or install-only suites. No timeout widening.
-  "test/integration/public-cli-coder-installed-run.test.ts",
-  // #319 Batch 4 R1: package-entrypoint split — all thematic files stay in heavy
-  // manifest (庭定『先拆且全留 heavy』; Batch 5 R9: heavy child concurrency=2).
-  "test/package/package-entrypoint-cold-help.integration.test.ts",
-  "test/package/package-entrypoint-navigator.integration.test.ts",
-  "test/package/package-entrypoint-observation.integration.test.ts",
-  "test/package/package-entrypoint-packaged-workers.integration.test.ts",
-  // #567: cold Doctor lifecycle + install surface — real pack/Pi under ordinary
-  // file-parallelism contended past hang detectors; schedule on heavy concurrency=2
-  // instead of widening wait windows (full-suite #567 evidence).
-  "test/package/doctor-package-lifecycle.test.ts",
-  "test/package/public-cli-install.test.ts",
-  "test/package/public-cli-cold-matrix.test.ts",
-  // #620: real-Pi malformed-prerequisites case — focused ~4.4s; under ordinary
-  // file-parallelism full-suite localTimeout at 15s (duration_ms ~23s). Schedule
-  // on heavy concurrency=2; do not widen the hang detector.
-  "test/integration/activation-envelope-contract.test.ts",
-  // #675: nested public evidence-child / cold-install dual-process cases — real
-  // nested pi summons (73s/28s, 90s, 66s); ordinary parallelism misclass.
-  "test/integration/public-cli-reviewer-engine-detour.test.ts",
-  "test/package/judge-auditor-fixture-tracer.test.ts",
-  "test/package/reviewer-package-lifecycle.test.ts",
-]);
 
 const TIERS = Object.freeze([
   "unit",
@@ -88,73 +54,26 @@ function discoverTestFiles(repoRoot) {
   return discovered;
 }
 
-function partition(discovered) {
-  const unique = new Set(discovered);
-  if (unique.size !== discovered.length) {
+function fail(message) {
+  console.error(`run-test-all: ${message}`);
+  process.exit(1);
+}
+
+function runNodeTest(files) {
+  if (files.length === 0) return Promise.resolve(0);
+
+  const unique = new Set(files);
+  if (unique.size !== files.length) {
     const seen = new Set();
     const dupes = [];
-    for (const file of discovered) {
+    for (const file of files) {
       if (seen.has(file)) dupes.push(file);
       seen.add(file);
     }
     fail(`duplicate discovered test files: ${dupes.join(", ")}`);
   }
 
-  const discoveredSet = unique;
-  const heavySet = new Set();
-  for (const entry of HEAVYWEIGHT_MANIFEST) {
-    if (heavySet.has(entry)) {
-      fail(`heavyweight manifest entry duplicated: ${entry}`);
-    }
-    heavySet.add(entry);
-    if (!discoveredSet.has(entry)) {
-      fail(
-        `heavyweight manifest entry missing from discovery: ${entry}`,
-      );
-    }
-  }
-
-  const ordinary = [];
-  const heavy = [];
-  for (const file of discovered) {
-    if (heavySet.has(file)) heavy.push(file);
-    else ordinary.push(file);
-  }
-
-  // Preserve manifest order for the heavy child (deterministic argv order).
-  const heavyOrdered = HEAVYWEIGHT_MANIFEST.filter((f) => heavy.includes(f));
-  if (heavyOrdered.length !== HEAVYWEIGHT_MANIFEST.length) {
-    fail("heavyweight partition lost manifest entries");
-  }
-
-  const ordinarySet = new Set(ordinary);
-  for (const file of heavyOrdered) {
-    if (ordinarySet.has(file)) {
-      fail(`file present in both ordinary and heavy: ${file}`);
-    }
-  }
-  if (ordinary.length + heavyOrdered.length !== discovered.length) {
-    fail(
-      `partition union size ${ordinary.length + heavyOrdered.length} !== discovered ${discovered.length}`,
-    );
-  }
-
-  return { ordinary, heavy: heavyOrdered };
-}
-
-function fail(message) {
-  console.error(`run-test-all: ${message}`);
-  process.exit(1);
-}
-
-function runNodeTest(files, { concurrency } = {}) {
-  if (files.length === 0) return Promise.resolve(0);
-
-  const args = ["--import", "tsx", "--test"];
-  if (concurrency !== undefined) {
-    args.push(`--test-concurrency=${concurrency}`);
-  }
-  args.push(...files);
+  const args = ["--import", "tsx", "--test", ...files];
 
   // Resolve `node` from PATH so lawful tests may intercept children via an
   // isolated PATH seam. No test-only env hook is accepted here.
@@ -179,12 +98,4 @@ function runNodeTest(files, { concurrency } = {}) {
 }
 
 const discovered = discoverTestFiles(root);
-const { ordinary, heavy } = partition(discovered);
-
-const ordinaryCode = await runNodeTest(ordinary);
-if (ordinaryCode !== 0) {
-  process.exit(ordinaryCode);
-}
-
-const heavyCode = await runNodeTest(heavy, { concurrency: 2 });
-process.exit(heavyCode);
+process.exit(await runNodeTest(discovered));

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -11,15 +11,18 @@ import {
   resolveAuditDossier,
   readJudgeAuditSubjects,
 } from "../../src/dossier-resolution.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 // bare-Pi absent pointer and missing-dossier path gates are covered at the
 // real auditor entry (judge-auditor-dossier.test.ts); keep only the concurrent
 // isolation contract and helper-level subject shape here.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-dossier-concurrent-"));
+  await withTempRoot("ak-dossier-concurrent-", async (root) => {
   const previous = process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runA = join(root, "run-a");
     const runB = join(root, "run-b");
     const { mkdir } = await import("node:fs/promises");
@@ -38,11 +41,11 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
       assert.equal(b.runDirectory, runB);
       assert.notEqual(a.runDirectory, b.runDirectory);
     }
-  } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous; }
+    );
+  });
 });
 
 test("judge subjects require assignment and candidate verdict on the parent session", () => {

@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { promisify } from "node:util";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { RELEASE_SOUL_INVENTORY } from "../helpers/package-entrypoint-fixtures.ts";
 import {
-  getSharedIsolatedPack,
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   packageRoot,
+  packIsolatedPackage,
 } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +35,7 @@ const HOST_PEERS = [
 
 interface ExtractedPack {
   root: string;
+  packDestination: string;
   packageJson: {
     name: string;
     license?: string;
@@ -50,10 +49,16 @@ interface ExtractedPack {
   paths: string[];
 }
 
+/**
+ * One-shot pack owned by this file: pack destination + extract root are
+ * self-owned sibling fixtures; cleaned after assertions (and on extract failure).
+ * No cross-process cache / lock / ready protocol (#685 C4).
+ */
 async function extractPackedArtifact(): Promise<ExtractedPack> {
-  const pack = await getSharedIsolatedPack();
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-meta-"));
+  const packDestination = await mkdtemp(worktreeTempPrefix("ak-pack-dest-"));
+  const root = await mkdtemp(worktreeTempPrefix("ak-pack-meta-"));
   try {
+    const pack = await packIsolatedPackage(packDestination);
     await execFileAsync("tar", ["-xzf", pack.tarball, "-C", root]);
     const packageJson = JSON.parse(
       await readFile(resolve(root, "package/package.json"), "utf8"),
@@ -65,28 +70,50 @@ async function extractPackedArtifact(): Promise<ExtractedPack> {
     );
     return {
       root,
+      packDestination,
       packageJson,
       licenseText,
       thirdPartyNoticeText,
       paths: pack.files.map((file) => file.path),
     };
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
-    throw error;
+    const failures: unknown[] = [error];
+    for (const path of [root, packDestination]) {
+      try {
+        await rm(path, { recursive: true, force: true });
+      } catch (cleanupError) {
+        failures.push(cleanupError);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    throw new AggregateError(failures, "pack extract failed and cleanup failed", {
+      cause: error,
+    });
+  }
+}
+
+async function disposeExtracted(fixture: ExtractedPack): Promise<void> {
+  const failures: unknown[] = [];
+  for (const path of [fixture.root, fixture.packDestination]) {
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "npm-identity pack fixture cleanup failed");
   }
 }
 
 /**
  * #420 整改：元数据断言全部落在一次解包的只读不可变产物上（解包 8 次 → 1 次，
- * 不触「独立契约塞共享可变状态」禁令）。进程退出时清理唯一 tmpdir。
+ * 不触「独立契约塞共享可变状态」禁令）。本文件拥有 pack 临时根完整生命周期。
  */
 const extracted = await extractPackedArtifact();
-process.on("exit", () => {
-  try {
-    rmSync(extracted.root, { recursive: true, force: true });
-  } catch {
-    // Best-effort temp cleanup; never mask test results.
-  }
+after(async () => {
+  await disposeExtracted(extracted);
 });
 
 /**
@@ -246,9 +273,10 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
  * the manifest load fields. Absorbs the packed-tarball existence assertions
  * from the former packaged-workers structure test (Doctor/Merger/Navigator
  * sources, compiled dist modules, packets, and the closed fixer-repair.json
- * negative); internal flag/schema shapes stay deleted (behavior lives in the
- * install/cold-matrix argv tracers, schema passthrough in
- * contract/fixer-prerequisite-contract).
+ * negative); internal flag/schema shapes stay deleted (schema passthrough in
+ * contract/fixer-prerequisite-contract). Install/cold-matrix argv tracers
+ * culled under #685 — see docs/research/issue-685-c3-deleted-contract-handoff.md
+ * (installed-package load face named; install process / cold-matrix 未结).
  */
 test("packed artifact ships the release inventory: souls, methods, runtime entrypoints, packets", async () => {
   for (const soul of RELEASE_SOUL_INVENTORY) {
@@ -324,39 +352,13 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
   assert.deepEqual(extracted.packageJson.pi?.extensions ?? ["missing"], []);
 });
 
-test("ordinary npm install of the packed artifact leaves Pi host peers unmaterialized", async () => {
+// #685: private npm install of packed artifact culled — host install surface.
+// Peer optional/* declarations stay as pack-metadata call-input asserts only.
+// C3 §H: ordinary npm install 后 HOST_PEERS 路径 ENOENT 未结（不是本元数据案，
+// 也不是 Pi 私有 bin 安装）— docs/research/issue-685-c3-deleted-contract-handoff.md.
+test("packed artifact declares Pi host peers as optional star peers", () => {
   for (const name of HOST_PEERS) {
     assert.equal(extracted.packageJson.peerDependencies?.[name], "*");
     assert.equal(extracted.packageJson.peerDependenciesMeta?.[name]?.optional, true);
   }
-
-  const consumer = await mkdtemp(resolve(tmpdir(), "ak-host-peer-install-"));
-  await withPrimaryAwareCleanup(
-    async () => {
-      await writeFile(
-        resolve(consumer, "package.json"),
-        JSON.stringify({
-          private: true,
-          dependencies: {
-            "@akagilnc/pi-workflow-roles": `file:${(await getSharedIsolatedPack()).tarball}`,
-          },
-        }),
-      );
-      await execFileAsync(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: consumer, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-      );
-      for (const name of HOST_PEERS) {
-        await assert.rejects(
-          () => access(resolve(consumer, "node_modules", ...name.split("/"))),
-          (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-          `${name} must remain supplied by the Pi host`,
-        );
-      }
-    },
-    async () => {
-      await rm(consumer, { recursive: true, force: true });
-    },
-  );
 });

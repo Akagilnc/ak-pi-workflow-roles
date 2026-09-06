@@ -1,6 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { worktreeTempPrefix } from "./worktree-temp.ts";
 
 /**
  * Run a test body, then cleanups, without letting teardown erase the primary failure.
@@ -37,7 +36,9 @@ export async function withPrimaryAwareCleanup<T>(
       failures.length === 1
         ? failures[0]
         : new AggregateError(failures, "Test cleanup failed", { cause: failures[0] });
-    if (primaryFailure !== undefined) {
+    // Use the succeeded fact-bit, not primaryFailure !== undefined: a lawful
+    // body throw of `undefined` is still a primary failure and must not be lost.
+    if (!succeeded) {
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
         "Test failed and cleanup failed",
@@ -59,7 +60,7 @@ export async function withTempRoot<T>(
   prefix: string,
   body: (root: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
+  const root = await mkdtemp(worktreeTempPrefix(prefix));
   return withPrimaryAwareCleanup(
     () => body(root),
     async () => {

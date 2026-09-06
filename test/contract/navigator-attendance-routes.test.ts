@@ -1,29 +1,28 @@
 // #420 整改拆分：路线记忆与重绑家族
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { createHash } from "node:crypto";
-import { seedGitRepository, withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import {
   context,
   candidate,
-  cleanupTempDir,
   sessionHarness,
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
+// #685: host-neutral native AgentSession prompt cases culled — providerFailure/
+// terminal-less. C3 §I: 无具名 @navigator 卷，不得用异常面总称结清
+// (docs/research/issue-685-c3-deleted-contract-handoff.md). Call-input remains.
 
 test("persistent model edits are immediate and have no fallback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-model-setting-"));
-  try {
+  await withTempRoot("navigator-model-setting-", async (root) => {
     const path = join(root, "navigator-model.json");
     assert.equal(await readNavigatorModelSetting(path), NAVIGATOR_DEFAULT_MODEL);
     const started = Date.now();
@@ -43,16 +42,11 @@ test("persistent model edits are immediate and have no fallback", async () => {
     await writeFile(path, JSON.stringify({ model: "provider-only-no-slash" }));
     const invalid = await readNavigatorModelSetting(path);
     assert.throws(() => parseNavigatorModelSetting(invalid));
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("future arrival is typed and presentation-only", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-arrival-"));
-  try {
+  await withTempRoot("navigator-arrival-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -63,18 +57,13 @@ test("future arrival is typed and presentation-only", async () => {
     assert.equal(events[0]?.arrivalMessage, "抵达");
     assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
     assert.equal(harness.prompts(), 0);
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("settlement decoration carries recommendation only; unavailable and no-advice stay absent", () => {
   const base = {
     content: [{ type: "text" as const, text: "Judge verdict accepted" }],
-    details: { judgeStatus: "converged" },
-  };
+    details: { judgeStatus: "converged" } };
   const recommendationEvent = {
     version: 1 as const,
     disposition: "recommendation" as const,
@@ -85,8 +74,7 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
     route: [{ role: "judge" as const, phase: null }, { role: "reviewer" as const, phase: null }],
     next: { role: "reviewer" as const, phase: null },
     reason: "needs review",
-    command: "Usage: pi --ak-role reviewer --help",
-  };
+    command: "Usage: pi --ak-role reviewer --help" };
   const decorated = decorateSettlementWithNavigation(base, {
     event: recommendationEvent,
     report: {
@@ -94,9 +82,7 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
       route: recommendationEvent.route,
       next: recommendationEvent.next,
       reason: recommendationEvent.reason,
-      command: recommendationEvent.command,
-    },
-  });
+      command: recommendationEvent.command } });
   assert.ok(decorated);
   // Receipt details remain contract-pure (same reference / deep-equal shape).
   assert.equal(decorated.details, base.details);
@@ -109,8 +95,7 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
     route: recommendationEvent.route,
     next: recommendationEvent.next,
     reason: recommendationEvent.reason,
-    command: recommendationEvent.command,
-  });
+    command: recommendationEvent.command });
   // Direction-only recommendation (no reason/command) still settles as navigation essentials.
   assert.deepEqual(
     settlementNavigationFromEvent({
@@ -120,26 +105,22 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
       role: "judge",
       phase: null,
       subjectKey: "/repo",
-      next: { role: "fixer", phase: "apply" },
-    }),
+      next: { role: "fixer", phase: "apply" } }),
     {
       disposition: "recommendation",
-      next: { role: "fixer", phase: "apply" },
-    },
+      next: { role: "fixer", phase: "apply" } },
   );
   assert.equal(
     decorateSettlementWithNavigation(base, {
       event: { ...recommendationEvent, disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
-      report: { disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
-    }),
+      report: { disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" } }),
     undefined,
   );
   assert.equal(decorateSettlementWithNavigation(base, undefined), undefined);
   assert.equal(
     decorateSettlementWithNavigation(base, {
       event: { ...recommendationEvent, disposition: "no-advice" },
-      report: { disposition: "no-advice" },
-    }),
+      report: { disposition: "no-advice" } }),
     undefined,
   );
 });
@@ -174,8 +155,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
   assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
-  const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
-  try {
+  await withTempRoot("ak-nav-physical-", async (home) => {
     const { realpathSync } = await import("node:fs");
     const physicalIssue = resolve(home, ".ak/work/issues/28");
     const session = resolve(home, ".ak-roles/books/h/runs/judge-navigator/session");
@@ -183,9 +163,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
     await mkdir(session, { recursive: true });
     assert.equal(subjectPath(session, physicalIssue), physicalIssue);
     assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
   const legitimate = `work subject: ${adHocRoot} with real task bytes`;
@@ -196,8 +174,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
 });
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-dispose-race-"));
-  try {
+  await withTempRoot("navigator-dispose-race-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     let releaseCreate!: () => void;
@@ -225,11 +202,9 @@ test("dispose during pending createSession drains the created session without pr
           async setModel() { setModelCalls += 1; },
           getThinkingLevel: () => "off",
           recordPointer: () => "/fixture/navigator-record",
-          dispose() { disposeCalls += 1; },
-        };
+          dispose() { disposeCalls += 1; } };
       },
-      onEvent: async (event) => { events.push(event); },
-    });
+      onEvent: async (event) => { events.push(event); } });
     nav.prepare();
     while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.dispose();
@@ -241,60 +216,51 @@ test("dispose during pending createSession drains the created session without pr
     assert.equal(setModelCalls, 0, "disposed attendance must not configure the late session");
     assert.equal(disposeCalls, 1, "created session must be disposed exactly once");
     assert.equal(events.some((event) => event.disposition === "recommendation"), false);
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("attendance dispose settles session close rejection on the caller", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-attendance-close-"));
-  let releasePrompt: (() => void) | undefined;
-  try {
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const closeBoom = new Error("session close failed");
-    let promptStarted!: () => void;
-    const prompted = new Promise<void>((resolve) => { promptStarted = resolve; });
-    const heldPrompt = new Promise<void>((resolve) => { releasePrompt = resolve; });
-    const nav = createNavigatorAttendance({
-      context: context(),
-      role: "coder",
-      phase: "apply",
-      subjectKey: "/repo/.ak/work/issues/28",
-      subject: "Fix issue 28",
-      authority: "owner decision",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
-      modelSettingPath: setting,
-      createSession: async () => ({
-        async prompt() {
-          promptStarted();
-          await heldPrompt;
-        },
-        appendEntry() {},
-        entries: () => [],
-        async setModel() {},
-        getThinkingLevel: () => "off" as const,
-        recordPointer: () => "/fixture/navigator-record",
-        dispose() { return Promise.reject(closeBoom); },
-      }),
-      onEvent: async () => {},
-    });
-    nav.prepare();
-    await prompted;
-    await assert.rejects(
-      () => Promise.resolve(nav.dispose()),
-      (error: unknown) => error === closeBoom,
-    );
-  } catch (error) {
-    releasePrompt?.();
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  releasePrompt?.();
-  await cleanupTempDir(root);
+  await withTempRoot("navigator-attendance-close-", async (root) => {
+    let releasePrompt: (() => void) | undefined;
+    try {
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const closeBoom = new Error("session close failed");
+      let promptStarted!: () => void;
+      const prompted = new Promise<void>((resolve) => { promptStarted = resolve; });
+      const heldPrompt = new Promise<void>((resolve) => { releasePrompt = resolve; });
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: "coder",
+        phase: "apply",
+        subjectKey: "/repo/.ak/work/issues/28",
+        subject: "Fix issue 28",
+        authority: "owner decision",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+        modelSettingPath: setting,
+        createSession: async () => ({
+          async prompt() {
+            promptStarted();
+            await heldPrompt;
+          },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() {},
+          getThinkingLevel: () => "off" as const,
+          recordPointer: () => "/fixture/navigator-record",
+          dispose() { return Promise.reject(closeBoom); } }),
+        onEvent: async () => {} });
+      nav.prepare();
+      await prompted;
+      await assert.rejects(
+        () => Promise.resolve(nav.dispose()),
+        (error: unknown) => error === closeBoom,
+      );
+    } finally {
+      releasePrompt?.();
+    }
+  });
 });
 
 
@@ -316,16 +282,13 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       projectFixerStatus: undefined as undefined | "completed",
       speculativeCandidate: {
         next: { role: "judge" as const, phase: null },
-        reason: "speculative placeholder discarded by settlement-bound rebind",
-      },
+        reason: "speculative placeholder discarded by settlement-bound rebind" },
       rebindCandidate: {
         next: { role: "merger" as const, phase: null },
-        reason: "collector 已收齐；游奕使建议直接合并（调用者可忽略）",
-      },
+        reason: "collector 已收齐；游奕使建议直接合并（调用者可忽略）" },
       expectedNext: { role: "merger" as const, phase: null },
       expectedCommand: "ak-role merger",
-      expectedReason: "collector 已收齐；游奕使建议直接合并（调用者可忽略）",
-    },
+      expectedReason: "collector 已收齐；游奕使建议直接合并（调用者可忽略）" },
     {
       label: "fixer unfinished → divergent judge advice kept",
       role: "fixer" as const,
@@ -339,16 +302,13 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       projectFixerStatus: undefined,
       speculativeCandidate: {
         next: { role: "fixer" as const, phase: "apply" as const },
-        reason: "speculative continue",
-      },
+        reason: "speculative continue" },
       rebindCandidate: {
         next: { role: "judge" as const, phase: null },
-        reason: "unfinished 也建议回大理寺（代码不得丢弃）",
-      },
+        reason: "unfinished 也建议回大理寺（代码不得丢弃）" },
       expectedNext: { role: "judge" as const, phase: null },
       expectedCommand: "ak-role judge",
-      expectedReason: "unfinished 也建议回大理寺（代码不得丢弃）",
-    },
+      expectedReason: "unfinished 也建议回大理寺（代码不得丢弃）" },
     {
       label: "judge continue → divergent merger advice kept",
       role: "judge" as const,
@@ -362,16 +322,13 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       projectFixerStatus: undefined,
       speculativeCandidate: {
         next: { role: "fixer" as const, phase: "apply" as const },
-        reason: "speculative fixer",
-      },
+        reason: "speculative fixer" },
       rebindCandidate: {
         next: { role: "merger" as const, phase: null },
-        reason: "continue 也建议 merger（代码无权裁定）",
-      },
+        reason: "continue 也建议 merger（代码无权裁定）" },
       expectedNext: { role: "merger" as const, phase: null },
       expectedCommand: "ak-role merger",
-      expectedReason: "continue 也建议 merger（代码无权裁定）",
-    },
+      expectedReason: "continue 也建议 merger（代码无权裁定）" },
     {
       label: "judge converged → merger advice kept after rebind",
       role: "judge" as const,
@@ -385,21 +342,17 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       projectFixerStatus: undefined,
       speculativeCandidate: {
         next: { role: "merger" as const, phase: null },
-        reason: "speculative merger",
-      },
+        reason: "speculative merger" },
       rebindCandidate: {
         next: { role: "merger" as const, phase: null },
-        reason: "converged；合并收尾",
-      },
+        reason: "converged；合并收尾" },
       expectedNext: { role: "merger" as const, phase: null },
       expectedCommand: "ak-role merger",
-      expectedReason: "converged；合并收尾",
-    },
+      expectedReason: "converged；合并收尾" },
   ] as const;
 
   for (const row of rows) {
-    const root = await mkdtemp(join(tmpdir(), "navigator-rebind-as-is-"));
-    try {
+    await withTempRoot("navigator-rebind-as-is-", async (root) => {
       const setting = join(root, "model.json");
       await writeFile(setting, JSON.stringify({ model: "provider/model" }));
       const harness = sessionHarness();
@@ -411,13 +364,11 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
               ? publicNavigatorSettlement("judge", null, {
                   toolName: JUDGE_OUTPUT_TOOL_NAME,
                   isError: false,
-                  details: { judgeStatus: row.projectJudgeStatus },
-                })
+                  details: { judgeStatus: row.projectJudgeStatus } })
               : publicNavigatorSettlement("fixer", "apply", {
                   toolName: FIXER_OUTPUT_TOOL_NAME,
                   isError: false,
-                  details: { status: row.projectFixerStatus },
-                });
+                  details: { status: row.projectFixerStatus } });
             assert.ok(projected, `${row.label}: projection must yield settlement`);
             assert.deepEqual(projected, row.settlement, `${row.label}: projected settlement shape`);
             return projected;
@@ -436,8 +387,7 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
         createSession: harness.factory,
         modelSettingPath: setting,
         invocationId: row.invocationId,
-        onEvent: async (event) => { events.push(event); },
-      });
+        onEvent: async (event) => { events.push(event); } });
 
       // Speculative prepare (before terminal) — discarded by settlement-bound rebind.
       nav.prepare();
@@ -482,32 +432,25 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       const decorated = decorateSettlementWithNavigation(
         {
           content: [{ type: "text" as const, text: "role terminal accepted" }],
-          details: { ok: true },
-        },
+          details: { ok: true } },
         { event: events[0], report: {
           disposition: "recommendation",
           next: events[0].next,
           reason: events[0].reason,
-          command: events[0].command,
-        } },
+          command: events[0].command } },
       );
       assert.ok(decorated, `${row.label}: recommendation must decorate settlement`);
       const text = (decorated.content[0] as { text: string }).text;
       assert.equal(text.includes(row.expectedReason), true, `${row.label}: reason appears in settlement content`);
       assert.equal(text.includes(row.expectedCommand), true, `${row.label}: command appears in settlement content`);
       assert.deepEqual(settlementNavigationFromEvent(events[0])?.next, row.expectedNext, `${row.label}: navigation essentials keep next as-is`);
-    } catch (error) {
-      await cleanupTempDir(root, error);
-      throw error;
-    }
-    await cleanupTempDir(root);
+    });
   }
 });
 
 test("settlement-bound rebind that repeats divergent advice still emits recommendation as-is", async () => {
   // Former "still contradicts → unavailable" path deleted: code has no authority to discard advice.
-  const root = await mkdtemp(join(tmpdir(), "navigator-rebind-keep-divergent-"));
-  try {
+  await withTempRoot("navigator-rebind-keep-divergent-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -523,8 +466,7 @@ test("settlement-bound rebind that repeats divergent advice still emits recommen
       loadRoleHelp: async () => "help",
       createSession: harness.factory,
       modelSettingPath: setting,
-      onEvent: async (event) => { events.push(event); },
-    });
+      onEvent: async (event) => { events.push(event); } });
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     await harness.tool().execute(
@@ -553,18 +495,13 @@ test("settlement-bound rebind that repeats divergent advice still emits recommen
     assert.deepEqual(events[0]?.next, { role: "merger", phase: null });
     assert.equal(events[0]?.reason, "still think merge");
     assert.equal(events[0]?.unavailableReason, undefined);
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("settlement-matched speculative advice is not rebound and divergent next still passes through", async () => {
   // matches keys the candidate to this settlement — not a next.role legality check.
   // Divergent next is still emitted as-is; no second prepare.
-  const root = await mkdtemp(join(tmpdir(), "navigator-matched-no-rebind-"));
-  try {
+  await withTempRoot("navigator-matched-no-rebind-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -580,8 +517,7 @@ test("settlement-matched speculative advice is not rebound and divergent next st
       loadRoleHelp: async () => "help",
       createSession: harness.factory,
       modelSettingPath: setting,
-      onEvent: async (event) => { events.push(event); },
-    });
+      onEvent: async (event) => { events.push(event); } });
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     await harness.tool().execute(
@@ -590,9 +526,7 @@ test("settlement-matched speculative advice is not rebound and divergent next st
         candidates: [{
           matches: { role: "collector", phase: null, kind: "accepted" },
           next: { role: "merger", phase: null },
-          reason: "matched to collector accepted; next=merger kept as-is",
-        }],
-      },
+          reason: "matched to collector accepted; next=merger kept as-is" }] },
       undefined,
       undefined,
       {} as never,
@@ -604,11 +538,7 @@ test("settlement-matched speculative advice is not rebound and divergent next st
     assert.deepEqual(events[0]?.next, { role: "merger", phase: null });
     assert.equal(events[0]?.reason, "matched to collector accepted; next=merger kept as-is");
     assert.equal(harness.prompts(), 1, "settlement-matched speculative advice must not force rebind");
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("status-specific route candidates outrank generics regardless of declaration order", () => {
@@ -618,15 +548,13 @@ test("status-specific route candidates outrank generics regardless of declaratio
     matches: { role: "fixer", phase: "apply", kind: "accepted" },
     route,
     next: route[1]!,
-    reason: "generic fallback",
-  }).candidates[0]!;
+    reason: "generic fallback" }).candidates[0]!;
   const unfinishedSpecific = candidate({
     id: "unfinished-specific",
     matches: { role: "fixer", phase: "apply", kind: "accepted", statuses: ["unfinished"] },
     route,
     next: route[0]!,
-    reason: "finish the open class",
-  }).candidates[0]!;
+    reason: "finish the open class" }).candidates[0]!;
   const settlement = { kind: "accepted" as const, role: "fixer", phase: "apply" as const, status: "unfinished" };
   assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.candidate.id, "unfinished-specific");
   assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], settlement)?.candidate.id, "unfinished-specific");
@@ -636,15 +564,13 @@ test("status-specific route candidates outrank generics regardless of declaratio
   const reviewerStatuses = candidate({
     matches: { role: "reviewer", phase: null, kind: "accepted", statuses: ["completed", "refused"] },
     route: [{ role: "judge", phase: null }],
-    next: { role: "judge", phase: null },
-  }).candidates;
+    next: { role: "judge", phase: null } }).candidates;
   assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.candidate.id, reviewerStatuses[0]!.id);
   assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.candidate.id, reviewerStatuses[0]!.id);
 });
 
 test("resumed setModel session failures preserve typed source and cause", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-resumed-cause-"));
-  try {
+  await withTempRoot("navigator-resumed-cause-", async (root) => {
     const setting = join(root, "model.json");
     // Thinking stick/availability re-check is gone (#683); only session setModel failures remain typed here.
     const cases = [
@@ -676,9 +602,7 @@ test("resumed setModel session failures preserve typed source and cause", async 
                   route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
                   next: { role: "reviewer", phase: null },
                   reason: "resume path",
-                  command: "Usage: pi --ak-role reviewer --help",
-                }],
-              }, undefined, undefined, {} as never);
+                  command: "Usage: pi --ak-role reviewer --help" }] }, undefined, undefined, {} as never);
             },
             appendEntry() {},
             entries: () => [],
@@ -690,11 +614,9 @@ test("resumed setModel session failures preserve typed source and cause", async 
             },
             getThinkingLevel: () => "off",
             recordPointer: () => "/fixture/navigator-record",
-            dispose() {},
-          };
+            dispose() {} };
         },
-        onEvent: async (event) => { events.push(event); },
-      });
+        onEvent: async (event) => { events.push(event); } });
       nav.prepare();
       await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
       assert.equal(created, true);
@@ -706,11 +628,7 @@ test("resumed setModel session failures preserve typed source and cause", async 
       assert.equal(events[1]?.unavailableSource, scenario.source, scenario.name);
       assert.equal(events[1]?.unavailableCause, scenario.source, scenario.name);
     }
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 

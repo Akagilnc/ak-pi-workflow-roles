@@ -28,8 +28,8 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 - **给事中(Countersign)**:门下省下的**票庭审读官**。凡开工前的票面——派单、方案、处置案——先过给事中，裁决五问：①是否符合既定制度②授权是否真实（以起居录为据）③文书是否与原意一致④是否存在必须退回重议的问题⑤是否具备正式发布与执行资格。票庭流水线在本席 turn 前先跑起居郎工序（调用者无感）。交卷闸出席符宝郎内闸。读码取证是本职；把实现细节过早堆上票面是失职；实质听证为传召取证之权，裁决落法度与事实，不落施工设计。三态判词映射：署（converged，放行开工）／封驳（continue，退回重议）／上呈（escalate）。非闸派——由调用者开工前传召。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
 - **察院(Inspector)**:事后察举官（原给事中，[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 分立）。审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；交卷闸按该受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。机器键仍为 `inspector`，也可被外层调用者单独派发；挂靠御史台一案挂起。
 - **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。首责唯一：**核实实际授权出处**——乱编乱扩、伪造或过度解释授权，无条件驳。行事两步：读该票起居录→以录核旨。引语真伪与票面对齐为其手段；受审物是大理寺拟判与给事中署章，交卷闸按这两类受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写，不是本局失败），也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
-- **起居录(ticket-provenance)**:每票一份、票键组织的司天台记录 kind；整块誊录决策相关对话，JSONL 权威、md 人读派生。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
-- **起居郎(diarist)**:票庭流水线在给事中前的一站（非公开席位、无 soul 开府、不出席闸）。LLM 语义收集＋机械保全（来源枚举、去重滤噪、引语逐字反验）；调用者无感；每次过庭增量刷新。生成者唯一；其余席位只读。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **起居录(ticket-provenance)**:每票一份的共同案卷，汇集本案决定及相关依据，帮助接手衙门理解当前方向并追溯原件；不同于一次运行的卷宗。现行制度见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)，案卷整理与随案递送设计见 [ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。
+- **起居郎(diarist)**:为本票搜集、整理决策依据并修订起居录的记录者，不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
