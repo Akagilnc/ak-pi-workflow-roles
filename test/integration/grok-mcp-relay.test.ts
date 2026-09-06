@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -14,44 +14,13 @@ const relayPath = join(packageRoot, "src/grok/mcp-relay.mjs");
 
 type UpstreamHandler = (message: { id: number; method: string; params?: unknown }, socket: Socket) => void;
 
-function isRelativeInside(rel: string): boolean {
-  return rel.length > 0 && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
-}
-
-/** Prefer a short relative sun_path so deep checkout absolute paths do not truncate/collide. */
-async function listenUnixSocket(server: Server, socketName: string, socketAbs: string): Promise<void> {
-  const rel = relative(process.cwd(), socketAbs);
-  const bindPath = isRelativeInside(rel)
-    ? rel
-    : Buffer.byteLength(socketAbs) < 100
-      ? socketAbs
-      : null;
-  if (bindPath !== null) {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(bindPath, resolve);
-    });
-    return;
-  }
-  // Deep absolute path + cwd outside package root: brief chdir for short relative bind.
-  const previousCwd = process.cwd();
-  process.chdir(worktreePackageRoot);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(socketName, resolve);
-    });
-  } finally {
-    process.chdir(previousCwd);
-  }
-}
-
 async function withRelay(
   handleUpstream: UpstreamHandler,
   run: (child: ReturnType<typeof spawn>, replies: AsyncIterator<string>) => Promise<void>,
 ): Promise<{ exitCode: number | null }> {
-  // Short relative socket under package root — no long mkdtemp path in sun_path.
-  const socketName = `.r${process.pid.toString(36)}${Date.now().toString(36)}.sock`;
+  // Short relative sun_path under package root (tests run with cwd=package root).
+  // .test-tmp- prefix reuses existing gitignore; no deep mkdtemp path in the bind address.
+  const socketName = `.test-tmp-r${process.pid.toString(36)}${Date.now().toString(36)}.sock`;
   const socketAbs = join(worktreePackageRoot, socketName);
   const token = "relay-token";
   let server: Server | undefined;
@@ -67,7 +36,10 @@ async function withRelay(
           handleUpstream(message, socket);
         });
       });
-      await listenUnixSocket(server, socketName, socketAbs);
+      await new Promise<void>((resolve, reject) => {
+        server!.once("error", reject);
+        server!.listen(socketName, resolve);
+      });
       child = spawn(process.execPath, [relayPath], {
         cwd: worktreePackageRoot,
         env: { ...process.env, AK_GROK_MCP_SOCKET: socketName, AK_GROK_MCP_TOKEN: token },
@@ -95,9 +67,11 @@ async function withRelay(
       });
     },
     async () => {
-      await unlink(socketAbs).catch(() => {
-        /* socket may already be gone */
-      });
+      try {
+        await unlink(socketAbs);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     },
   );
 }
