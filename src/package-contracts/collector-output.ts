@@ -59,10 +59,29 @@ export type CollectorEvidenceRecord = {
   authoritativeTime?: string | null;
 };
 
+/**
+ * #676 C: sole structured projection-fact type (builder + package leaf).
+ * Builder always emits the full object; package leaf keeps it optional so old
+ * volumes without the field stay readable — missing is unknown, never defaulted.
+ */
+export type CollectorSubmissionProjection = {
+  findingsSource: "absent" | "array" | "unreadable";
+  findingsProjectedCount: number;
+  findingsUnprojected: boolean;
+  unfinishedReasonsSource: "absent" | "array" | "unreadable";
+  unfinishedReasonsProjectedCount: number;
+  unfinishedReasonsUnprojected: boolean;
+};
+
 export type CollectorReceipt = {
   host: "github.com";
   repository: string;
   prNumber: number;
+  /**
+   * Final observed PR state; non-OPEN still delivers materials (#676 D6).
+   * Absent/unreadable on old volumes is unknown — never defaulted to OPEN.
+   */
+  prState?: string;
   manifestDigest: string;
   activationTime: string;
   deadlineTime: string;
@@ -70,6 +89,13 @@ export type CollectorReceipt = {
   finalSnapshotId: string;
   targetHead: string;
   groups: CollectorIdentityGroup[];
+  unfinishedReasons?: string[];
+  /**
+   * Distinguishes readable-empty from unprojected original submission content (#676 C).
+   * Package leaf may carry a partial projection when some sibling keys are unreadable —
+   * missing keys stay absent (never defaulted false/0/OPEN).
+   */
+  submissionProjection?: Partial<CollectorSubmissionProjection>;
   requestAttempts: CollectorRequestAttempt[];
   snapshots: CollectorSnapshot[];
   evidenceRecords: CollectorEvidenceRecord[];
@@ -97,10 +123,18 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     materials: records(safeGet(group, "materials")),
     findings: records(safeGet(group, "findings")),
   }));
+  const unfinishedRaw = safeGet(value, "unfinishedReasons");
+  const unfinishedReasons = strings(unfinishedRaw);
+  // #676 C: project readable submissionProjection fields independently — do not
+  // drop the whole block when one sibling key is the wrong type (left-拾遗1).
+  const submissionProjection = projectSubmissionProjection(safeGet(value, "submissionProjection"));
+  const prStateRaw = safeGet(value, "prState");
+  const prState = typeof prStateRaw === "string" ? prStateRaw : undefined;
   return {
     host: safeGet(value, "host") as "github.com",
     repository: safeGet(value, "repository") as string,
     prNumber: safeGet(value, "prNumber") as number,
+    ...(prState === undefined ? {} : { prState }),
     manifestDigest: safeGet(value, "manifestDigest") as string,
     activationTime: safeGet(value, "activationTime") as string,
     deadlineTime: safeGet(value, "deadlineTime") as string,
@@ -108,10 +142,48 @@ export function validateAcceptedCollectorReceipt(value: unknown): CollectorRecei
     finalSnapshotId: safeGet(value, "finalSnapshotId") as string,
     targetHead: safeGet(value, "targetHead") as string,
     groups,
+    ...(unfinishedReasons.length > 0 ? { unfinishedReasons } : {}),
+    ...(submissionProjection === undefined ? {} : { submissionProjection }),
     requestAttempts: records(safeGet(value, "requestAttempts")) as unknown as CollectorRequestAttempt[],
     snapshots: records(safeGet(value, "snapshots")).map((snapshot) => ({
       snapshotId: safeGet(snapshot, "snapshotId"), observedAt: safeGet(snapshot, "observedAt"), completedAt: safeGet(snapshot, "completedAt"), completedMono: safeGet(snapshot, "completedMono"), host: safeGet(snapshot, "host"), repository: safeGet(snapshot, "repository"), prNumber: safeGet(snapshot, "prNumber"), prState: safeGet(snapshot, "prState"), headOid: safeGet(snapshot, "headOid"), complete: safeGet(snapshot, "complete"), evidenceIds: strings(safeGet(snapshot, "evidenceIds")), pageDiagnostics: records(safeGet(snapshot, "pageDiagnostics")), normalizedByteLength: safeGet(snapshot, "normalizedByteLength"),
     } as CollectorSnapshot)),
     evidenceRecords: records(safeGet(value, "evidenceRecords")).map((record) => ({ evidenceId: safeGet(record, "evidenceId"), kind: safeGet(record, "kind"), versionId: safeGet(record, "versionId"), contentDigest: safeGet(record, "contentDigest"), firstObservedAt: safeGet(record, "firstObservedAt"), githubId: safeGet(record, "githubId"), authorLogin: safeGet(record, "authorLogin"), htmlUrl: safeGet(record, "htmlUrl"), authoritativeTime: safeGet(record, "authoritativeTime") } as CollectorEvidenceRecord)),
   };
+}
+
+/** Readable projection facts only; omit keys that are the wrong type — never fabricate defaults. */
+function projectSubmissionProjection(
+  raw: unknown,
+): Partial<CollectorSubmissionProjection> | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const p = raw as Record<string, unknown>;
+  const out: Partial<CollectorSubmissionProjection> = {};
+  if (
+    p["findingsSource"] === "absent" ||
+    p["findingsSource"] === "array" ||
+    p["findingsSource"] === "unreadable"
+  ) {
+    out.findingsSource = p["findingsSource"];
+  }
+  if (typeof p["findingsProjectedCount"] === "number") {
+    out.findingsProjectedCount = p["findingsProjectedCount"];
+  }
+  if (typeof p["findingsUnprojected"] === "boolean") {
+    out.findingsUnprojected = p["findingsUnprojected"];
+  }
+  if (
+    p["unfinishedReasonsSource"] === "absent" ||
+    p["unfinishedReasonsSource"] === "array" ||
+    p["unfinishedReasonsSource"] === "unreadable"
+  ) {
+    out.unfinishedReasonsSource = p["unfinishedReasonsSource"];
+  }
+  if (typeof p["unfinishedReasonsProjectedCount"] === "number") {
+    out.unfinishedReasonsProjectedCount = p["unfinishedReasonsProjectedCount"];
+  }
+  if (typeof p["unfinishedReasonsUnprojected"] === "boolean") {
+    out.unfinishedReasonsUnprojected = p["unfinishedReasonsUnprojected"];
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

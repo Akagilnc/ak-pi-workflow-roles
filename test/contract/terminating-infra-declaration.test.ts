@@ -1,9 +1,10 @@
-// #541 structural contract test: every primary packaged-role output tool's
-// parameter schema must explicitly advertise the SAME shared non-empty
-// infrastructure-failure declaration (a typed `infrastructureFailure.diagnostic`
-// string with minLength >= 1). Untyped `additionalProperties:true` acceptance is
-// NOT enough — the declaration must be a real, composed schema property.
-// Prose (descriptions) is intentionally not asserted.
+// #541 / #676 C structural contract test: every primary packaged-role output tool's
+// parameter schema must explicitly advertise the SAME shared nested
+// infrastructure-failure declaration (`infrastructureFailure.diagnostic`).
+// Untyped `additionalProperties:true` acceptance is NOT enough — the nested
+// declaration must be a real, composed schema property. Declaration preservation
+// only — no type/minLength/required host-gate assertions (ADR 0057 / 第 0 条).
+// Prose (descriptions) is intentionally not asserted for equality.
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -43,8 +44,8 @@ type Declared = {
 };
 type SchemaObj = { properties: Record<string, unknown> };
 
-test("every terminating output tool schema advertises the same non-empty infrastructure-failure declaration", () => {
-  const diagnostics: string[] = [];
+test("every terminating output tool schema advertises the same nested infrastructure-failure declaration", () => {
+  const shapes: string[] = [];
   for (const [name, schema] of TERMINATING_ROLE_SCHEMAS) {
     const obj = schema as unknown as SchemaObj;
     const declaration = obj.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY] as
@@ -54,28 +55,24 @@ test("every terminating output tool schema advertises the same non-empty infrast
       declaration && typeof declaration === "object",
       `${name} must explicitly advertise an infrastructureFailure property`,
     );
-    const diagnostic = declaration.properties?.[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY] as
-      | { type?: string; minLength?: number }
-      | undefined;
+    // Nested diagnostic declaration must survive composition (ADR 0057 preservation).
+    // Do not lock type/minLength/required — those are host shape gates, not declaration.
+    const diagnostic = declaration.properties?.[INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY];
     assert.ok(
-      diagnostic && typeof diagnostic === "object",
-      `${name} infrastructureFailure must carry a diagnostic property`,
+      diagnostic !== undefined && diagnostic !== null && typeof diagnostic === "object",
+      `${name} infrastructureFailure must carry a nested diagnostic property`,
     );
-    assert.equal(diagnostic.type, "string", `${name} diagnostic must be a string`);
-    assert.ok(
-      typeof diagnostic.minLength === "number" && diagnostic.minLength >= 1,
-      `${name} diagnostic must be non-empty (minLength >= 1)`,
-    );
-    diagnostics.push(
+    shapes.push(
       JSON.stringify({
-        type: diagnostic.type,
-        minLength: diagnostic.minLength,
+        hasInfrastructureFailure: true,
+        hasNestedDiagnostic: true,
+        additionalProperties: declaration.additionalProperties === true,
       }),
     );
   }
-  // Every terminating role must advertise the SAME declaration shape (no prose in comparison).
-  const canonical = diagnostics[0];
-  for (const d of diagnostics) {
-    assert.equal(d, canonical, "every terminating output tool schema must share one declaration");
+  // Every terminating role must advertise the SAME nested declaration shape.
+  const canonical = shapes[0];
+  for (const d of shapes) {
+    assert.equal(d, canonical, "every terminating output tool schema must share one nested declaration");
   }
 });

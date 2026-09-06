@@ -12,6 +12,8 @@ import {
 import { normalizeAuthenticatedUserEvidence } from "../../src/collector-evidence.ts";
 
 test("normalize helpers accept OPEN and valid review states and reject missing head", () => {
+  // MERGED vs CLOSED public REST→Terminal proof lives on public-cli-collector-run (#676 D).
+  // Keep only the OPEN happy path + missing-head reject here — no parallel MERGED unit helper.
   const pr = normalizePullRequest({
     number: 3,
     state: "open",

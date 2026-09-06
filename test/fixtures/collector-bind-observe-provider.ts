@@ -1,6 +1,7 @@
 /**
- * Offline faux provider for public Collector production-seam tracers.
- * Issues one ak_collector_observe so the real Collector runtime crosses GitHub.
+ * Offline faux provider for public Collector role-bind path (#676 A).
+ * Role decides ticket → ak_collector_bind_target → observe → output.
+ * Simulates the LLM judgment; does not scrape task text in production code.
  */
 import {
   fauxAssistantMessage,
@@ -10,36 +11,28 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL } from "../../src/collector-ledger.ts";
+import {
+  COLLECTOR_BIND_TARGET_TOOL,
+  COLLECTOR_OBSERVE_TOOL,
+} from "../../src/collector-ledger.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 
-export default function collectorObserveProvider(pi: ExtensionAPI): void {
+export default function collectorBindObserveProvider(pi: ExtensionAPI): void {
   const faux = fauxProvider({
     api: "ak-collector-offline",
     provider: "ak-collector-offline",
     tokenSize: { min: 1000, max: 1000 },
   });
-  const requestManifest = process.argv.includes("--ak-collector-request-manifest");
-  // #676: observe-only path still seals a receipt (closed/merged delivery + explicit target).
+  // Fixture stands in for role judgment: bind issue 676 → unique PR, then observe.
   faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall(COLLECTOR_BIND_TARGET_TOOL, { issueNumber: 676 }, { id: "collector-bind-1" }),
+      { stopReason: "toolUse" },
+    ),
     fauxAssistantMessage(
       fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "collector-obs-1" }),
       { stopReason: "toolUse" },
     ),
-    ...(requestManifest ? [
-      (context: any) => {
-        const observed = [...context.messages].reverse().find((message: any) => message.role === "toolResult");
-        return fauxAssistantMessage(
-          fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "codex", snapshotId: observed.details.snapshotId }, { id: "collector-request-1" }),
-          { stopReason: "toolUse" },
-        );
-      },
-      fauxAssistantMessage(
-        fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "collector-obs-2" }),
-        { stopReason: "toolUse" },
-      ),
-    ] : []),
-    // Findings: pointer-submit every review/issue_comment/review_comment evidenceId.
     (context: any) => {
       const observed = [...context.messages].reverse().find((message: any) =>
         message.role === "toolResult" && message.toolName === COLLECTOR_OBSERVE_TOOL && message.isError === false
@@ -69,7 +62,7 @@ export default function collectorObserveProvider(pi: ExtensionAPI): void {
     ...faux.provider,
     auth: {
       apiKey: {
-        name: "Offline Collector observe fixture",
+        name: "Offline Collector bind+observe fixture",
         async resolve() {
           return { auth: { apiKey: "offline" } };
         },
@@ -80,7 +73,4 @@ export default function collectorObserveProvider(pi: ExtensionAPI): void {
     },
   };
   pi.registerProvider(provider);
-  pi.on("session_shutdown", () => {
-    console.error(`COLLECTOR_OBSERVE_PROVIDER_CALLS=${faux.state.callCount}`);
-  });
 }

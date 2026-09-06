@@ -92,8 +92,9 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
 ak-role reviewer --base main "Review the branch."
 
-# collector — GitHub PR review evidence
-ak-role collector --pr 42 --repo owner/repository
+# collector — GitHub PR review evidence (explicit --pr, unique head/commit bind, or role bind-target from materials)
+ak-role collector --pr 42 --repo owner/repository "Collect findings for the assigned issue."
+ak-role collector --repo owner/repository "Collect findings for #42"
 
 # fixer — repair the assigned findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

@@ -103,7 +103,8 @@ export type RoleTurnActivation =
   | {
       readonly role: "collector";
       readonly repo: string;
-      readonly pr: string;
+      /** Bound PR when known at admission; omit when role will bind from materials. */
+      readonly pr?: string;
       readonly requestManifestPath?: string;
     }
   | { readonly role: "doctor"; readonly casePath: string }

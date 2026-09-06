@@ -1570,8 +1570,8 @@ export async function loadResumableCollectorRun(
     );
   }
   const { prNumber, repository, repositoryDisplay, manifestDigest } = loaded.admittedFields;
+  // #676 A: prNumber may be unbound at admission (role bind-target). Repository is required.
   if (
-    prNumber === undefined ||
     repository === undefined ||
     repositoryDisplay === undefined ||
     manifestDigest === undefined
@@ -1595,7 +1595,7 @@ export async function loadResumableCollectorRun(
   const admitted: AdmittedCollectorInvocation = {
     role: "collector",
     ...resumedBaseAdmitted(loaded),
-    prNumber,
+    ...(prNumber === undefined ? {} : { prNumber }),
     repository: parsedRepository,
     ...(loaded.admittedFields.requestManifestPath === undefined
       ? {}

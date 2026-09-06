@@ -79,7 +79,9 @@ async function runRealCollectorScript(options: {
   reviews?: any[];
   issueComments?: any[];
   reviewComments?: any[];
+  pullRequest?: ReturnType<typeof samplePull>;
   requests?: Array<{ id: string; body: string }>;
+  createCollectorClock?: () => CollectorClock;
   responses: Array<CollectorScriptResponse | ((context: any) => CollectorScriptResponse)>;
 }) {
   return withActivationHome({ prefix: "ak-collector-real-script-" }, async ({ agentDir, home }) => {
@@ -89,12 +91,16 @@ async function runRealCollectorScript(options: {
     }
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
-      pullRequest: samplePull({ headOid: "head-1" }),
+      pullRequest: options.pullRequest ?? samplePull({ headOid: "head-1" }),
       reviews: options.reviews ?? [],
       issueComments: options.issueComments ?? [],
       reviewComments: options.reviewComments ?? [],
     });
-    const collectorClock = clock();
+    const collectorClock = options.createCollectorClock?.() ?? clock();
+    const elapsed = () =>
+      typeof (collectorClock as { elapsed?: () => number }).elapsed === "function"
+        ? (collectorClock as { elapsed: () => number }).elapsed()
+        : collectorClock.monoNow();
     const faux = fauxProvider({ api: "collector-real-script", provider: "collector-real-script", tokenSize: { min: 1000, max: 1000 } });
     faux.setResponses(options.responses as any);
     const result = await withInProcessPi({
@@ -119,7 +125,7 @@ async function runRealCollectorScript(options: {
       const receipt: any = sealed?.decisiveFacts;
       const latestOutcome = await readLatestSubmissionOutcome(home, headerId, home);
       const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
-      return { receipt, latestOutcome, infrastructureFailure, entries, transport, elapsed: collectorClock.elapsed() };
+      return { receipt, latestOutcome, infrastructureFailure, entries, transport, elapsed: elapsed() };
     });
     return result;
   });
@@ -145,13 +151,32 @@ test("ak-role Collector wait honors the real eligibility cutoff", async () => {
 });
 
 test("Collector failed reactivation clears a previously successful real role activation", async () => {
+  // #676 E: role module owns business activate only; envelope owns setActiveTools/events.
   const flags = new Map<string, unknown>([["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"]]);
-  const tools = new Map<string, any>(); let active: string[] = [];
-  const pi = { registerFlag() {}, getFlag: (name: string) => flags.get(name), getCommands: () => [], getAllTools: () => [...tools.values()], registerTool: (tool: any) => tools.set(tool.name, tool), setActiveTools: (names: string[]) => { active = names; }, getActiveTools: () => active, on() {} };
-  const runtime = createCollectorRoleRuntime(pi as any, { loadSoul: async () => soul, createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }), createClock: clock, createLedger: (config, collectorClock) => createCollectorLedger(config, { clock: collectorClock, dossierEntries: [] }) }, { failInfrastructure(error: unknown): never { throw error; } });
+  const tools = new Map<string, any>();
+  let activation: Awaited<ReturnType<ReturnType<typeof createCollectorRoleRuntime>["activate"]>> | undefined;
+  const pi = {
+    registerFlag() {},
+    getFlag: (name: string) => flags.get(name),
+    getCommands: () => [],
+    getAllTools: () => [...tools.values()],
+    registerTool: (tool: any) => tools.set(tool.name, tool),
+    setActiveTools() {},
+    getActiveTools: () => [...tools.keys()],
+    on() {},
+  };
+  const runtime = createCollectorRoleRuntime(pi as any, {
+    loadSoul: async () => soul,
+    createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }),
+    createClock: clock,
+    createLedger: (config, collectorClock) => createCollectorLedger(config, { clock: collectorClock, dossierEntries: [] }),
+  }, { failInfrastructure(error: unknown): never { throw error; } });
+  runtime.registerBusinessTools(() => activation);
   const context = { mode: "print" } as any;
-  await runtime.activate(context, { reason: "new" }); flags.delete("ak-collector-repo");
-  await assert.rejects(() => runtime.activate(context, { reason: "new" }), /requires --ak-collector-repo/);
+  activation = await runtime.activate(context);
+  flags.delete("ak-collector-repo");
+  activation = undefined;
+  await assert.rejects(() => runtime.activate(context), /requires --ak-collector-repo/);
   await assert.rejects(() => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined), /通进司未激活/);
 });
 
@@ -495,3 +520,212 @@ test("#641 P2 read tool real failure writes the typed host fact settlement class
     process.exitCode = priorExitCode;
   }
 });
+
+function botReview(overrides: {
+  id: number;
+  userLogin: string;
+  userId: number;
+  body: string;
+  commitId: string;
+}) {
+  return {
+    id: overrides.id,
+    userLogin: overrides.userLogin,
+    machineIdentity: { userType: "Bot", userId: overrides.userId },
+    state: "COMMENTED",
+    body: overrides.body,
+    commitId: overrides.commitId,
+    submittedAt: "2026-01-01T00:01:00Z",
+    htmlUrl: `https://github.com/acme/widgets/pull/1#pullrequestreview-${overrides.id}`,
+    raw: { id: overrides.id },
+  };
+}
+
+test("#676 D6 closed PR still seals existing findings with prState and prior+current materials", async () => {
+  const result = await runRealCollectorScript({
+    pullRequest: samplePull({ headOid: "head-new", state: "CLOSED" }),
+    reviews: [
+      botReview({
+        id: 701,
+        userLogin: "coderabbitai[bot]",
+        userId: 136622811,
+        body: "old finding on prior head",
+        commitId: "head-old",
+      }),
+      botReview({
+        id: 702,
+        userLogin: "chatgpt-codex-connector[bot]",
+        userId: 199175422,
+        body: "new finding on current head",
+        commitId: "head-new",
+      }),
+    ],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const evidence = views[views.length - 1].evidence.filter((record: any) => record.kind === "review");
+        assert.equal(evidence.length, 2);
+        return outputCall({
+          findings: evidence.map((record: any) => ({
+            evidenceId: record.evidenceId,
+            category: record.commitOid === "head-old" ? "prior-finding" : "current-finding",
+          })),
+        }, "output-closed");
+      },
+    ],
+  });
+  assert.ok(result.receipt, "closed PR must still seal collected materials");
+  assert.equal(result.receipt.prState, "CLOSED");
+  assert.equal(result.receipt.targetHead, "head-new");
+  assert.equal(result.transport.calls.create, 0, "closed PR must not trigger new review requests");
+  const findings = result.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 2, "old and new findings both return without validity filtering");
+  const relations = new Set(
+    result.receipt.groups.flatMap((group: any) => group.materials.map((material: any) => material.headRelation)),
+  );
+  assert.equal(relations.has("prior"), true);
+  assert.equal(relations.has("current"), true);
+  assert.ok(findings.every((finding: any) => typeof finding.source.evidenceId === "string"));
+  assert.ok(findings.every((finding: any) => finding.pointer?.commentId !== undefined));
+});
+
+test("#676 D6 non-OPEN request bounces before and after cutoff; materials seal without POST", async () => {
+  // #676 D: one shared assembly for pre/post cutoff — no second parallel harness.
+  async function runNonOpen(options: { pastCutoff: boolean; commentId: number; body: string }) {
+    const collectorClock = (() => {
+      let elapsed = options.pastCutoff ? 16 * 60 * 1000 : 0;
+      return {
+        wallNow: () => new Date(Date.parse("2026-01-01T00:00:00Z") + elapsed),
+        monoNow: () => elapsed,
+        sleep: async (ms: number) => { elapsed += ms; },
+      };
+    })();
+    return runRealCollectorScript({
+      pullRequest: samplePull({ headOid: "head-1", state: "MERGED" }),
+      issueComments: [botIssueComment({ id: options.commentId, userLogin: "coderabbitai[bot]", userId: 136622811, body: options.body })],
+      requests: [{ id: "codex", body: "Please review." }],
+      createCollectorClock: () => collectorClock,
+      responses: [
+        observeOnce,
+        (context: any) => {
+          const observed = [...context.messages].reverse().find((message: any) => message.role === "toolResult");
+          return fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_REQUEST_TOOL, { requestId: "codex", snapshotId: observed.details.snapshotId }, { id: options.pastCutoff ? "request-after-cutoff" : "request-closed" }),
+            { stopReason: "toolUse" },
+          );
+        },
+        (context: any) => {
+          const views = providerObserveViews(context.messages);
+          const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+          return outputCall({
+            findings: [{ evidenceId: target.evidenceId, summary: options.pastCutoff ? "kept after cutoff" : "kept", category: "kept" }],
+            ...(options.pastCutoff ? { unfinishedReasons: ["request skipped: PR MERGED"] } : {}),
+          }, options.pastCutoff ? "output-after-cutoff-bounce" : "output-after-bounce");
+        },
+      ],
+    });
+  }
+
+  const before = await runNonOpen({ pastCutoff: false, commentId: 8101, body: "still collect me" });
+  const bouncedBefore = before.entries.filter((entry: any) =>
+    entry.type === "message" &&
+    entry.message.role === "toolResult" &&
+    entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
+    entry.message.isError === true
+  );
+  assert.equal(bouncedBefore.length, 1, "non-OPEN request must bounce visibly");
+  assert.equal(before.transport.calls.create, 0, "non-OPEN must not POST a new review request");
+  assert.ok(before.receipt, "after bounce, existing materials still seal");
+  assert.equal(before.receipt.prState, "MERGED");
+  assert.equal(before.receipt.groups.flatMap((group: any) => group.findings).length, 1);
+  assert.deepEqual(before.receipt.requestAttempts, []);
+
+  const after = await runNonOpen({ pastCutoff: true, commentId: 9101, body: "keep me after cutoff" });
+  const bouncedAfter = after.entries.filter((entry: any) =>
+    entry.type === "message" &&
+    entry.message.role === "toolResult" &&
+    entry.message.toolName === COLLECTOR_REQUEST_TOOL &&
+    entry.message.isError === true
+  );
+  assert.equal(bouncedAfter.length, 1, "non-OPEN after cutoff must bounce, not latch fatal");
+  assert.equal(after.transport.calls.create, 0, "no POST after cutoff non-OPEN");
+  assert.ok(after.receipt);
+  assert.equal(after.receipt.prState, "MERGED");
+  assert.deepEqual(after.receipt.requestAttempts, []);
+  assert.deepEqual(after.receipt.unfinishedReasons, ["request skipped: PR MERGED"]);
+  const findings = after.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].summary, "kept after cutoff");
+});
+
+test("#676 C non-array/non-object findings are not shape-rejected; unprojected content stays distinguishable", async () => {
+  // Host must not pure-shape-reject; runtime must not wash unreadable findings into "zero findings".
+  // Unknown-evidence bind failure remains covered by the earlier #641 chain① pointer test.
+  const nonArray = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9201, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      outputCall({
+        findings: "not-an-array",
+        unfinishedReasons: "also-not-an-array",
+      }, "output-non-array"),
+    ],
+  });
+  assert.ok(nonArray.receipt, "non-array findings must seal, not pure-shape-reject");
+  assert.equal(nonArray.receipt.groups.flatMap((group: any) => group.findings).length, 0);
+  assert.equal(nonArray.receipt.unfinishedReasons, undefined);
+  assert.equal(nonArray.receipt.submissionProjection.findingsSource, "unreadable");
+  assert.equal(nonArray.receipt.submissionProjection.findingsUnprojected, true);
+  assert.equal(nonArray.receipt.submissionProjection.findingsProjectedCount, 0);
+  assert.equal(nonArray.receipt.submissionProjection.unfinishedReasonsSource, "unreadable");
+  assert.equal(nonArray.receipt.submissionProjection.unfinishedReasonsUnprojected, true);
+
+  // Bound-only path: sole non-string summary/category must independently mark unprojected
+  // (no prior bad items that already set the flag and mask this field gap — #676 D).
+  const fieldGap = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9203, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      (context: any) => {
+        const views = providerObserveViews(context.messages);
+        const target = views[views.length - 1].evidence.find((record: any) => record.kind === "issue_comment");
+        return outputCall({
+          findings: [
+            { evidenceId: target.evidenceId, category: "", summary: "bound-summary" },
+            // Bound pointer with non-string summary/category: keep finding, mark unprojected.
+            { evidenceId: target.evidenceId, category: 99, summary: { text: "nope" } },
+          ],
+          unfinishedReasons: ["partial bot unfinished", 42, "still-here"],
+        }, "output-field-gap");
+      },
+    ],
+  });
+  assert.ok(fieldGap.receipt, "field-gap findings must seal with partial projection");
+  const findings = fieldGap.receipt.groups.flatMap((group: any) => group.findings);
+  assert.equal(findings.length, 2, "pointer-bound items project even when category/summary unreadable");
+  assert.equal(findings[0].summary, "bound-summary");
+  assert.equal(findings[0].category, "");
+  assert.equal(findings[1].summary, undefined);
+  assert.equal(findings[1].category, undefined);
+  assert.deepEqual(fieldGap.receipt.unfinishedReasons, ["partial bot unfinished", "still-here"]);
+  assert.equal(fieldGap.receipt.submissionProjection.findingsSource, "array");
+  assert.equal(fieldGap.receipt.submissionProjection.findingsUnprojected, true);
+  assert.equal(fieldGap.receipt.submissionProjection.findingsProjectedCount, 2);
+  assert.equal(fieldGap.receipt.submissionProjection.unfinishedReasonsUnprojected, true);
+  assert.equal(fieldGap.receipt.submissionProjection.unfinishedReasonsProjectedCount, 2);
+
+  // Non-canonical top-level key is not washed into findingsSource=absent (#676 C).
+  const alias = await runRealCollectorScript({
+    issueComments: [botIssueComment({ id: 9204, userLogin: "coderabbitai[bot]", userId: 136622811, body: "material stays" })],
+    responses: [
+      observeOnce,
+      outputCall({ items: [{ evidenceId: "x" }], note: "alias" }, "output-alias"),
+    ],
+  });
+  assert.ok(alias.receipt);
+  assert.equal(alias.receipt.submissionProjection.findingsSource, "unreadable");
+  assert.equal(alias.receipt.submissionProjection.findingsUnprojected, true);
+  assert.equal(alias.receipt.submissionProjection.findingsProjectedCount, 0);
+});
+
