@@ -24,7 +24,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { readRunTicketNumber } from "../ticket-seat-memory.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -1005,8 +1005,7 @@ async function freezeAttachments(
 
 /**
  * Read ticketNumber from a retained source run's admitted-request.json,
- * falling back to invocation.json. Sole implementation lives in ticket-seat-memory
- * (shared with officer nest discovery / auditor subject binding).
+ * falling back to invocation.json (#635 source-run inheritance).
  */
 export async function readTicketNumberFromSourceRun(
   runDirectory: string,

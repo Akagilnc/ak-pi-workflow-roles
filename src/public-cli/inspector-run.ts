@@ -3,15 +3,18 @@
  * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
  * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
  * with gate-province dispatch; this module is the direct command face.
+ * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
+import { resolveInstructionTicket, resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
+  bindAdmittedTicketNumber,
   buildInspectorTransportPrompt,
+  recordTrueUnboundTicketResolution,
   type AdmittedInspectorInvocation,
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
@@ -23,6 +26,7 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
+  findLatestRunIdForSeatTicket,
   loadResumableInspectorRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -69,9 +73,45 @@ export async function runPublicInspector(
   admitted?: AdmittedInspectorInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseInspectorArgvResult;
+  try {
+    parsed = parseInspectorArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #637: same ticket → resume prior inspector run before minting a new one.
+  // Probe failures fall through; fresh path re-resolves so the failure face stays
+  // on the admitted run (same as pre-#637 bind-before-mark).
+  const projectRoot = parsed.project ?? env.cwd;
+  let ticketResolution: Awaited<ReturnType<typeof resolveInstructionTicket>> | undefined;
+  try {
+    ticketResolution = await resolveInstructionTicket(
+      parsed.instruction,
+      projectRoot,
+      env,
+    );
+    if (ticketResolution.kind === "ticket") {
+      const previousRunId = await findLatestRunIdForSeatTicket({
+        home: env.home,
+        bookKey: resolveBookKeyFromGit(projectRoot),
+        role: "inspector",
+        ticketNumber: ticketResolution.ticketNumber,
+      });
+      if (previousRunId !== undefined) {
+        return await runPublicInspectorResume({ runId: previousRunId }, env, io);
+      }
+    }
+  } catch {
+    ticketResolution = undefined;
+  }
+
   let admitted: AdmittedInspectorInvocation;
   try {
-    const parsed = parseInspectorArgv(argv);
     admitted = await admitInspectorInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -91,26 +131,20 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #635 seat self-ticket then #636 ticket+seat memory principal (before admitted mark).
-  await resolveSeatTicketBinding(admitted, env);
-  const memory = await rebindAdmittedToTicketSeatMemory({
-    admitted,
-    seat: "inspector",
-    principalAuthority: env.principalAuthority,
-  });
+  // #635: reuse successful probe; otherwise resolve before admitted mark.
+  if (ticketResolution === undefined) {
+    await resolveSeatTicketBinding(admitted, env);
+  } else if (ticketResolution.kind === "ticket") {
+    await bindAdmittedTicketNumber(admitted, ticketResolution.ticketNumber);
+  } else {
+    await recordTrueUnboundTicketResolution(admitted);
+  }
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  // Same ticket nest already present → native host resume (not a fresh initial).
-  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
   const engineMaterial = engineSessionMaterialFromOptions({
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     packageRoot: env.packageRoot,
   });
-  const continuation = {
-    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
-    prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
-  };
-
   const turnRequest = buildInspectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -121,7 +155,10 @@ export async function runPublicInspector(
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
-    continuation,
+    continuation: {
+      kind: "initial",
+      prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+    },
   });
 
   return await runPostAdmissionOneShot({

@@ -16,6 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -827,6 +828,47 @@ export async function findRunDirectoryById(
     }
   }
   return undefined;
+}
+
+/**
+ * Locate the latest retained run for one seat+ticket under a book (#637).
+ * Same walk surface as findRunDirectoryById; ticket identity from durable pages.
+ * runId is UUIDv7 — lexicographic max is latest. No parallel index.
+ */
+export async function findLatestRunIdForSeatTicket(input: {
+  readonly home: string;
+  readonly bookKey: string;
+  readonly role: RoleRunRecord["role"];
+  readonly ticketNumber: number;
+}): Promise<string | undefined> {
+  if (
+    !Number.isSafeInteger(input.ticketNumber) ||
+    input.ticketNumber < 1
+  ) {
+    return undefined;
+  }
+  const ledgerHome = resolveActivationLedgerHome(input.home);
+  const runsDir = join(
+    activationBookDirectory(ledgerHome, input.bookKey),
+    "runs",
+  );
+  let entries: string[];
+  try {
+    entries = await readdir(runsDir);
+  } catch {
+    return undefined;
+  }
+  const suffix = `@${input.role}`;
+  let best: string | undefined;
+  for (const entry of entries) {
+    if (!entry.endsWith(suffix)) continue;
+    const runId = entry.slice(0, entry.length - suffix.length);
+    if (runId.length === 0) continue;
+    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
+    if (ticketNumber !== input.ticketNumber) continue;
+    if (best === undefined || runId > best) best = runId;
+  }
+  return best;
 }
 
 type LoadedAdmittedRequestFields = {

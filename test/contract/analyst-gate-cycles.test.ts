@@ -5,29 +5,20 @@
  * - runAnalyst issue page → gateCycles (historical + current officer faces,
  *   zero-round siblings, rejected/missing terminal receipt, damaged JSONL)
  * - runAnalyst cohort → gateCyclesByOfficer fold from ensured pages
- * - #636 D: shared ticket-seat main volume → per-run frame span via run binding
- *
  * Oracles are hand values from fixture volumes (typed status / span / findings
  * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
-import { appendFile, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import { runAnalyst } from "../../src/analyst-entry.ts";
-import type { AnalystB2FrameBucketsActionsSection } from "../../src/analyst-metric-families/b2-frame-buckets-actions.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
-import type { AnalystLegWallClockSection } from "../../src/analyst-metric-families/leg-wall-clock.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
-import {
-  TICKET_SEAT_RUN_BINDING_ENTRY_TYPE,
-  ticketSeatMemorySessionDirectory,
-} from "../../src/ticket-seat-memory.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -481,7 +472,7 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
   await withTempHome(async (home) => {
     const auditorDir = judgeAuditorDir(home);
     await mkdir(auditorDir, { recursive: true });
-    // One continuous ticket-seat volume: summons A (1s wall) then B (2s wall).
+    // One continuous auditor volume: summons A (1s wall) then B (2s wall).
     // Whole-volume span would report ~62s for both (judge r1 probe); interval read must not.
     const partA = gateToolSessionJsonl({
       id: "summons-a",
@@ -526,232 +517,6 @@ test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps 
         { status: "bounce", officerWallMs: 1_000, findingsCount: 1 },
         { status: "pass", officerWallMs: 2_000, findingsCount: 0 },
       ],
-    );
-  });
-});
-
-test("analyst via runAnalyst: shared ticket-seat main volume keeps per-run frame span after continuations", async () => {
-  await withTempHome(async (home) => {
-    // #636 D: two inspector runs share one main sessionFile under the real
-    // ticket-seat nest (git projectRoot + admitted ticket). Whole-volume read
-    // would give both the cumulative wall; binding intervals must keep each
-    // run stable across later appends and later-run damage. Fake dirs without
-    // admitted-request bypass nest discovery and cannot prove the seam.
-    const projectRoot = packageRoot;
-    const book = resolveBookKeyFromGit(projectRoot);
-    const ticketNumber = 636;
-    const runA = "019ff636-0001-7000-8000-0000000000a1";
-    const runB = "019ff636-0002-7000-8000-0000000000b2";
-    const bookRuns = join(home, ".ak-roles", "books", book, "runs");
-    const sharedDir = ticketSeatMemorySessionDirectory({
-      ticketNumber,
-      seat: "inspector",
-      cwd: projectRoot,
-      home,
-    });
-    const sharedSession = join(sharedDir, "session.jsonl");
-    await mkdir(sharedDir, { recursive: true });
-
-    const binding = (runId: string, id: string, at: string) =>
-      JSON.stringify({
-        type: "custom",
-        customType: TICKET_SEAT_RUN_BINDING_ENTRY_TYPE,
-        id,
-        parentId: null,
-        timestamp: at,
-        data: { version: 1, runId },
-      });
-    // Non-zero tool span so B2 retains the tool action (zero-width clips drop).
-    const activity = (
-      id: string,
-      startedAt: string,
-      endedAt: string,
-      model: string,
-      toolId: string,
-    ) =>
-      [
-        JSON.stringify({
-          type: "message",
-          id: `${id}-asst`,
-          parentId: null,
-          timestamp: startedAt,
-          message: {
-            role: "assistant",
-            model,
-            timestamp: startedAt,
-            content: [{ type: "toolCall", id: toolId, name: "read", arguments: {} }],
-          },
-        }),
-        JSON.stringify({
-          type: "message",
-          id: `${id}-res`,
-          parentId: `${id}-asst`,
-          timestamp: endedAt,
-          message: {
-            role: "toolResult",
-            toolCallId: toolId,
-            toolName: "read",
-            timestamp: endedAt,
-            isError: false,
-            content: [{ type: "text", text: "ok" }],
-          },
-        }),
-      ].join("\n");
-
-    // Run A: 1s wall (00:00 → 00:01). Run B: 2s wall (01:00 → 01:02).
-    // Cumulative whole-volume wall would be ~62s for both.
-    await writeFile(
-      sharedSession,
-      [
-        JSON.stringify({
-          type: "session",
-          version: 3,
-          id: "shared-inspector",
-          timestamp: "2026-09-03T00:00:00.000Z",
-          cwd: projectRoot,
-        }),
-        binding(runA, "bind-a", "2026-09-03T00:00:00.000Z"),
-        activity("a", "2026-09-03T00:00:00.000Z", "2026-09-03T00:00:01.000Z", "model-a", "call_a"),
-        binding(runB, "bind-b", "2026-09-03T00:01:00.000Z"),
-        activity("b", "2026-09-03T00:01:00.000Z", "2026-09-03T00:01:02.000Z", "model-b", "call_b"),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-
-    async function seedRun(runId: string, role: string): Promise<void> {
-      const runDir = join(bookRuns, `${runId}@${role}`);
-      await mkdir(join(runDir, "artifacts"), { recursive: true });
-      await mkdir(join(runDir, "session"), { recursive: true });
-      await writeFile(
-        join(runDir, "invocation.json"),
-        `${JSON.stringify({
-          role,
-          runId,
-          bookKey: book,
-          projectRoot,
-          ticketNumber,
-          sessionDirectory: sharedDir,
-          sessionFile: sharedSession,
-        }, null, 2)}\n`,
-        "utf8",
-      );
-      // Real ticket-key discovery requires admitted-request{ticketNumber,projectRoot}.
-      await writeFile(
-        join(runDir, "admitted-request.json"),
-        `${JSON.stringify({
-          role,
-          runId,
-          ticketNumber,
-          projectRoot,
-        }, null, 2)}\n`,
-        "utf8",
-      );
-      await writeFile(
-        join(runDir, "artifacts", "report.json"),
-        `${JSON.stringify({
-          role,
-          runId,
-          outcome: { kind: "accepted", role, status: "completed", decisiveFacts: {} },
-        }, null, 2)}\n`,
-        "utf8",
-      );
-    }
-
-    await seedRun(runA, "inspector");
-    await seedRun(runB, "inspector");
-
-    function issueSurfaces(page: AnalystIssueMetricsPage): {
-      wall: AnalystLegWallClockSection;
-      b2: AnalystB2FrameBucketsActionsSection;
-    } {
-      const bag = page as AnalystIssueMetricsPage & {
-        readonly legWallClock?: AnalystLegWallClockSection;
-        readonly b2FrameBucketsActions?: AnalystB2FrameBucketsActionsSection;
-      };
-      assert.ok(bag.legWallClock, "leg wall-clock section must be present");
-      assert.ok(bag.b2FrameBucketsActions, "B2 section must be present");
-      return { wall: bag.legWallClock, b2: bag.b2FrameBucketsActions };
-    }
-
-    function assertRunFacts(
-      page: AnalystIssueMetricsPage,
-      label: string,
-    ): void {
-      const { wall, b2 } = issueSurfaces(page);
-      const wallA = wall.ranking.find((row) => row.runId === runA);
-      const wallB = wall.ranking.find((row) => row.runId === runB);
-      assert.ok(wallA, `${label}: run A must remain readable with binding interval`);
-      assert.ok(wallB, `${label}: run B must remain readable with binding interval`);
-      assert.equal(wallA.wallMs, 1_000, `${label}: run A owns only its 1s interval`);
-      assert.equal(wallB.wallMs, 2_000, `${label}: run B owns only its 2s interval`);
-      assert.equal(
-        page.unreadable.some((row) => row.runId === runA || row.runId === runB),
-        false,
-        `${label}: closed A/B intervals must not be unreadable`,
-      );
-      const b2A = b2.runs.find((row) => row.runId === runA);
-      const b2B = b2.runs.find((row) => row.runId === runB);
-      assert.ok(b2A, `${label}: run A B2 metrics retained`);
-      assert.ok(b2B, `${label}: run B B2 metrics retained`);
-      assert.equal(b2A.wallMs, 1_000, `${label}: run A B2 wall`);
-      assert.equal(b2B.wallMs, 2_000, `${label}: run B B2 wall`);
-      const toolA = b2A.actions.find(
-        (action) => action.kind === "tool" && action.toolCallId === "call_a",
-      );
-      const toolB = b2B.actions.find(
-        (action) => action.kind === "tool" && action.toolCallId === "call_b",
-      );
-      assert.ok(toolA && toolA.kind === "tool", `${label}: run A tool interval retained`);
-      assert.ok(toolB && toolB.kind === "tool", `${label}: run B tool interval retained`);
-      assert.equal(toolA.toolName, "read");
-      assert.equal(toolB.toolName, "read");
-    }
-
-    const first = await runAnalyst(
-      { mode: "issue", projectRoot },
-      { home },
-    );
-    assertRunFacts(first.page, "initial");
-
-    // Two later continuations append onto the shared volume — prior run facts must not move.
-    await appendFile(
-      sharedSession,
-      [
-        binding("019ff636-0003-7000-8000-0000000000c3", "bind-c", "2026-09-03T00:02:00.000Z"),
-        activity("c", "2026-09-03T00:02:00.000Z", "2026-09-03T00:02:05.000Z", "model-c", "call_c"),
-        binding("019ff636-0004-7000-8000-0000000000d4", "bind-d", "2026-09-03T00:03:00.000Z"),
-        activity("d", "2026-09-03T00:03:00.000Z", "2026-09-03T00:03:09.000Z", "model-d", "call_d"),
-      ].join("\n") + "\n",
-      "utf8",
-    );
-
-    const second = await runAnalyst(
-      { mode: "issue", projectRoot },
-      { home },
-    );
-    assertRunFacts(second.page, "after continuations");
-
-    // Later-run damage on the shared volume must not erase closed A/B intervals.
-    await appendFile(sharedSession, "{broken\n", "utf8");
-
-    const third = await runAnalyst(
-      { mode: "issue", projectRoot },
-      { home },
-    );
-    assertRunFacts(third.page, "after later-run damage");
-
-    // Typed model face: closed intervals keep their session models after damage.
-    const models = await runAnalyst(
-      { mode: "model-groups", projectRoots: [projectRoot] },
-      { home },
-    );
-    const groupKeys = new Set(models.page.groups.map((group) => group.rawGroupKey));
-    assert.equal(groupKeys.has("model-a"), true, "run A model retained after later-run damage");
-    assert.equal(groupKeys.has("model-b"), true, "run B model retained after later-run damage");
-    assert.equal(
-      models.page.unreadable.some((row) => row.runId === runA || row.runId === runB),
-      false,
-      "model-groups must not list closed A/B as unreadable after later-run damage",
     );
   });
 });

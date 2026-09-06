@@ -1,25 +1,20 @@
 /**
- * #636 — 察院/符宝郎 ticket+seat memory principal via public entry.
- * Same ticket reopens the same nest; different tickets isolate; public CLI
- * second call sends continuation.resume on the sealed principal. Native host
- * reopen + cross-host DK-4 true runs are #638 family evidence — this suite
- * does not treat mock handoff as DK-4 completion.
+ * #637 — same-ticket officer summons resume the seat's previous run.
+ * Public entry tracer: first summons mints a run; second summons resumes the
+ * same run directory/principal; seat-table model on resume is the live seat.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  readTicketSeatMemoryLastHost,
-  ticketSeatMemorySessionDirectory,
-} from "../../src/ticket-seat-memory.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runPublicInspector } from "../../src/public-cli/inspector-run.ts";
-import { runPublicNotary, runPublicNotaryResume } from "../../src/public-cli/notary-run.ts";
+import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { parseInspectorArgv, parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -45,8 +40,48 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#636 public notary CLI: same-ticket resume, different-ticket isolation, independent runs", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-mem-"));
+function runIdFromDirectory(runDirectory: string): string {
+  const base = runDirectory.split(/[\\/]/).pop() ?? "";
+  const at = base.indexOf("@");
+  return at === -1 ? base : base.slice(0, at);
+}
+
+/** Materialize the principal session file so resume availability checks pass. */
+async function ensureSessionPrincipal(sessionFile: string): Promise<void> {
+  await mkdir(dirname(sessionFile), { recursive: true });
+  try {
+    await readFile(sessionFile);
+  } catch {
+    await writeFile(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "test-principal",
+        timestamp: "2026-09-06T00:00:00.000Z",
+        cwd: "/tmp",
+      })}\n`,
+      "utf8",
+    );
+  }
+}
+
+async function listBookRunDirs(home: string): Promise<string[]> {
+  const booksRoot = join(home, ".ak-roles", "books");
+  const books = await readdir(booksRoot).catch(() => [] as string[]);
+  const dirs: string[] = [];
+  for (const b of books) {
+    const runsDir = join(booksRoot, b, "runs");
+    const entries = await readdir(runsDir).catch(() => [] as string[]);
+    for (const entry of entries) {
+      dirs.push(join(runsDir, entry));
+    }
+  }
+  return dirs;
+}
+
+test("#637 public notary: first→second summons resume same run; seat model on resume", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-resume-"));
   try {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -59,38 +94,28 @@ test("#636 public notary CLI: same-ticket resume, different-ticket isolation, in
     >;
     await writeFile(
       admittedPath,
-      `${JSON.stringify({ ...admittedRaw, ticketNumber: 636 }, null, 2)}\n`,
+      `${JSON.stringify({ ...admittedRaw, ticketNumber: 637 }, null, 2)}\n`,
       "utf8",
     );
 
-    const memoryDir636 = ticketSeatMemorySessionDirectory({
-      ticketNumber: 636,
-      seat: "notary",
-      cwd: project,
-      home,
-    });
-    const memoryDir700 = ticketSeatMemorySessionDirectory({
-      ticketNumber: 700,
-      seat: "notary",
-      cwd: project,
-      home,
-    });
-
-    // Observing typed continuation + principal path only — not a DK-4 mock-handoff proof.
     const seen: Array<{
+      runId: string;
+      runDirectory: string;
       sessionFile: string;
       kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
+      model?: RoleTurnRequest["model"];
     }> = [];
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        await ensureSessionPrincipal(sessionFile);
         seen.push({
+          runId: runIdFromDirectory(request.runDirectory),
+          runDirectory: request.runDirectory,
           sessionFile,
           kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
+          ...(request.model === undefined ? {} : { model: request.model }),
         });
-        // No scripted session rewrite: contract under test is the turn request wire.
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -108,104 +133,113 @@ test("#636 public notary CLI: same-ticket resume, different-ticket isolation, in
       roleTurnHost: host,
       sessionAppender: appendPiSessionCustomEntry,
       host: "pi" as const,
+      model: { provider: "faux", model: "birth-model", thinking: "high" as const },
     };
 
-    await runPublicNotary(
+    const first = await runPublicNotary(
       ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, createRunId: () => "notary-mem-1" },
+      { ...envBase, createRunId: () => "01a063700-0000-7000-8000-00000000n001" },
       io,
       parseNotaryArgv,
     );
     assert.equal(seen.length, 1, "first public notary must dispatch one turn");
-    assert.equal(seen[0]!.kind, "initial", "first nest open is initial");
-    assert.ok(
-      seen[0]!.sessionFile.startsWith(memoryDir636),
-      `first principal must seal ticket-seat nest, got ${seen[0]!.sessionFile}`,
-    );
+    assert.equal(seen[0]!.kind, "initial", "first summons is initial");
+    assert.equal(first.admitted?.runId, "01a063700-0000-7000-8000-00000000n001");
+    assert.equal(first.admitted?.runDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[0]!.model?.model, "birth-model");
 
-    await runPublicNotary(
+    const runsAfterFirst = await listBookRunDirs(home);
+    const notaryRunsAfterFirst = runsAfterFirst.filter((d) => d.includes("@notary"));
+    assert.equal(notaryRunsAfterFirst.length, 1, "first summons creates exactly one notary run");
+
+    // Live seat table drifts before the second summons.
+    const second = await runPublicNotary(
       ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, createRunId: () => "notary-mem-2" },
+      {
+        ...envBase,
+        createRunId: () => "01a063700-0000-7000-8000-00000000n002",
+        model: { provider: "faux", model: "live-seat-model", thinking: "low" as const },
+      },
       io,
       parseNotaryArgv,
     );
     assert.equal(seen.length, 2, "second public notary must dispatch one turn");
-    assert.equal(seen[1]!.kind, "resume", "existing nest must send continuation.resume");
+    assert.equal(seen[1]!.kind, "resume", "same-ticket re-summons must resume");
+    assert.equal(
+      seen[1]!.runDirectory,
+      seen[0]!.runDirectory,
+      "second summons must continue the same run directory",
+    );
+    assert.equal(
+      seen[1]!.runId,
+      seen[0]!.runId,
+      "second summons must keep the same run id",
+    );
     assert.equal(
       seen[1]!.sessionFile,
       seen[0]!.sessionFile,
-      "same ticket must reopen the same native session file path",
+      "second summons must reopen the same session principal",
     );
-    assert.notEqual(
-      seen[1]!.runDirectory,
-      seen[0]!.runDirectory,
-      "each call keeps its own run directory",
+    assert.equal(
+      second.admitted?.runId,
+      first.admitted?.runId,
+      "admitted identity on resume is the prior run",
     );
+    assert.equal(
+      seen[1]!.model?.model,
+      "live-seat-model",
+      "resume must take the live seat-table model",
+    );
+    assert.equal(seen[1]!.model?.thinking, "low");
 
-    // Different ticket → different nest (typed principal isolation).
-    await writeFile(
-      admittedPath,
-      `${JSON.stringify({ ...admittedRaw, ticketNumber: 700 }, null, 2)}\n`,
-      "utf8",
-    );
-    await runPublicNotary(
-      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, createRunId: () => "notary-mem-700" },
-      io,
-      parseNotaryArgv,
-    );
-    assert.equal(seen.length, 3, "different-ticket notary must dispatch one turn");
-    assert.equal(seen[2]!.kind, "initial", "new ticket opens a fresh nest");
-    assert.ok(
-      seen[2]!.sessionFile.startsWith(memoryDir700),
-      `ticket 700 must seal its own nest, got ${seen[2]!.sessionFile}`,
-    );
-    assert.notEqual(
-      seen[2]!.sessionFile,
-      seen[0]!.sessionFile,
-      "distinct tickets must not share the native volume",
+    const runsAfterSecond = await listBookRunDirs(home);
+    const notaryRunsAfterSecond = runsAfterSecond.filter((d) => d.includes("@notary"));
+    assert.equal(
+      notaryRunsAfterSecond.length,
+      1,
+      "second summons must not mint a new notary run directory",
     );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test("#636 public inspector CLI: ticket+seat nest seals and second call resumes", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-inspector-mem-"));
+test("#637 public inspector: first→second summons resume same run", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-public-inspector-resume-"));
+  const binDir = join(home, "bin");
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
   try {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // #635 seat self-ticket via hermes/gh fixtures — no CLI --ticket.
-    await installGhFixture(join(home, "bin"), {
-      issues: { 636: { body: "issue 636 body", comments: [] } },
+    await installGhFixture(binDir, {
+      issues: { 637: { body: "issue 637 body", comments: [] } },
     });
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 636 },
-    });
-    const memoryDir = ticketSeatMemorySessionDirectory({
-      ticketNumber: 636,
-      seat: "inspector",
-      cwd: project,
-      home,
+    await installHermesFixture(binDir, {
+      resolverResponse: { assertion: "ticket", ticketNumber: 637 },
     });
 
     const seen: Array<{
+      runId: string;
+      runDirectory: string;
       sessionFile: string;
       kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
     }> = [];
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        await ensureSessionPrincipal(sessionFile);
         seen.push({
+          runId: runIdFromDirectory(request.runDirectory),
+          runDirectory: request.runDirectory,
           sessionFile,
           kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
         });
         return { code: 0, stderr: "", timedOut: false };
       },
     };
+
     const io = {
       stdout: (_t: string) => {},
       stderr: (_t: string) => {},
@@ -221,186 +255,39 @@ test("#636 public inspector CLI: ticket+seat nest seals and second call resumes"
       host: "pi" as const,
     };
 
-    // PATH must see hermes/gh fixtures for seat ticket bind.
-    const prevPath = process.env.PATH;
-    process.env.PATH = `${join(home, "bin")}${prevPath ? `:${prevPath}` : ""}`;
-    try {
-      await runPublicInspector(
-        ["inspect once for ticket #636"],
-        { ...envBase, createRunId: () => "inspector-mem-1" },
-        io,
-        parseInspectorArgv,
-      );
-      assert.equal(seen.length, 1, "first public inspector must dispatch one turn");
-      assert.equal(seen[0]!.kind, "initial", "first inspector nest open is initial");
-      assert.ok(
-        seen[0]!.sessionFile.startsWith(memoryDir),
-        `inspector principal must seal ticket-seat nest, got ${seen[0]!.sessionFile}`,
-      );
-
-      await runPublicInspector(
-        ["inspect again for ticket #636"],
-        { ...envBase, createRunId: () => "inspector-mem-2" },
-        io,
-        parseInspectorArgv,
-      );
-      assert.equal(seen.length, 2, "second public inspector must dispatch one turn");
-      assert.equal(seen[1]!.kind, "resume", "existing inspector nest must send continuation.resume");
-      assert.equal(
-        seen[1]!.sessionFile,
-        seen[0]!.sessionFile,
-        "same ticket inspector must reopen the same native session file path",
-      );
-      assert.notEqual(
-        seen[1]!.runDirectory,
-        seen[0]!.runDirectory,
-        "each inspector call keeps its own run directory",
-      );
-    } finally {
-      if (prevPath === undefined) delete process.env.PATH;
-      else process.env.PATH = prevPath;
-    }
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("#636 public notary: Grok native home spans failure, same-run retry, return-to-Grok", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-notary-native-home-"));
-  try {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project);
-    const admittedPath = join(sourceRunPath, "admitted-request.json");
-    const admittedRaw = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    await writeFile(
-      admittedPath,
-      `${JSON.stringify({ ...admittedRaw, ticketNumber: 636 }, null, 2)}\n`,
-      "utf8",
-    );
-
-    const memoryDir = ticketSeatMemorySessionDirectory({
-      ticketNumber: 636,
-      seat: "notary",
-      cwd: project,
-      home,
-    });
-
-    // Typed request + last-host ownership only — not a native ACP true-run (#638).
-    const seen: Array<{
-      kind: RoleTurnRequest["continuation"]["kind"];
-      runDirectory: string;
-      nativeHomeRunDirectory?: string;
-      previousHost?: string;
-    }> = [];
-    const host = {
-      async executeTurn(request: RoleTurnRequest) {
-        seen.push({
-          kind: request.continuation.kind,
-          runDirectory: request.runDirectory,
-          ...(request.nativeHomeRunDirectory === undefined
-            ? {}
-            : { nativeHomeRunDirectory: request.nativeHomeRunDirectory }),
-          ...(request.hostTransition === undefined
-            ? {}
-            : { previousHost: request.hostTransition.previousHost }),
-        });
-        return { code: 1, stderr: "controlled-stop\n", timedOut: false };
-      },
-    };
-
-    const io = {
-      stdout: (_t: string) => {},
-      stderr: (_t: string) => {},
-    };
-    const envBase = {
-      packageRoot,
-      home,
-      agentDir: join(home, "agent"),
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-      sessionAppender: appendPiSessionCustomEntry,
-    };
-
-    // 1) Failure path still records Grok native-home ownership on the nest.
-    await runPublicNotary(
-      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-1" },
+    const first = await runPublicInspector(
+      ["Inspect ticket #637 materials."],
+      { ...envBase, createRunId: () => "01a063700-0000-7000-8000-00000000i001" },
       io,
-      parseNotaryArgv,
+      parseInspectorArgv,
     );
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
-    assert.equal(seen[0]!.nativeHomeRunDirectory, undefined);
-    const afterFailure = await readTicketSeatMemoryLastHost(memoryDir);
-    assert.deepEqual(afterFailure, {
-      host: "grok-build",
-      runDirectory: seen[0]!.runDirectory,
-    });
+    assert.equal(first.admitted?.ticketNumber, 637);
+    assert.equal(first.admitted?.runId, "01a063700-0000-7000-8000-00000000i001");
 
-    // 2) New-run resume reopens the established Grok native home.
-    await runPublicNotary(
-      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, host: "grok-build", createRunId: () => "notary-nh-2" },
+    const second = await runPublicInspector(
+      ["Inspect ticket #637 materials again."],
+      { ...envBase, createRunId: () => "01a063700-0000-7000-8000-00000000i002" },
       io,
-      parseNotaryArgv,
+      parseInspectorArgv,
     );
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
-    assert.equal(seen[1]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
-    assert.notEqual(seen[1]!.runDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[1]!.runDirectory, seen[0]!.runDirectory);
+    assert.equal(seen[1]!.runId, seen[0]!.runId);
+    assert.equal(seen[1]!.sessionFile, seen[0]!.sessionFile);
+    assert.equal(second.admitted?.runId, first.admitted?.runId);
 
-    // 3) Same-run retry (invocation already marked grok) still carries native home.
-    await runPublicNotaryResume(
-      { runId: "notary-nh-2" },
-      { ...envBase, host: "grok-build" },
-      io,
+    const runs = await listBookRunDirs(home);
+    assert.equal(
+      runs.filter((d) => d.includes("@inspector")).length,
+      1,
+      "second inspector summons must not mint a new run",
     );
-    assert.equal(seen.length, 3);
-    assert.equal(seen[2]!.kind, "resume");
-    assert.equal(seen[2]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
-    assert.equal(seen[2]!.runDirectory, seen[1]!.runDirectory);
-
-    // 4) Leave Grok for Pi — last-host host flips, Grok native home pointer preserved.
-    await runPublicNotary(
-      ["--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
-      { ...envBase, host: "pi", createRunId: () => "notary-nh-3" },
-      io,
-      parseNotaryArgv,
-    );
-    assert.equal(seen.length, 4);
-    assert.equal(seen[3]!.kind, "resume");
-    assert.equal(seen[3]!.previousHost, "grok-build");
-    const afterPi = await readTicketSeatMemoryLastHost(memoryDir);
-    assert.deepEqual(afterPi, {
-      host: "pi",
-      runDirectory: seen[0]!.runDirectory,
-    });
-
-    // 5) Old Grok run retry after Pi intermediate — last-host (pi) owns host,
-    // not the stale per-run invocation mark still recorded as grok-build.
-    // Also the return-to-Grok path: reopen the established native home, not the Pi run.
-    await runPublicNotaryResume(
-      { runId: "notary-nh-2" },
-      { ...envBase, host: "grok-build" },
-      io,
-    );
-    assert.equal(seen.length, 5);
-    assert.equal(seen[4]!.kind, "resume");
-    assert.equal(seen[4]!.previousHost, "pi");
-    assert.equal(seen[4]!.nativeHomeRunDirectory, seen[0]!.runDirectory);
-    assert.equal(seen[4]!.runDirectory, seen[1]!.runDirectory);
-    const afterReturn = await readTicketSeatMemoryLastHost(memoryDir);
-    assert.deepEqual(afterReturn, {
-      host: "grok-build",
-      runDirectory: seen[0]!.runDirectory,
-    });
   } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
     await rm(home, { recursive: true, force: true });
   }
 });

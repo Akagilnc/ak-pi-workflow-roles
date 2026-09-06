@@ -21,6 +21,29 @@ export type SeatTicketBindingEnv = {
 };
 
 /**
+ * Instruction → ticket resolution without admission (#635 / #637).
+ * Used to locate a prior same-ticket run before minting a new one.
+ */
+export async function resolveInstructionTicket(
+  instruction: string,
+  projectRoot: string,
+  env: SeatTicketBindingEnv = {},
+): Promise<DiaristTicketResolution> {
+  const resolver = createHermesDiaristTicketResolver({
+    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
+    cwd: projectRoot,
+  });
+  const checkExistence = createGhTicketExistenceChecker();
+  const origin = resolveDiaristGithubOrigin(projectRoot);
+  return resolveDiaristTicketFromInstruction({
+    instruction,
+    origin,
+    resolver,
+    checkExistence,
+  });
+}
+
+/**
  * Bind ticketNumber onto an unbound admitted seat via LLM instruction recognition.
  * Already-settled admissions (ticketNumber or durable true-unbound) short-circuit —
  * no re-entry into hermes on auto-resume attempts or manual resume (#635).
@@ -35,18 +58,11 @@ export async function resolveSeatTicketBinding(
     return { kind: "true-unbound" };
   }
 
-  const resolver = createHermesDiaristTicketResolver({
-    ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
-    cwd: admitted.projectRoot,
-  });
-  const checkExistence = createGhTicketExistenceChecker();
-  const origin = resolveDiaristGithubOrigin(admitted.projectRoot);
-  const resolution = await resolveDiaristTicketFromInstruction({
-    instruction: admitted.instruction,
-    origin,
-    resolver,
-    checkExistence,
-  });
+  const resolution = await resolveInstructionTicket(
+    admitted.instruction,
+    admitted.projectRoot,
+    env,
+  );
   if (resolution.kind === "ticket") {
     await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
   } else {

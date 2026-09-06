@@ -23,7 +23,7 @@ export function gateToolSessionJsonl(input: {
   readonly attemptEntryId?: string;
   /**
    * When false, omit the session header — used to append a second summons onto an
-   * existing continuous ticket-seat volume (#636 interval read).
+   * existing continuous auditor volume (multi-attempt interval read).
    */
   readonly includeHeader?: boolean;
 }): string {

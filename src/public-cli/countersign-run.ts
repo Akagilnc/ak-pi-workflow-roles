@@ -5,6 +5,7 @@
  * Diarist is a prior station on the court pipeline, not a countersign call.
  * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
  */
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   createDiaristIssueFaceFetcher,
@@ -19,11 +20,16 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
+  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
+  recordTrueUnboundTicketResolution,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
+import {
+  resolveInstructionTicket,
+  resolveSeatTicketBinding,
+} from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
   runPostAdmissionOneShot,
@@ -32,6 +38,7 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
+  findLatestRunIdForSeatTicket,
   loadResumableCountersignRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -82,9 +89,46 @@ export async function runPublicCountersign(
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseCountersignArgvResult;
+  try {
+    parsed = parseCountersignArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #637: same ticket → resume prior countersign run before minting a new one.
+  // Probe failures fall through to fresh admit so beforeDispatch can settle them
+  // as controlled failures (same face as pre-#637).
+  const projectRoot = parsed.project ?? env.cwd;
+  let ticketResolution: Awaited<ReturnType<typeof resolveInstructionTicket>> | undefined;
+  try {
+    ticketResolution = await resolveInstructionTicket(
+      parsed.instruction,
+      projectRoot,
+      env,
+    );
+    if (ticketResolution.kind === "ticket") {
+      const previousRunId = await findLatestRunIdForSeatTicket({
+        home: env.home,
+        bookKey: resolveBookKeyFromGit(projectRoot),
+        role: "countersign",
+        ticketNumber: ticketResolution.ticketNumber,
+      });
+      if (previousRunId !== undefined) {
+        return await runPublicCountersignResume({ runId: previousRunId }, env, io);
+      }
+    }
+  } catch {
+    // Leave ticketResolution undefined — fresh path re-resolves in beforeDispatch.
+    ticketResolution = undefined;
+  }
+
   let admitted: AdmittedCountersignInvocation;
   try {
-    const parsed = parseCountersignArgv(argv);
     admitted = await admitCountersignInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -127,8 +171,9 @@ export async function runPublicCountersign(
       ),
     },
   };
-  // Mutable shell: pre-court ticket resolution may rebind activation before executeTurn.
+  // Mutable shell: ticket bind re-projects activation before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
+  const probedTicket = ticketResolution;
 
   return await runPostAdmissionOneShot({
     admitted,
@@ -137,8 +182,14 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        await resolveSeatTicketBinding(admitted, env);
-        // Re-project activation so Notary gate flag carries the post-admission binding.
+        // #635: reuse successful probe; otherwise resolve here so failures settle.
+        if (probedTicket === undefined) {
+          await resolveSeatTicketBinding(admitted, env);
+        } else if (probedTicket.kind === "ticket") {
+          await bindAdmittedTicketNumber(admitted, probedTicket.ticketNumber);
+        } else {
+          await recordTrueUnboundTicketResolution(admitted);
+        }
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),

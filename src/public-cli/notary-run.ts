@@ -2,16 +2,22 @@
  * Public Notary Role run: admit source-run locator → shared post-admission coordinator
  * → settle Terminal result (#448 / #517). Zero caller prompt/attachment. Lifecycle is
  * the shared post-admission seam; this module keeps only Notary adapters.
+ * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
+import {
+  NotarySourceRunError,
+  resolveNotarySourceRunLocator,
+} from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { rebindAdmittedToTicketSeatMemory } from "../ticket-seat-memory.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
   buildNotaryTransportPrompt,
+  readTicketNumberFromSourceRun,
   type AdmittedNotaryInvocation,
-  type ParseNotaryArgvResult
+  type ParseNotaryArgvResult,
 } from "./invocation.ts";
 import {
   runPostAdmissionOneShot,
@@ -21,6 +27,7 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
+  findLatestRunIdForSeatTicket,
   loadResumableNotaryRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -72,9 +79,51 @@ export async function runPublicNotary(
   admitted?: AdmittedNotaryInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseNotaryArgvResult;
+  try {
+    parsed = parseNotaryArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #637: same ticket → resume prior notary run before minting a new one.
+  const projectRoot = parsed.project ?? env.cwd;
+  try {
+    const source = await resolveNotarySourceRunLocator({
+      projectRoot,
+      sourceRun: parsed.sourceRun,
+      home: env.home,
+    });
+    const ticketNumber = await readTicketNumberFromSourceRun(source.runDirectory);
+    if (ticketNumber !== undefined) {
+      const previousRunId = await findLatestRunIdForSeatTicket({
+        home: env.home,
+        bookKey: resolveBookKeyFromGit(projectRoot),
+        role: "notary",
+        ticketNumber,
+      });
+      if (previousRunId !== undefined) {
+        return await runPublicNotaryResume({ runId: previousRunId }, env, io);
+      }
+    }
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    if (error instanceof NotarySourceRunError) {
+      presentStructuralRejection(new CliUsageError(error.message, { cause: error }), io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
   let admitted: AdmittedNotaryInvocation;
   try {
-    const parsed = parseNotaryArgv(argv);
     admitted = await admitNotaryInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -93,27 +142,12 @@ export async function runPublicNotary(
     throw error;
   }
 
-  // #636: ticket from source-run → continue ticket+seat memory principal across runs.
-  // Rebind before admitted mark so run-state session paths name the memory principal.
-  // Existing nest → continuation.kind=resume so real hosts reopen native volume (Grok
-  // session/load; Pi/Grok hostTransition path handoff). Same-ticket rebind alone is not resume.
-  const memory = await rebindAdmittedToTicketSeatMemory({
-    admitted,
-    seat: "notary",
-    principalAuthority: env.principalAuthority,
-  });
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     packageRoot: env.packageRoot,
   });
-  // Prompt is the same officer transport; only continuation kind flips (#636 / ADR 0079).
-  const continuation = {
-    kind: memory?.resumed === true ? ("resume" as const) : ("initial" as const),
-    prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
-  };
-
   const turnRequest = buildNotaryTurnRequest(admitted, {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -124,7 +158,10 @@ export async function runPublicNotary(
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
-    continuation,
+    continuation: {
+      kind: "initial",
+      prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+    },
   });
 
   return await runPostAdmissionOneShot({

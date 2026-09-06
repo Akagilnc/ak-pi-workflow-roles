@@ -12,9 +12,7 @@ import {
   type AnalystGateCycleRound,
 } from "../analyst-gate-cycles-read.ts";
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
-import {
-  resolveTicketSeatMemoryNestDirectories,
-} from "../ticket-seat-memory.ts";
+
 import {
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
@@ -1008,16 +1006,7 @@ async function loadBoundAuditorVolumes(
     latestParentUserIndex = i;
     break;
   }
-  const runDirectory = join(dirname(sessionFile), "..");
-  // #636: ticket-seat auditor memory nest via sole discovery helper.
-  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
-    runDirectory,
-    seats: ["auditor"],
-  });
-  const childDirectories = [
-    join(dirname(sessionFile), "auditor-roles"),
-    ...memoryNests,
-  ];
+  const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   // Auto-resume seam (owner A): stale check must ignore resume envelope and
   // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
   // first attempt's child after resume advanced latest, losing retentionFailure
@@ -1043,9 +1032,8 @@ async function loadBoundAuditorVolumes(
       }
       const header = entries.find((entry) => entry.type === "session");
       if (!isRecord(header)) continue;
-      // Ticket-seat continuous memory keeps the first parent's header.parentSession;
-      // binding.parent.sessionFile is the per-summons authority (#636).
-      // Each binding owns only its interval — never whole-volume provider/compliance.
+      // Parent-attempt binding owns its interval on multi-attempt volumes
+      // (never whole-volume provider/compliance).
       const bindingIndexes: number[] = [];
       for (let i = 0; i < entries.length; i += 1) {
         const entry = entries[i];
@@ -2366,9 +2354,8 @@ export function projectTerminalGateFact(
 }
 
 /**
- * Read gate facts from the run's session/auditor-roles nest and, when the run
- * carries a ticket, from #636 ticket-seat memory nests via the sole nested-volume
- * reader (#446/#478). Missing directories → undefined (no-gate zero change).
+ * Read gate facts from the run's session/auditor-roles nest (#446/#478).
+ * Missing directories → undefined (no-gate zero change).
  * Damaged discovered volumes propagate — never wash to "no gate".
  */
 export async function extractGateFactFromSessionDirectory(
@@ -2378,15 +2365,7 @@ export async function extractGateFactFromSessionDirectory(
     readonly parentSessionFile?: string;
   } = {},
 ): Promise<TerminalGateFact | undefined> {
-  const runDirectory = options.runDirectory ?? join(sessionDirectory, "..");
-  const memoryNests = await resolveTicketSeatMemoryNestDirectories({
-    runDirectory,
-    seats: ["inspector", "notary"],
-  });
-  const directories = [
-    join(sessionDirectory, "auditor-roles"),
-    ...memoryNests,
-  ];
+  const directories = [join(sessionDirectory, "auditor-roles")];
   const parentSessionFile =
     options.parentSessionFile ?? join(sessionDirectory, "session.jsonl");
   const rounds = await readAnalystGateCyclesFromAuditorRoles(directories, {

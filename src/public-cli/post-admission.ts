@@ -26,11 +26,6 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
-import {
-  isTicketSeatMemoryBound,
-  readTicketSeatMemoryLastHost,
-  writeTicketSeatMemoryLastHost,
-} from "../ticket-seat-memory.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   missingCredentialPreDispatchFailure,
@@ -59,12 +54,10 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
-  projectThrownFailureLeaf,
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   sealedAcceptanceRedispatchDisposition,
-  type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -233,127 +226,6 @@ export async function presentControlledFailure<
   };
 }
 
-/** Serialize one failure leaf for details.concurrentFailures (sole leaf owner = settlement). */
-function concurrentFailureLeafRecord(leaf: ControlledFailure): {
-  readonly cause: ControlledFailureCause;
-  readonly diagnostic: string;
-  readonly identity?: { readonly name?: string; readonly code?: string | number };
-  readonly details?: Readonly<Record<string, unknown>>;
-} {
-  return {
-    cause: leaf.cause,
-    diagnostic: leaf.diagnostic,
-    ...(leaf.identity === undefined ? {} : { identity: leaf.identity }),
-    ...(leaf.details === undefined ? {} : { details: leaf.details }),
-  };
-}
-
-function existingConcurrentFailureLeaves(
-  details: Readonly<Record<string, unknown>> | undefined,
-): unknown[] {
-  const value = details?.concurrentFailures;
-  return Array.isArray(value) ? [...value] : [];
-}
-
-/**
- * Attach last-host write failure as concurrent secondary evidence on an existing
- * returned-path ControlledFailureInput — append, never replace prior leaves.
- */
-function withLastHostWriteConcurrentFailure(
-  input: ControlledFailureInput,
-  writeError: unknown,
-): ControlledFailureInput {
-  const writeLeaf = concurrentFailureLeafRecord(projectThrownFailureLeaf(writeError));
-  if (input.knownFailure !== undefined) {
-    const failure = input.knownFailure;
-    return {
-      ...input,
-      knownFailure: {
-        cause: failure.cause,
-        ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-        ...(failure.diagnostic === undefined
-          ? {}
-          : { diagnostic: failure.diagnostic }),
-        details: {
-          ...(failure.details ?? {}),
-          concurrentFailures: [
-            ...existingConcurrentFailureLeaves(failure.details),
-            writeLeaf,
-          ],
-        },
-      },
-    };
-  }
-  return {
-    ...input,
-    knownDetails: {
-      ...(input.knownDetails ?? {}),
-      concurrentFailures: [
-        ...existingConcurrentFailureLeaves(input.knownDetails),
-        writeLeaf,
-      ],
-    },
-  };
-}
-
-/** Settled failure roleOutcome already narrowed by kind at the sole call site. */
-type SettledFailureOutcome = Extract<
-  TerminalResult["roleOutcome"],
-  { kind: "failure" }
->;
-
-/**
- * Rebuild the settled failure as knownFailure so concurrent last-host write can
- * append without replacing cause/identity/diagnostic/details.
- * Caller narrows by kind; no second runtime re-check.
- */
-function knownFailureFromSettledFailureOutcome(
-  outcome: SettledFailureOutcome,
-): RoleTurnKnownFailure {
-  const facts = outcome.decisiveFacts;
-  const secondary = facts.secondaryEvidence;
-  const details =
-    secondary !== undefined &&
-    typeof secondary === "object" &&
-    secondary !== null &&
-    !Array.isArray(secondary)
-      ? (secondary as Readonly<Record<string, unknown>>)
-      : undefined;
-  const identity: { name?: string; code?: string | number } = {};
-  if (typeof facts.errorName === "string") identity.name = facts.errorName;
-  if (
-    typeof facts.errorCode === "string" ||
-    typeof facts.errorCode === "number"
-  ) {
-    identity.code = facts.errorCode;
-  }
-  return {
-    cause: outcome.cause,
-    diagnostic: outcome.diagnostic,
-    ...(Object.keys(identity).length > 0 ? { identity } : {}),
-    ...(details === undefined ? {} : { details }),
-  };
-}
-
-/**
- * Presence envelope for a caught last-host write failure.
- * Own-key presence is distinct from the caught value: `throw undefined` must stay a
- * real failure fact (same rule as settlement thrown own-key), never a missing-write sentinel.
- */
-type LastHostWriteFailure = { readonly error: unknown };
-
-/** Keep primary throw identity; attach last-host write as a real AggregateError leaf. */
-function withOptionalLastHostWriteThrow(
-  primary: unknown,
-  writeFailure: LastHostWriteFailure | undefined,
-  message: string,
-): unknown {
-  if (writeFailure === undefined) return primary;
-  return new AggregateError([primary, writeFailure.error], message, {
-    cause: primary,
-  });
-}
-
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -389,54 +261,16 @@ export async function dispatchPostAdmissionTurn<
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
-    // #636 ticket-seat memory: one last-host page owns both last host and Grok native-home run.
-    // Open is not turn return/throw: production Grok notes the open fact at bind success;
-    // last-host records when the host returned a result OR when native home actually opened.
-    // Pre-open throws claim nothing; post-open throws retain the opened run.
-    // Side effects are gated by explicit ticket+seat binding — never by directory-outside-run guessing.
+    // Same-run resume (#637) keeps host identity on the run's invocation page.
     let previousHost: string | undefined;
-    let previousRunDirectory: string | undefined;
-    let nativeHomeRunDirectory: string | undefined;
-    let openedNativeHomeRunDirectory: string | undefined;
     const liveHost = env.host;
     const principalCoordinates =
       admitted.principal === undefined
         ? undefined
         : env.principalAuthority.decode(admitted.principal);
-    const ticketSeatMemoryBound = isTicketSeatMemoryBound({
-      role: admitted.role,
-      ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-    });
     let turnRequest: RoleTurnRequest;
     try {
-      // Ticket-seat host authority lives on the nest last-host page only.
-      // Per-run invocation.host must not override: old-run retry after a cross-host
-      // intermediate would otherwise keep the stale run host and drop the transition.
-      // Non-ticket-seat paths still read the per-run invocation mark (#617).
-      if (ticketSeatMemoryBound && principalCoordinates !== undefined) {
-        const lastHost = await readTicketSeatMemoryLastHost(
-          principalCoordinates.sessionDirectory,
-        );
-        if (lastHost !== undefined) {
-          previousHost = lastHost.host;
-          // runDirectory on last-host is the established Grok native isolation run when present
-          // (preserved across non-Grok hosts so return-to-Grok can reopen it).
-          if (
-            typeof lastHost.runDirectory === "string" &&
-            lastHost.runDirectory.length > 0
-          ) {
-            previousRunDirectory = lastHost.runDirectory;
-            if (
-              liveHost === "grok-build" &&
-              request.continuation.kind === "resume"
-            ) {
-              nativeHomeRunDirectory = lastHost.runDirectory;
-            }
-          }
-        }
-      } else {
-        previousHost = await readInvocationHost(admitted.runDirectory);
-      }
+      previousHost = await readInvocationHost(admitted.runDirectory);
       const hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
           ? await projectHostTransitionPriorNative({
@@ -444,27 +278,14 @@ export async function dispatchPostAdmissionTurn<
               liveHost,
               runDirectory: admitted.runDirectory,
               piSessionFile: principalCoordinates.sessionFile,
-              ...(previousRunDirectory === undefined ? {} : { previousRunDirectory }),
             })
           : undefined;
       turnRequest = request;
       if (hostTransition !== undefined) {
         turnRequest = { ...turnRequest, hostTransition };
       }
-      if (nativeHomeRunDirectory !== undefined) {
-        turnRequest = { ...turnRequest, nativeHomeRunDirectory };
-      }
-      // Capture the actual Grok open event from production isolation (bind success).
-      if (ticketSeatMemoryBound) {
-        turnRequest = {
-          ...turnRequest,
-          noteNativeHomeOpened: (runDirectory) => {
-            openedNativeHomeRunDirectory = runDirectory;
-          },
-        };
-      }
     } catch (error) {
-      // last-host / prior-native IO is on the public one-shot path — controlled failure, not bare throw.
+      // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return (await presentControlledFailure(
         admitted,
         {
@@ -502,74 +323,23 @@ export async function dispatchPostAdmissionTurn<
       }
     }
 
-    // Turn outcome and open fact are separate events. Discriminate throw value undefined.
-    let turnOutcome:
-      | { readonly kind: "returned"; readonly result: RoleTurnResult }
-      | { readonly kind: "thrown"; readonly error: unknown };
+    let result: RoleTurnResult;
     try {
-      turnOutcome = {
-        kind: "returned",
-        result: await env.roleTurnHost.executeTurn(turnRequest),
-      };
+      result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
-      turnOutcome = { kind: "thrown", error };
-    }
-
-    // last-host authority: host returned a turn result OR native home actually opened.
-    // Grok open fact comes from production bind (noteNativeHomeOpened), not from return/throw.
-    // Mock hosts that return without opening still record via the returned path.
-    // Pre-open throws: neither → no claim. Post-open throws: open fact → retain.
-    // Spans returned failure / same-run retry / return-to-Grok / post-open body+cleanup throws.
-    // last-host write failure is pending secondary evidence only — never forks settlement.
-    // Thrown dual: AggregateError leaves. Returned dual: same shared settle/resolve chain,
-    // write leaf attached at the single present boundary (ADR 0080 single-settlement-disposition).
-    // Presence is the envelope, not the caught value — `throw undefined` stays a failure fact.
-    let lastHostWriteFailure: LastHostWriteFailure | undefined;
-    const hostEngaged =
-      turnOutcome.kind === "returned" || openedNativeHomeRunDirectory !== undefined;
-    if (
-      hostEngaged &&
-      liveHost !== undefined &&
-      principalCoordinates !== undefined &&
-      ticketSeatMemoryBound
-    ) {
-      try {
-        await writeTicketSeatMemoryLastHost(
-          principalCoordinates.sessionDirectory,
-          liveHost,
-          liveHost === "grok-build"
-            ? (openedNativeHomeRunDirectory ??
-                nativeHomeRunDirectory ??
-                admitted.runDirectory)
-            : previousRunDirectory,
-        );
-      } catch (error) {
-        lastHostWriteFailure = { error };
-      }
-    }
-
-    if (turnOutcome.kind === "thrown") {
-      // Preserve original throw/cause (pre-open or post-open). last-host already
-      // retained open fact above when bind had succeeded; write fail stays concurrent.
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: withOptionalLastHostWriteThrow(
-            turnOutcome.error,
-            lastHostWriteFailure,
-            "host turn and ticket-seat last-host write failed",
-          ),
+          thrown: error,
         },
         adapters,
         env.principalAuthority,
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
-
-    const result = turnOutcome.result;
 
     try {
       await writeFile(
@@ -592,11 +362,7 @@ export async function dispatchPostAdmissionTurn<
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
-          thrown: withOptionalLastHostWriteThrow(
-            error,
-            lastHostWriteFailure,
-            "settlement and ticket-seat last-host write failed",
-          ),
+          thrown: error,
         },
         adapters,
         env.principalAuthority,
@@ -604,44 +370,6 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
-      if (lastHostWriteFailure !== undefined) {
-        if (settled.roleOutcome.kind === "failure") {
-          // Existing failure terminal stays primary; last-host write is concurrent only.
-          // shouldPresentSettled must not be read as "no existing failure".
-          return (await presentControlledFailure(
-            admitted,
-            withLastHostWriteConcurrentFailure(
-              {
-                timedOut: result.timedOut,
-                code: result.code,
-                stderr: result.stderr,
-                knownFailure: knownFailureFromSettledFailureOutcome(
-                  settled.roleOutcome,
-                ),
-              },
-              lastHostWriteFailure.error,
-            ),
-            adapters,
-            env.principalAuthority,
-            io,
-          )) as { exitCode: number; admitted: A; terminal: T };
-        }
-        // No existing failure terminal — last-host write is the sole public failure.
-        // thrown key is always set so `throw undefined` stays own-key present.
-        return (await presentControlledFailure(
-          admitted,
-          {
-            timedOut: result.timedOut,
-            code: result.code,
-            stderr: result.stderr,
-            thrown: lastHostWriteFailure.error,
-          },
-          adapters,
-          env.principalAuthority,
-          io,
-        )) as { exitCode: number; admitted: A; terminal: T };
-      }
-      // last-host recorded after host returned a turn result (shared failure/retry/return fact).
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
@@ -670,20 +398,14 @@ export async function dispatchPostAdmissionTurn<
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
-    const hostFailureInput: ControlledFailureInput = {
-      timedOut: result.timedOut,
-      code: result.code,
-      stderr: result.stderr,
-      ...controlledFailureInputFromResolution(resolution),
-    };
     return (await presentControlledFailure(
       admitted,
-      lastHostWriteFailure === undefined
-        ? hostFailureInput
-        : withLastHostWriteConcurrentFailure(
-            hostFailureInput,
-            lastHostWriteFailure.error,
-          ),
+      {
+        timedOut: result.timedOut,
+        code: result.code,
+        stderr: result.stderr,
+        ...controlledFailureInputFromResolution(resolution),
+      },
       adapters,
       env.principalAuthority,
       io,
