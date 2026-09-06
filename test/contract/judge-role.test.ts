@@ -573,16 +573,12 @@ async function workerCompletionGatekeeperHarness(options: {
       };
       // Real transport failure stays infrastructure (not GatekeeperDecisionError).
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      // Shape-unusable officer decision is typed unreadable with retained submission (ADR 0055) —
-      // not transport abort, not forged bounce.
-      await reject(`${officer}-unusable-release`, (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "unreadable");
-        if (error.result.status === "unreadable") {
-          assert.equal(error.result.officer, officer);
-          assert.deepEqual(error.result.submission, officerUnusableSubmission);
-        }
-      });
+      // Shape-unusable officer decision: parent stands (ADR 0055 / #675) — not NonPass reject,
+      // not transport abort, not forged bounce. runGatekeeper still projects status=unreadable.
+      // Judge may return pending-round-closure; worker may terminate — common contract is no throw.
+      await assert.doesNotReject(
+        () => execute(`${officer}-unusable-release`, output, this.context(`${officer}-unusable-release`, toolName)),
+      );
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.equal(error.result.status, "no_receipt");
@@ -1716,7 +1712,9 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
     officer: "notary",
   });
   await tracer.assertRejectSequence();
-  assert.equal(auditCalls, 0, "auditor must not start on Gatekeeper non-pass");
+  // Shape-unreadable parent-stands past the gate and reaches auditor once (#675 / ADR 0055).
+  // bounce/no_receipt/transport still keep auditor dark.
+  assert.equal(auditCalls, 1, "auditor runs once when shape-unreadable parent-stands");
   const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
   const { sealed, pending } = await acceptThroughTypedRoundClosure({
     handlers: harness.handlers,
@@ -1728,8 +1726,8 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   });
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
-  assert.equal(auditCalls, 1, "auditor runs only after Notary pass");
-  // #675: 4 reject summons + 1 pass = 5.
+  assert.equal(auditCalls, 2, "auditor runs again after Notary pass");
+  // #675: transport+unreadable+no_receipt+bounce + 1 pass = 5.
   assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 
@@ -1757,7 +1755,7 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
       return true;
     },
   );
-  assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper non-pass for other judgeStatus");
+  assert.equal(auditCalls, 2, "auditor must not start on Gatekeeper transport non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
 });
 

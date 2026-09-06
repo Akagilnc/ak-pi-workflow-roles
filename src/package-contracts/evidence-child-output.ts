@@ -20,7 +20,7 @@ export const evidenceChildOutputSchema = withInfrastructureFailureDeclaration(
   ),
 );
 
-/** Report body retained as delivered — no type/blank reshape (ADR 0055 / §0). */
+/** Report body retained as delivered — no type/blank/field-presence reshape (ADR 0055 / §0). */
 export type EvidenceChildOutput = { readonly report: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -30,16 +30,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function projectLawfulEvidenceChildOutput(
   value: unknown,
 ): EvidenceChildOutput | undefined {
-  // Presence of report field is the only discriminator. No String() conversion,
-  // no blank trim gate — original candidate bytes stay (ADR 0055 / CLAUDE.md §0).
-  if (!isRecord(value) || !Object.hasOwn(value, "report")) return undefined;
-  return { report: value.report };
+  // No field-presence gate (ADR 0055 / CLAUDE.md §0 / #675). Retain delivered bytes:
+  // report key when present, otherwise the whole object as the report body.
+  if (!isRecord(value)) return undefined;
+  return { report: Object.hasOwn(value, "report") ? value.report : value };
 }
 
 export function validateRecordedEvidenceChildOutput(value: unknown): EvidenceChildOutput {
   const projected = projectLawfulEvidenceChildOutput(value);
   if (projected === undefined) {
-    throw new Error("Evidence-child output has no report field");
+    throw new Error("Evidence-child output is not an object");
   }
   return projected;
 }

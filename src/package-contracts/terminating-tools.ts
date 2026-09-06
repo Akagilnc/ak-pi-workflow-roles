@@ -231,11 +231,12 @@ export function validateAcceptedDetails(
     [EVIDENCE_CHILD_OUTPUT_TOOL_NAME]: [],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
+  // Evidence-child: any object is a candidate body — no report-field presence gate (#675 / ADR 0055).
   const evidenceChildDiscriminator =
     toolName === EVIDENCE_CHILD_OUTPUT_TOOL_NAME
     && candidate !== null
     && typeof candidate === "object"
-    && Object.hasOwn(candidate, "report");
+    && !Array.isArray(candidate);
   const baseDiscriminator = discriminator;
   const runtimeBindingMissing =
     (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||

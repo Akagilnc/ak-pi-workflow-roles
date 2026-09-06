@@ -606,7 +606,8 @@ test("①② durability via real createRecordSession survives resume; no second 
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.roleOutcome.cause, "output");
+      // Host infrastructure terminating-tool failure keeps activation cause — not shape-output (#675).
+      assert.equal(result.terminal!.roleOutcome.cause, "activation");
       assert.match(result.terminal!.roleOutcome.diagnostic, /EACCES/);
       assert.deepEqual(result.terminal!.roleOutcome.decisiveFacts.secondaryEvidence, {
         ...buildNavigatorInfrastructureFailureFact(),

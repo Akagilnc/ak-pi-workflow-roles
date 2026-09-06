@@ -1037,9 +1037,11 @@ function typedFailedTerminatingToolKnownFailure(
     const diagnostic = isRecord(textPart) ? textPart.text : undefined;
     // Durable details already carry fact + typed evidence from envelope one-shot projection (#475).
     // Do not re-parse retained compliance responses here.
+    // Host infrastructure must NOT map to cause=output — that cause is reserved for
+    // shape-unreadable retained candidates (ADR 0055 / #675 producer→consumer diversion).
     const details = isRecord(message.details) ? message.details : classification.fact;
     return {
-      cause: "output",
+      cause: "activation",
       identity: { name: message.toolName, code: message.toolCallId },
       ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
       details,
