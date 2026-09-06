@@ -150,16 +150,16 @@ export async function runPublicGleanerLeftResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableGleanerLeftRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) =>
+    buildTurnRequest: (admitted, effective) =>
       buildGleanerLeftTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: gleanerLeftAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

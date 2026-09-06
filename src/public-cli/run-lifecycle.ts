@@ -130,17 +130,13 @@ export type PublicResumeRequest = {
 
 /**
  * Open court turn on a retained run (#637).
- * Persisted on run-state while the current court has no sealed ledger row so
- * bare `ak-role resume` continues this court (materials + attempt id) instead of
- * presenting a prior court's seal. Cleared when this courtAttemptId seals.
+ * courtAttemptId + the same summons materials shape already used by re-summons.
+ * Bare resume rehydrates request.summons and rides existing load/buildTurnRequest.
+ * Cleared when this courtAttemptId seals.
  */
 export type CurrentCourtState = {
   readonly courtAttemptId: string;
-  readonly instruction?: string;
-  readonly instructionEmpty?: boolean;
-  readonly frozenAttachmentPaths?: readonly string[];
-  readonly sourceRunPath?: string;
-  readonly sourceRun?: NotarySourceRunLocator;
+  readonly summons?: SameTicketSummonsMaterials;
 };
 
 /**
@@ -252,18 +248,17 @@ type RoleRunStateDisk = {
   readonly currentCourt?: CurrentCourtState;
 };
 
-function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
+function parseSameTicketSummonsMaterials(
+  raw: unknown,
+): SameTicketSummonsMaterials | undefined {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
-    return undefined;
-  }
   const instruction =
     typeof record.instruction === "string" ? record.instruction : undefined;
   const instructionEmpty =
     typeof record.instructionEmpty === "boolean" ? record.instructionEmpty : undefined;
-  const frozenAttachmentPaths = Array.isArray(record.frozenAttachmentPaths)
-    ? record.frozenAttachmentPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+  const attachmentPaths = Array.isArray(record.attachmentPaths)
+    ? record.attachmentPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
     : undefined;
   const sourceRunPath =
     typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
@@ -291,15 +286,36 @@ function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
       };
     }
   }
+  if (
+    instruction === undefined &&
+    instructionEmpty === undefined &&
+    (attachmentPaths === undefined || attachmentPaths.length === 0) &&
+    sourceRunPath === undefined &&
+    sourceRun === undefined
+  ) {
+    return undefined;
+  }
   return {
-    courtAttemptId: record.courtAttemptId,
     ...(instruction === undefined ? {} : { instruction }),
     ...(instructionEmpty === undefined ? {} : { instructionEmpty }),
-    ...(frozenAttachmentPaths === undefined || frozenAttachmentPaths.length === 0
+    ...(attachmentPaths === undefined || attachmentPaths.length === 0
       ? {}
-      : { frozenAttachmentPaths }),
+      : { attachmentPaths }),
     ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
     ...(sourceRun === undefined ? {} : { sourceRun }),
+  };
+}
+
+function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
+    return undefined;
+  }
+  const summons = parseSameTicketSummonsMaterials(record.summons);
+  return {
+    courtAttemptId: record.courtAttemptId,
+    ...(summons === undefined ? {} : { summons }),
   };
 }
 

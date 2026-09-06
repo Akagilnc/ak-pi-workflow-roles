@@ -539,14 +539,26 @@ export async function runPostAdmissionSeatResume<
   request: PublicResumeRequest;
   env: PostAdmissionEnv;
   io: CliIo;
-  load: () => Promise<{ admitted: A }>;
-  buildTurnRequest: (admitted: A) => RoleTurnRequest | Promise<RoleTurnRequest>;
+  /** Load admitted state; receives the effective resume request (may carry rehydrated summons). */
+  load: (request: PublicResumeRequest) => Promise<{ admitted: A }>;
+  /** Build turn from admitted + effective request (summons ride existing projection). */
+  buildTurnRequest: (
+    admitted: A,
+    request: PublicResumeRequest,
+  ) => RoleTurnRequest | Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  // Resolve effective request first: bare resume with unsealed currentCourt
+  // rehydrates summons onto the same request shape the summons face uses.
+  let request = input.request;
+  let forceContinuation = request.summons !== undefined;
+  let openCourtAttemptId: string | undefined;
+
+  // Need runDirectory to read currentCourt — load once without rehydrated summons.
   let loaded;
   try {
-    loaded = await input.load();
+    loaded = await input.load(request);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
@@ -554,78 +566,66 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  // Same-ticket re-summons carry materials → new court turn on the retained run.
-  // forceContinuation skips sealed short-circuit; courtAttemptId opens a fresh
-  // submission-ledger attempt so sole-final applies per turn (old seals kept).
-  // Bare resume with an unsealed currentCourt continues that court (not prior seal).
-  const summonsFace = input.request.summons !== undefined;
-  let forceContinuation = summonsFace;
-  let turnRequest = await input.buildTurnRequest(loaded.admitted);
-  let admitted = loaded.admitted;
 
-  if (summonsFace) {
-    const courtAttemptId =
-      turnRequest.courtAttemptId !== undefined && turnRequest.courtAttemptId.length > 0
-        ? turnRequest.courtAttemptId
-        : randomUUID();
-    turnRequest = { ...turnRequest, courtAttemptId };
-    const summons = input.request.summons!;
-    const court: CurrentCourtState = {
-      courtAttemptId,
-      ...(summons.instruction === undefined ? {} : { instruction: summons.instruction }),
-      ...(summons.instructionEmpty === undefined
-        ? {}
-        : { instructionEmpty: summons.instructionEmpty }),
-      ...(summons.attachmentPaths === undefined || summons.attachmentPaths.length === 0
-        ? {}
-        : { frozenAttachmentPaths: summons.attachmentPaths }),
-      ...(summons.sourceRunPath === undefined ? {} : { sourceRunPath: summons.sourceRunPath }),
-      ...(summons.sourceRun === undefined ? {} : { sourceRun: summons.sourceRun }),
-    };
-    await recordCurrentCourt(admitted.runDirectory, court);
-  } else {
-    const openCourt = await readCurrentCourt(admitted.runDirectory);
+  if (request.summons === undefined) {
+    const openCourt = await readCurrentCourt(loaded.admitted.runDirectory);
     if (openCourt !== undefined) {
       const sealedForOpen = await readSealedSubmission(
-        admitted.projectRoot,
-        admitted.runId,
+        loaded.admitted.projectRoot,
+        loaded.admitted.runId,
         {
-          home: homeFromRunDirectory(admitted.runDirectory),
+          home: homeFromRunDirectory(loaded.admitted.runDirectory),
           attemptId: openCourt.courtAttemptId,
         },
       );
       if (sealedForOpen === undefined) {
-        // Continue the unsealed current court — materials from run-state, not birth page.
+        // Continue open court: same summons materials + existing courtAttemptId.
         forceContinuation = true;
-        turnRequest = { ...turnRequest, courtAttemptId: openCourt.courtAttemptId };
-        if (
-          openCourt.sourceRunPath !== undefined &&
-          openCourt.sourceRun !== undefined &&
-          turnRequest.activation.role === "notary"
-        ) {
-          admitted = {
-            ...admitted,
-            sourceRunPath: openCourt.sourceRunPath,
-            sourceRun: openCourt.sourceRun,
-          } as A;
-          turnRequest = {
-            ...turnRequest,
-            activation: {
-              ...turnRequest.activation,
-              role: "notary",
-              sourceRun: openCourt.sourceRunPath,
-            },
-          };
+        openCourtAttemptId = openCourt.courtAttemptId;
+        request = {
+          runId: request.runId,
+          ...(request.message === undefined ? {} : { message: request.message }),
+          ...(openCourt.summons === undefined ? {} : { summons: openCourt.summons }),
+        };
+        if (openCourt.summons !== undefined) {
+          try {
+            loaded = await input.load(request);
+          } catch (error) {
+            if (error instanceof CliUsageError) {
+              presentStructuralRejection(error, input.io);
+              return { exitCode: 2 };
+            }
+            throw error;
+          }
         }
       } else {
-        // Open court already sealed — drop pointer; bare resume stays run-scoped.
-        await clearCurrentCourt(admitted.runDirectory);
+        await clearCurrentCourt(loaded.admitted.runDirectory);
       }
     }
   }
 
+  let turnRequest = await input.buildTurnRequest(loaded.admitted, request);
+
+  // New summons court: mint attempt id and persist court+summons on run-state.
+  // Open-court continue: reuse persisted courtAttemptId (do not mint).
+  if (forceContinuation) {
+    const courtAttemptId =
+      openCourtAttemptId ??
+      (turnRequest.courtAttemptId !== undefined && turnRequest.courtAttemptId.length > 0
+        ? turnRequest.courtAttemptId
+        : randomUUID());
+    turnRequest = { ...turnRequest, courtAttemptId };
+    if (openCourtAttemptId === undefined) {
+      const court: CurrentCourtState = {
+        courtAttemptId,
+        ...(request.summons === undefined ? {} : { summons: request.summons }),
+      };
+      await recordCurrentCourt(loaded.admitted.runDirectory, court);
+    }
+  }
+
   return await runPostAdmissionManualResume({
-    admitted,
+    admitted: loaded.admitted,
     env: input.env,
     io: input.io,
     request: turnRequest,

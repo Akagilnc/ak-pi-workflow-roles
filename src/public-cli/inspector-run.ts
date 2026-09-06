@@ -196,22 +196,22 @@ export async function runPublicInspectorResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableInspectorRun(
         env.home,
-        request.runId,
+        effective.runId,
         env.principalAuthority,
       ),
-    buildTurnRequest: async (admitted) => {
+    buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(
         admitted.runDirectory,
-        request.summons,
+        effective.summons,
       );
       return buildInspectorTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
           admitted,
-          request,
+          effective,
           env,
           summonsPrepared,
         ),

@@ -89,14 +89,14 @@ export async function runPublicInstructionSeatResume(
     request,
     env,
     io,
-    load: () => loadResumableInstructionSeatRun(
+    load: (effective) => loadResumableInstructionSeatRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) => buildInstructionSeatTurnRequest(
+    buildTurnRequest: (admitted, effective) => buildInstructionSeatTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: instructionSeatAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
