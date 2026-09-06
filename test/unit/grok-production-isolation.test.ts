@@ -1,6 +1,6 @@
 /**
  * Production grok isolation binding (#580 / #594): bindProductionGrokIsolation is the
- * authority createProductionGrokRoleTurnHost consumes for GROK_HOME, auth
+ * authority createProductionGrokRoleTurnHost consumes for GROK_HOME/HOME, auth
  * root, and binary resolve. S6 seatbelt hang-on-request.home is covered by
  * grok-role-turn-host tests — this file proves the binding and cleanup settlement,
  * including residual auth/hook scrub and symlink refusal (#594 F1/F3/F4).
@@ -49,11 +49,11 @@ test("production isolation binding shares one home for GROK_HOME, auth, and bina
   await withGrokFixtureRoots(async ({ operatorHome, runDirectory }) => {
     const binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
 
-    // Single root: auth copy === child GROK_HOME under runDirectory; HOME stays operator.
+    // Single root: auth copy === child GROK_HOME/HOME under runDirectory.
     assert.equal(binding.controlledHome, join(runDirectory, "grok-home"));
     assert.equal(under(runDirectory, binding.controlledHome), true);
     assert.equal(binding.env.GROK_HOME, binding.controlledHome);
-    assert.notEqual(binding.env.HOME, binding.controlledHome);
+    assert.equal(binding.env.HOME, binding.controlledHome);
     assert.equal(binding.env.AK_PACKAGE_ROOT, packageRoot);
     assert.equal(
       await readFile(join(binding.controlledHome, "auth.json"), "utf8"),
