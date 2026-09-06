@@ -254,13 +254,15 @@ export async function openPiInProcessSession(
     const fallbackApi = providerDefaultModel?.api
       ?? (childProvider as any)?.api
       ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
+    // Fallback model facts come from the provider surface only — never derive
+    // reasoning (or any capability) from the thinking string (#683 pass-through).
     const modelToUse = foundModel ?? {
       id: selection.model,
       name: selection.model,
       api: fallbackApi as any,
       provider: selection.provider,
       baseUrl: providerDefaultModel?.baseUrl ?? "",
-      reasoning: selection.thinking !== undefined && selection.thinking !== "off",
+      reasoning: providerDefaultModel?.reasoning ?? false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
@@ -632,9 +634,11 @@ export async function openPiInProcessSession(
     }
 
     // 7. Create AgentSession
-    // Host thinking passthrough when present; bare selection omits thinkingLevel so
-    // Pi defaults apply (#675 ⑥). When reusing a session file, re-apply seat model
-    // after open so Pi cannot restore a stale model over selection (#675 ⑤ / #697).
+    // Thinking is opaque pass-through (#683 / #675 ⑥). Absent selection omits
+    // thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent package defaults. When reusing a session file,
+    // re-apply seat model after open so Pi cannot restore a stale model over
+    // selection (#675 ⑤ / #697).
     const requestedThinking = selection.thinking;
     const priorEntries =
       typeof (sessionManager as { getEntries?: () => readonly unknown[] }).getEntries === "function"

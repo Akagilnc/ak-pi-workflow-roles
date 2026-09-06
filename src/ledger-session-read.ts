@@ -258,3 +258,43 @@ export function extractSessionToolIntervals(
       : { ...base, endedAt: interval.endedAt };
   });
 }
+
+/**
+ * One binding-owned interval inside a continuous volume (#636):
+ * from the nearest preceding binding at-or-before `anchorIndex` through the
+ * row before the next binding (or EOF). Gate/settlement/analyst share this
+ * slice — do not fork a second interval scan.
+ *
+ * `closed` is true iff a later binding ended the interval before EOF of the
+ * provided rows. On a damaged prefix parse, closed intervals are fully owned
+ * by their run; open intervals (through prefix EOF) may have lost rows to the
+ * bad line and stay honest-missing for full span/tools.
+ */
+export type BindingInterval = {
+  readonly rows: readonly LedgerSessionRow[];
+  readonly closed: boolean;
+};
+
+export function intervalRowsAroundAnchor(
+  rows: readonly LedgerSessionRow[],
+  anchorIndex: number,
+  isBindingRow: (row: LedgerSessionRow) => boolean,
+): BindingInterval {
+  let start = 0;
+  for (let i = anchorIndex; i >= 0; i -= 1) {
+    if (isBindingRow(rows[i]!)) {
+      start = i;
+      break;
+    }
+  }
+  let end = rows.length;
+  for (let i = Math.max(anchorIndex, start) + 1; i < rows.length; i += 1) {
+    if (isBindingRow(rows[i]!)) {
+      end = i;
+      break;
+    }
+  }
+  return { rows: rows.slice(start, end), closed: end < rows.length };
+}
+
+

@@ -539,16 +539,19 @@ export async function prepareGrokRoleEnvelope(options: {
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
-  // AK_ROLE_RUN_DIR injection onto the parent so ledger runIdentity correlates
-  // with settlement's bare admitted.runId via runIdFromRunDirectory. Inject only
+  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
+  // runIdentity and court-attempt identity correlate with settlement. Inject only
   // after prepare succeeds (below); dispose must restore including unset.
   let priorAkRoleRunDir: string | undefined;
+  let priorAkRoleCourtAttempt: string | undefined;
   let runDirInjected = false;
-  const restoreAkRoleRunDir = (): void => {
+  const restoreAkRoleRunEnv = (): void => {
     if (!runDirInjected) return;
     runDirInjected = false;
     if (priorAkRoleRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
+    if (priorAkRoleCourtAttempt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = priorAkRoleCourtAttempt;
   };
   const dispose = async (): Promise<void> => {
     if (disposed) return;
@@ -560,7 +563,7 @@ export async function prepareGrokRoleEnvelope(options: {
       cleanupFailures.push(error);
     }
     try {
-      restoreAkRoleRunDir();
+      restoreAkRoleRunEnv();
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -659,7 +662,10 @@ export async function prepareGrokRoleEnvelope(options: {
     }
 
     priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
+    priorAkRoleCourtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
     process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+    if (request.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
     runDirInjected = true;
 
     return {

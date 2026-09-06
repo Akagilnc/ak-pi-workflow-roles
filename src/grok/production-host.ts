@@ -167,7 +167,7 @@ export async function bindProductionGrokIsolation(
  * and AK seatbelt hooks via settleProductionGrokHomeCleanup (no silent catch)
  * while preserving the session dossier under runDirectory/grok-home. Success,
  * typed-result, and throw paths all clean up; cleanup failure and primary+cleanup
- * both surface.
+ * both surface. Same-run Grok isolation only — no cross-run home override (#637).
  */
 export async function withProductionGrokIsolation<T>(
   runDirectory: string,
@@ -283,6 +283,7 @@ async function recordGrokCapabilities(
 
 /**
  * Assemble the production grok-build RoleTurnHost from the S6 true adapter.
+ * Isolation always under the live request.runDirectory (same-run resume keeps it).
  */
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
@@ -321,15 +322,20 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
   return {
     executeTurn(request) {
       const execution = serial.then(() =>
-        withProductionGrokIsolation(request.runDirectory, request.home, packageRoot, async (binding) => {
-          turn = binding;
-          try {
-            // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
-            return await inner.executeTurn({ ...request, home: binding.controlledHome });
-          } finally {
-            turn = undefined;
-          }
-        }),
+        withProductionGrokIsolation(
+          request.runDirectory,
+          request.home,
+          packageRoot,
+          async (binding) => {
+            turn = binding;
+            try {
+              // S6 seatbelt hangs on request.home — same isolated root as GROK_HOME.
+              return await inner.executeTurn({ ...request, home: binding.controlledHome });
+            } finally {
+              turn = undefined;
+            }
+          },
+        ),
       );
       serial = execution.then(
         () => undefined,

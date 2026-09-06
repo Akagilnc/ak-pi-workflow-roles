@@ -184,12 +184,12 @@ export async function runPublicResume(
     request,
     env,
     io,
-    load: () =>
-      loadResumableJudgeRun(env.home, request.runId, env.principalAuthority),
-    buildTurnRequest: (admitted) =>
+    load: (effective) =>
+      loadResumableJudgeRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
       buildJudgeTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: judgeAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

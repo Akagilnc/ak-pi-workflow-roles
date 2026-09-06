@@ -50,6 +50,11 @@ export function buildExplicitInternalActivationArgs(
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
 
+/**
+ * Pi argv for seat model. Host only passes through resolved values — no local
+ * thinking whitelist and no package default fill. Bare provider/model omits
+ * --thinking so Pi owns its own default (#346/#384). Explicit thinking only.
+ */
 function buildSeatModelCliArgs(model: RoleTurnModelConfig | undefined): string[] {
   if (model === undefined) return [];
   return [
@@ -430,6 +435,8 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      // Shared envelope isolates this call's court identity: omitting courtAttemptId
+      // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         HOME: request.home,
@@ -439,6 +446,8 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         // Child-process scoped only — not written back onto the parent process.env.
         AK_ROLE_PACKAGE_ROOT: config.packageRoot,
       };
+      if (request.courtAttemptId === undefined) delete env.AK_ROLE_COURT_ATTEMPT;
+      else env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
       applyEngineChildEnv(env, request.engine);
       // Nested auditor dossier tool binds the parent run pointer when published.
       if (

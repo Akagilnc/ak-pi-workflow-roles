@@ -703,6 +703,19 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
 
     // Real manual resume entry: sealed + publication miss must not redispatch (#648).
     let resumeDispatches = 0;
+    const noRedispatchHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args) => {
+        resumeDispatches += 1;
+        return {
+          code: 1,
+          stderr: "must not redispatch after sealed acceptance\n",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
     const { io: resumeIo } = captureIo();
     await runAkRole(["resume", runId], {
       packageRoot,
@@ -710,24 +723,64 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io: resumeIo,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
-          resumeDispatches += 1;
-          return {
-            code: 1,
-            stderr: "must not redispatch after sealed acceptance\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      }),
+      roleTurnHost: noRedispatchHost,
     });
     assert.equal(resumeDispatches, 0);
     assert.ok(
       await readSealedSubmission(project, runId, home),
       "sealed accepted projection must remain readable after manual resume",
+    );
+
+    // #672 US6: clear the test-planted report.json directory fault, then manual
+    // resume rebuilds the public report from sealed facts without redispatch.
+    const reportPath = join(runDirectory, "artifacts", "report.json");
+    assert.equal((await stat(reportPath)).isDirectory(), true);
+    await rm(reportPath, { recursive: true, force: true });
+    const { io: rebuildIo } = captureIo();
+    const rebuilt = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: rebuildIo,
+      roleTurnHost: noRedispatchHost,
+    });
+    assert.equal(resumeDispatches, 0, "cleared publication fault must not redispatch");
+    assert.equal(rebuilt.exitCode, 0);
+    assert.ok(rebuilt.terminal);
+    assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
+    if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
+      assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
+      assert.equal(rebuilt.terminal!.roleOutcome.status, "converged");
+      assert.equal(
+        (rebuilt.terminal!.roleOutcome.decisiveFacts as { note?: string }).note,
+        "lawful despite later publication failure",
+      );
+    }
+    assert.equal(rebuilt.terminal!.autoResumeCount ?? 0, 0);
+    const reportStat = await stat(reportPath);
+    assert.equal(reportStat.isFile(), true, "cleared fault must rebuild report.json as a file");
+    const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
+      role?: string;
+      runId?: string;
+      outcome?: { kind?: string; role?: string; status?: string; decisiveFacts?: { note?: string } };
+    };
+    assert.equal(reportBody.role, "judge");
+    assert.equal(reportBody.runId, runId);
+    assert.equal(reportBody.outcome?.kind, "accepted");
+    assert.equal(reportBody.outcome?.role, "judge");
+    assert.equal(reportBody.outcome?.status, "converged");
+    assert.equal(
+      reportBody.outcome?.decisiveFacts?.note,
+      "lawful despite later publication failure",
+    );
+    assert.ok(
+      rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
+      "rebuilt terminal must reference the public report artifact",
+    );
+    assert.ok(
+      await readSealedSubmission(project, runId, home),
+      "sealed accepted projection must remain after report rebuild",
     );
   });
 
@@ -1944,6 +1997,12 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           join(coords.sessionDirectory, "host-issued-principal.jsonl"),
         );
       },
+      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+        return fixturePrincipal(
+          coordinates.sessionDirectory,
+          coordinates.sessionFile,
+        );
+      },
       decode(value: unknown) {
         const coords = piDurablePrincipalAuthority.decode(value);
         return Object.assign({}, coords, { __durableCoords: true });
@@ -2020,6 +2079,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     // Host-denied availability must fail honestly without a typed accepted Terminal.
     const blockingAuthority = {
       issue: principalAuthority.issue,
+      seal: principalAuthority.seal,
       decode: principalAuthority.decode,
       async isAvailable() {
         return false;
