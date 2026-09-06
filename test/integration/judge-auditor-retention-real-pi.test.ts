@@ -105,9 +105,10 @@ async function createJudgeAuditorRetentionTracer(home: string): Promise<{ extens
         try { watcher?.close(); } catch {}
         // parentFile was replaced with a directory; rm (self-created under test home)
         // then write file bytes back. Bare writeFile on a directory is EISDIR.
+        // force:true already tolerates absence; real cleanup failures must surface.
         await rm(parentFile, { recursive: true, force: true });
         await writeFile(parentFile, parentBytes);
-        try { await rm(sitianRecordsPath, { recursive: true, force: true }); } catch {}
+        await rm(sitianRecordsPath, { recursive: true, force: true });
       };
       const checkAndRestore = async () => {
         try {
