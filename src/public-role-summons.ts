@@ -19,6 +19,9 @@ import type { TerminalResult } from "./public-cli/terminal.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
+/** Nested public summon (gate/compliance child) — skip re-attaching Navigator sidecar. */
+export const AK_ROLE_NESTED_PUBLIC_SUMMON_ENV = "AK_ROLE_NESTED_PUBLIC_SUMMON" as const;
+
 
 export type PublicSummonRole =
   | "inspector"
@@ -46,6 +49,11 @@ export type PublicSummonRequest = {
    * seat extraPiArgs). Callers pass explicitly — no process.env test protocol.
    */
   readonly extraPiArgs?: readonly string[];
+  /**
+   * Nested public summon from parent gate/compliance — child must not re-attach
+   * Navigator attendance (parent work run owns the sidecar). Direct CLI omits.
+   */
+  readonly nestedSummon?: boolean;
 };
 
 export type PublicSummonResult = {
@@ -230,6 +238,23 @@ async function createSummonEnv(options: {
 export async function summonPublicRole(
   options: PublicSummonRequest,
 ): Promise<PublicSummonResult> {
+  const priorNested = process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV];
+  if (options.nestedSummon === true) {
+    process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV] = "1";
+  }
+  try {
+    return await summonPublicRoleBody(options);
+  } finally {
+    if (options.nestedSummon === true) {
+      if (priorNested === undefined) delete process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV];
+      else process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV] = priorNested;
+    }
+  }
+}
+
+async function summonPublicRoleBody(
+  options: PublicSummonRequest,
+): Promise<PublicSummonResult> {
   const packageRoot = resolveSummonsPackageRoot(options.packageRoot);
   const home = await resolveSummonHome(options);
   const agentDir =
@@ -386,6 +411,7 @@ export async function summonGateOfficer(options: {
       role: "notary",
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
       cwd: options.cwd,
+      nestedSummon: true,
       ...(home === undefined ? {} : { home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.io === undefined ? {} : { io: options.io }),
@@ -395,6 +421,7 @@ export async function summonGateOfficer(options: {
     role: "inspector",
     argv: [`卷宗指针：${options.sourceRunDirectory}`],
     cwd: options.cwd,
+    nestedSummon: true,
     ...(home === undefined ? {} : { home }),
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     ...(options.io === undefined ? {} : { io: options.io }),

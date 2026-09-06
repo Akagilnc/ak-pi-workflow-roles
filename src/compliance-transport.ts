@@ -221,6 +221,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,
+        nestedSummon: true,
       });
     });
   const summoned = await summon(subject, runDirectory);

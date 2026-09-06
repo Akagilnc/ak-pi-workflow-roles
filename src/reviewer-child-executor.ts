@@ -113,6 +113,7 @@ export async function executeReviewerChild(
           role: "evidence-child",
           argv: nextArgv,
           cwd: workspace,
+          nestedSummon: true,
           ...(home === undefined ? {} : { home }),
           ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
         });

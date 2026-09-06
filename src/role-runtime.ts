@@ -1629,25 +1629,14 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        // Navigator attendance is for work-role runs (route advice after terminal).
-        // Province officers / auditor / evidence-child / navigator-self are short
-        // instruction seats — nested gate/compliance must not multiply Luna prepares
-        // on the parent model-setting path (#675 exact prepare contract).
-        const navigatorAttendanceRoles = new Set([
-          "judge",
-          "coder",
-          "fixer",
-          "doctor",
-          "reviewer",
-          "collector",
-          "merger",
-          "countersign",
-          "gleaner-left",
-        ]);
-        if (
-          dependencies.createNavigatorAttendance !== undefined
-          && navigatorAttendanceRoles.has(entry.role)
-        ) {
+        // Nested public summons (gate/compliance children) must not re-attach the
+        // Navigator sidecar — parent work run already owns attendance (#675).
+        // Direct CLI / top-level runs keep automatic attendance (every run).
+        const { AK_ROLE_NESTED_PUBLIC_SUMMON_ENV } = await import("./public-role-summons.ts");
+        const nestedPublicSummon =
+          typeof process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV] === "string"
+          && process.env[AK_ROLE_NESTED_PUBLIC_SUMMON_ENV].trim() === "1";
+        if (dependencies.createNavigatorAttendance !== undefined && !nestedPublicSummon) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {
