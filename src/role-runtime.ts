@@ -82,6 +82,7 @@ import {
 import {
   commitDiaristSelections,
   loadDiaristSourceCatalog,
+  type DiaristSourceCatalog,
 } from "./diarist.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
@@ -890,7 +891,11 @@ export function createDiaristRoleRuntime(
   dependencies: DiaristRuntimeDependencies,
   getSourcesFlag: () => unknown,
 ) {
-  return createFiledOfficerRuntime(
+  // This turn's catalog, snapshotted at activate: the candidateIndexes the role
+  // saw and the rows accept commits are the same bytes. Accept never re-reads
+  // the file, so anything written to it mid-turn cannot become a diary entry.
+  let catalog: DiaristSourceCatalog | undefined;
+  const runtime = createFiledOfficerRuntime(
     roleHost,
     {
       role: "diarist",
@@ -898,32 +903,47 @@ export function createDiaristRoleRuntime(
       acceptedText: DIARIST_ACCEPTED_TEXT,
       soulTag: "diarist",
       beforeAccept: async ({ parameters }) => {
-        const sourcesPath = decodeDiaristSourcesPath(getSourcesFlag);
-        // True-unbound summons: no ticket, no catalog, no diary to commit.
-        if (sourcesPath === undefined) return undefined;
-        const facts = await commitDiaristSelections({
-          catalog: loadDiaristSourceCatalog(sourcesPath),
-          selections: projectDiaristSelections(parameters),
-        });
         const submitted =
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
-            : { receipt: parameters };
-        return { ...submitted, sitian: facts };
+            : undefined;
+        // True-unbound summons: no ticket, no catalog, no diary committed — so
+        // this turn produced no sitian facts. A self-reported `sitian` is not
+        // one (锚定宪法); drop it rather than let it ride into decisiveFacts.
+        // Carrying the field is not a reason to bounce the receipt (第 0 条).
+        if (catalog === undefined) {
+          if (submitted === undefined || !("sitian" in submitted)) return undefined;
+          const stripped = { ...submitted };
+          delete stripped.sitian;
+          return stripped;
+        }
+        const facts = await commitDiaristSelections({
+          catalog,
+          selections: projectDiaristSelections(parameters),
+        });
+        return { ...(submitted ?? { receipt: parameters }), sitian: facts };
       },
     },
     dependencies,
   );
+  return {
+    async activate() {
+      catalog = loadFrozenDiaristCatalog(getSourcesFlag);
+      return runtime.activate();
+    },
+  };
 }
 
-/** Envelope-owned decode of the frozen catalog path (ADR 0018). */
-function decodeDiaristSourcesPath(getFlag: () => unknown): string | undefined {
+/** Envelope-owned decode + one-shot load of the frozen catalog (ADR 0018). */
+function loadFrozenDiaristCatalog(
+  getFlag: () => unknown,
+): DiaristSourceCatalog | undefined {
   const raw = getFlag();
   if (raw === undefined) return undefined;
   if (typeof raw !== "string" || raw.trim() === "") {
     throw new Error("Diarist source catalog flag must be a nonempty path");
   }
-  return raw;
+  return loadDiaristSourceCatalog(raw);
 }
 
 export function createCountersignRoleRuntime(
