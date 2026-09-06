@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #590 production-deps tracers — separate contracts, shared fixtures.
  * Entry: createGrokRoleRuntimeDependencies (+ Grok envelope for doctor).
@@ -80,11 +81,13 @@ async function withGrokRoot<T>(run: (ctx: {
   runDirectory: string;
   deps: ReturnType<typeof createGrokRoleRuntimeDependencies>;
 }) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-leg-"));
+  return await withTempRoot("ak-grok-leg-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
   delete process.env.AK_ROLE_ENGINE;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     seedGitRepository(root);
     execFileSync("git", ["-C", root, "config", "user.email", "leg@test.local"], { stdio: "ignore" });
     execFileSync("git", ["-C", root, "config", "user.name", "Leg Test"], { stdio: "ignore" });
@@ -98,11 +101,11 @@ async function withGrokRoot<T>(run: (ctx: {
       runDirectory,
       deps: createGrokRoleRuntimeDependencies(packageRoot),
     });
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun; },
+      async () => { if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine; }
+    );
+  });
 }
 
 test("production Grok deps: public inspector activates with packaged session materials", async () => {

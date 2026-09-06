@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #604 acceptance: production CLI home does not follow process.env.HOME.
  * Real entry (runAkRole) + disk observation — mid-size integration seam.
@@ -17,9 +18,11 @@ const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI_MODULE = new URL("../../src/public-cli/cli.ts", import.meta.url).href;
 
 test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async () => {
-  const fakeTmpHome = mkdtempSync(worktreeTempPrefix("ak-fake-cli-home-"));
+  await withTempRoot("ak-fake-cli-home-", async (fakeTmpHome) => {
   const previousHome = process.env.HOME;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     process.env.HOME = fakeTmpHome;
     const result = await runAkRole(["roles"], {
       packageRoot: PACKAGE_ROOT,
@@ -30,11 +33,11 @@ test("HOME=<tmpdir> ak-role does not create .ak-roles under that tmpdir", async 
     });
     assert.equal(result.exitCode, 0);
     assert.equal(existsSync(join(fakeTmpHome, ".ak-roles")), false);
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    rmSync(fakeTmpHome, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome; }
+    );
+  });
 });
 
 /**

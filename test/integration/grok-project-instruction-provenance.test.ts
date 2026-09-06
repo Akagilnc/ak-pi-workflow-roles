@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   inspectControlledGrok,
@@ -87,8 +87,10 @@ process.stdout.write(JSON.stringify({
 });
 
 test("isHeadMatchedProjectInstruction: worktree permission failure stays loud with permission identity", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-head-perm-"));
-  try {
+  return await withTempRoot("ak-grok-head-perm-", async (root) => {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);
     git(root, ["config", "user.name", "test"]);
@@ -104,8 +106,8 @@ test("isHeadMatchedProjectInstruction: worktree permission failure stays loud wi
         return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "EACCES";
       },
     );
-  } finally {
-    await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined);
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined); }
+    );
+  });
 });

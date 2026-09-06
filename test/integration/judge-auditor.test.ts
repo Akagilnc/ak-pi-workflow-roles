@@ -13,6 +13,7 @@ import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/dossier-resolution.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const usage = {
   input: 10,
@@ -80,7 +81,7 @@ function auditContext(runDirectory?: string): ExtensionContext {
 }
 
 test("Pi judge auditor preserves authentication failures", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-judge-auth-"));
+  await withTempRoot("ak-judge-auth-", async (root) => {
   const runDirectory = join(root, "run");
   const agentDir = join(root, "agent");
   await mkdir(runDirectory);
@@ -107,7 +108,9 @@ test("Pi judge auditor preserves authentication failures", async () => {
   }, null, 2)}\n`);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     await writeInstitutionalSeatTable(runDirectory, {
       auditor: seatSelection("test", "auditor"),
     });
@@ -118,9 +121,9 @@ test("Pi judge auditor preserves authentication failures", async () => {
       auditor({ context }),
       /authentication failed: provider is not configured: test/,
     );
-  } finally {
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir; }
+    );
+  });
 });

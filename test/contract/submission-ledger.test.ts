@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import test from "node:test";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
@@ -88,10 +89,16 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const f = await fixture();
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
-  try { await run(f); } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(f.root, { recursive: true, force: true });
-  }
+  await withPrimaryAwareCleanup(
+    () => run(f),
+    async () => {
+      if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = priorRun;
+    },
+    async () => {
+      await rm(f.root, { recursive: true, force: true });
+    },
+  );
 }
 
 test("host-neutral round closure seals only a sole terminal candidate", async () => {
