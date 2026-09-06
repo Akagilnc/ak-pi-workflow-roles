@@ -1,8 +1,8 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 / #709 — seat ticket identity from the public CLI true entry
- * (no --ticket / no frontmatter / no seat model call): the number is reused from
- * records this book already holds. Asserts typed ticketNumber on
+ * (no --ticket / no frontmatter / no extra recognizer call): the number is the
+ * typed key the working 起居郎 round hands back. Asserts typed ticketNumber on
  * admitted-request.json + invocation.json only.
  */
 import assert from "node:assert/strict";
@@ -44,7 +44,6 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -113,9 +112,9 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    await installHermesFixture(join(home, "bin"));
-    // #709: #582 is a ticket this book already records — seats reuse that identity.
-    ensureTicketProvenanceVolume(582, project, home);
+    // #709: the working 起居郎 round hands the seat a typed ticket identity;
+    // no volume is pre-seeded and no seat scans the instruction for digits.
+    await installHermesFixture(join(home, "bin"), { ticketNumber: 582 });
     await run({ home, project });
   });
 }

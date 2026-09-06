@@ -1,25 +1,21 @@
 /**
  * Shared ticket identity seam for public court seats (#635 / #637 / #709).
- * One path: unbound admission → reuse a ticket number this book already records
- * (retained run pages + 起居录 volumes) → bindAdmittedTicketNumber.
- * ADR 0081 `reuse-case-ticket-without-extra-llm`: no seat-side model call, no
- * second ticket-number source of truth, no minting a number from human titles.
- * Nothing matched is not 真无票 — the run simply stays unbound, which is lawful.
+ * One path: unbound summons → the working 起居郎 round reads the caller's
+ * instruction and hands back a typed ticketNumber → bindAdmittedTicketNumber.
+ * ADR 0081 `initial-court-ticket-supplied` / `reuse-case-ticket-without-extra-llm`:
+ * identity rides the round already doing the case work — no second ticket-number
+ * source of truth, no extra recognizer call, and no seat-side scan of instruction
+ * prose (锚定宪法: machines consume typed keys, never free text).
+ * A round that names no ticket leaves the run lawfully unbound — never a fake one.
  * No CLI --ticket and no attachment frontmatter binding.
  */
-import { existsSync } from "node:fs";
-
-import {
-  ActivationGitRepositoryRequiredError,
-  resolveBookKeyFromGit,
-} from "../activation-ledger-git.ts";
-import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import { runDiarist } from "../diarist.ts";
 import {
   bindAdmittedTicketNumber,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 import {
-  collectBookRunTicketNumbers,
   findLatestRunIdForSeatTicket,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
@@ -27,78 +23,30 @@ import {
 
 export type SeatTicketBindingEnv = {
   readonly home: string;
+  readonly cwd: string;
+  readonly packageRoot: string;
 };
 
 /**
- * Complete decimal ticket tokens in an instruction.
- * A digit run is one token: `82` inside `#582` is not 82, and a leading zero
- * makes the run a different literal than the ticket number it would parse to.
+ * Ticket identity for this summons, from the 起居郎 round that collects the case
+ * material. The round mints the ticket's 起居录 volume when it names one, so a
+ * first summons with neither a volume nor a retained run still bootstraps its own
+ * identity and dossier. Undefined means this summons named no ticket the round
+ * could establish; the seat proceeds unbound, which is lawful.
  */
-export function instructionTicketTokens(
-  instruction: string,
-): readonly number[] {
-  const tokens = new Set<number>();
-  for (const run of instruction.match(/\d+/g) ?? []) {
-    if (run.startsWith("0")) continue;
-    const parsed = Number(run);
-    if (!Number.isSafeInteger(parsed) || parsed < 1) continue;
-    tokens.add(parsed);
-  }
-  return [...tokens];
-}
-
-/**
- * Ticket identity this summons reuses, or undefined when none is unambiguous.
- * Known identities come only from records this book already holds: 起居录 volume
- * partitions and ticket numbers on retained run pages. Zero or several known
- * tokens in the instruction leave the run unbound — never guess, never fail.
- */
-export async function resolveKnownTicketNumber(input: {
+export async function resolveSummonsTicketIdentity(input: {
   readonly instruction: string;
   readonly projectRoot: string;
-  readonly home: string;
-  readonly bookKey?: string;
+  readonly env: SeatTicketBindingEnv;
 }): Promise<number | undefined> {
-  const tokens = instructionTicketTokens(input.instruction);
-  if (tokens.length === 0) return undefined;
-  const known: number[] = [];
-  let runTickets: ReadonlySet<number> | undefined;
-  for (const token of tokens) {
-    const volume = resolveTicketProvenanceVolume(
-      token,
-      input.projectRoot,
-      input.home,
-    );
-    if (existsSync(volume.volumeDir)) {
-      known.push(token);
-      continue;
-    }
-    if (runTickets === undefined) {
-      runTickets = await readBookRunTickets(input);
-    }
-    if (runTickets.has(token)) known.push(token);
-  }
-  return known.length === 1 ? known[0] : undefined;
-}
-
-/**
- * Ticket numbers on this book's retained runs.
- * A directory with no book (not a git repository) simply holds no run history —
- * admission owns that rejection face, this lookup does not pre-empt it.
- */
-async function readBookRunTickets(input: {
-  readonly projectRoot: string;
-  readonly home: string;
-  readonly bookKey?: string;
-}): Promise<ReadonlySet<number>> {
-  let bookKey: string;
-  try {
-    bookKey = input.bookKey ?? resolveBookKeyFromGit(input.projectRoot);
-  } catch (error) {
-    if (error instanceof ActivationGitRepositoryRequiredError) return new Set();
-    throw error;
-  }
-  return await collectBookRunTicketNumbers({ home: input.home, bookKey });
+  const result = await runDiarist({
+    instruction: input.instruction,
+    cwd: input.projectRoot,
+    home: input.env.home,
+    sessionCwds: [input.projectRoot, input.env.cwd],
+    packageRoot: input.env.packageRoot,
+  });
+  return result.ticketNumber;
 }
 
 /** Bind a reused ticket number onto an admission that is still unbound. */
@@ -122,11 +70,10 @@ export async function resolveSeatTicketBinding(
   env: SeatTicketBindingEnv,
 ): Promise<number | undefined> {
   if (admitted.ticketNumber !== undefined) return admitted.ticketNumber;
-  const ticketNumber = await resolveKnownTicketNumber({
+  const ticketNumber = await resolveSummonsTicketIdentity({
     instruction: admitted.instruction,
     projectRoot: admitted.projectRoot,
-    home: env.home,
-    bookKey: admitted.bookKey,
+    env,
   });
   await bindReusedTicketNumber(admitted, ticketNumber);
   return ticketNumber;

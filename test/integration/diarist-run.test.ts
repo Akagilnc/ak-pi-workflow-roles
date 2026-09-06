@@ -130,6 +130,8 @@ test("runDiarist always establishes volume + md (empty court)", async () => {
     });
     assert.equal(result.collectorStatus, "skipped-no-fresh");
     assert.equal(result.appended, 0);
+    assert.ok(result.volumeRecordFile);
+    assert.ok(result.humanViewFile);
     await access(result.volumeRecordFile);
     await access(result.humanViewFile);
     const read = await readTicketProvenance(1, project, home);
@@ -171,6 +173,7 @@ test("runDiarist: collector failure does not advance watermark; true cause appen
           TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
       )?.payload as Record<string, unknown>;
       assert.equal(rawPayload.sourceKind, undefined);
+      assert.ok(first.humanViewFile);
       await access(first.humanViewFile);
       assert.equal(readOfferedIdentities(9, project, home).size, 0);
 
@@ -375,6 +378,7 @@ test("runDiarist: LLM selection reverse-verify + idempotent append + reject spli
       assert.equal(first.collectorStatus, "ok");
       assert.equal(first.appended, 1);
       assert.equal(first.rejectedQuotes, 1);
+      assert.ok(first.humanViewFile);
       await access(first.humanViewFile);
 
       const read1 = await readTicketProvenance(582, project, home);
