@@ -9,14 +9,13 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  applyTicketResolution,
   resolveInstructionTicket,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
-  bindAdmittedTicketNumber,
   buildInspectorTransportPrompt,
-  recordTrueUnboundTicketResolution,
   type AdmittedInspectorInvocation,
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
@@ -138,12 +137,8 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #635: reuse the pre-admit ticket probe (already resolved above).
-  if (ticketResolution.kind === "ticket") {
-    await bindAdmittedTicketNumber(admitted, ticketResolution.ticketNumber);
-  } else {
-    await recordTrueUnboundTicketResolution(admitted);
-  }
+  // #635: reuse the pre-admit ticket probe via shared seat-ticket-binding seam.
+  await applyTicketResolution(admitted, ticketResolution);
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({

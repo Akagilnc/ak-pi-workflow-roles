@@ -51,6 +51,21 @@ export async function resolveInstructionTicket(
 }
 
 /**
+ * Sole disposition of a resolved ticket onto an unbound admission (#635 / #637).
+ * Countersign / inspector / resolveSeatTicketBinding share this — no parallel branches.
+ */
+export async function applyTicketResolution(
+  admitted: AdmittedRoleInvocation,
+  resolution: DiaristTicketResolution,
+): Promise<void> {
+  if (resolution.kind === "ticket") {
+    await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
+  } else {
+    await recordTrueUnboundTicketResolution(admitted);
+  }
+}
+
+/**
  * Bind ticketNumber onto an unbound admitted seat via LLM instruction recognition.
  * Already-settled admissions (ticketNumber or durable true-unbound) short-circuit —
  * no re-entry into hermes on auto-resume attempts or manual resume (#635).
@@ -70,11 +85,7 @@ export async function resolveSeatTicketBinding(
     admitted.projectRoot,
     env,
   );
-  if (resolution.kind === "ticket") {
-    await bindAdmittedTicketNumber(admitted, resolution.ticketNumber);
-  } else {
-    await recordTrueUnboundTicketResolution(admitted);
-  }
+  await applyTicketResolution(admitted, resolution);
   return resolution;
 }
 

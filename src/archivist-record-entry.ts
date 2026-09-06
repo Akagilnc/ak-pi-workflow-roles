@@ -77,9 +77,6 @@ export type CreateRecordSessionOptions = {
 /** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
 export const WORKER_SUBMISSION_GATE_KIND = "worker-submission-gate";
 
-/** Officer auditor nest kind — same-ticket re-summons resume the prior volume (ADR 0079 / #637). */
-export const AUDITOR_ROLES_KIND = "auditor-roles";
-
 /**
  * Sole file-level placement lock for a resumed same-nest principal (ADR 0065 / #221).
  * ensureRealDirectoryTree already owns the sessionDir chain; a final .jsonl symlink is
@@ -139,10 +136,9 @@ export type RecordSessionOpen = {
  * identity is checked once before SessionManager.open (directory walk cannot see a
  * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
  * via destination-free SessionManager.create — no derived postcondition.
- * Resume via the AK-owned current-session ledger is limited to subject-keyed identity,
- * the authorized worker-submission-gate durable path, and auditor-roles (ADR 0079
- * ticket-seat-memory-officer-principal: same-ticket re-summons resume the prior volume).
- * Other ordinary no-subject children (evidence-children, …) always mint a fresh session.
+ * Resume via the AK-owned current-session ledger is limited to subject-keyed identity
+ * and the authorized worker-submission-gate durable path (ADR 0066).
+ * Other ordinary no-subject children (auditor-roles, evidence-children, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  *
@@ -186,12 +182,10 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Subject-keyed nests continue by subject digest; gate and auditor-roles are the
-  // authorized no-subject same-nest continuations. All other kinds mint fresh.
+  // Subject-keyed nests continue by subject digest; worker-submission-gate is the
+  // sole authorized no-subject same-nest continuation. All other kinds mint fresh.
   const mayResumeSameNest =
-    options.subject !== undefined ||
-    options.kind === WORKER_SUBMISSION_GATE_KIND ||
-    options.kind === AUDITOR_ROLES_KIND;
+    options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
     const recentFile = readCurrentSession(sessionDir);
     assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
