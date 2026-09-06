@@ -294,7 +294,6 @@ export async function dispatchPostAdmissionTurn<
           ? await projectHostTransitionPriorNative({
               previousHost,
               liveHost,
-              runDirectory: admitted.runDirectory,
               piSessionFile: principalCoordinates.sessionFile,
             })
           : undefined;

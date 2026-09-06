@@ -39,7 +39,6 @@ async function listPiNativeRecordPaths(sessionFile: string): Promise<string[]> {
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
   readonly liveHost: string;
-  readonly runDirectory: string;
   readonly piSessionFile: string;
 }): Promise<RoleTurnHostTransition | undefined> {
   if (input.previousHost === input.liveHost) return undefined;

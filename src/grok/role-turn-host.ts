@@ -1,8 +1,5 @@
-import { execFile, spawn } from "node:child_process";
-import { open, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative as pathRelative } from "node:path";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { promisify } from "node:util";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
@@ -15,13 +12,6 @@ export interface GrokAcpConnection {
   onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
   close(): Promise<void>;
 }
-
-export type GrokControlledInspection = Readonly<{
-  /** Active configuration whose source is neither Grok builtin nor AK injection. */
-  privateActive: readonly string[];
-  /** Active AK-owned configuration observed by the same first-party inspect call. */
-  akActive: readonly string[];
-}>;
 
 /** The shared envelope, prepared before session/new (systemPrompt delivery) and
  * able to observe the host's real builtin tool surface once it arrives post-session. */
@@ -62,11 +52,6 @@ export function renderGrokSystemPromptOverride(authority: {
   return renderAgentStartMaterials(authority.body, authority.materials);
 }
 
-export type GrokCapabilityDeclaration = Readonly<{
-  nativeToolNarrowing: false;
-  preToolUseDeny: boolean;
-}>;
-
 export type GrokSessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
@@ -77,9 +62,7 @@ export type GrokSessionIdentityAuthority = Readonly<{
 export type GrokRoleTurnHostConfig = Readonly<{
   sessionIdentity: GrokSessionIdentityAuthority;
   connect(request: RoleTurnRequest): Promise<GrokAcpConnection>;
-  inspect(request: RoleTurnRequest): Promise<GrokControlledInspection>;
   prepare(request: RoleTurnRequest): Promise<GrokPreparedTurn>;
-  recordCapabilities(request: RoleTurnRequest, declaration: GrokCapabilityDeclaration): void | Promise<void>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -222,16 +205,13 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
   return {
     executeTurn(request) {
       const execution = serial.then(async (): Promise<RoleTurnResult> => {
-        await config.inspect(request);
         const continuation = request.continuation;
         const prepared = await config.prepare(request);
         let connection: GrokAcpConnection | undefined;
         let sessionId: string | undefined;
         let accepted = false;
         try {
-          // AK injection proof is prepared MCP composition (envelope), not inspect.akActive.
-          // Inspect only classifies first-party already-active sources; external packageRoot
-          // materials reach session/new via prepare, not via Grok-native inspect paths.
+          // AK injection proof is prepared MCP composition (envelope).
           if (prepared.mcpServers.length === 0) {
             return failure("activation", "UncontrolledGrokSession", "ak-config-missing");
           }
@@ -243,7 +223,6 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
           const initializeMeta = initialized._meta as {
             modelState?: { availableModels?: unknown };
           } | undefined;
-          await config.recordCapabilities(request, { nativeToolNarrowing: false, preToolUseDeny: false });
           const modelState = initializeMeta?.modelState;
           const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
           if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
@@ -417,255 +396,7 @@ const PRIVATE_COMPAT_ENV = Object.fromEntries(
       [`GROK_${vendor}_${kind}_ENABLED`, "false"] as const)),
 );
 
-type InspectItem = {
-  readonly name?: unknown;
-  readonly path?: unknown;
-  readonly disabled?: unknown;
-  readonly enabled?: unknown;
-  readonly compatibilityStatus?: unknown;
-  readonly source?: { readonly type?: unknown; readonly path?: unknown };
-};
-
-export type GrokInspectionClassificationOptions = Readonly<{
-  /**
-   * Calling-repo projectInstructions whose path is carried by HEAD and whose
-   * working-tree bytes match that blob (#521 repo-instructions-are-shared-material).
-   * These are shared repo material — not privateActive, not AK package injection.
-   */
-  readonly headMatchedProjectInstructionPaths?: ReadonlySet<string>;
-}>;
-
-const execFileAsync = promisify(execFile);
-
-function errnoCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
-  const code = (error as { code: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-}
-
-async function realpathIfPresent(path: string): Promise<string | undefined> {
-  try {
-    return await realpath(path);
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-/**
- * Typed worktree readability: ENOENT → absent; permission and other IO stay loud.
- * Does not consult Git diagnostics.
- */
-async function worktreeFilePresence(path: string): Promise<"absent" | "present"> {
-  try {
-    const handle = await open(path, "r");
-    await handle.close();
-    return "present";
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") return "absent";
-    throw error;
-  }
-}
-
-/**
- * Map a worktree-relative path to the unique HEAD tree path it names.
- * Exact match first; otherwise a single case-insensitive hit in the same
- * directory (Grok may report `Claude.md` while HEAD stores `CLAUDE.md`).
- * Path identity keeps the inspect leaf name (final symlink not followed).
- * Git/IO failures propagate; only "not in HEAD" returns undefined.
- */
-async function resolveHeadTreePath(topLevel: string, relativePath: string): Promise<string | undefined> {
-  const { stdout: exactOut } = await execFileAsync(
-    "git",
-    ["ls-tree", "--name-only", "HEAD", "--", relativePath],
-    { cwd: topLevel, encoding: "utf8" },
-  );
-  const exactHits = exactOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
-  if (exactHits.includes(relativePath)) return relativePath;
-
-  const parent = dirname(relativePath);
-  const leaf = basename(relativePath);
-  // Path absence is an empty structured ls-tree result (exit 0), never stderr prose.
-  if (parent !== ".") {
-    const { stdout: parentOut } = await execFileAsync(
-      "git",
-      ["ls-tree", "--name-only", "HEAD", "--", parent],
-      { cwd: topLevel, encoding: "utf8" },
-    );
-    const parentHits = parentOut.split("\n").map((name) => name.trim()).filter((name) => name !== "");
-    if (!parentHits.includes(parent)) return undefined;
-  }
-
-  // Parent confirmed present (or root): list children. Any failure stays loud infrastructure.
-  const { stdout: listing } = parent === "."
-    ? await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], {
-      cwd: topLevel,
-      encoding: "utf8",
-    })
-    : await execFileAsync("git", ["ls-tree", "--name-only", `HEAD:${parent}`], {
-      cwd: topLevel,
-      encoding: "utf8",
-    });
-  const needle = leaf.toLowerCase();
-  const hits = listing
-    .split("\n")
-    .map((name) => name.trim())
-    .filter((name) => name !== "" && basename(name).toLowerCase() === needle)
-    .map((name) => (parent === "." ? basename(name) : join(parent, basename(name))));
-  return hits.length === 1 ? hits[0] : undefined;
-}
-
-/**
- * True when inspect-reported path is carried by calling-repo HEAD and the bytes
- * a host reads through that path match the HEAD blob
- * (#521 repo-instructions-are-shared-material).
- *
- * Expected negatives (return false): empty/outside path, HEAD does not carry
- * the path, worktree absent, or worktree bytes ≠ HEAD blob.
- * Infrastructure (throw with cause): git unavailable, unexpected git/repo
- * failure, permission or other IO on realpath/hash.
- */
-export async function isHeadMatchedProjectInstruction(
-  repositoryCwd: string,
-  absolutePath: string,
-): Promise<boolean> {
-  if (absolutePath === "" || absolutePath.includes("\0")) return false;
-
-  const { stdout: topLevelOut } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: repositoryCwd,
-    encoding: "utf8",
-  });
-  // Prove HEAD is readable before path negatives — corrupt/missing HEAD stays loud.
-  await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
-    cwd: repositoryCwd,
-    encoding: "utf8",
-  });
-  const topLevel = await realpath(topLevelOut.trim());
-
-  // Keep final leaf identity (do not realpath through a final-component symlink).
-  const parent = await realpathIfPresent(dirname(absolutePath));
-  if (parent === undefined) return false;
-  const leaf = basename(absolutePath);
-  if (leaf === "" || leaf === "." || leaf === "..") return false;
-  const candidate = join(parent, leaf);
-  const relative = pathRelative(topLevel, candidate);
-  if (relative === "" || relative.startsWith("..") || isAbsolute(relative) || relative.includes("\0")) {
-    return false;
-  }
-
-  const headRel = await resolveHeadTreePath(topLevel, relative);
-  if (headRel === undefined) return false;
-  const headFile = join(topLevel, headRel);
-
-  const { stdout: headBlobOut } = await execFileAsync(
-    "git",
-    ["rev-parse", "--verify", `HEAD:${headRel}`],
-    { cwd: topLevel, encoding: "utf8" },
-  );
-  const headBlob = headBlobOut.trim();
-
-  // Prefer inspect-reported path bytes (hash-object follows symlink content).
-  // Worktree absence is typed FS ENOENT; permission and other IO stay loud.
-  // When exact casing is absent, fall back to the unique HEAD-cased path.
-  let hashTarget = candidate;
-  const candidatePresence = await worktreeFilePresence(candidate);
-  if (candidatePresence === "absent") {
-    if (candidate === headFile) return false;
-    const headPresence = await worktreeFilePresence(headFile);
-    if (headPresence === "absent") return false;
-    hashTarget = headFile;
-  }
-  const { stdout } = await execFileAsync("git", ["hash-object", "--", hashTarget], {
-    cwd: topLevel,
-    encoding: "utf8",
-  });
-  return headBlob === stdout.trim();
-}
-
-function inspectItemPath(value: InspectItem): string {
-  if (typeof value.source?.path === "string") return value.source.path;
-  if (typeof value.path === "string") return value.path;
-  return "";
-}
-
-function isInspectItemActive(value: InspectItem): boolean {
-  return value.disabled !== true && value.enabled !== false && value.compatibilityStatus !== "disabled";
-}
-
-/** Collect active projectInstruction paths for HEAD-blob provenance resolution. */
-export function listActiveProjectInstructionPaths(document: Readonly<Record<string, unknown>>): readonly string[] {
-  const items = document.projectInstructions;
-  if (!Array.isArray(items)) return [];
-  const paths: string[] = [];
-  for (const value of items as InspectItem[]) {
-    if (!isInspectItemActive(value)) continue;
-    const path = inspectItemPath(value);
-    if (path !== "") paths.push(path);
-  }
-  return paths;
-}
-
-/** Classify first-party inspect JSON by provenance; wording and item counts are irrelevant. */
-export function classifyGrokInspection(
-  document: Readonly<Record<string, unknown>>,
-  packageRoot: string,
-  options: GrokInspectionClassificationOptions = {},
-): GrokControlledInspection {
-  const privateActive = new Set<string>();
-  const akActive = new Set<string>();
-  const headMatched = options.headMatchedProjectInstructionPaths ?? new Set<string>();
-  const externalCompat = document.externalCompat as { cells?: unknown } | undefined;
-  if (Array.isArray(externalCompat?.cells)) {
-    for (const cell of externalCompat.cells as Array<{ vendor?: unknown; surface?: unknown; enabled?: unknown }>) {
-      if (cell.enabled !== true) continue;
-      privateActive.add(`externalCompat:${String(cell.vendor)}:${String(cell.surface)}`);
-    }
-  }
-  for (const section of ["skills", "agents", "plugins", "mcpServers", "hooks", "projectInstructions"] as const) {
-    const items = document[section];
-    if (!Array.isArray(items)) continue;
-    for (const value of items as InspectItem[]) {
-      if (!isInspectItemActive(value)) continue;
-      const sourceType = value.source?.type;
-      const path = inspectItemPath(value);
-      const identity = `${section}:${typeof value.name === "string" ? value.name : path}`;
-      if (sourceType === "builtin" || sourceType === "bundled") continue;
-      if (path === packageRoot || path.startsWith(`${packageRoot}/`)) akActive.add(identity);
-      else if (section === "projectInstructions" && headMatched.has(path)) continue;
-      else privateActive.add(identity);
-    }
-  }
-  return { privateActive: [...privateActive].sort(), akActive: [...akActive].sort() };
-}
-
-/** First-party structured inspection under the exact environment used by ACP. */
-export async function inspectControlledGrok(options: {
-  readonly binary: string;
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly packageRoot: string;
-}): Promise<GrokControlledInspection> {
-  const { stdout } = await execFileAsync(options.binary, ["inspect", "--json"], {
-    cwd: options.cwd,
-    env: options.env,
-    encoding: "utf8",
-  });
-  const document: unknown = JSON.parse(stdout);
-  if (typeof document !== "object" || document === null || Array.isArray(document)) {
-    throw new Error("Grok structured inspection did not return an object");
-  }
-  const record = document as Readonly<Record<string, unknown>>;
-  const headMatchedProjectInstructionPaths = new Set<string>();
-  for (const path of listActiveProjectInstructionPaths(record)) {
-    if (path === options.packageRoot || path.startsWith(`${options.packageRoot}/`)) continue;
-    if (await isHeadMatchedProjectInstruction(options.cwd, path)) {
-      headMatchedProjectInstructionPaths.add(path);
-    }
-  }
-  return classifyGrokInspection(record, options.packageRoot, { headMatchedProjectInstructionPaths });
-}
-
-/** Exact child environment shared by inspect and ACP agent processes. */
+/** Child environment shared by ACP agent processes. */
 export function controlledGrokChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...base,
