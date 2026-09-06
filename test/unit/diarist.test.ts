@@ -123,6 +123,7 @@ test("extractReferencedAdrPaths keeps docs/adr shapes; drops traversal claims", 
 test("parseDiaristLlmStdout consumes sole selections object; ignores unknown fields", () => {
   const stdout = JSON.stringify({
     extraTop: true,
+    ticketNumber: 582,
     selections: [
       {
         candidateIndex: 0,
@@ -134,12 +135,20 @@ test("parseDiaristLlmStdout consumes sole selections object; ignores unknown fie
     ],
   });
   const parsed = parseDiaristLlmStdout(stdout, 2);
-  assert.equal(parsed.length, 2);
-  assert.equal(parsed[0]!.candidateIndex, 0);
-  assert.deepEqual(parsed[0]!.quotes, ["hello"]);
-  assert.equal(parsed[0]!.triage, "relevant");
-  assert.equal(parsed[1]!.candidateIndex, 1);
-  assert.deepEqual(parsed[1]!.quotes, []);
+  // Ticket identity is a typed key on the same object — never read out of prose.
+  assert.equal(parsed.ticketNumber, 582);
+  assert.equal(parsed.selections.length, 2);
+  assert.equal(parsed.selections[0]!.candidateIndex, 0);
+  assert.deepEqual(parsed.selections[0]!.quotes, ["hello"]);
+  assert.equal(parsed.selections[0]!.triage, "relevant");
+  assert.equal(parsed.selections[1]!.candidateIndex, 1);
+  assert.deepEqual(parsed.selections[1]!.quotes, []);
+  // Absent and null both mean the summons named no ticket (lawful unbound).
+  assert.equal(parseDiaristLlmStdout('{"selections":[]}', 0).ticketNumber, undefined);
+  assert.equal(
+    parseDiaristLlmStdout('{"selections":[],"ticketNumber":null}', 0).ticketNumber,
+    undefined,
+  );
 });
 
 test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shapes", () => {
@@ -171,6 +180,14 @@ test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shap
     {
       stdout: "```json\n{\"selections\":[]}\n```",
       reason: "unparseable-json",
+    },
+    {
+      stdout: '{"selections":[],"ticketNumber":"582"}',
+      reason: "ticket-number-uninterpretable",
+    },
+    {
+      stdout: '{"selections":[],"ticketNumber":0}',
+      reason: "ticket-number-uninterpretable",
     },
   ];
   for (const c of cases) {

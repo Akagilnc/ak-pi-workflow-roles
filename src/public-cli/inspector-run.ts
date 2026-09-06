@@ -10,7 +10,7 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   bindReusedTicketNumber,
-  resolveKnownTicketNumber,
+  resolveSummonsTicketIdentity,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -87,13 +87,14 @@ export async function runPublicInspector(
   }
 
   // #637: same ticket → resume prior inspector run with this summons' materials.
-  // #709: identity is reused from records this book already holds — no seat model call.
+  // #709: the 起居郎 round names the ticket before any run is minted, so the same
+  // identity picks the session to resume and, on a first summons, mints the volume.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveKnownTicketNumber({
+  const reusedTicketNumber = await resolveSummonsTicketIdentity({
     instruction: parsed.instruction,
     projectRoot,
-    home: env.home,
+    env,
   });
   if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
@@ -168,7 +169,7 @@ export async function runPublicInspector(
     request: turnRequest,
     adapters: inspectorAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        // #635/#709: bind the resolved identity inside the controlled-failure boundary.
         await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
       },
     }),

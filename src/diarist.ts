@@ -85,7 +85,14 @@ export type DiaristIssueFaceFetcher = (input: {
 }) => Promise<DiaristIssueFace | undefined>;
 
 export type DiaristRunInput = {
-  readonly ticketNumber: number;
+  /**
+   * Ticket identity the caller already holds. Omit it and this round reads the
+   * summons and hands one back — the sole ticket-number source of truth
+   * (ADR 0081 `initial-court-ticket-supplied` / `reuse-case-ticket-without-extra-llm`).
+   */
+  readonly ticketNumber?: number;
+  /** Caller summons text this round understands when identity is not yet known. */
+  readonly instruction?: string;
   readonly cwd: string;
   /** Explicit package home (admitted run / tests); never process.env.HOME (#604). */
   readonly home?: string;
@@ -102,7 +109,8 @@ export type DiaristRunInput = {
 };
 
 export type DiaristRunResult = {
-  readonly ticketNumber: number;
+  /** Identity this round worked under; undefined = the summons named no ticket. */
+  readonly ticketNumber: number | undefined;
   /** Safeguard-cleaned source count before incremental filter. */
   readonly candidateCount: number;
   /** Blocks not yet on the volume — sole set sent to the collector this court. */
@@ -111,8 +119,9 @@ export type DiaristRunResult = {
   readonly rejectedQuotes: number;
   readonly pointers: readonly RecordPointer[];
   readonly entries: readonly TicketProvenanceEntry[];
-  readonly humanViewFile: string;
-  readonly volumeRecordFile: string;
+  /** Volume faces — absent when the round named no ticket (no volume is minted). */
+  readonly humanViewFile?: string;
+  readonly volumeRecordFile?: string;
   readonly collectorStatus:
     | "ok"
     | "skipped-no-fresh"
@@ -289,28 +298,30 @@ function faceTextForAnchors(face: DiaristIssueFace | undefined): string | undefi
 }
 
 /**
- * Run one diarist pass for a ticket: mechanical candidates → LLM collect →
- * reverse-verify → idempotent sitian append → human view refresh.
- * Always establishes the per-ticket volume + md.
+ * Run one diarist pass: mechanical candidates → LLM collect → reverse-verify →
+ * idempotent sitian append → human view refresh.
+ * The same round carries ticket identity: an input ticketNumber is worked under
+ * directly, otherwise the collector reads the caller's summons and names one.
+ * A named ticket always ends with its volume + md established, including on the
+ * empty and failed paths. A round that names none stays lawfully unbound and
+ * mints nothing — no fake ticket, no volume.
  */
 export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResult> {
   const homeOpt = input.home === undefined ? {} : { home: input.home };
-  // Per-ticket volume exists for every bound court, including empty/fail paths.
-  const volumePaths = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
+  const known = input.ticketNumber;
 
-  const anchorText = faceTextForAnchors(input.issueFace);
-  const anchors: DiaristAnchorSet = buildDiaristAnchors({
-    ticketNumber: input.ticketNumber,
-    ...(anchorText === undefined ? {} : { ticketBody: anchorText }),
-  });
   const rawBlocks = await loadSourceBlocks(input);
   // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
   const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
   // Incremental: only blocks whose entry identity is not yet on the volume
   // are offered to the collector (ADR 0075 refresh-every-court = 增量幂等).
-  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd, input.home);
+  // An unknown identity has no volume to compare against — every block is fresh.
+  const seen =
+    known === undefined
+      ? new Set<string>()
+      : await loadSeenEntryIdentities(known, input.cwd, input.home);
   const fresh = safeguarded.filter(
-    (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
+    (block) => known === undefined || !seen.has(blockEntryIdentity(known, block)),
   );
 
   let collectorStatus: DiaristRunResult["collectorStatus"];
@@ -325,12 +336,16 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     ...(input.packageRoot === undefined ? {} : { packageRoot: input.packageRoot }),
   });
 
-  if (fresh.length === 0) {
+  // Nothing new to transcribe skips the round — but only once identity is known.
+  // An unknown identity still asks, with an empty catalog if that is all there is:
+  // the summons alone is enough for this round to name the ticket.
+  if (known !== undefined && fresh.length === 0) {
     collectorStatus = "skipped-no-fresh";
   } else {
     try {
       collect = await collector({
-        ticketNumber: input.ticketNumber,
+        ...(known === undefined ? {} : { ticketNumber: known }),
+        ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
         candidates: fresh,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
@@ -343,15 +358,46 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
       collectorStatus = "failed";
       collectorError =
         error instanceof Error ? error.message : String(error);
-      // Durable true-cause on the ticket volume (append-only history).
+      if (known === undefined) {
+        // Identity was this round's work. Engine/parse failure is not 真无票
+        // (失败诚实: do not wash an unidentified exception into unbound).
+        throw error;
+      }
+      // Bound ticket: durable true-cause on the volume; the station continues.
       appendCollectorFailureDiagnostic({
-        ticketNumber: input.ticketNumber,
+        ticketNumber: known,
         cwd: input.cwd,
         ...homeOpt,
         collectorError,
       });
     }
   }
+
+  const ticketNumber = known ?? collect?.ticketNumber;
+  if (ticketNumber === undefined) {
+    // 真无票: the collector named no ticket. Collector failure never reaches here.
+    return {
+      ticketNumber: undefined,
+      candidateCount: safeguarded.length,
+      freshCount: fresh.length,
+      appended: 0,
+      rejectedQuotes: 0,
+      pointers: [],
+      entries: [],
+      collectorStatus,
+      ...(collectorError === undefined ? {} : { collectorError }),
+      ...(llmRawStdout === undefined ? {} : { llmRawStdout }),
+    };
+  }
+
+  // Per-ticket volume exists for every named ticket, including empty/fail paths.
+  const volumePaths = ensureTicketProvenanceVolume(ticketNumber, input.cwd, input.home);
+
+  const anchorText = faceTextForAnchors(input.issueFace);
+  const anchors: DiaristAnchorSet = buildDiaristAnchors({
+    ticketNumber,
+    ...(anchorText === undefined ? {} : { ticketBody: anchorText }),
+  });
 
   const pointers: RecordPointer[] = [];
   const accepted: TicketProvenanceEntry[] = [];
@@ -374,7 +420,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         rejectedQuotes += 1;
         // Single diagnostic expression — never a disguised diary entry.
         const ptr = appendQuoteVerifyFailureDiagnostic({
-          ticketNumber: input.ticketNumber,
+          ticketNumber,
           cwd: input.cwd,
           ...homeOpt,
           cause: projected.cause,
@@ -383,7 +429,7 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
         continue;
       }
       const ptr = appendTicketProvenanceEntry({
-        ticketNumber: input.ticketNumber,
+        ticketNumber,
         cwd: input.cwd,
         ...homeOpt,
         entry: projected.entry,
@@ -404,27 +450,25 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
     (collectorStatus === "ok" || collectorStatus === "empty-selection")
   ) {
     recordOfferedIdentities({
-      ticketNumber: input.ticketNumber,
+      ticketNumber,
       cwd: input.cwd,
       ...homeOpt,
-      identities: fresh.map((block) =>
-        blockEntryIdentity(input.ticketNumber, block),
-      ),
+      identities: fresh.map((block) => blockEntryIdentity(ticketNumber, block)),
     });
   }
 
   // Refresh human view from the full volume (includes prior court runs).
   // Always write — empty courts still get the md face next to the JSONL.
-  const volume = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  const volume = await readTicketProvenance(ticketNumber, input.cwd, input.home);
   const humanViewFile = writeTicketProvenanceHumanView({
-    ticketNumber: input.ticketNumber,
+    ticketNumber,
     cwd: input.cwd,
     ...homeOpt,
     entries: volume.entries,
   });
 
   return {
-    ticketNumber: input.ticketNumber,
+    ticketNumber,
     candidateCount: safeguarded.length,
     freshCount: fresh.length,
     appended: accepted.length,

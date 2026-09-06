@@ -3,7 +3,7 @@
  * shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
- * Unbound admission reuses a known ticket identity (#709) before the diary station.
+ * Unbound summons takes its ticket identity from the 起居郎 round itself (#709).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -25,7 +25,7 @@ import {
 } from "./invocation.ts";
 import {
   bindReusedTicketNumber,
-  resolveKnownTicketNumber,
+  resolveSummonsTicketIdentity,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
@@ -100,13 +100,14 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // #709: identity is reused from records this book already holds — no seat model call.
+  // #709: the 起居郎 round names the ticket before any run is minted, so the same
+  // identity picks the session to resume and, on a first summons, mints the volume.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveKnownTicketNumber({
+  const reusedTicketNumber = await resolveSummonsTicketIdentity({
     instruction: parsed.instruction,
     projectRoot,
-    home: env.home,
+    env,
   });
   if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
@@ -185,13 +186,14 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        // #635/#709: bind the resolved identity inside the controlled-failure boundary,
+        // then re-project activation once the station has settled whatever it binds.
         await bindReusedTicketNumber(admitted, reusedTicketNumber);
+        await runCountersignDiaristStation(admitted, env);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
         );
-        await runCountersignDiaristStation(admitted, env);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
@@ -272,7 +274,9 @@ export async function runPublicCountersignResume(
  * Caller-invisible — collector failures append durable volume diagnostics and the
  * station continues; issue-source / ADR source-read / watermark honesty failures
  * leave typed durable diagnostics and propagate (失败诚实).
- * An unbound run skips the station — no diary is minted without a ticket identity.
+ * A run with no identity yet still enters the round with its instruction: naming
+ * the ticket is this round's own work (#709), and a ticket it names is bound here.
+ * A round that names none leaves the run unbound — no volume, no fake ticket.
  *
  * Issue body/comments come from the shared GitHub seam only. Attachments stay
  * attachments — never merged and mislabeled as issue-body-comment.
@@ -281,20 +285,25 @@ export async function runPublicCountersignResume(
 export async function runCountersignDiaristStation(
   admitted: AdmittedCountersignInvocation,
   env: Pick<CountersignRunEnv, "cwd" | "packageRoot">,
-): Promise<DiaristRunResult | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
-
-  const issueFace = await loadBoundIssueFace(admitted);
+): Promise<DiaristRunResult> {
+  const issueFace =
+    admitted.ticketNumber === undefined
+      ? undefined
+      : await loadBoundIssueFace(admitted);
   const home = tryHomeFromAkRolesPath(admitted.runDirectory);
 
   const result = await runDiarist({
-    ticketNumber: admitted.ticketNumber,
+    ...(admitted.ticketNumber === undefined
+      ? {}
+      : { ticketNumber: admitted.ticketNumber }),
+    instruction: admitted.instruction,
     cwd: admitted.projectRoot,
     ...(home === undefined ? {} : { home }),
-    issueFace,
+    ...(issueFace === undefined ? {} : { issueFace }),
     sessionCwds: [admitted.projectRoot, env.cwd],
     ...(env.packageRoot === undefined ? {} : { packageRoot: env.packageRoot }),
   });
+  await bindReusedTicketNumber(admitted, result.ticketNumber);
   return result;
 }
 

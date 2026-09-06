@@ -18,6 +18,11 @@ export type HermesFixtureOptions = {
    * (passes mechanical verbatim check → durable volume sourceKind/sourceRef).
    */
   selectAllCandidates?: boolean;
+  /**
+   * Typed ticket identity the collector hands back on either face (#709).
+   * Omitted = the round names no ticket, i.e. lawful unbound.
+   */
+  ticketNumber?: number;
   /** Force non-zero exit (both faces). */
   defaultExitCode?: number;
 };
@@ -43,6 +48,16 @@ export async function installHermesFixture(
     options.defaultExitCode === undefined
       ? undefined
       : Number(options.defaultExitCode);
+  const ticketFace =
+    options.ticketNumber === undefined
+      ? "{}"
+      : `{ ticketNumber: ${Number(options.ticketNumber)} }`;
+  // collectorResponse stays verbatim (malformed shapes must survive); the typed
+  // ticket identity, when asked for, is merged onto whatever object it carries.
+  const defaultFaceBody =
+    options.ticketNumber === undefined
+      ? embedJson(collectorDefault)
+      : `JSON.stringify(Object.assign(JSON.parse(${embedJson(collectorDefault)}), ${ticketFace}))`;
 
   // Explicit CommonJS (.cjs): package root is "type":"module"; bare `hermes`
   // without extension inherits ESM and rejects require(). Fixture must reach
@@ -73,9 +88,9 @@ if (isCollector) {
       quotes: transcript.length > 0 ? [transcript] : [],
     };
   });
-  process.stdout.write(JSON.stringify({ selections }));
+  process.stdout.write(JSON.stringify({ selections, ...${ticketFace} }));
   process.exit(0);`
-      : `process.stdout.write(${embedJson(collectorDefault)});
+      : `process.stdout.write(${defaultFaceBody});
   process.exit(0);`
   }
 }

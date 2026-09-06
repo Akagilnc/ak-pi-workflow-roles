@@ -42,10 +42,7 @@ import {
 } from "../helpers/hermes-fixture.ts";
 import { DiaristIssueSourceError } from "../../src/diarist.ts";
 import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
-import {
-  ensureTicketProvenanceVolume,
-  readTicketProvenance,
-} from "../../src/ticket-provenance.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -772,9 +769,8 @@ test("runPublicCountersign: diarist beforeDispatch failure settles terminal (not
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     // No origin → diarist station throws origin-unresolved after markRunRunning.
-    await installHermesFixture(join(home, "bin"));
-    // #709: identity is reused from an existing 起居录 volume, not a model call.
-    ensureTicketProvenanceVolume(582, project, home);
+    // #709: the 起居郎 round names the ticket; nothing is pre-seeded on disk.
+    await installHermesFixture(join(home, "bin"), { ticketNumber: 582 });
 
     let turnStarted = false;
     const { io, stderr } = captureIo();
@@ -833,17 +829,9 @@ test("runPublicCountersign: diarist station fills ticket volume before role turn
       { cwd: project },
     );
 
-    ensureTicketProvenanceVolume(582, project, home);
     await installHermesFixture(join(home, "bin"), {
-      collectorResponse: {
-        selections: [
-          {
-            candidateIndex: 0,
-            quotes: ["立文件。送司天台记录。"],
-            triage: "relevant",
-          },
-        ],
-      },
+      selectAllCandidates: true,
+      ticketNumber: 582,
     });
     await installGhFixture(join(home, "bin"), {
       issues: {
@@ -1015,8 +1003,9 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
 
 test("public countersign path: known ticket is reused, bound, and delivered with its diary", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // #709: the identity already exists in this book's records — no seat model call.
-    ensureTicketProvenanceVolume(582, project, home);
+    // #709: identity comes back as a typed key from the 起居郎 round itself — no
+    // pre-seeded volume, no seat-side scan of the instruction.
+    await installHermesFixture(join(home, "bin"), { ticketNumber: 582 });
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -1048,6 +1037,7 @@ test("public countersign path: known ticket is reused, bound, and delivered with
 
 test("public countersign path: no known ticket stays unbound, skips diary and dossier", async () => {
   await withCountersignProject(async ({ home, project }) => {
+    // #709 真无票: the 起居郎 round names no ticket, so nothing is bound or minted.
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
@@ -1075,44 +1065,3 @@ test("public countersign path: no known ticket stays unbound, skips diary and do
   });
 });
 
-test("public countersign path: an unrecorded number in the instruction is not minted", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    let turnTicket: number | undefined;
-    const result = await runPublicCountersign(
-      ["裁：票 #999999 从未在本书留过记录。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000p03",
-        onTurn: (req) => {
-          turnTicket =
-            req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
-        },
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    assert.equal(turnTicket, undefined);
-  });
-});
-
-test("public countersign path: a known number's digit substring is not that ticket", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    // Only #82 is recorded; the instruction carries #582, which is a different token.
-    ensureTicketProvenanceVolume(82, project, home);
-    const result = await runPublicCountersign(
-      ["裁：审票 #582 是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000p06",
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-  });
-});

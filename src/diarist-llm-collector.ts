@@ -37,15 +37,27 @@ export type DiaristLlmSelection = {
   readonly triage?: "relevant" | "context" | "irrelevant";
 };
 
-export type DiaristLlmCollectResult = {
+/**
+ * Typed collector output: the blocks this round selected and the ticket identity
+ * it read out of the caller's summons (ADR 0081 `initial-court-ticket-supplied`).
+ * ticketNumber absent means the summons named no ticket — lawful unbound.
+ */
+export type DiaristLlmCollectorOutput = {
   readonly selections: readonly DiaristLlmSelection[];
+  readonly ticketNumber?: number;
+};
+
+export type DiaristLlmCollectResult = DiaristLlmCollectorOutput & {
   /** Raw engine stdout retained for diagnostics (not a gate). */
   readonly rawStdout: string;
   readonly engineArgv: readonly string[];
 };
 
 export type DiaristLlmCollector = (input: {
-  readonly ticketNumber: number;
+  /** Identity already bound to this run; omit so this round reads it from the summons. */
+  readonly ticketNumber?: number;
+  /** Caller summons text — the sole place a not-yet-bound ticket is named. */
+  readonly instruction?: string;
   readonly candidates: readonly DiaristSourceBlock[];
   readonly signal?: AbortSignal;
 }) => Promise<DiaristLlmCollectResult>;
@@ -57,7 +69,8 @@ export type DiaristLlmStdoutReason =
   | "not-object"
   | "selections-missing"
   | "selections-wrong-type"
-  | "selection-uninterpretable";
+  | "selection-uninterpretable"
+  | "ticket-number-uninterpretable";
 
 export class DiaristLlmStdoutError extends Error {
   readonly code = "diarist-llm-stdout" as const;
@@ -74,15 +87,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Ticket identity this round names, as a typed key (never parsed out of prose).
+ * Omitted or null = the summons named no ticket. Any other shape is uninterpretable
+ * and fails honestly rather than degrading into a guessed or silent identity.
+ */
+function parseCollectorTicketNumber(
+  parsed: Record<string, unknown>,
+): number | undefined {
+  if (!Object.prototype.hasOwnProperty.call(parsed, "ticketNumber")) return undefined;
+  const value = parsed.ticketNumber;
+  if (value === null) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 1
+  ) {
+    throw new DiaristLlmStdoutError(
+      "ticket-number-uninterpretable",
+      "diarist collector ticketNumber must be a safe integer >= 1, null, or absent",
+    );
+  }
+  return value;
+}
+
+/**
  * Consumer-driven parse of collector stdout.
- * Sole shape: one JSON object with typed `selections` array.
- * Unknown top-level / row fields are ignored. No fence/substring recovery,
- * no blocks/index/i/quote aliases. Empty or uninterpretable input fails honestly.
+ * Sole shape: one JSON object with typed `selections` array and optional typed
+ * `ticketNumber`. Unknown top-level / row fields are ignored. No fence/substring
+ * recovery, no blocks/index/i/quote aliases. Empty or uninterpretable input fails honestly.
  */
 export function parseDiaristLlmStdout(
   stdout: string,
   candidateCount: number,
-): DiaristLlmSelection[] {
+): DiaristLlmCollectorOutput {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) {
     throw new DiaristLlmStdoutError("empty-stdout", "diarist collector stdout is empty");
@@ -184,7 +221,11 @@ export function parseDiaristLlmStdout(
       ...(triage === undefined ? {} : { triage }),
     });
   }
-  return out;
+  const ticketNumber = parseCollectorTicketNumber(parsed);
+  return {
+    selections: out,
+    ...(ticketNumber === undefined ? {} : { ticketNumber }),
+  };
 }
 
 /** Structured engine payload for hermes -z (sole method-delivery seam). */
@@ -195,7 +236,10 @@ export type DiaristCollectorEnginePayload = {
    * read at call time and delivered in the same -z structured input (no coordinate-only).
    */
   readonly method: string;
-  readonly ticketNumber: number;
+  /** Ticket already bound to this run; absent when this round must read it out. */
+  readonly ticketNumber?: number;
+  /** Caller summons text this round reads to name the ticket it is working on. */
+  readonly instruction?: string;
   readonly candidates: readonly {
     readonly candidateIndex: number;
     readonly sourceKind: DiaristSourceBlock["sourceKind"];
@@ -211,13 +255,15 @@ export type DiaristCollectorEnginePayload = {
  * not a path coordinate. Serialized body is staged by the shared engine seam (never argv).
  */
 export function buildDiaristCollectorEnginePayload(input: {
-  readonly ticketNumber: number;
+  readonly ticketNumber?: number;
+  readonly instruction?: string;
   readonly candidates: readonly DiaristSourceBlock[];
   readonly method: string;
 }): DiaristCollectorEnginePayload {
   return {
     method: input.method,
-    ticketNumber: input.ticketNumber,
+    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+    ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
     candidates: input.candidates.map((block, index) => ({
       candidateIndex: index,
       sourceKind: block.sourceKind,
@@ -276,7 +322,8 @@ export function createHermesDiaristCollector(
   }
   return async (input) => {
     const payload = buildDiaristCollectorEnginePayload({
-      ticketNumber: input.ticketNumber,
+      ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+      ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
       candidates: input.candidates,
       method,
     });
@@ -310,12 +357,12 @@ export function createHermesDiaristCollector(
         `diarist LLM collector engine exited ${result.code}: ${result.stderr.slice(0, 500)}`,
       );
     }
-    const selections = parseDiaristLlmStdout(
+    const output = parseDiaristLlmStdout(
       result.stdout,
       input.candidates.length,
     );
     return {
-      selections,
+      ...output,
       rawStdout: result.stdout,
       // Staged body redacted — argv face shows the path token only.
       engineArgv: argv,

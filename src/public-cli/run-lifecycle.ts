@@ -1057,21 +1057,6 @@ export async function findLatestRunIdForSeatTicket(input: {
   return best;
 }
 
-/**
- * Ticket identities this book's retained runs already record (#709).
- * Read-only reuse surface for seat ticket binding — no ticket number is minted here.
- */
-export async function collectBookRunTicketNumbers(input: {
-  readonly home: string;
-  readonly bookKey: string;
-}): Promise<ReadonlySet<number>> {
-  const known = new Set<number>();
-  for (const entry of await readBookRunTicketEntries(input)) {
-    if (entry.ticketNumber !== undefined) known.add(entry.ticketNumber);
-  }
-  return known;
-}
-
 type LoadedAdmittedRequestFields = {
   readonly instruction: string;
   readonly instructionEmpty: boolean;
