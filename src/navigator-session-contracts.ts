@@ -232,8 +232,6 @@ export function parseNavigatorModelSetting(value: string): {
  */
 export async function resolveNavigatorSeatSelection(
   context: HostContext,
-  _modelSettingPath: string | undefined,
-  _defaultModelSettingPath: string,
 ): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel?: string }> {
   try {
     const { loadPublicCliConfig } = await import("./public-cli/config.ts");

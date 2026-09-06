@@ -7,7 +7,6 @@ import { sitianReport } from "./sitian-facade.ts";
 import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
-  navigatorModelSettingPath,
   navigatorProviderFailureFromDiagnostics,
   navigatorProviderFailureFromError,
   navigatorProviderFailureFromStatus,
@@ -53,11 +52,9 @@ async function runChildCleanup(
   });
 }
 
-export function createNativeNavigatorSessionFactory(
-  defaultModelSettingPath = navigatorModelSettingPath(),
-): NavigatorSessionFactory {
-  return async ({ context, subject, modelSettingPath, tool }) => {
-    const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
+export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
+  return async ({ context, subject, tool }) => {
+    const resolved = await resolveNavigatorSeatSelection(context);
     let selection = resolved.selection;
     let thinkingLevel = resolved.thinkingLevel;
     let configuredLabel = resolved.configuredLabel;

@@ -292,7 +292,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
                 candidates: [{
                   id: "cold-luna-route",
-                  // Unbound candidate: selectable without settlement-keyed statuses (#675 nested path).
+                  matches: { role: "judge", phase: null, kind: "accepted" },
                   route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
                   next: { role: "reviewer", phase: null },
                   reason: "cold-installed typed route",
@@ -310,11 +310,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Per-invoke queue. Nested public notary/auditor each run Navigator on the
-          // navigator seat (Luna) plus their own output turns; parent also prepare+judge.
-          // Measured floor for one successful nested path on this fixture: 16.
-          // modelRequests exact-3 stays parent-prepare-only (see parentPrepareCounted).
-          luna.setResponses(Array.from({ length: 16 }, () => response));
+          luna.setResponses(Array.from({ length: 8 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -365,18 +361,10 @@ test("cold-installed live help follows the loaded extension and changes on the n
             if (event?.disposition !== "recommendation") return;
             const observed = await uniqueObservedNavigatorSession(home, resolve(issueRoot), issueRoot);
             const persisted = observed.entries;
-            // Parent settlement is the sealed attendance fact; preparation that drains
-            // into it must complete before. Prefer last prepare at-or-before settlement
-            // so nested officer navigator prepares after parent settle do not invert order.
+            const prepared = [...persisted].reverse().find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME);
             const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
-            const settledAt = settled?.timestamp;
-            const settledMs = typeof settledAt === "string" ? Date.parse(settledAt) : Number.NaN;
-            const prepared = [...persisted].reverse().find((entry) => {
-              if (entry.type !== "message" || entry.message?.role !== "toolResult" || entry.message?.toolName !== NAVIGATOR_PREPARE_TOOL_NAME) return false;
-              if (!Number.isFinite(settledMs) || typeof entry.timestamp !== "string") return true;
-              return Date.parse(entry.timestamp) <= settledMs;
-            });
             const preparedAt = prepared?.timestamp;
+            const settledAt = settled?.timestamp;
             const persistedVisibleAt = visible?.timestamp;
             if (typeof preparedAt !== "string" || typeof settledAt !== "string" || typeof persistedVisibleAt !== "string") {
               throw new Error(`${label} must persist typed preparation, settlement, and visible timestamps: ${JSON.stringify({ preparedAt, settledAt, persistedVisibleAt, event, persistedTypes: persisted.map((entry) => ({ type: entry.type, customType: entry.customType, timestamp: entry.timestamp })) })}`);

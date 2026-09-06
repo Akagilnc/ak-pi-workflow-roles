@@ -277,7 +277,7 @@ function projectOfficerTerminal(
 export {
   DIRECT_OFFICER_RUN_POINTER_KIND,
   type DirectOfficerRunPointer,
-} from "./direct-officer-run-pointer.ts";
+} from "./archivist-record-entry.ts";
 
 /**
  * Project + request shared archivist to book a typed pointer under parent
@@ -301,7 +301,7 @@ async function bookDirectOfficerPointer(
     // No independent 正本 to point at — do not synthesize a parallel session.
     return;
   }
-  const { bookDirectOfficerRunPointer } = await import("./direct-officer-run-pointer.ts");
+  const { bookDirectOfficerRunPointer } = await import("./archivist-record-entry.ts");
   await bookDirectOfficerRunPointer({
     parentSessionFile: parentFile,
     officer,
