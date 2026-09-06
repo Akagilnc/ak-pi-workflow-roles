@@ -233,10 +233,10 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             });
           }
 
-          // #617 DK-7: hand Pi session path once; Grok reads the file itself.
+          // #617 DK-7: hand the Pi native session path once; the host reads the file itself.
           const priorNativePaths =
             continuation.kind === "resume"
-            && request.hostTransition?.previousHost === "pi"
+            && request.hostTransition?.priorNativeKind === "pi-native"
               ? request.hostTransition.priorNativePaths
               : undefined;
           if (continuation.kind === "resume") {
