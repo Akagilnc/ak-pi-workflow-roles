@@ -240,19 +240,23 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             continuation.kind === "resume"
               ? request.hostTransition?.priorNativePaths
               : undefined;
+          const loadConnection = connection;
+          const loadSession = async (bindSessionId: string): Promise<string> => {
+            const loaded = await loadConnection.request("session/load", {
+              sessionId: bindSessionId,
+              cwd: request.cwd,
+              mcpServers: prepared.mcpServers,
+              _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+            });
+            return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
+              ? loaded.sessionId
+              : bindSessionId;
+          };
           if (continuation.kind === "resume" && config.boundResume === "session/load") {
             // Same-host resume reuses the native ACP session via session/load.
             const boundSessionId = await config.sessionIdentity.load(request.principal);
             if (boundSessionId !== undefined && boundSessionId !== "") {
-              const loaded = await connection.request("session/load", {
-                sessionId: boundSessionId,
-                cwd: request.cwd,
-                mcpServers: prepared.mcpServers,
-                _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
-              });
-              sessionId = typeof loaded.sessionId === "string" && loaded.sessionId !== ""
-                ? loaded.sessionId
-                : boundSessionId;
+              sessionId = await loadSession(boundSessionId);
             }
           }
           if (sessionId === undefined) {
@@ -274,7 +278,14 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           }
 
           // set_model hosts (hermes) address the seat model by `provider:model`
-          // once the session exists; argv hosts never reach this RPC.
+          // once the session exists; argv hosts never reach this RPC. The same
+          // guard covers the re-bind below: only when a model was actually sent
+          // can hermes-agent 0.20.6 have rebuilt the session agent and dropped
+          // the ACP-injected AK mcpServers (set_session_model → _make_agent
+          // derives its toolset from hermes-config MCP servers only; 2026-09-07
+          // probe: after set_model the model reported NO_AK_TOOLS). Re-binding
+          // via session/load re-registers the relay server and restores the role
+          // tool surface — the resume path above reuses the same load verb.
           if (
             config.modelPassing === "set_model"
             && request.model !== undefined
@@ -284,26 +295,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               sessionId,
               modelId: acpModelId(config.modelPassing, request.model),
             });
-          }
-
-          // hermes-agent 0.20.6: session/set_model rebuilds the session agent
-          // (providers/session.set_session_model → _make_agent) and the rebuild
-          // derives its toolset from hermes-config MCP servers only, dropping the
-          // ACP-injected AK mcpServers (2026-09-07 probe: after set_model the
-          // model reported NO_AK_TOOLS and enumerated a nameless toolset).
-          // Re-binding the session with the same mcpServers re-registers the
-          // relay server and restores the role tool surface. session/load is the
-          // spec-valid re-bind verb (hermes also re-registers on load/resume).
-          if (
-            config.modelPassing === "set_model"
-            && sessionId !== undefined
-          ) {
-            await connection.request("session/load", {
-              sessionId,
-              cwd: request.cwd,
-              mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
-            });
+            await loadSession(sessionId);
           }
 
           let prompt =
