@@ -52,8 +52,11 @@ function seedJudgeSubjects(sessionManager: SessionManager): void {
 
 /**
  * Shared child-provider observation for healthy + negative auditor paths.
- * Counts real mock HTTP hits through withInstitutionalProviderFixture so a
- * materials-gate failure that still opened the child would red on call count.
+ * Counts faux provider HTTP responses only (not full child/auth open).
+ * Negatives omit institutional seat; healthy arms seat + pass response.
+ * C3 #685: proves provider request count === 0 on materials gate; stronger
+ * 「整个 child/auth 未打开」/原 audit-failure-subprocess 矩阵未结 —
+ * docs/research/issue-685-c3-deleted-contract-handoff.md §J.
  */
 async function withAuditorChildObservation<T>(
   run: (ctx: {

@@ -1,62 +1,193 @@
-# #685 C3 删案承接表（owner 2026-09-06 r13）
+# #685 C3 删案承接表（owner 2026-09-06 r13；r9 文书重写）
 
 口径（owner 御批选项 1）：
 
-- **不再点火**真宿主 / 冷装 / 聚合脚本。
-- 承接只用**既有真实卷宗**逐案指认：具名 `runId` + **绝对路径**；该卷必须确实证明该契约。
-- 证不了的明确标 **未结**。
+- **不再点火**真宿主 / 冷装 / 聚合脚本；不为证明修复换形再造测试。
+- 承接只用**既有真实卷宗**或**留存 CI 确定性 call-input 案**逐案指认：具名 `runId` + **绝对路径**（或留存测试路径）；该证据必须确实证明该原行为。
+- **真实卷存在 ≠ 原契约已证**。健康 terminal / public-cli 入口旁证**单列**，不得吞掉专用未结项。
+- 证不了的明确标 **未结**。诚实未结不是缺陷；用旁证或同名 Error 冒充原观察才是。
 - **自拟聚合摘要不算 run**（含 `runs/01a072fc-685-c3-agg-*@fixer/aggregation-dossier.json` 及其 checks）。
 - 七处伪 run 目录原地保全，本表不引用、不删除。
+- 因**盯文 / 呈现锁 / 失效行为**合法删除的断言：写法源与处置，不为其造证明。
 
-前缀：`/Users/akagilnc/.ak-roles/books/ak-pi-workflow-roles/runs/`
+前缀 `BOOK` = `/Users/akagilnc/.ak-roles/books/ak-pi-workflow-roles/runs`  
+范围：`git diff --name-only d9801a3c...8c2f309f` 中全部删除测试文件 + 修改文件中删除的行为（只读原断言反查，不恢复宿主测试、不写 src）。
 
-留存 CI 案（确定性 call-input）可作同根承接，与生产卷并列写明。
+---
 
-| 删案 | 契约 | 必要性 | 同根 | 处置 | 精确承接 | 结态 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `test/integration/collector-real-entry.test.ts` 整文件 | Collector 公开入口 settle | 真宿主 | 生产 collector | 删 | runId `01a07280-5ba5-7554-b8a3-2ab8294ce0d9`；绝对路径 `…/runs/01a07280-5ba5-7554-b8a3-2ab8294ce0d9@collector`；`entryMode=public-cli`，`rolePackageRoot`→`~/.pi/agent/npm/…/pi-workflow-roles`，`state=terminal`，`outcome=collected`。**不**证 resume 失败面 | 健康 settle **已结**；resume 失败面 **未结** |
-| `test/integration/public-cli-collector-run.test.ts` | collector 公开 run | 真宿主 | 同上 | 删 | 同 `01a07280-5ba5-7554-b8a3-2ab8294ce0d9@collector` | 同上 |
-| `test/integration/gatekeeper-real-entry.test.ts` 整文件 | 直召 Inspector / Notary | 真宿主 | 生产 gate 席 | 删 | Inspector：`01a07237-8bab-7606-ab2f-ea2f181fbfe7` → `…/01a07237-8bab-7606-ab2f-ea2f181fbfe7@inspector`（public-cli，terminal，session 在盘）。Notary：`01a0628a-c182-7887-98a7-085af456ac63` → `…/01a0628a-c182-7887-98a7-085af456ac63@notary`（public-cli，terminal） | 健康直召 **已结** |
-| `test/integration/gleaner-left-real-entry.test.ts` | gleaner-left 真入口 | 真宿主 | 生产 gleaner | 删 | `01a06fa4-2f99-7df8-92c8-f70c1f24061b` → `…/01a06fa4-2f99-7df8-92c8-f70c1f24061b@gleaner-left`（public-cli，terminal，session 在盘） | 健康入口 **已结** |
-| `test/integration/fixer-pi-loader-methods.test.ts` | fixer 方法装载 / 公开 settle | 真宿主 | 生产 fixer | 删 | `01a07240-fc0d-7ef3-8bd5-7fb38f346220` → `…/01a07240-fc0d-7ef3-8bd5-7fb38f346220@fixer`（public-cli，terminal，accepted completed） | 健康 settle **已结** |
-| `test/integration/public-cli-judge-run.test.ts` | Judge 公开 CLI 真跑 | 真宿主 | 生产 judge | 删 | `01a0726d-5d67-713f-956e-81c201907e59` → `…/01a0726d-5d67-713f-956e-81c201907e59@judge`（escalate）；`01a07246-0999-7ec9-a422-fb06dad57d18` → `…/01a07246-0999-7ec9-a422-fb06dad57d18@judge`（continue）。二者均为 public-cli + `~/.pi/agent/npm` 安装根 + terminal。**不**证非法激活 / observation 失败 | 健康/裁决路径 **已结**；非法激活失败面 **未结**（ADR 0019 留存确定性案另担） |
-| `test/integration/public-cli-coder-installed-run.test.ts` | coder 已装包入口 settle | 真宿主 | 生产 coder | 删 | 健康 coder：`01a07257-43a1-7f09-ac08-d0d7d67ca20a` → `…/01a07257-43a1-7f09-ac08-d0d7d67ca20a@coder`；`01a07222-0cb7-72f1-b1ae-6ded5aa3cf89` → `…/01a07222-0cb7-72f1-b1ae-6ded5aa3cf89@coder`（均 public-cli + npm 安装根 + completed）。provider-stop/resume 失败面 | 健康已装入口 **已结**；provider-stop/resume 失败 **未结** |
-| `test/package/package-entrypoint-packaged-workers.integration.test.ts` 健康 worker 腿 | 打包后 worker 公开 settle | 真宿主 | 生产 coder/fixer/judge | 删 | coder/fixer/judge 健康卷见上列具名路径 | 健康 settle **已结** |
-| 同上 · 跨进程 dossier 隔离 | 两独立 packaged 进程 dossier 不串 | 真宿主+隔离 | 指针隔离 | 删 | 留存 CI：`test/unit/dossier-resolution.test.ts`「concurrent pointers keep two runs from crossing dossiers」。生产两独立 run 目录并存可观察，但**不是**原案「两 packaged Pi 进程」专用证明 | 指针隔离 **已结**（留存案）；原 packaged 双进程隔离 **未结** |
-| `test/integration/public-cli-judge-engine-detour.test.ts` | engine-detour 失败 typed 停整 run（ADR 0071） | 真宿主失败面 | 0071 | 删 | `01a00dd4-679c-7031-8553-c2a41a871e07` → `…/01a00dd4-679c-7031-8553-c2a41a871e07@judge`：`artifacts/error.json` 为 `EngineDetourInfrastructureError` / `engine detour exited with code 1`，`invocation.engine=opus`，`state=terminal`，无 accepted report。同形：`01a00dd5-5e7a-7b82-9b09-2fc81daecfd5@judge`、`01a00dd4-b672-752d-8ae3-9bad6c713842@judge`。留存 CI 补 call-input：`test/integration/engine-detour-cancel-idle.test.ts`（spawn/abort）、`public-cli-engine-axis.test.ts`（engine 名/配置） | judge detour 失败停 run **已结** |
-| `test/integration/public-cli-reviewer-engine-detour.test.ts` | reviewer engine-detour 失败 | 真宿主失败面 | 0071 | 删 | `01a067dd-924f-74a1-9d56-e068df06be4d` → `…/01a067dd-924f-74a1-9d56-e068df06be4d@reviewer`：`EngineDetourInfrastructureError`（「本激活内劳务引擎已使用」），`engine=opus`，terminal。另 `01a067d3-01cc-74f4-817c-8dac3b787cca@reviewer` / `01a067d7-6fa2-749b-a6e5-2c5150294964@reviewer` 有同 identity 的 error 落盘 | reviewer detour 失败面 **已结** |
-| `test/package/public-cli-install.test.ts` | 隔离 Pi home 执行 install 并发现 bin | 真 npm install | 安装过程 | 删 | 生产大量 run 的 `rolePackageRoot` 已落在 `~/.pi/agent/npm/node_modules/@akagilnc/pi-workflow-roles`（例：上列 collector/coder/fixer/judge），只证明**已装包可被 public-cli 加载**，**不**证明 install 命令本身或隔离 home 构造 | 已装包加载面 **已结**；install 过程/隔离 home **未结** |
-| `test/package/package-entrypoint-cold-help.integration.test.ts` | 冷装 live help 随 extension 重读 | 真宿主+冷装 | help | 删 | 无生产 run 归档 `ak-role … --help` 输出 | **未结** |
-| `test/package/public-cli-cold-matrix.test.ts` | 冷装版本矩阵 / 文档化 update | 真 install 矩阵 | 安装矩阵 | 删 | 无版本矩阵真跑卷 | **未结** |
-| `test/integration/shared-cold-install-construction.test.ts` | 共享冷装指纹重建 | 真 install | 安装构造 | 删 | 无 | **未结** |
-| `test/package/package-entrypoint-navigator.integration.test.ts` | 包内 Navigator 真会话 | 真宿主 | 生产导航 | 删 | Navigator 嵌在生产腿内，无单独 `@navigator` run 目录可指认专用契约（准备/失败矩阵/跨角色连续性） | **未结**（无具名 navigator 卷） |
-| `test/integration/navigator-lifecycle-real-session.test.ts` | Navigator 真会话生命周期 | 真宿主 | 同上 | 删 | 同上 | **未结** |
-| `test/package/package-entrypoint-observation.integration.test.ts` | tool-execution observation 面 | 真宿主 | observation | 删 | 无 observation 专用生产卷可核 | **未结** |
-| `test/integration/audit-failure-subprocess.test.ts` | audit 失败子进程 typed 终局 | 真宿主失败面 | judge/auditor 失败 | 删 | 留存 CI：`test/integration/judge-auditor-dossier.test.ts`（missing-dossier/subject + **no-call** childCalls=0）；`test/unit/dossier-resolution.test.ts`。健康 judge **不**承接 audit 失败子进程 | 负向 dossier/no-call **已结**（留存案）；原 subprocess 失败矩阵 **未结** |
-| `test/package/judge-auditor-fixture-tracer.test.ts` | judge-auditor fixture tracer | 真宿主 | 同上 | 删 | 同上留存案 | 同上 |
-| `test/integration/reviewer-activation-rejection-books.test.ts` | reviewer 激活拒绝 | 真宿主拒绝面 | 激活屏障 | 删 | 健康 reviewer `01a07244-6de6-7cda-856d-8de0cecb3a13` → `…/01a07244-6de6-7cda-856d-8de0cecb3a13@reviewer` 只证健康路径；拒绝面无卷 | 健康 **已结**；拒绝面 **未结** |
-| `test/package/doctor-package-lifecycle.test.ts` | Doctor 包生命周期 / 审计输出 | 真宿主 | 生产 doctor | 删 | `01a06625-5bfd-738f-8214-d402cb84a5f1` → `…/01a06625-5bfd-738f-8214-d402cb84a5f1@doctor`（public-cli，terminal，status=refused）只证入口可达+拒绝 settle，**不**证「fresh Pi + 一次 audited output 完成」 | 入口/拒绝 **部分**；audited 完成轨迹 **未结** |
-| `test/package/collector-package-lifecycle.test.ts` / `reviewer-package-lifecycle.test.ts` | 角色包生命周期 | 真宿主 | 生产对应角色 | 删 | collector/reviewer 健康卷见上；lifecycle 专用矩阵无卷 | 健康 settle **已结**；lifecycle 专用 **未结** |
-| `test/integration/package-tool-idle-removed.test.ts` | 包工具/stream idle 移除后行为 | 真宿主 | 生产角色腿 | 删 | 健康 coder 见上；idle 专用失败面无卷。留存：`engine-detour-cancel-idle.test.ts` 声明 package-owned idle backstop 已移除 | idle 专用 **未结** |
-| activation-envelope `withInProcessPi` 宿主案 | 注册/拒绝/observation / 多进程 ledger race | 真宿主 | 生产激活 + 留存非宿主案 | 删宿主 | 健康激活旁证：`01a07246-0999-7ec9-a422-fb06dad57d18@judge`。多进程 O_APPEND/mkdir race：生产 books 下并发 run 目录可观察，但**无**原 8+8/16-worker 专用卷。留存：symlink escape 确定性案 | 健康旁证 **已结**；race 专用 / 非法激活 observation **未结** |
-| judge-role skill-expansion host 案 | 缺 skill 非 pass | 真宿主 | 生产 coder/judge | 删 | 健康 coder/judge 见上；缺 skill 拒绝面无卷 | 缺 skill 拒绝 **未结** |
-| merger-role session repo host 案 | 会话 cwd 真扩展 | 真宿主 | 生产 merger | 删 | `01a06fa5-aaf0-7b19-a67f-7c86c3e09530` → `…/01a06fa5-aaf0-7b19-a67f-7c86c3e09530@merger`；`01a06bde-2e3e-7f92-85a8-369fef08fd41` → `…/01a06bde-2e3e-7f92-85a8-369fef08fd41@merger`（public-cli，terminal，completed） | 健康 merger **已结** |
-| oauth-keepalive host×N | session keepalive | 真宿主 | 生产会话 | 删 | 健康 reviewer 会话见上；keepalive 异常面无卷。留存 oauth 案仅 route/cause 身份 | keepalive 异常 **未结** |
-| worker-submission-gates durability host | recordSession 耐久 | 真宿主 | 生产 fixer | 删 | `01a07240-fc0d-7ef3-8bd5-7fb38f346220@fixer`（session+artifacts 在盘）；留存非宿主 gate arm 仍在 CI | 耐久旁证 **已结** |
-| fixtures `*-provider.ts` 等真宿主 provider | 仅服务已删宿主案 | 无独立契约 | 同上 | 随案删 | 无单独承接 | — |
-| 自拟聚合 `01a072fc-685-c3-agg-*@fixer` | （非删案）r7 污染目录 | — | — | **不引用、不删除** | 七处伪目录与 `aggregation-dossier.json` **不算** run | 排除 |
+## A. Collector 公开入口与 #641
+
+原文件：`test/integration/collector-real-entry.test.ts`、`test/integration/public-cli-collector-run.test.ts`；包生命周期见 H。
+
+| 原案（行为） | 必要性 | 同根 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| Collector 公开入口 settle / observe-only 无 request manifest 成功 | 真宿主 | 生产 collector | 删 | runId `01a07280-5ba5-7554-b8a3-2ab8294ce0d9`；`BOOK/01a07280-5ba5-7554-b8a3-2ab8294ce0d9@collector`：`entryMode=public-cli`，`rolePackageRoot`→`~/.pi/agent/npm/…/pi-workflow-roles`，`state=terminal`，`artifacts/report.json` 在盘 | **健康 settle 旁证已结** |
+| optional request 执行后**重观测**入 receipt（collector-real-entry + public-cli-collector-run 同根） | 真宿主 | 上列 | 删 | 上列健康卷仅证入口+terminal，**无** request→re-observe 专用观察 | **未结** |
+| wait 遵守真实 eligibility cutoff | 真宿主 | — | 删 | 无 cutoff 专用卷 | **未结** |
+| failed reactivation 清除先前成功激活 | 真宿主 | — | 删 | 无 | **未结** |
+| #641 chain① 全文指针可开、receipt 不落原文；未知/不可开指针 correctable bounce 后 retry seal；zero-finding attendance-only；不可解 finding 不污染后续合法提交 | 真宿主 | #641 | 删 | 无 #641 指针/纠错专用生产卷 | **未结** |
+| #641 chain② 误报 infrastructureFailure bounce；unassemblable receipt 走共享 host failure | 真宿主 | #641 | 删 | 无 | **未结** |
+| #641 P2 read tool 真失败写入 typed host fact 供 settlement 分类 | 真宿主 | #641 | 删 | 无 | **未结** |
+| activation **恢复**非空 session dossier 后再 resume observe/output | 真宿主 | resume | 删 | 健康 terminal **不**证 restore-before-resume | **未结** |
+| output candidate **同轮禁止** request（GitHub POST 前拦截） | 真宿主 | — | 删 | 无 | **未结** |
+| public Collector **HTTP 404** → typed activation failure + Error Artifact | 真宿主失败面 | ADR 0019 | 删 | 无 404 activation 专用卷（既有 collector error 卷为 identity drift / 402 等，**不是** HTTP 404 activation） | **未结** |
+
+---
+
+## B. Gatekeeper 直召官
+
+原文件：`test/integration/gatekeeper-real-entry.test.ts`。
+
+| 原案（行为） | 必要性 | 同根 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| worker 完成**直接召** Inspector（无 Gatekeeper child）；dossier tool 在、subject body tool 不在 | 真宿主/直召关系 | 生产 gate 接缝 | 删 | 独立 `@inspector` 健康入口 **不是**「worker 完成后直召」关系证明。留存 call-input：`test/contract/judge-role.test.ts`「coder completed submissions traverse the direct Inspector gate until pass」等（进程内 gate 投影，非原 real-entry 子进程） | 直召关系 **未结**；进程内 gate 投影由留存案另担 |
+| judge draft **直接召** Notary 且 **preserve bounce** | 真宿主 | 同上 | 删 | 独立 `BOOK/01a0628a-c182-7887-98a7-085af456ac63@notary` 只证 Notary 公开健康入口，**不**证 draft→Notary 直召或 bounce 保留 | **未结** |
+| direct officer **escalate**（reason + findings typed） | 真宿主 | 同上 | 删 | 无 escalate 专用卷 | **未结** |
+| countersign verdict 直接召 Notary | 真宿主 | 同上 | 删 | 同上，独立 notary 健康卷不够 | **未结** |
+| direct officer **无回执** → loud typed `no_receipt` | 真宿主失败面 | 同上 | 删 | 留存：`test/integration/public-cli-notary.test.ts`「layer ③ no_receipt…」为共享 lifecycle 投影，**不是** gatekeeper-real-entry 直召无回执 | 直召无回执 **未结** |
+| missing arguments → one-shot serializable **transport_failure**；transport failure **点名被召 seat** | 真宿主失败面 | 同上 | 删 | 无 | **未结** |
+| `runGatekeeper` **持久化** in-memory tool-call leaf，dossier 解析 candidate body | 真宿主+持久叶子 | 同上 | 删 | 无 leaf 持久专用卷 | **未结** |
+| （旁证，非上列专用契约）Inspector/Notary 公开入口可 terminal | 真宿主 | 生产官席 | — | Inspector：`BOOK/01a07237-8bab-7606-ab2f-ea2f181fbfe7@inspector`（public-cli，terminal；注意该卷 `rolePackageRoot` 为 worktree trial 根，非 npm 安装根）。Notary：`BOOK/01a0628a-c182-7887-98a7-085af456ac63@notary` | **健康入口旁证已结**；**不得**合并结清上列直召/bounce/escalate/无回执/transport/叶子 |
+
+---
+
+## C. Fixer 双 method 装载 / Merger session B / worker gates 耐久
+
+| 原案（行为） | 原文件 | 必要性 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| Fixer production activation args 到达真实 Pi loader：**initial-apply** 与 **resume-apply** 两种 optional method 均装入 `diagnosing-bugs` + `tdd` skill（user 首条无 skill 标签） | `fixer-pi-loader-methods.test.ts` | 真宿主 method 装载 | 删 | `BOOK/01a07240-fc0d-7ef3-8bd5-7fb38f346220@fixer` 只证 public-cli + terminal + accepted completed，**不**证 initial/resume 两种 method 装载轨迹 | 健康 settle **旁证已结**；**双 method 装载未结** |
+| production extension 观察 **session repository B**，非 ambient repository A（激活到 completion） | `merger-role.test.ts`（删案） | 真宿主 cwd 隔离 | 删 | merger 健康卷 `BOOK/01a06fa5-aaf0-7b19-a67f-7c86c3e09530@merger`、`BOOK/01a06bde-2e3e-7f92-85a8-369fef08fd41@merger` 不区分 session B vs ambient A。留存：`merger-role.test.ts` 其余案为 host-neutral / Git state call-input，**不含**原 session-B 宿主案 | session B≠A **未结**；健康 merger **旁证已结** |
+| ①② durability：真实 `createRecordSession` **resume 后不再 false bounce** | `worker-submission-gates.test.ts`（删案） | 真宿主 recordSession | 删 | fixer 健康卷 session+artifacts 在盘只是耐久旁证。留存 gate arm（reason/zero-commit/prefix/uninstall）**不含** resume 后二次 bounce 否定 | resume 无二次 false bounce **未结**；非宿主 gate arm **已结**（留存 CI） |
+
+---
+
+## D. Judge / Reviewer engine-detour（ADR 0071）
+
+| 原案（行为） | 原文件 | 必要性 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| AC1 **成功**：PATH fake engine → detour → typed judge receipt（两 detour toolCall/Result，stdout/stderr 分流，judge output+closure） | `public-cli-judge-engine-detour.test.ts` | 真宿主成功劳务 | 删 | 生产 judge 健康/裁决卷（如 `BOOK/01a07246-0999-7ec9-a422-fb06dad57d18@judge` continue、`BOOK/01a0726d-5d67-713f-956e-81c201907e59@judge` escalate）**无** detour 成功双调用观察 | **成功劳务返回未结** |
+| engine **进程失败**停在公开入口、无 Receipt（empty-output / exit 非 0 等行） | 同上 | 真宿主失败面 | 删 | `BOOK/01a00dd4-679c-7031-8553-c2a41a871e07@judge`：`artifacts/error.json` = `EngineDetourInfrastructureError` / `engine detour exited with code 1`，`details.exitCode=1`，`state=terminal`，无 accepted report。同形：`…/01a00dd4-b672-752d-8ae3-9bad6c713842@judge`、`…/01a00dd5-5e7a-7b82-9b09-2fc81daecfd5@judge`。留存 call-input：`test/integration/engine-detour-cancel-idle.test.ts`（spawn/abort/cause seam） | judge detour **进程失败停 run 已结**（真错误卷 + 留存 seam） |
+| AC4 **治理**：无 engine → 无 detour tool；默认 typed path 仍 accepts | 同上 | 真宿主治理分支 | 删 | `test/integration/public-cli-engine-axis.test.ts`「ambient AK_ROLE_ENGINE does not activate detour…」等为配置/信号 call-input，**不是**原「无 engine 整跑仍 accepts 且 session 无 detour」宿主观察 | **治理分支未结** |
+| reviewer：evidence legs 内 **engine 进程失败**，原 **cause 贯穿**公开终局（exit≠0，diagnostic 含 engineCause） | `public-cli-reviewer-engine-detour.test.ts` | 真宿主失败面 | 删 | `BOOK/01a067dd-924f-74a1-9d56-e068df06be4d@reviewer`：`EngineDetourInfrastructureError`，diagnostic=「**本激活内劳务引擎已使用**」，`details.exitCode=0`——与原案「进程失败 + cause 贯穿 + 非 0」**不是同一观察**，**不得**作该失败案已结证明。同 identity 其他 reviewer error 卷同形时亦然 | **未结** |
+| reviewer AC with-notes：cursor engine → leg detour → typed reviewer receipt | 同上 | 真宿主成功劳务 | 删 | 健康 reviewer `BOOK/01a07244-6de6-7cda-856d-8de0cecb3a13@reviewer` 不证 leg detour 成功路径 | **未结** |
+
+---
+
+## E. 公开 CLI Judge/Coder 真跑与 failure-evidence
+
+原文件：`public-cli-judge-run.test.ts`、`public-cli-coder-installed-run.test.ts`。
+
+| 原案（行为） | 必要性 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- |
+| Judge 公开入口达 gate 并 registry command settle Terminal | 真宿主 | 删 | `BOOK/01a07246-0999-7ec9-a422-fb06dad57d18@judge`（continue）、`BOOK/01a0726d-5d67-713f-956e-81c201907e59@judge`（escalate）：public-cli + npm 安装根 + terminal | 健康/裁决路径 **已结** |
+| public Coder **rejected / never-called abandonment → typed no-receipt** | 真宿主失败面 | 删 | 无该 no-receipt 形态专用卷 | **未结** |
+| public Coder **aborted stop** → infrastructure nonzero、无 receipt delivery | 真宿主失败面 | 删 | 无 | **未结** |
+| Judge retained **unreadable compliance** 走 failure channel | 真宿主失败面 | 删 | 无 | **未结** |
+| Judge public **failure-evidence tracer** 各 scenario | 真宿主失败面 | 删 | 无逐 scenario 专用卷；不得用健康 judge 冒充 | **未结** |
+| cold-installed coder：**provider-stop then resume** → accepted terminal | 真宿主+冷装 | 删 | 健康 coder `BOOK/01a07257-43a1-7f09-ac08-d0d7d67ca20a@coder`、`BOOK/01a07222-0cb7-72f1-b1ae-6ded5aa3cf89@coder` 只证已装入口 completed | 健康已装入口 **旁证已结**；provider-stop/resume **未结** |
+
+---
+
+## F. packaged-workers 与跨进程 dossier
+
+原文件：`package-entrypoint-packaged-workers.integration.test.ts`；跨进程案在 `judge-auditor-fixture-tracer.test.ts`（**归属纠正**：不是 packaged-workers 文件内的案）。
+
+| 原案（行为） | 原文件归属 | 必要性 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| cold-installed 从 **editable Souls** 审计 active auditor seats | packaged-workers | 真宿主+冷装 | 删 | 健康 worker 卷不证 editable Souls 审计 | **未结** |
+| packaged judge 跨 Pi **loader / schema / persisted batch / auth-resolved audit / termination** offline | packaged-workers | 真宿主边界 | 删 | 不得概括为「健康 worker」 | **未结** |
+| packaged judge escalation → 一条 typed human decision | packaged-workers | 真宿主 | 删 | 生产 escalate 卷（上列 judge）非原 offline packaged 边界矩阵 | **未结**（与 E 健康 escalate 旁证分列） |
+| packaged coder apply：**canonical native tdd expansion + colliding prefix** | packaged-workers | 真宿主 | 删 | 留存：`test/contract/judge-role.test.ts`「coder apply binds completion to the immediately following canonical tdd expansion」为 call-input，**不含** colliding prefix 冷装宿主 | colliding prefix 宿主 **未结** |
+| packaged fixer：**both-phase bash seatbelt** + tool surface 保留 + **singleton output** | packaged-workers | 真宿主 | 删 | 健康 fixer 旁证不证 seatbelt/singleton 矩阵 | **未结** |
+| **两独立 packaged Pi 进程** dossier 不串（trace 互不含对方 runDirectory；installedRoot 不同） | **`judge-auditor-fixture-tracer.test.ts`** | 真宿主+隔离 | 删 | 留存：`test/unit/dossier-resolution.test.ts`「concurrent pointers keep two runs from crossing dossiers」= **顺序环境指针**隔离，**不是**双 packaged 进程。生产两 run 目录并存可观察，同非原案 | 指针隔离 **已结**（留存案）；**原 packaged 双进程隔离未结** |
+
+---
+
+## G. public-cli merger / failure-provider-stop 删案
+
+| 原案（行为） | 原文件 | 必要性 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- | --- |
+| public Merger **residual failure precedence** 落共享表 | `public-cli-merger-run.test.ts`（删） | 真宿主失败优先级 | 删 | 留存 merger-run 为 sealed→Terminal / non-sole / post-seal 共享入口，**不含** residual failure precedence 宿主表 | **未结** |
+| public Merger clean completed merge 共享表 | 同上 | 真宿主 | 删 | 健康 merger 卷旁证入口；非原「共享表 clean merge」专用矩阵 | 健康旁证 **已结**；共享表 clean merge 专用 **未结** |
+| Pi real-entry singleton table **rejects non-sole-final** | 同上 | 真宿主 | 删 | 留存：`host-neutral typed turns reject non-sole output…` 为进程内，非 Pi real-entry singleton 表 | real-entry non-sole-final **未结** |
+| #307 navigator institutional：durable archivist session + **typed 503** observation | `public-cli-failure-provider-stop.test.ts`（删） | 真宿主 | 删 | 留存同文件其余 #307（aborted raw / SDK payload / 2xx clear / ENOENT / non-absence）仍在；**本条 503+archivist 已删且无对等生产卷** | **未结**（具名；不得用「#307 异常面仍在」总称掩盖） |
+
+---
+
+## H. 安装 / 冷装 / 包生命周期 / observation / idle
+
+| 原案（行为） | 原文件 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- |
+| 隔离 Pi home **install** packed artifact + private npm bin 发现 ak-role | `public-cli-install.test.ts` | 删 | 多角色 `rolePackageRoot` 落在 `~/.pi/agent/npm/…` 只证**已装可加载**。留存：`npm-identity-metadata.test.ts` pack 清单 / optional peers | 已装加载面 **旁证已结**；**install 过程/隔离 home 未结** |
+| cold-installed **live help** 随 extension 重读变化 | `package-entrypoint-cold-help.integration.test.ts` | 删 | 无 `ak-role … --help` 生产归档 | **未结** |
+| 一次冷装练完 public roles + Navigator gates；documented update 刷新 | `public-cli-cold-matrix.test.ts` | 删 | 无版本矩阵真跑卷 | **未结** |
+| shared cold install 嵌套未跟踪字节变化时重建 | `shared-cold-install-construction.test.ts` | 删 | 无 | **未结** |
+| Doctor：fresh Pi 加载已装 extension 并 **完成一次 audited output**（soul/audit/closure/ledger） | `doctor-package-lifecycle.test.ts` | 删 | `BOOK/01a06625-5bfd-738f-8214-d402cb84a5f1@doctor`（public-cli，terminal，status=refused）只证入口+拒绝 settle | 入口/拒绝 **部分旁证**；audited 完成轨迹 **未结** |
+| Collector 冷装默认 **gh transport** 出 receipt | `collector-package-lifecycle.test.ts` | 删 | 健康 collector 不证 gh transport 冷装矩阵 | lifecycle/gh **未结** |
+| Reviewer 已装 tarball：**Reviewer→Judge 链** + frozen report/evidence | `reviewer-package-lifecycle.test.ts` | 删 | 健康 reviewer/judge 分卷并存 ≠ 原冷装链式案 | 链专用 **未结** |
+| tool-execution observation：stderr JSONL、永不打 Navigator prepare；无 `--ak-role` 则零记录 | `package-entrypoint-observation.integration.test.ts` | 删 | 无 | **未结** |
+| package-owned tool idle 已移除；stream idle 仍归 compliance | `package-tool-idle-removed.test.ts` | 删 | 留存：`engine-detour-cancel-idle.test.ts`「silent detour child is not cut by package-owned tool idle backstop」 | package-owned idle 移除 call-input **部分已结**；原 183s 角色注册宿主时序 **未结** |
+
+---
+
+## I. Navigator / OAuth / activation 宿主删案
+
+| 原案（行为） | 原文件 | 处置 | 精确承接 | 结态 |
+| --- | --- | --- | --- | --- |
+| ordinary attendance 时序；print/JSON 独立呈现；一 prepare 跨 recommendation/silent；pre-output failure 后仍健康 prepare；cause matrix typed+Receipt；cross-role continuity；authority 外 input；fresh process resume route memory | `package-entrypoint-navigator.integration.test.ts`（多案） | 删 | **无**具名 `@navigator` run 目录。生产腿内嵌 Navigator 不可反查为上列专用矩阵 | **逐案未结**（不得用「Navigator 异常面/矩阵」总称已结） |
+| exact-session resume 保 principal；terminal 开下一 invocation；非 UUIDv7 拒；durable terminal 分类；mid-turn prepare；prompt failure rethrow；institutional close；dispose close rejection | `navigator-lifecycle-real-session.test.ts` | 删 | 同上 | **未结** |
+| host-neutral native factory：opens / thinking / HTTP classify / institutional seat 优先 | `navigator-attendance*.test.ts`（删行为） | 删 | 留存 routes/attendance 为 call-input；注释已标 C3 未结 | **未结** |
+| #351 e2e ≥2 expiry refresh；non-target provider 过滤；**shutdown** 后零 tick；**unexpired** 零网络；production setting seam 驱动 filter | `oauth-keepalive.test.ts`（删行为） | 删 | 留存：single-flight / error warning / dual surface / notify fallback / 部分 setting——**不含** e2e 双窗、shutdown、unexpired、production setting 宿主刷新 | 上列删行为 **未结**；留存 route/cause 身份 **已结** |
+| 注册 inventory（terminating/support tools provider-open）；每角色一条 accepted-activation；unselected/unsupported 零事实；whole-activation rejection 非 0+named cause 先于 model；**O_APPEND 8+8** 与 **16-worker mkdir race**；malformed Fixer 前置真实子进程失败；observation writer 经 ExtensionRunner 原 cause abort；Reviewer skill expansion envelope | `activation-envelope-contract.test.ts`（删行为） | 删 | 留存：book key / git spawn identity / **symlink escape 四向量**。健康激活旁证：`BOOK/01a07246-0999-7ec9-a422-fb06dad57d18@judge` | 健康旁证与 symlink **已结**；inventory/admission 计数/拒绝矩阵/race/malformed 子进程/observation emit/Reviewer expansion 宿主 **未结** |
+| gleaner-left 真链 seal 空弹章 / pointer+statement | `gleaner-left-real-entry.test.ts` | 删 | `BOOK/01a06fa4-2f99-7df8-92c8-f70c1f24061b@gleaner-left` public-cli terminal | 健康入口 **旁证已结**；弹章字段专用 **未结** |
+| reviewer activation rejection → books 内 violation+diagnostic | `reviewer-activation-rejection-books.test.ts` | 删 | 健康 reviewer 只证健康路径 | 拒绝面 **未结** |
+| coder missing skill-expansion → 真宿主 session typed non-pass | `judge-role.test.ts`（删） | 删 | 无 | **未结** |
+| audit-failure-subprocess：fatal Judge audit abort print/JSON；no-receipt audit + Navigator drain；coder 无 skill expansion non-receipt；Reviewer fatal stages 无 receipt | `audit-failure-subprocess.test.ts` | 删 | 见下节 no-call 收窄；健康 judge **不**承接 | 原 subprocess 失败矩阵 **未结** |
+
+---
+
+## J. no-call / dossier 留存收窄（判牒专项）
+
+| 项 | 观察 | 结态 |
+| --- | --- | --- |
+| `test/integration/judge-auditor-dossier.test.ts` missing-dossier / missing-subject | 负向**未配** institutional seat；计数加在 faux **provider HTTP response** 钩上；断言 `childCalls()===0` = **provider 请求为零**，在 materials gate 先于 child 打开的实现下成立 | **provider 请求为零已结**（留存案） |
+| 更强原契约「整个 child/auth 未打开 / 真 Pi 子进程 audit 失败矩阵」 | 现 childCalls **只数** provider 响应；健康路径才 `armPassResponse`+seat。`src/evidence-child-executor.ts` 先读 runDirectory/seat 再开 scratch/child——负向未配 seat 时的更强「未开 child session」**无**对等宿主证明 | **更强 child/auth 未打开、原 subprocess 矩阵：未结** |
+| 不得宣称 | 不得写「已证明整个 child/auth 未打开」或用 no-call 绿灯结清 `audit-failure-subprocess` / fixture-tracer 失败矩阵 | — |
+
+---
+
+## K. 盯文 / 呈现锁 / 失效行为合法删除（不造证明）
+
+法源：`souls/quality-law.md`「盯生成物一律禁止」；锚定宪法「机器只咬契约，不咬呈现」；ADR 0016 tests-follow-logic-not-format。
+
+| 删除类 | 样本原位置 | 处置 |
+| --- | --- | --- |
+| systemPrompt / soul 原文 / assignment 措辞 match | `judge-role`「production audit transcript preserves assignment…」「injects its soul…」等；grok「opening materials inject soul exactly once」；多处 `assert.match(systemPrompt, …)` | **合法删**；留存改走 typed 工具/裁决结果，不锁散文 |
+| help/stdout 表头、roles 表行正则、live help marker 字符串 | install/cold-help/cold-matrix | 随真宿主案删；呈现面不另造 CI |
+| session 自定义 message 文案 / attendance 可见措辞 | navigator 包入口 | 随案删；typed disposition 留存于 contract 层 call-input |
+| fixtures 仅服务已删宿主案 | `test/fixtures/*-provider.ts` 八件 | 随案删；无独立契约 |
+
+---
+
+## L. runner / 调度删案（非宿主契约）
+
+| 原案 | 处置 | 结态 |
+| --- | --- | --- |
+| run-test-all heavy 分区 / manifest 闭包 / 子进程退出传播 | 随 heavy 空置改写；现 `scripts/run-test-all.mjs` heavy 空、默认并行一子进程 | 调度行为以**现行** runner+`test/integration/run-test-all.test.ts` 为准；旧 heavy 分区契约 **作废**（产品决策：空 heavy），非未证明宿主行为 |
+
+---
 
 ## 明确排除
 
 - 任何 `aggregation-dossier.json` / `deletedContractHandoff` / scratch 聚合脚本输出。
-- `01a072fc-685-c3-agg-*@fixer` 七伪目录（owner：原地保全）。
-- 通配 `01a072*@{role}`。
+- `BOOK/01a072fc-685-c3-agg-*@fixer` 七伪目录（owner：原地保全）。
+- 通配 `01a072*@{role}` 或「同角色任意 terminal」冒充专用契约。
 
 ## 聚合脚本
 
-worktree 内无聚合脚本、无向 `~/.ak-roles/books` 写伪 run 目录的提交代码。r7 scratch（`.test-tmp-685-agg-script.mjs` 等）未入仓；本轮不复跑、不复写。
+worktree 内无聚合脚本、无向 `~/.ak-roles/books` 写伪 run 的提交代码。r7 scratch 未入仓；不复跑、不复写。
 
-## 与 r7 代码的关系
+## 与既有代码的关系
 
-- **保留**：C4 状态转换 / primary-aware-cleanup / hermes CJS 边界；C3 `judge-auditor-dossier` no-call（childCalls=0）与 grok 声明收缩。
-- **作废为承接**：r7 自拟聚合四核 allOk 摘要。
+- **保留**：C4 primary-aware-cleanup / hermes 边界；C3 judge-auditor no-call（**仅** provider 请求为零，见 J）；engine-detour cancel-idle 与 engine-axis 配置案；worker gate 非宿主 arm；activation symlink；oauth 留存 warning/single-flight 等。
+- **作废为承接**：r7 自拟聚合摘要；凡「健康 terminal ⇒ 专用契约已结」的跳连；用 `exitCode=0`「本激活内劳务引擎已使用」冒充 reviewer engine 进程失败 cause 贯穿。
