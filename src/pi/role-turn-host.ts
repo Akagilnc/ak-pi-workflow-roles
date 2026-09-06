@@ -447,6 +447,13 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       ) {
         env.AK_ROLE_AUDITOR_SOURCE_RUN = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
       }
+      // Audited-subject input selects soul materials (same for nested and direct).
+      if (
+        typeof process.env.AK_ROLE_AUDITOR_SUBJECT === "string"
+        && process.env.AK_ROLE_AUDITOR_SUBJECT.trim() !== ""
+      ) {
+        env.AK_ROLE_AUDITOR_SUBJECT = process.env.AK_ROLE_AUDITOR_SUBJECT;
+      }
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;
       }

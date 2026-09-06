@@ -32,7 +32,7 @@ test("persistent model edits are immediate and have no fallback", async () => {
     await writeNavigatorModelSetting("provider/two", path);
     assert.equal(await readNavigatorModelSetting(path), "provider/two");
     assert.equal(Date.now() - started < 5000, true);
-    await writeFile(path, JSON.stringify({ model: "provider/one:backup" }));
+    await writeFile(path, JSON.stringify({ model: "provider-only-no-slash" }));
     const invalid = await readNavigatorModelSetting(path);
     assert.throws(() => parseNavigatorModelSetting(invalid));
   } catch (error) {

@@ -565,6 +565,8 @@ export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
+  /** Auditor only — audited subject selecting soul materials (#675 owner). */
+  subject?: "judge" | "doctor";
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
@@ -597,6 +599,7 @@ function parseInstructionArgv(
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
+  let subject: "judge" | "doctor" | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -618,6 +621,16 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "subject") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw !== "judge" && raw !== "doctor") {
+          throw new CliUsageError(
+            `auditor --subject must be judge|doctor, got ${taken.value ?? "(missing)"}`,
+          );
+        }
+        subject = raw;
+        continue;
+      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -632,6 +645,7 @@ function parseInstructionArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
+    ...(subject === undefined ? {} : { subject }),
   };
 }
 

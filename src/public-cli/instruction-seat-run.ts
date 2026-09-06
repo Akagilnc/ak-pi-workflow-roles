@@ -168,8 +168,16 @@ export async function runPublicInstructionSeat(
   terminal?: TerminalResult;
 }> {
   let admitted: AdmittedInstructionSeatInvocation;
+  let auditorSubject: "judge" | "doctor" | undefined;
   try {
     const parsed = parseArgv(argv);
+    if (role === "auditor") {
+      // Subject is the audited-object input (#675 owner) — publish for soul loader.
+      if (parsed.subject !== "judge" && parsed.subject !== "doctor") {
+        throw new CliUsageError("auditor --subject requires judge|doctor");
+      }
+      auditorSubject = parsed.subject;
+    }
     admitted = await admitInstructionSeat(role, {
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -189,36 +197,49 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  await markRunAdmitted(admitted, env.principalAuthority);
+  // Scope subject env to this auditor turn so materials match direct and nested path.
+  const { AK_ROLE_AUDITOR_SUBJECT_ENV } = await import("../auditor-soul.ts");
+  const priorSubject = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+  if (auditorSubject !== undefined) {
+    process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = auditorSubject;
+  }
+  try {
+    await markRunAdmitted(admitted, env.principalAuthority);
 
-  const turnRequest = buildInstructionSeatTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildInstructionTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
-    },
-  });
+    const turnRequest = buildInstructionSeatTurnRequest(admitted, {
+      packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.engine === undefined ? {} : { engine: env.engine }),
+      ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+      ...(env.correlationId === undefined || env.correlationId.trim() === ""
+        ? {}
+        : { correlationId: env.correlationId }),
+      continuation: {
+        kind: "initial",
+        prompt: buildInstructionTransportPrompt(
+          admitted,
+          engineSessionMaterialFromOptions({
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+            packageRoot: env.packageRoot,
+          }),
+        ),
+      },
+    });
 
-  return await runPostAdmissionOneShot({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
-    adapters: instructionSeatAdapters(),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
+    return await runPostAdmissionOneShot({
+      admitted,
+      env,
+      io,
+      request: turnRequest,
+      adapters: instructionSeatAdapters(),
+      ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    });
+  } finally {
+    if (auditorSubject !== undefined) {
+      if (priorSubject === undefined) delete process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+      else process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = priorSubject;
+    }
+  }
 }

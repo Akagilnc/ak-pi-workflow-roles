@@ -686,7 +686,6 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createPiRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
-      summonGateOfficer: extensionGateSummon,
   transcriptFromContext: (ctx: ExtensionContext) => string = () =>
     "review evidence and adjudication",
 ) {
@@ -695,7 +694,9 @@ async function startJudge(
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
       auditSoulCompliance,
-      summonGateOfficer: extensionGateSummon,
+      ...(defaultGateSummon === undefined
+        ? {}
+        : { summonGateOfficer: extensionGateSummon }),
     }, { transcriptFromContext })(harness.pi as ExtensionAPI);
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -912,7 +913,6 @@ test("focused Judge controller registers output without narrowing host tools", a
     {
       loadSoul: async () => "  JUDGE LAW  ",
       auditSoulCompliance: async () => ({ status: "pass" }),
-      summonGateOfficer: extensionGateSummon,
     },
     testHostActions(),
   );
@@ -1013,7 +1013,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           {
             loadSoul: async () => "judge",
             auditSoulCompliance: async () => ({ status: "pass", usage }),
-      summonGateOfficer: extensionGateSummon,
           },
           testHostActions(),
         );
@@ -2735,7 +2734,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         // #675: compliance summons public auditor; offline injects the decision terminal.
         const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
           auditCalls += 1;
-          const summonAuditor: AuditorSummon = async () => ({
+          const summonAuditor: AuditorSummon = async (_subject) => ({
             exitCode: 0,
             terminal: {
               roleOutcome: {
@@ -2761,7 +2760,6 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "judge law",
             auditSoulCompliance: auditCompliance,
-      summonGateOfficer: extensionGateSummon,
           }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(piHostAdapter.host, {

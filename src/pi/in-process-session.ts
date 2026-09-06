@@ -632,14 +632,14 @@ export async function openPiInProcessSession(
     }
 
     // 7. Create AgentSession
-    // Existing Navigator contract: requested thinking must stick after open. Pi
-    // clamps unsupported levels; if max was requested and not applied, fail as
-    // typed unavailable/thinking (pre-#590 attendance setModel check).
-    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
+    // Host params passthrough only — no map/validate/default of thinking (#675 ⑥).
+    // After open, re-apply seat model/thinking: Pi createAgentSession can restore
+    // from an existing session file and cover the selection (#675 ⑤ / #697).
+    const requestedThinking = selection.thinking;
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: requestedThinking as any,
+      ...(requestedThinking === undefined ? {} : { thinkingLevel: requestedThinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -649,11 +649,30 @@ export async function openPiInProcessSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
+    try {
+      await session.setModel(effectiveModel);
+      if (requestedThinking !== undefined) {
+        session.setThinkingLevel(requestedThinking as any);
+      }
+    } catch (error) {
+      session.dispose();
+      throw withTypedReason(
+        error instanceof Error
+          ? error
+          : new Error(
+            `${label} failed to apply seat model/thinking for ${selection.provider}/${selection.model}`,
+          ),
+        requestedThinking !== undefined ? "thinking" : "model",
+      );
+    }
+    if (
+      requestedThinking !== undefined
+      && session.thinkingLevel !== requestedThinking
+    ) {
       session.dispose();
       throw withTypedReason(
         new Error(
-          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`,
+          `${label} thinking level ${requestedThinking} is unavailable for ${selection.provider}/${selection.model}`,
         ),
         "thinking",
       );

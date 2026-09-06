@@ -21,9 +21,8 @@ export type DoctorAuditOptions = {
 };
 
 /**
- * Doctor compliance via public auditor activation (#675 / ADR 0062).
- * 审刑院 is an independent role — not a re-summon of doctor (no self-audit recursion).
- * Auditor materials = direct `ak-role auditor` assembly (auditor.md).
+ * Doctor compliance via public auditor activation (#675 / ADR 0062 / owner r11).
+ * 审刑院 is an independent role; subject=doctor selects souls/doctor-auditor.md.
  */
 export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -33,6 +32,7 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
+      subject: "doctor",
       context: options.context,
       ...(auditorRunDirectory(options.context) === undefined
         ? {}

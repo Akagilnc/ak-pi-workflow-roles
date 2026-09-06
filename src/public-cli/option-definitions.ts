@@ -427,6 +427,20 @@ const NAVIGATOR_OPTIONS = [
 const AUDITOR_OPTIONS = [
   bindOwner("auditor", SHARED_PROJECT_SEMANTICS),
   bindOwner("auditor", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "subject",
+    owner: "auditor",
+    canonical: "--subject",
+    aliases: [],
+    valueMetavar: "judge|doctor",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required audited subject: judge or doctor (selects judge-auditor.md / doctor-auditor.md).",
+      zh: "必填受审对象：judge 或 doctor（装 judge-auditor.md / doctor-auditor.md）。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const EVIDENCE_CHILD_OPTIONS = [
@@ -1220,9 +1234,10 @@ const ROLE_COMMAND_HELP = {
   auditor: {
     command: "auditor",
     summary: "Direct Auditor (审刑院) compliance audit: pass, revise, or escalate.",
-    usage: ["ak-role auditor [options] [instruction]"],
+    usage: ["ak-role auditor --subject <judge|doctor> [options] [instruction]"],
     examples: [
-      'ak-role auditor --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject judge --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject doctor "审：太医候选是否合规。"',
     ],
   },
   "evidence-child": {

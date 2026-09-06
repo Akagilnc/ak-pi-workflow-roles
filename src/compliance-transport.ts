@@ -1,6 +1,10 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  AK_ROLE_AUDITOR_SUBJECT_ENV,
+  type AuditorSoulRole,
+} from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
@@ -88,19 +92,24 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 }
 
 /**
- * Public auditor summon for compliance (#675 / ADR 0062).
- * 审刑院 is the independent audit role — not a re-entry of judge/doctor (no self-audit recursion).
- * Same public path and materials whether nested from judge/doctor or direct `ak-role auditor`.
+ * Public auditor summon for compliance (#675 / ADR 0062 / owner r11).
+ * 审刑院 is the independent audit role; subject (who is audited) selects soul files.
+ * Same public path whether nested or direct `ak-role auditor --subject …`.
  */
-export type AuditorSummon = (sourceRunDirectory: string) => Promise<PublicSummonResult>;
+export type AuditorSummon = (
+  subject: AuditorSoulRole,
+  sourceRunDirectory: string,
+) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
+  /** Who is being audited — selects judge-auditor.md / doctor-auditor.md. */
+  readonly subject: AuditorSoulRole;
   /** @deprecated Fixer-lane hand-delivery only (#242 retires). */
   serializedInput?: string;
   context: HostContext;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
-  /** Test seam — production uses summonPublicRole({ role: "auditor" }). */
+  /** Test seam — production uses summonPublicRole({ role: "auditor", argv: ["--subject", subject, …] }). */
   summonAuditor?: AuditorSummon;
 };
 
@@ -169,30 +178,39 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   if (runDirectory === undefined) {
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
+  const subject = options.subject;
   const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   const summon =
     options.summonAuditor
-    ?? (async (sourceRunDirectory: string) => {
+    ?? (async (auditSubject: AuditorSoulRole, sourceRunDirectory: string) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
       const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
       const home = homeFromRunDirectory(sourceRunDirectory);
-      // Publish source-run for public auditor dossier tool (same for nested and direct).
+      // Publish subject + source-run inputs for public auditor (same for nested and direct).
       // Scoped to this summon only — never leave a cross-run env residue.
       const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
+      const priorSubject = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
       process.env.AK_ROLE_AUDITOR_SOURCE_RUN = sourceRunDirectory;
+      process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = auditSubject;
       try {
         return await summonPublicRole({
           role: "auditor",
-          argv: [`卷宗指针：${sourceRunDirectory}\n${prompt}`],
+          argv: [
+            "--subject",
+            auditSubject,
+            `卷宗指针：${sourceRunDirectory}\n${prompt}`,
+          ],
           cwd: options.context.cwd ?? process.cwd(),
           home,
         });
       } finally {
         if (priorSource === undefined) delete process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
         else process.env.AK_ROLE_AUDITOR_SOURCE_RUN = priorSource;
+        if (priorSubject === undefined) delete process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+        else process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = priorSubject;
       }
     });
-  const summoned = await summon(runDirectory);
+  const summoned = await summon(subject, runDirectory);
   return await projectAuditorTerminal(summoned);
 }

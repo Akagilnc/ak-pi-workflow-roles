@@ -235,13 +235,15 @@ export function createNativeNavigatorSessionFactory(
         if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
           throw new NavigatorUnavailableError(
             "thinking",
-            `Navigator thinking level ${nextThinking} is unavailable for ${next}`,
+            `Navigator thinking level ${nextThinking ?? "(none)"} is unavailable for ${next}`,
           );
         }
         selection = {
           provider: nextParsed.provider,
           model: nextParsed.model,
-          thinking: nextParsed.thinkingLevel,
+          ...(nextParsed.thinkingLevel === undefined
+            ? {}
+            : { thinking: nextParsed.thinkingLevel }),
         };
         thinkingLevel = nextParsed.thinkingLevel;
         configuredLabel = next;

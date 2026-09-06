@@ -36,6 +36,7 @@ import {
   formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
+import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -134,7 +135,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
-    loadAuditorSoul: () => loadMainRoleSessionMaterials("auditor"),
+    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
     loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),

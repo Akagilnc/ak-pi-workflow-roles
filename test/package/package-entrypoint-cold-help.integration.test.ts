@@ -120,7 +120,11 @@ test("cold-installed live help follows the loaded extension and changes on the n
         await attendanceModule.writeNavigatorModelSetting("provider/one:max", modelSettingPath);
         assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/one:max");
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/one:backup" }), "utf8");
-        assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /:max|thinking suffix/);
+        // #675 ⑥: thinking suffix is passthrough — no max/off whitelist.
+        assert.deepEqual(
+          attendanceModule.parseNavigatorModelSetting("provider/one:backup"),
+          { provider: "provider", model: "one", thinkingLevel: "backup" },
+        );
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
         const events: Array<{ command?: string; disposition?: string; unavailableReason?: string }> = [];
         const prepareRequests: string[] = [];
@@ -233,6 +237,18 @@ test("cold-installed live help follows the loaded extension and changes on the n
         // then edit and restore the same setting without permitting a fallback.
         // Independent presentation is proven by observable typed attendance events,
         // one Navigator call, <=1s prepared latency, and repeated <10% follow-up below.
+        // #675: nested public auditor/notary take live seat table — seed hermetic seats.
+        const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+        const offlineSeat = { provider: "openai-codex", model: "gpt-5.6-luna" };
+        await savePublicCliConfig({
+          seats: {
+            auditor: offlineSeat,
+            notary: offlineSeat,
+            inspector: offlineSeat,
+            judge: offlineSeat,
+            navigator: offlineSeat,
+          },
+        }, home);
         const installedNavigator = await installed("src/navigator-attendance.ts");
         const issueRoot = resolve(fixture, ".ak/work/issues/28");
         await mkdir(issueRoot, { recursive: true });
@@ -276,10 +292,19 @@ test("cold-installed live help follows the loaded extension and changes on the n
                 }],
               }), { stopReason: "toolUse" });
             }
-            if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+            // #675: nested public auditor terminates on ak_auditor_output; parent may still see SOUL_AUDIT.
+            if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+              const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
+              return fauxAssistantMessage(
+                fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+                { stopReason: "toolUse" },
+              );
+            }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          luna.setResponses(Array.from({ length: 8 }, () => response));
+          // Nested public auditor/notary share this faux queue with parent+navigator.
+          // Measured minimum for 4 invokes with nested audit: 24.
+          luna.setResponses(Array.from({ length: 24 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           await withAgentDirProviderFixture(luna, coldAgentDir, () =>
