@@ -354,9 +354,10 @@ test("book key follows git common-dir host basename across worktrees, rename, an
 
 test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
   const root = mkdtempSync(worktreeTempPrefix("ak-book-infra-"));
-  // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
-  const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
   try {
+    // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
+    // Second acquire stays inside try so a failure still hits root's finally.
+    const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
     const cwd = join(root, "workspace");
     mkdirSync(cwd);
     // Empty PATH makes spawn of `git` fail with ENOENT — infrastructure, not non-git cwd.

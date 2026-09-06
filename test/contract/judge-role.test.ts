@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
@@ -159,9 +160,14 @@ afterEach(async () => {
   // Drop any leftover env binding between tests (owned dirs already popped above).
   delete process.env.AK_ROLE_RUN_DIR;
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
-  // is restored to its original value after nested registrations.
+  // is restored to its original value after nested registrations. Each cleanup runs
+  // independently so one failure cannot skip the rest.
+  const providerCleanups: Array<() => Promise<void>> = [];
   while (institutionalProviderCleanups.length > 0) {
-    await institutionalProviderCleanups.pop()!();
+    providerCleanups.push(institutionalProviderCleanups.pop()!);
+  }
+  if (providerCleanups.length > 0) {
+    await withPrimaryAwareCleanup(async () => {}, ...providerCleanups);
   }
 });
 
@@ -186,6 +192,27 @@ function gateModelDefinition(id: string) {
     contextWindow: 128000,
     maxTokens: 16384,
   };
+}
+
+function institutionalProviderTeardowns(
+  mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined,
+  previousAgentDir: string | undefined,
+  tempAgentDir: string,
+): Array<() => Promise<void>> {
+  // Same independent-cleanup shape as withInstitutionalProviderFixture: each step
+  // runs even if a prior step rejects; primary failure stays cause.
+  return [
+    async () => {
+      if (mock !== undefined) await mock.close();
+    },
+    async () => {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    },
+    async () => {
+      rmSync(tempAgentDir, { recursive: true, force: true });
+    },
+  ];
 }
 
 async function registerInstitutionalProviderFixture(
@@ -221,17 +248,18 @@ async function registerInstitutionalProviderFixture(
     }
     writeFileSync(join(tempAgentDir, "models.json"), JSON.stringify({ providers }, null, 2), "utf8");
   } catch (error) {
-    if (mock !== undefined) await mock.close();
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    rmSync(tempAgentDir, { recursive: true, force: true });
-    throw error;
+    await withPrimaryAwareCleanup(
+      async () => {
+        throw error;
+      },
+      ...institutionalProviderTeardowns(mock, previousAgentDir, tempAgentDir),
+    );
   }
   institutionalProviderCleanups.push(async () => {
-    if (mock !== undefined) await mock.close();
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    rmSync(tempAgentDir, { recursive: true, force: true });
+    await withPrimaryAwareCleanup(
+      async () => {},
+      ...institutionalProviderTeardowns(mock, previousAgentDir, tempAgentDir),
+    );
   });
 }
 
