@@ -68,38 +68,45 @@ test("resolveAnalystBookKey: dubious-ownership exit 128 stays loud with its real
   // Analyst must not synthesize a book identity behind the failure's back.
   // Stable counterexample: a PATH-injected git emitting the real diagnostic.
   const dir = mkdtempSync(worktreeTempPrefix("analyst-book-key-"));
-  const bin = mkdtempSync(worktreeTempPrefix("analyst-book-key-bin-"));
-  const fakeGit = join(bin, "git");
-  writeFileSync(
-    fakeGit,
-    '#!/bin/sh\nprintf \'fatal: detected dubious ownership in repository at "%s"\\n\' "$PWD" >&2\nexit 128\n',
-    "utf8",
-  );
-  chmodSync(fakeGit, 0o755);
-  const realPath = process.env.PATH;
-  process.env.PATH = `${bin}:${realPath ?? ""}`;
   try {
-    assert.throws(
-      () => resolveAnalystBookKey(dir),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal(error.name, "ActivationGitRepositoryRequiredError");
-        assert.ok(
-          error.message.includes("dubious ownership"),
-          "the real git cause must ride the loud carrier",
+    // Second acquire inside try so a failure still hits dir's finally.
+    const bin = mkdtempSync(worktreeTempPrefix("analyst-book-key-bin-"));
+    try {
+      const fakeGit = join(bin, "git");
+      writeFileSync(
+        fakeGit,
+        '#!/bin/sh\nprintf \'fatal: detected dubious ownership in repository at "%s"\\n\' "$PWD" >&2\nexit 128\n',
+        "utf8",
+      );
+      chmodSync(fakeGit, 0o755);
+      const realPath = process.env.PATH;
+      process.env.PATH = `${bin}:${realPath ?? ""}`;
+      try {
+        assert.throws(
+          () => resolveAnalystBookKey(dir),
+          (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.name, "ActivationGitRepositoryRequiredError");
+            assert.ok(
+              error.message.includes("dubious ownership"),
+              "the real git cause must ride the loud carrier",
+            );
+            assert.equal(
+              (error as { confirmedNonRepository?: boolean }).confirmedNonRepository,
+              false,
+              "dubious ownership must stay unconfirmed — never the root: fallback face",
+            );
+            return true;
+          },
+          "unconfirmed git failure must propagate loudly, not become a synthetic key",
         );
-        assert.equal(
-          (error as { confirmedNonRepository?: boolean }).confirmedNonRepository,
-          false,
-          "dubious ownership must stay unconfirmed — never the root: fallback face",
-        );
-        return true;
-      },
-      "unconfirmed git failure must propagate loudly, not become a synthetic key",
-    );
+      } finally {
+        process.env.PATH = realPath;
+      }
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   } finally {
-    process.env.PATH = realPath;
     rmSync(dir, { recursive: true, force: true });
-    rmSync(bin, { recursive: true, force: true });
   }
 });
