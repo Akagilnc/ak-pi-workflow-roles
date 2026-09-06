@@ -208,18 +208,18 @@ export async function runPublicNotaryResume(
     request,
     env,
     io,
-    load: async () => {
-      if (request.message !== undefined) {
+    load: async (effective) => {
+      if (effective.message !== undefined) {
         throw new CliUsageError(
           "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
         );
       }
       const loaded = await loadResumableNotaryRun(
         env.home,
-        request.runId,
+        effective.runId,
         env.principalAuthority,
       );
-      const summons = request.summons;
+      const summons = effective.summons;
       if (
         summons?.sourceRunPath !== undefined &&
         summons.sourceRun !== undefined
@@ -234,10 +234,10 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted) =>
+    buildTurnRequest: (admitted, effective) =>
       buildNotaryTurnRequest(
         admitted,
-        resumeTurnRequestProjectionOptions(admitted, request, env),
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

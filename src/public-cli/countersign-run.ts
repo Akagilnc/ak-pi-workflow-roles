@@ -236,22 +236,22 @@ export async function runPublicCountersignResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableCountersignRun(
         env.home,
-        request.runId,
+        effective.runId,
         env.principalAuthority,
       ),
-    buildTurnRequest: async (admitted) => {
+    buildTurnRequest: async (admitted, effective) => {
       const summonsPrepared = await prepareSummonsResumeMaterials(
         admitted.runDirectory,
-        request.summons,
+        effective.summons,
       );
       return buildCountersignTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
           admitted,
-          request,
+          effective,
           env,
           summonsPrepared,
         ),
