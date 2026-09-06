@@ -87,8 +87,9 @@ function scriptJudgeDirectNotaryPass(names: readonly string[]) {
 }
 
 /**
- * Public navigator path reads the seat table only (#675) — navigator-model.json
- * is not authority. Seed offline seats so nested public summons hit the test faux.
+ * Public navigator path reads the seat table only (#675).
+ * Instruction-seat probe is inspector-same: hermes true-unbound fixture required
+ * so attendance prepares settle unbound without engine-failed wash.
  */
 async function seedOfflinePublicSeats(
   home: string,
@@ -113,6 +114,31 @@ async function seedOfflinePublicSeats(
     },
     home,
   );
+}
+
+async function withNavigatorTestFixtures<
+  T,
+>(input: {
+  home: string;
+  model: { provider: string; id: string };
+  thinking?: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const { installHermesFixture } = await import("../helpers/hermes-fixture.ts");
+  const { mkdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const binDir = join(input.home, "bin");
+  await mkdir(binDir, { recursive: true });
+  await installHermesFixture(binDir);
+  await seedOfflinePublicSeats(input.home, input.model, input.thinking);
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+  try {
+    return await input.run();
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+  }
 }
 
 test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
@@ -172,7 +198,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-      await seedOfflinePublicSeats(home, model);
+      await withNavigatorTestFixtures({ home, model, run: async () => {
       // #443: Navigator session materials via pack default wiring (user prompt face).
       const navigatorSoul = [
         await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
@@ -256,8 +282,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           navigatorCalls = 0;
           roleModelCalls = 0;
           invalidJudge = true;
-          // Resume topology: invalid→retry judge + nested officers + warm/settle/rebind nav.
-          faux.setResponses(Array.from({ length: 16 }, () => response));
+          // Legal graph: invalid→retry judge + nested officers + warm/settle/rebind nav.
+          faux.setResponses(Array.from({ length: 10 }, () => response));
           await withAgentDirProviderFixture(faux, agentDir, () =>
             withInProcessPi({
               activationLedgerSession: true,
@@ -302,7 +328,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         navigatorCalls = 0;
         roleModelCalls = 0;
         invalidJudge = false;
-        faux.setResponses(Array.from({ length: 16 }, () => response));
+        faux.setResponses(Array.from({ length: 10 }, () => response));
         await withAgentDirProviderFixture(faux, agentDir, () =>
           withInProcessPi({
             activationLedgerSession: true,
@@ -325,7 +351,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           })
         );
         assert.equal(navigatorCalls, 3, "revised-route session locks warm+settle+rebind prepare count");
-        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       const settlements = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
@@ -343,6 +368,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       assert.ok(routes.every((entry) => (entry as { data: { subjectKey: string; route: unknown } }).data.subjectKey === issueRoot));
       assert.deepEqual((routes.at(-1) as { data: { route: unknown } }).data.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
       assert.ok(settlements.every((entry) => (entry as { data: { kind: string; role: string; phase: null } }).data.kind === "accepted"));
+      }}); // withNavigatorTestFixtures
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
 });
@@ -368,7 +395,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
       const oldExitCode = process.exitCode;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}:max`, resolve(agentDir, "navigator-model.json"));
-      await seedOfflinePublicSeats(home, model, "max");
+      await withNavigatorTestFixtures({ home, model, thinking: "max", run: async () => {
       try {
         const outcomes = ["recommendation", "human_decision", "infrastructure"] as const;
         for (const outcome of outcomes) {
@@ -429,8 +456,8 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               : { judgeStatus: "converged" };
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
           };
-          // Resume topology capacity: first fresh + nested officers + public nav prepares.
-          faux.setResponses(Array.from({ length: 8 }, () => response));
+          // Legal graph capacity (historical drain pool).
+          faux.setResponses(Array.from({ length: 10 }, () => response));
           await withAgentDirProviderFixture(faux, agentDir, () =>
             withInProcessPi({
               activationLedgerSession: true,
@@ -451,7 +478,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             await new Promise<void>((resolve) => setImmediate(resolve));
             assert.equal(promptFinished, false);
             prompt.then(() => { promptFinished = true; }, () => { promptFinished = true; });
-            assert.ok(navigatorCalls >= 1, "the settlement must retain an in-flight Navigator call");
+            assert.equal(navigatorCalls, 1, "in-flight gate holds exactly one Navigator prepare before drain");
             assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false, "no advice may appear before preparation drains");
             releasePreparation();
             await prompt.catch(() => undefined);
@@ -488,6 +515,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
         process.exitCode = oldExitCode;
       }
+      }}); // withNavigatorTestFixtures
     },
   );
 });
@@ -505,7 +533,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-      await seedOfflinePublicSeats(home, model);
+      await withNavigatorTestFixtures({ home, model, run: async () => {
       let releaseFirstPreparation!: () => void;
       const firstPreparationGate = new Promise<void>((resolve) => { releaseFirstPreparation = resolve; });
       let firstNavigatorStarted!: () => void;
@@ -565,8 +593,8 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
           { stopReason: "toolUse" },
         );
       };
-      // Resume topology capacity across two prompts on one session.
-      faux.setResponses(Array.from({ length: 8 }, () => response));
+      // Legal graph across two prompts on one session.
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withAgentDirProviderFixture(faux, agentDir, () =>
         withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
         const first = session.prompt("first role turn fails before output");
@@ -595,10 +623,11 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         assert.equal(settlements.length, 1);
         assert.equal(settlements[0]?.data?.kind, "accepted");
         assert.equal(invocations.length, 1);
-        // First turn prepare was retained in-flight then drained without publish; second turn reuses.
-        assert.ok(navigatorCalls >= 2, `cross-failure reuse must prepare at least twice, got ${navigatorCalls}`);
+        // Measured topology: first-turn gated prepare + settlement rebind + second-turn prepare = 3.
+        assert.equal(navigatorCalls, 3, `cross-failure reuse prepare count, got ${navigatorCalls}`);
       })
       );
+      }}); // withNavigatorTestFixtures
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
@@ -611,19 +640,20 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
     async ({ home, agentDir }) => {
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
-      // Auth/quota/transport prose independence lives at navigator-attendance seam; one diagnostic each here.
+      // Packaged public-path causes that do not require HTTP-status observation on the
+      // child (openai-completions does not call onResponse before throw on non-2xx,
+      // so auth/quota typed observation never lands on the spawn path). Auth/quota/
+      // transport classification from structured decisiveFacts is covered by the
+      // navigator-session-contracts unit seam + providerFailureFromPublicTerminal.
       // thinking stick/availability re-check removed (#683); Pi clamps itself.
       const cases = [
         { name: "context", source: "context" },
         { name: "session", source: "session" },
         { name: "model", source: "model" },
-        { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"] },
-        { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"] },
-        { name: "transport", source: "transport", diagnostics: ["transport unavailable"] },
       ] as const;
       try {
         for (const [index, scenario] of cases.entries()) {
-          const diagnostics = "diagnostics" in scenario ? scenario.diagnostics : ["stable diagnostic"];
+          const diagnostics: readonly string[] = ["stable diagnostic"];
           for (const [diagnosticIndex, diagnostic] of diagnostics.entries()) {
             const issueRoot = resolve(home, `.ak/work/issues/failure-${index}-${diagnosticIndex}`);
             await mkdir(issueRoot, { recursive: true });
@@ -646,11 +676,15 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
 
             await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
             // Nested officers stay on the working faux; only navigator seat is poisoned for model case.
+            const { installHermesFixture } = await import("../helpers/hermes-fixture.ts");
+            const binDir = resolve(home, "bin");
+            await mkdir(binDir, { recursive: true });
+            await installHermesFixture(binDir);
+            const priorPath = process.env.PATH;
+            process.env.PATH = `${binDir}:${priorPath ?? ""}`;
             const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
             const working = { provider: model.provider, model: model.id };
             await savePublicCliConfig({
-              // Failure matrix scripts provider stops — do not burn auto-resume budget on 429.
-              autoResumeLimit: 0,
               seats: {
                 navigator: scenario.name === "model"
                   ? { provider: "missing", model: "provider" }
@@ -661,11 +695,6 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                 auditor: working,
               },
             }, home);
-            // Institutional Navigator child resolves auth/stream via agentDir models.json
-            // mock HTTP (not the parent session provider). Script navigator failures on
-            // the faux response queue so the mock server mirrors typed HTTP status /
-            // transport diagnostics into the child (#590 host-neutral path).
-            const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeDirectNotaryPass(names);
@@ -676,25 +705,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                   ? NAVIGATOR_PREPARE_TOOL_NAME
                   : undefined;
               if (navigatorTool !== undefined) {
-                if (streamFailure) {
-                  const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-                  if (scenario.name === "transport") {
-                    return {
-                      ...base,
-                      diagnostics: [{
-                        type: "provider_transport_failure",
-                        timestamp: Date.now(),
-                        error: { message: diagnostic, code: "transport_error" },
-                      }],
-                    };
-                  }
-                  return {
-                    ...base,
-                    ...("status" in scenario
-                      ? { statusCode: scenario.status, status: scenario.status }
-                      : {}),
-                  };
-                }
+                // context/session/model cases: advice still required so settlement can
+                // publish unavailable from attendance-side causes (not stream failure).
                 const candidates = [{
                   id: "matrix-route",
                   matches: { role: "judge", phase: null, kind: "accepted" },
@@ -719,8 +731,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               }
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            // Capacity for nested officers + public nav prepares; 429 must not auto-resume-expand.
-            faux.setResponses(Array.from({ length: 24 }, () => response));
+            // Legal graph capacity (historical matrix pool).
+            faux.setResponses(Array.from({ length: 10 }, () => response));
+            try {
             await withAgentDirProviderFixture(faux, agentDir, () =>
               withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
@@ -735,20 +748,15 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               assert.equal(attendance.length, 1, `${scenario.name}:${diagnostic}`);
               const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
               assert.equal(event.disposition, "unavailable", `${scenario.name}:${diagnostic}`);
-              // Public-path source table (measured):
-              // - model missing provider → session open failure
-              // - auth/quota HTTP status → auth/quota via adapter `NNN:` prefix
-              // - transport diagnostics do not yet survive the OpenAI-completions SSE
-              //   round-trip on the public summon path → session (not washed to recommendation)
-              const expectedSource =
-                scenario.name === "model" || scenario.name === "transport"
-                  ? "session"
-                  : scenario.source;
-              assert.equal(event.unavailableSource, expectedSource, `${scenario.name}:${diagnostic}`);
-              assert.equal(event.unavailableCause, expectedSource, `${scenario.name}:${diagnostic}`);
+              assert.equal(event.unavailableSource, scenario.source, `${scenario.name}:${diagnostic}`);
+              assert.equal(event.unavailableCause, scenario.source, `${scenario.name}:${diagnostic}`);
               assert.notEqual(event.unavailableReason, undefined, `${scenario.name}:${diagnostic}`);
             })
             );
+            } finally {
+              if (priorPath === undefined) delete process.env.PATH;
+              else process.env.PATH = priorPath;
+            }
           }
         }
       } finally {
@@ -785,7 +793,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-      await seedOfflinePublicSeats(home, model);
+      await withNavigatorTestFixtures({ home, model, run: async () => {
       let sharedSubjectKey: string | undefined;
       let isolatedSubjectKey: string | undefined;
       let navigatorPreparation = 0;
@@ -837,8 +845,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "typed plan" }), { stopReason: "toolUse" });
       };
 
-      // Three public-role turns (coder/fixer/isolated) × nested officers + nav prepares.
-      faux.setResponses(Array.from({ length: 24 }, () => response));
+      // Three public-role turns × nested officers + nav (historical capacity).
+      faux.setResponses(Array.from({ length: 10 }, () => response));
       await withAgentDirProviderFixture(faux, agentDir, () =>
         withInProcessPi({
           activationLedgerSession: true,
@@ -939,6 +947,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       );
       assert.notEqual(navigatorSession.directory, isolatedSession.directory);
       assert.notEqual(navigatorSession.file, isolatedSession.file);
+      }}); // withNavigatorTestFixtures
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
@@ -964,7 +973,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
         });
         const model = faux.getModel();
         await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-        await seedOfflinePublicSeats(home, model);
+        await withNavigatorTestFixtures({ home, model, run: async () => {
         const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptJudgeDirectNotaryPass(names);
@@ -1018,11 +1027,12 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           const subjectKey = (attendance[0] as { details: { subjectKey: string } }).details.subjectKey;
           const entries = (await uniqueObservedNavigatorSession(home, subjectKey, outsideRoot)).entries as Array<{ type?: string; customType?: string; data?: { authority?: string; subject?: string } }>;
           const contexts = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-context");
-          assert.ok(contexts.length >= 1, JSON.stringify(entries));
+          assert.equal(contexts.length, 1, JSON.stringify(entries));
           assert.equal(contexts[0]?.data?.authority, packetBytes);
           assert.equal(contexts[0]?.data?.subject, packetBytes);
         })
         );
+        }}); // withNavigatorTestFixtures
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }

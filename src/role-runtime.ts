@@ -1530,13 +1530,18 @@ export function createRoleRuntimeExtension(
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
     // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
     // write failure must surface — never silently drop authorized error evidence.
+    // Provider label falls back when ctx.model is unset on the error path so the
+    // httpStatus observation is not washed away (#675 public navigator auth/quota).
     roleHost.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = ctx.model?.provider;
-      if (typeof provider !== "string" || provider.trim() === "") return;
       const status = event.status;
       if (typeof status !== "number") return;
+      const fromCtx = ctx.model?.provider;
+      const provider =
+        typeof fromCtx === "string" && fromCtx.trim() !== ""
+          ? fromCtx
+          : "unknown";
       try {
         await recordTypedProviderHttpStatus(runDir, {
           httpStatus: status,
