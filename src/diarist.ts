@@ -106,6 +106,14 @@ export type DiaristRunInput = {
   readonly signal?: AbortSignal;
   /** Package root for hermes collector method material resolution. */
   readonly packageRoot?: string;
+  /**
+   * After this round names a ticket, load the GitHub issue face so the same
+   * invocation can collect it. Omit when the caller already passed issueFace
+   * or when this seat does not fetch faces (coder/fixer/judge/inspector).
+   */
+  readonly loadIssueFace?: (
+    ticketNumber: number,
+  ) => Promise<DiaristIssueFace>;
 };
 
 export type DiaristRunResult = {
@@ -393,7 +401,61 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   // Per-ticket volume exists for every named ticket, including empty/fail paths.
   const volumePaths = ensureTicketProvenanceVolume(ticketNumber, input.cwd, input.home);
 
-  const anchorText = faceTextForAnchors(input.issueFace);
+  // Same round: once identity is known, load the issue face and collect those
+  // blocks here. Do not return to the seat for a second runDiarist.
+  let issueFace = input.issueFace;
+  if (issueFace === undefined && input.loadIssueFace !== undefined) {
+    issueFace = await input.loadIssueFace(ticketNumber);
+  }
+  const firstIdentities = new Set(
+    fresh.map((block) => blockEntryIdentity(ticketNumber, block)),
+  );
+  const extraFresh =
+    issueFace === undefined || input.issueFace !== undefined
+      ? []
+      : mechanicalSafeguardPipeline(
+          await loadSourceBlocks({ ...input, issueFace }),
+        ).filter(
+          (block) =>
+            !firstIdentities.has(blockEntryIdentity(ticketNumber, block)),
+        );
+  const batches: Array<{
+    readonly blocks: readonly DiaristSourceBlock[];
+    readonly collect: DiaristLlmCollectResult | undefined;
+    readonly status: DiaristRunResult["collectorStatus"];
+  }> = [{ blocks: fresh, collect, status: collectorStatus }];
+  if (extraFresh.length > 0) {
+    try {
+      const extraCollect = await collector({
+        ticketNumber,
+        ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
+        candidates: extraFresh,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      });
+      llmRawStdout = extraCollect.rawStdout;
+      const extraStatus =
+        extraCollect.selections.length === 0 ? "empty-selection" : "ok";
+      if (extraStatus === "ok") collectorStatus = "ok";
+      else if (collectorStatus !== "ok") collectorStatus = extraStatus;
+      batches.push({
+        blocks: extraFresh,
+        collect: extraCollect,
+        status: extraStatus,
+      });
+    } catch (error) {
+      collectorStatus = "failed";
+      collectorError =
+        error instanceof Error ? error.message : String(error);
+      appendCollectorFailureDiagnostic({
+        ticketNumber,
+        cwd: input.cwd,
+        ...homeOpt,
+        collectorError,
+      });
+    }
+  }
+
+  const anchorText = faceTextForAnchors(issueFace);
   const anchors: DiaristAnchorSet = buildDiaristAnchors({
     ticketNumber,
     ...(anchorText === undefined ? {} : { ticketBody: anchorText }),
@@ -402,58 +464,56 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
   const pointers: RecordPointer[] = [];
   const accepted: TicketProvenanceEntry[] = [];
   let rejectedQuotes = 0;
+  const offered: string[] = [];
 
-  // Only a successful collect (ok / empty-selection already branched) with
-  // selections present can enter the volume. empty-selection has collect with [].
-  if (collect !== undefined && collectorStatus === "ok") {
-    for (const selection of collect.selections) {
-      // triage is human-face only — never a machine gate (collector contract).
-      // Inclusion is solely: selection present + quote reverse-verify pass.
-      const block = fresh[selection.candidateIndex];
-      if (block === undefined) continue;
-      const projected = blockToLlmEntry(block, {
-        anchors,
-        quotes: selection.quotes,
-        ...(selection.note === undefined ? {} : { note: selection.note }),
-      });
-      if (!projected.ok) {
-        rejectedQuotes += 1;
-        // Single diagnostic expression — never a disguised diary entry.
-        const ptr = appendQuoteVerifyFailureDiagnostic({
+  for (const batch of batches) {
+    if (batch.collect !== undefined && batch.status === "ok") {
+      for (const selection of batch.collect.selections) {
+        const block = batch.blocks[selection.candidateIndex];
+        if (block === undefined) continue;
+        const projected = blockToLlmEntry(block, {
+          anchors,
+          quotes: selection.quotes,
+          ...(selection.note === undefined ? {} : { note: selection.note }),
+        });
+        if (!projected.ok) {
+          rejectedQuotes += 1;
+          const ptr = appendQuoteVerifyFailureDiagnostic({
+            ticketNumber,
+            cwd: input.cwd,
+            ...homeOpt,
+            cause: projected.cause,
+          });
+          pointers.push(ptr);
+          continue;
+        }
+        const ptr = appendTicketProvenanceEntry({
           ticketNumber,
           cwd: input.cwd,
           ...homeOpt,
-          cause: projected.cause,
+          entry: projected.entry,
+          source: "diarist",
         });
         pointers.push(ptr);
-        continue;
+        accepted.push(projected.entry);
       }
-      const ptr = appendTicketProvenanceEntry({
-        ticketNumber,
-        cwd: input.cwd,
-        ...homeOpt,
-        entry: projected.entry,
-        source: "diarist",
-      });
-      pointers.push(ptr);
-      accepted.push(projected.entry);
+    }
+    if (
+      batch.collect !== undefined &&
+      (batch.status === "ok" || batch.status === "empty-selection")
+    ) {
+      offered.push(
+        ...batch.blocks.map((block) => blockEntryIdentity(ticketNumber, block)),
+      );
     }
   }
 
-  // Successful collector pass (incl. empty selection): mark all offered
-  // identities only after the volume writes above, so a crash mid-commit
-  // still retries the batch next court. Entry identity and quote-verify
-  // diagnostic identity are stable — retry does not duplicate either.
-  // Failure does not advance the watermark (retry honestly).
-  if (
-    collect !== undefined &&
-    (collectorStatus === "ok" || collectorStatus === "empty-selection")
-  ) {
+  if (offered.length > 0) {
     recordOfferedIdentities({
       ticketNumber,
       cwd: input.cwd,
       ...homeOpt,
-      identities: fresh.map((block) => blockEntryIdentity(ticketNumber, block)),
+      identities: offered,
     });
   }
 
@@ -469,8 +529,8 @@ export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResu
 
   return {
     ticketNumber,
-    candidateCount: safeguarded.length,
-    freshCount: fresh.length,
+    candidateCount: safeguarded.length + extraFresh.length,
+    freshCount: fresh.length + extraFresh.length,
     appended: accepted.length,
     rejectedQuotes,
     pointers,

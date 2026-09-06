@@ -13,6 +13,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -30,7 +31,9 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  await withTempRoot("ak-host-axis-", fn);
+  await withTempRoot("ak-host-axis-", (home) =>
+    withHermesFixtureOnPath(home, () => fn(home)),
+  );
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });

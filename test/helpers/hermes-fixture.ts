@@ -110,6 +110,27 @@ process.exit(1);
   return binDir;
 }
 
+/**
+ * Install the collector fixture on PATH for one home. Default collector names
+ * no ticket (lawful unbound) so existing no-ticket public entries keep working.
+ */
+export async function withHermesFixtureOnPath<T>(
+  home: string,
+  run: () => Promise<T>,
+  options?: HermesFixtureOptions,
+): Promise<T> {
+  const binDir = join(home, "bin");
+  await installHermesFixture(binDir, options);
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+  try {
+    return await run();
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+  }
+}
+
 export type GhFixtureOptions = {
   issues?: Record<
     number,
