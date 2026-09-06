@@ -113,7 +113,12 @@ export type PostAdmissionAdapters<
   A extends AdmittedRoleInvocation = AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
 > = {
-  trySettle: (admitted: A, authority: DurablePrincipalAuthority) => Promise<T | undefined>;
+  trySettle: (
+    admitted: A,
+    authority: DurablePrincipalAuthority,
+    /** Current court turn scope (#637); omit for run-scoped sealed reads. */
+    scope?: { readonly courtAttemptId?: string },
+  ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
   resolveRunnerKnownFailure?: (input: {
@@ -358,8 +363,14 @@ export async function dispatchPostAdmissionTurn<
     }
 
     let settled: T | undefined;
+    // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
+    // prior sealed pass cannot wash this turn's missing/escalated/failed result.
+    const courtScope =
+      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+        ? undefined
+        : { courtAttemptId: request.courtAttemptId };
     try {
-      settled = await adapters.trySettle(admitted, env.principalAuthority);
+      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
     } catch (error) {
       // Settle throw is a real failure fact — never swallow into undefined.
       return (await presentControlledFailure(

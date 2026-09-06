@@ -70,10 +70,11 @@ function instructionSeatAdapters() {
     trySettle: (
       admitted: AdmittedInstructionSeatInvocation,
       authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
     ) =>
       admitted.role === "gatekeeper"
-        ? trySettleGatekeeperTerminalResult(admitted, authority)
-        : trySettleNavigatorTerminalResult(admitted, authority),
+        ? trySettleGatekeeperTerminalResult(admitted, authority, scope)
+        : trySettleNavigatorTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
   };

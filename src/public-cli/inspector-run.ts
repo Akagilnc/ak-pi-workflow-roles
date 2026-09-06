@@ -173,7 +173,7 @@ export async function runPublicInspector(
 
 function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) => trySettleInspectorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
   };
 }

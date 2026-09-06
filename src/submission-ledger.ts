@@ -113,15 +113,54 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: str
   };
 }
 
-/** Settlement read seam: typed sealed projection only, never host session JSONL. */
+/** Optional court-turn scope for settlement reads (#637). */
+export type SubmissionLedgerReadScope = {
+  readonly home?: string;
+  /** When set, only this court attempt's ledger rows participate. */
+  readonly attemptId?: string;
+};
+
+function resolveReadScope(
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): SubmissionLedgerReadScope {
+  if (homeOrScope === undefined) return {};
+  if (typeof homeOrScope === "string") return { home: homeOrScope };
+  return homeOrScope;
+}
+
+function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
+  if (typeof record.subject === "object" && record.subject !== null) {
+    const fromSubject = (record.subject as { attemptId?: unknown }).attemptId;
+    if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
+  }
+  if (typeof record.payload === "object" && record.payload !== null) {
+    const fromPayload = (record.payload as { attemptId?: unknown }).attemptId;
+    if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
+  }
+  return undefined;
+}
+
+function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
+  owned: readonly T[],
+  attemptId: string | undefined,
+): readonly T[] {
+  if (attemptId === undefined) return owned;
+  return owned.filter((record) => recordAttemptId(record) === attemptId);
+}
+
+/** Settlement read seam: typed sealed projection only, never host session JSONL.
+ * Omit attemptId for run-scoped latest sealed (manual resume idempotent).
+ * Pass attemptId for the current court turn so a prior seal cannot wash this turn. */
 export async function readSealedSubmission(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<SealedSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind === "post-seal-anomaly") return undefined;
     if (record?.kind !== "sealed") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
@@ -134,11 +173,13 @@ export async function readSealedSubmission(
 export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
     if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
@@ -153,11 +194,13 @@ export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "ou
 export async function readLatestSubmissionOutcome(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<LatestSubmissionOutcome | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<LatestSubmissionOutcome> | undefined;
     if (payload?.type === "outcome" && typeof payload.outcome === "string") {
