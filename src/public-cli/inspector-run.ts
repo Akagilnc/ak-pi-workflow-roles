@@ -109,6 +109,7 @@ export async function runPublicInspector(
       projectRoot,
       role: "inspector",
       ticketNumber: probedTicketNumber,
+      freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
         runPublicInspectorResume(
