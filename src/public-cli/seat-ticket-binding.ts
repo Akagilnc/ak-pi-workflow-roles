@@ -8,6 +8,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   createGhTicketExistenceChecker,
   createHermesDiaristTicketResolver,
+  DiaristTicketResolutionError,
   resolveDiaristTicketFromInstruction,
   type DiaristTicketResolution,
 } from "../diarist-ticket-resolution.ts";
@@ -28,8 +29,20 @@ export type SeatTicketBindingEnv = {
 };
 
 /**
+ * Pre-admit instruction ticket probe (#635 / #637).
+ * Success carries the resolution for same-ticket resume + post-admit bind.
+ * DiaristTicketResolutionError is captured (not thrown) so the seat can still
+ * admit and settle the failure inside the post-admission controlled path —
+ * bare throw before admit would skip terminal settlement (失败诚实, no wash).
+ */
+export type InstructionTicketProbe =
+  | { readonly kind: "resolved"; readonly resolution: DiaristTicketResolution }
+  | { readonly kind: "failed"; readonly error: DiaristTicketResolutionError };
+
+/**
  * Instruction → ticket resolution without admission (#635 / #637).
  * Used to locate a prior same-ticket run before minting a new one.
+ * Throws on resolution failure — prefer probeInstructionTicket at seat entry.
  */
 export async function resolveInstructionTicket(
   instruction: string,
@@ -51,6 +64,39 @@ export async function resolveInstructionTicket(
 }
 
 /**
+ * Pre-admit probe: resolution success or captured DiaristTicketResolutionError.
+ * Other errors still propagate (launch/infrastructure outside this class).
+ */
+export async function probeInstructionTicket(
+  instruction: string,
+  projectRoot: string,
+  env: SeatTicketBindingEnv = {},
+): Promise<InstructionTicketProbe> {
+  try {
+    const resolution = await resolveInstructionTicket(
+      instruction,
+      projectRoot,
+      env,
+    );
+    return { kind: "resolved", resolution };
+  } catch (error) {
+    if (error instanceof DiaristTicketResolutionError) {
+      return { kind: "failed", error };
+    }
+    throw error;
+  }
+}
+
+/** Ticket number from a successful ticket probe; undefined for unbound/failed. */
+export function ticketNumberFromProbe(
+  probe: InstructionTicketProbe,
+): number | undefined {
+  if (probe.kind !== "resolved") return undefined;
+  if (probe.resolution.kind !== "ticket") return undefined;
+  return probe.resolution.ticketNumber;
+}
+
+/**
  * Sole disposition of a resolved ticket onto an unbound admission (#635 / #637).
  * Countersign / inspector / resolveSeatTicketBinding share this — no parallel branches.
  */
@@ -63,6 +109,19 @@ export async function applyTicketResolution(
   } else {
     await recordTrueUnboundTicketResolution(admitted);
   }
+}
+
+/**
+ * Apply a pre-admit probe onto an unbound admission.
+ * Failed probes rethrow — caller must be inside the controlled-failure boundary
+ * (post-admission beforeDispatch), never before admit/markRunning.
+ */
+export async function applyInstructionTicketProbe(
+  admitted: AdmittedRoleInvocation,
+  probe: InstructionTicketProbe,
+): Promise<void> {
+  if (probe.kind === "failed") throw probe.error;
+  await applyTicketResolution(admitted, probe.resolution);
 }
 
 /**

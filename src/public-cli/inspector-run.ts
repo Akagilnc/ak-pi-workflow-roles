@@ -9,8 +9,9 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  applyTicketResolution,
-  resolveInstructionTicket,
+  applyInstructionTicketProbe,
+  probeInstructionTicket,
+  ticketNumberFromProbe,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -87,14 +88,17 @@ export async function runPublicInspector(
   }
 
   // #637: same ticket → resume prior inspector run with this summons' materials.
+  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
+  // controlled failure (bare pre-admit throw skips terminal settlement).
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketResolution = await resolveInstructionTicket(
+  const ticketProbe = await probeInstructionTicket(
     parsed.instruction,
     projectRoot,
     env,
   );
-  if (ticketResolution.kind === "ticket") {
+  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
+  if (probedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -104,7 +108,7 @@ export async function runPublicInspector(
       home: env.home,
       projectRoot,
       role: "inspector",
-      ticketNumber: ticketResolution.ticketNumber,
+      ticketNumber: probedTicketNumber,
       summons,
       resume: (runId, materials) =>
         runPublicInspectorResume(
@@ -137,8 +141,6 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #635: reuse the pre-admit ticket probe via shared seat-ticket-binding seam.
-  await applyTicketResolution(admitted, ticketResolution);
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({
@@ -166,15 +168,27 @@ export async function runPublicInspector(
     env,
     io,
     request: turnRequest,
-    adapters: inspectorAdapters(),
+    adapters: inspectorAdapters({
+      beforeDispatch: async (admittedSeat) => {
+        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
+        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
-function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
+function inspectorAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedInspectorInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedInspectorInvocation> {
   return {
     trySettle: (admitted, authority, scope) => trySettleInspectorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
