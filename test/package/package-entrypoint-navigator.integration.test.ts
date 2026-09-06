@@ -640,20 +640,19 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
     async ({ home, agentDir }) => {
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
-      // Packaged public-path causes that do not require HTTP-status observation on the
-      // child (openai-completions does not call onResponse before throw on non-2xx,
-      // so auth/quota typed observation never lands on the spawn path). Auth/quota/
-      // transport classification from structured decisiveFacts is covered by the
-      // navigator-session-contracts unit seam + providerFailureFromPublicTerminal.
       // thinking stick/availability re-check removed (#683); Pi clamps itself.
       const cases = [
         { name: "context", source: "context" },
         { name: "session", source: "session" },
-        { name: "model", source: "model" },
+        // Missing provider: public summon yields no terminal → transport (shared open face).
+        { name: "model", source: "transport" },
+        { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"] },
+        { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"] },
+        { name: "transport", source: "transport", diagnostics: ["transport unavailable"] },
       ] as const;
       try {
         for (const [index, scenario] of cases.entries()) {
-          const diagnostics: readonly string[] = ["stable diagnostic"];
+          const diagnostics = "diagnostics" in scenario ? scenario.diagnostics : ["stable diagnostic"];
           for (const [diagnosticIndex, diagnostic] of diagnostics.entries()) {
             const issueRoot = resolve(home, `.ak/work/issues/failure-${index}-${diagnosticIndex}`);
             await mkdir(issueRoot, { recursive: true });
@@ -695,18 +694,32 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                 auditor: working,
               },
             }, home);
+            const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
             const response = (context: Context) => {
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeDirectNotaryPass(names);
               if (province !== undefined) return province;
-              const navigatorTool = names.includes("ak_navigator_output")
-                ? "ak_navigator_output"
-                : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-                  ? NAVIGATOR_PREPARE_TOOL_NAME
-                  : undefined;
-              if (navigatorTool !== undefined) {
-                // context/session/model cases: advice still required so settlement can
-                // publish unavailable from attendance-side causes (not stream failure).
+              // Public path terminates on ak_navigator_output only.
+              if (names.includes("ak_navigator_output")) {
+                if (streamFailure) {
+                  const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
+                  if (scenario.name === "transport") {
+                    return {
+                      ...base,
+                      diagnostics: [{
+                        type: "provider_transport_failure",
+                        timestamp: Date.now(),
+                        error: { message: diagnostic, code: "transport_error" },
+                      }],
+                    };
+                  }
+                  return {
+                    ...base,
+                    ...("status" in scenario
+                      ? { statusCode: scenario.status, status: scenario.status }
+                      : {}),
+                  };
+                }
                 const candidates = [{
                   id: "matrix-route",
                   matches: { role: "judge", phase: null, kind: "accepted" },
@@ -716,12 +729,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                   command: "Usage: pi --ak-role reviewer --help",
                 }];
                 return fauxAssistantMessage(
-                  fauxToolCall(
-                    navigatorTool,
-                    navigatorTool === "ak_navigator_output"
-                      ? { status: "advice", candidates }
-                      : { candidates },
-                  ),
+                  fauxToolCall("ak_navigator_output", { status: "advice", candidates }),
                   { stopReason: "toolUse" },
                 );
               }

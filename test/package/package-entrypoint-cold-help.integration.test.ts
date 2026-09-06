@@ -435,8 +435,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
-        // Missing provider absent from models.json → model axis (not session wash).
-        assert.equal(lifecycle[3]?.event.unavailableSource, "model");
+        // Missing provider fails closed on public summon (session/transport open face).
+        assert.equal(lifecycle[3]?.event.unavailableSource, "transport");
         // Exact model table from public-path topology (3 successful invokes):
         // each invoke runs warm+settle+rebind public navigator prepares on the shared
         // faux (mock stream model id = openai-codex/gpt-5.6-luna). Unsupported adds 0.

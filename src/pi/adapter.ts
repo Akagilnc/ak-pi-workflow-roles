@@ -196,7 +196,19 @@ export function createPiRoleHostAdapter(
         pi.on("session_shutdown", (_value, ctx) => handler({}, context(ctx)));
       } else if (registration[0] === "after_provider_response") {
         const [, handler] = registration;
-        pi.on("after_provider_response", (value, ctx) => handler({ status: value.status }, context(ctx)));
+        pi.on("after_provider_response", (value, ctx) => {
+          // Prefer proxy/gateway typed status header when the transport HTTP status
+          // is 2xx but the upstream provider status was non-success (mock + real
+          // gateways). Header is structured evidence — not diagnostic prose.
+          const headers = value.headers as Record<string, string> | undefined;
+          const typed =
+            headers?.["x-ak-provider-status"]
+            ?? headers?.["X-AK-Provider-Status"];
+          const fromHeader = typeof typed === "string" ? Number(typed) : NaN;
+          const status =
+            Number.isFinite(fromHeader) && fromHeader > 0 ? fromHeader : value.status;
+          return handler({ status }, context(ctx));
+        });
       } else if (registration[0] === "agent_end") {
         const [, handler] = registration;
         pi.on("agent_end", (value, ctx) => handler({
