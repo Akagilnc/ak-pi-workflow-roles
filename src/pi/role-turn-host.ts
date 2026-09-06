@@ -406,9 +406,10 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
+      // Pi already owns its own session file, so only sitian prior volume rides in.
       let turnRequest = request;
       const paths =
-        request.hostTransition?.previousHost === "grok-build"
+        request.hostTransition?.priorNativeKind === "sitian"
           ? request.hostTransition.priorNativePaths
           : undefined;
       if (
