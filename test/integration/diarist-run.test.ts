@@ -40,6 +40,7 @@ import {
   DIARIST_COLLECT_METHOD_RELATIVE,
   resolveDiaristCollectMethodPath,
 } from "../../src/diarist-llm-collector.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { ENGINE_DETOUR_STAGED_PROMPT_TOKEN } from "../../src/engine-detour.ts";
 import { runDiarist } from "../../src/diarist.ts";
 import {
@@ -733,18 +734,21 @@ test("runDiarist: mid-batch volume failure keeps partial commits; retry is idemp
         },
       });
       chmodSync(volume.recordFile, 0o444);
-      try {
-        await assert.rejects(() =>
-          runDiarist({
-            ticketNumber: 11,
-            cwd: project,
-          home,
-            packageRoot,
-          }),
-        );
-      } finally {
-        chmodSync(volume.recordFile, 0o644);
-      }
+      await withPrimaryAwareCleanup(
+        async () => {
+          await assert.rejects(() =>
+            runDiarist({
+              ticketNumber: 11,
+              cwd: project,
+            home,
+              packageRoot,
+            }),
+          );
+        },
+        async () => {
+          chmodSync(volume.recordFile, 0o644);
+        },
+      );
 
       const partial = await readTicketProvenance(11, project, home);
       assert.equal(partial.entries.length, 1);

@@ -18,7 +18,7 @@ import {
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
@@ -363,20 +363,23 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       mkdirSync(worktreesRoot, { recursive: true });
       const escapeLink = join(worktreesRoot, "symlink-escape");
       symlinkSync(strangerGitDir, escapeLink);
-      try {
-        bareGate(home).arm(root);
-        assert.equal(
-          hooksPathOf(stranger),
-          plantedStranger.hooksDir,
-          "symlink worktree entry must not clear external hooksPath",
-        );
-        assert.ok(
-          existsSync(plantedStranger.hookPath),
-          "symlink worktree entry must not delete external owned hook",
-        );
-      } finally {
-        unlinkSync(escapeLink);
-      }
+      await withPrimaryAwareCleanup(
+        async () => {
+          bareGate(home).arm(root);
+          assert.equal(
+            hooksPathOf(stranger),
+            plantedStranger.hooksDir,
+            "symlink worktree entry must not clear external hooksPath",
+          );
+          assert.ok(
+            existsSync(plantedStranger.hookPath),
+            "symlink worktree entry must not delete external owned hook",
+          );
+        },
+        async () => {
+          unlinkSync(escapeLink);
+        },
+      );
 
       // Unrelated repo out of discoverable range (no symlink entry).
       bareGate(home).arm(root);
@@ -386,25 +389,31 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       // Failure honesty: unreadable owned hook must not be washed into "not owned".
       const unreadable = plantOwnedHooks(root);
       chmodSync(unreadable.hookPath, 0o000);
-      try {
-        assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
-        assert.equal(
-          hooksPathOf(root),
-          unreadable.hooksDir,
-          "failed uninstall must not clear hooksPath after disguising ownership",
-        );
-      } finally {
-        await scrubPlanted(root, unreadable);
-      }
+      await withPrimaryAwareCleanup(
+        async () => {
+          assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
+          assert.equal(
+            hooksPathOf(root),
+            unreadable.hooksDir,
+            "failed uninstall must not clear hooksPath after disguising ownership",
+          );
+        },
+        async () => {
+          await scrubPlanted(root, unreadable);
+        },
+      );
 
       // Failure honesty: delete failure must surface; arm must not continue as success.
       const undeletable = plantOwnedHooks(root);
       chmodSync(undeletable.hooksDir, 0o555);
-      try {
-        assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
-      } finally {
-        await scrubPlanted(root, undeletable);
-      }
+      await withPrimaryAwareCleanup(
+        async () => {
+          assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
+        },
+        async () => {
+          await scrubPlanted(root, undeletable);
+        },
+      );
     });
   });
 });

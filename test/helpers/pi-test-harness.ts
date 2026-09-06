@@ -497,11 +497,12 @@ export async function withProcessCwd<T>(
   return await withProcessGlobalLock(async () => {
     const previous = process.cwd();
     process.chdir(cwd);
-    try {
-      return await scenario();
-    } finally {
-      process.chdir(previous);
-    }
+    return withPrimaryAwareCleanup(
+      () => scenario(),
+      async () => {
+        process.chdir(previous);
+      },
+    );
   });
 }
 
@@ -893,7 +894,16 @@ export async function seedAgentDirModelsJsonFromFaux(
     );
     return { close: mock.close, baseUrl: mock.baseUrl };
   } catch (error) {
-    await mock.close();
+    // Setup primary must survive close failure (same rule as withPrimaryAwareCleanup).
+    try {
+      await mock.close();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Test failed and cleanup failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
@@ -904,11 +914,12 @@ export async function withAgentDirProviderFixture<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-  try {
-    return await run();
-  } finally {
-    await seeded.close();
-  }
+  return withPrimaryAwareCleanup(
+    () => run(),
+    async () => {
+      await seeded.close();
+    },
+  );
 }
 
 export async function writeTestSkill(

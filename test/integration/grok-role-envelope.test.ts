@@ -394,36 +394,41 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
         }),
       },
     });
-    try {
-      assert.ok(prepared.abortSignal instanceof AbortSignal);
-      assert.equal(prepared.abortSignal.aborted, false);
+    await withPrimaryAwareCleanup(
+      async () => {
+        assert.ok(prepared.abortSignal instanceof AbortSignal);
+        assert.equal(prepared.abortSignal.aborted, false);
 
-      // closeRound on abort — mirrors role-turn-host host-aborted path racing projection.
-      const closeOnAbort = new Promise<Awaited<ReturnType<typeof prepared.closeRound>>>((resolve, reject) => {
-        prepared.abortSignal!.addEventListener("abort", () => {
-          void prepared.closeRound().then(resolve, reject);
-        }, { once: true });
-      });
+        // closeRound on abort — mirrors role-turn-host host-aborted path racing projection.
+        const closeOnAbort = new Promise<Awaited<ReturnType<typeof prepared.closeRound>>>((resolve, reject) => {
+          prepared.abortSignal!.addEventListener("abort", () => {
+            void prepared.closeRound().then(resolve, reject);
+          }, { once: true });
+        });
 
-      const server = prepared.mcpServers[0] as McpServer;
-      const mcpPromise = callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
-        infrastructureFailure: { diagnostic },
-      });
+        const server = prepared.mcpServers[0] as McpServer;
+        const mcpPromise = callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
+          infrastructureFailure: { diagnostic },
+        });
 
-      const closure = await closeOnAbort;
-      assert.equal(closure.accepted, false);
-      assert.ok("failure" in closure, "closeRound during hung projection must not fall to MissingSubmission");
-      assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
-      assert.equal(closure.failure.diagnostic, diagnostic);
+        const closure = await closeOnAbort;
+        assert.equal(closure.accepted, false);
+        assert.ok("failure" in closure, "closeRound during hung projection must not fall to MissingSubmission");
+        assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
+        assert.equal(closure.failure.diagnostic, diagnostic);
 
-      releaseSettle();
-      const reply = await mcpPromise;
-      assert.equal(reply.error, undefined);
-      assert.equal((reply.result as { isError?: boolean })?.isError, true);
-    } finally {
-      releaseSettle?.();
-      await prepared.dispose?.();
-    }
+        releaseSettle();
+        const reply = await mcpPromise;
+        assert.equal(reply.error, undefined);
+        assert.equal((reply.result as { isError?: boolean })?.isError, true);
+      },
+      async () => {
+        releaseSettle?.();
+      },
+      async () => {
+        await prepared.dispose?.();
+      },
+    );
         },
       async () => {
         process.exitCode = priorExitCode;

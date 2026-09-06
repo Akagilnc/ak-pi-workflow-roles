@@ -30,7 +30,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts";
-import { machineLedgerHome, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { machineLedgerHome, seedGitRepository, withProcessCwd } from "../helpers/pi-test-harness.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
 
@@ -67,13 +67,9 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   await withBusinessRepo(async () => {
     await withPrimaryAwareCleanup(
       async () => {
-        const previousCwd = process.cwd();
-        process.chdir(packageRoot);
-        try {
+        await withProcessCwd(packageRoot, async () => {
           await buildPublicAkRoleBin(binPath);
-        } finally {
-          process.chdir(previousCwd);
-        }
+        });
         // Prove the shipped layout has no sibling family tree next to the bin.
 
         seedGitRepository(project);
