@@ -460,9 +460,17 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Measured resume topology: parent + nested officers + 3 public nav prepares.
-        faux.setResponses(Array.from({ length: 10 }, () => response));
+        // Measured resume topology: parent + nested officers + public nav prepares = 9.
+        // Pool length === expectedConsumed (legal graph; no hedge ceiling).
+        let consumed = 0;
+        const expectedConsumed = 9;
+        const counting = (ctx: Parameters<typeof response>[0]) => {
+          consumed += 1;
+          return response(ctx);
+        };
+        faux.setResponses(Array.from({ length: expectedConsumed }, () => counting));
         await session.prompt(developerPrompt);
+        assert.equal(consumed, expectedConsumed, "packaged workers must consume exactly the measured trajectory");
 
         const seenJudgeContext = judgeContext as Context | undefined;
         assert.ok(seenJudgeContext);
