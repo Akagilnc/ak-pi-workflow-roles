@@ -48,18 +48,35 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         );
         // Durable role session under the machine ledger book (ADR 0048); not under the consumer fixture.
         const bookKey = "consumer"; // cloneSharedColdInstall dest basename under home/consumer
+        const runId = "01a06ff1-0000-7000-8000-00000000doct";
         const runDirectory = resolve(
           home,
           ".ak-roles",
           "books",
           bookKey,
           "runs",
-          "doctor-fresh",
+          `${runId}@doctor`,
         );
         const sessionDir = resolve(runDirectory, "session");
-        // #518 S3: institutional consumers read seat selection from the run page.
-        // Direct-Pi doctor activation bypasses public-CLI admission, so seed the page.
-                await mkdir(runDirectory, { recursive: true });
+        // Direct-Pi doctor activation bypasses public-CLI admission; seed the retained
+        // run page so nested public auditor --source-run can resolve (notary face).
+        await mkdir(runDirectory, { recursive: true });
+        await writeFile(
+          resolve(runDirectory, "run-state.json"),
+          `${JSON.stringify({
+            runId,
+            role: "doctor",
+            state: "running",
+            bookKey,
+            projectRoot: fixture,
+            sessionDirectory: sessionDir,
+            sessionFile: resolve(sessionDir, "session.jsonl"),
+            runDirectory,
+            admittedRequestPath: resolve(runDirectory, "admitted-request.json"),
+            principalWire: { kind: "pi", sessionFile: resolve(sessionDir, "session.jsonl") },
+          }, null, 2)}\n`,
+        );
+        await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n", "utf8");
         // Production activation requires a git cwd (ADR 0048); seed the consumer fixture.
         // With a git root present, Doctor case identity becomes repo-relative (stableRunsIdentity).
         execFileSync("git", ["init", "-b", "main"], { cwd: fixture, stdio: "ignore" });

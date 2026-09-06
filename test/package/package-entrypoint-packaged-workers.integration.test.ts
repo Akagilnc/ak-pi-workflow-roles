@@ -32,7 +32,6 @@ import {
   FIXER_OUTPUT_TOOL_NAME,
   INSPECTOR_OUTPUT_TOOL,
   JUDGE_OUTPUT_TOOL_NAME,
-  NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
@@ -41,8 +40,9 @@ import {
 } from "../../src/role-runtime.ts";
 import { Value } from "typebox/value";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
-import { navigatorPrepareFixtureResponse } from "../helpers/navigator-child-fixture.ts";
+import { navigatorPublicAdviceResponse } from "../helpers/navigator-child-fixture.ts";
 import {
   getSharedIsolatedPack,
   loadRawPackageManifest,
@@ -68,6 +68,22 @@ import {
   packageEntrypoint,
 } from "../helpers/package-entrypoint-fixtures.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
+import { installHermesFixture } from "../helpers/hermes-fixture.ts";
+
+/** Inspector-same true-unbound probe so public instruction seats settle unbound. */
+async function withHermesTrueUnbound<T>(home: string, run: () => Promise<T>): Promise<T> {
+  const binDir = join(home, "bin");
+  await mkdir(binDir, { recursive: true });
+  await installHermesFixture(binDir);
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+  try {
+    return await run();
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+  }
+}
 
 /** In-file direct-officer pass scripting. */
 function scriptOfficerPass(names: readonly string[], officer: "notary" | "inspector") {
@@ -122,11 +138,13 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         seats: { auditor: seat, judge: seat, notary: seat, inspector: seat },
       }, home);
 
+      const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
+      const bookKey = resolveBookKeyFromGit(installedRoot);
       const runDirectory = resolve(
         home,
         ".ak-roles",
         "books",
-        "consumer",
+        bookKey,
         "runs",
         "01a06ff1-0000-7000-8000-00000000audt@judge",
       );
@@ -137,7 +155,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
           runId: "01a06ff1-0000-7000-8000-00000000audt",
           role: "judge",
           state: "running",
-          bookKey: "consumer",
+          bookKey,
           projectRoot: installedRoot,
           sessionDirectory: resolve(runDirectory, "session"),
           sessionFile: resolve(runDirectory, "session/session.jsonl"),
@@ -183,11 +201,13 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       process.env.AK_ROLE_PACKAGE_ROOT = installedRoot;
       process.env.HOME = home;
       try {
-        await withAgentDirProviderFixture(faux, agentDir, async () => {
-          const decision = await judge.createPiJudgeAuditor()({
-            context: { cwd: installedRoot, sessionManager: sm } as any,
+        await withHermesTrueUnbound(home, async () => {
+          await withAgentDirProviderFixture(faux, agentDir, async () => {
+            const decision = await judge.createPiJudgeAuditor()({
+              context: { cwd: installedRoot, sessionManager: sm } as any,
+            });
+            assert.equal(decision.status, "pass");
           });
-          assert.equal(decision.status, "pass");
         });
       } finally {
         if (priorPackageRoot === undefined) delete process.env.AK_ROLE_PACKAGE_ROOT;
@@ -196,7 +216,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         else process.env.HOME = priorHome;
       }
 
-      assert.ok(nestedCalls >= 1, "public auditor nested turn must hit the faux provider");
+      assert.equal(nestedCalls, 1, "public auditor nested turn hits the faux provider once");
       assert.ok(
         nestedPrompt.includes(installedJudgeAuditor.trim()) || nestedPrompt.includes(installedJudgeAuditor),
         "nested public auditor must load installed judge-auditor soul",
@@ -230,11 +250,13 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       process.env.AK_ROLE_PACKAGE_ROOT = installedRoot;
       process.env.HOME = home;
       try {
-        await withAgentDirProviderFixture(faux, agentDir, async () => {
-          const decision = await judge.createPiJudgeAuditor()({
-            context: { cwd: installedRoot, sessionManager: sm } as any,
+        await withHermesTrueUnbound(home, async () => {
+          await withAgentDirProviderFixture(faux, agentDir, async () => {
+            const decision = await judge.createPiJudgeAuditor()({
+              context: { cwd: installedRoot, sessionManager: sm } as any,
+            });
+            assert.equal(decision.status, "pass");
           });
-          assert.equal(decision.status, "pass");
         });
       } finally {
         await writeFile(judgeSoulPath, original, "utf8");
@@ -243,7 +265,7 @@ test("cold-installed package audits active auditor seats from editable Souls", a
         if (priorHome === undefined) delete process.env.HOME;
         else process.env.HOME = priorHome;
       }
-      assert.ok(nestedCalls >= 1);
+      assert.equal(nestedCalls, 1, "edited-soul nested turn hits the faux provider once");
       assert.ok(
         nestedPrompt.includes(editedSoul.trim()) || nestedPrompt.includes(editedSoul),
         "edited judge-auditor soul must reach the nested public auditor turn",
@@ -362,6 +384,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           },
         }),
       );
+      await withHermesTrueUnbound(home, async () => {
       await withInProcessPi({
         activationLedgerSession: true,
         cwd: packageRoot,
@@ -396,10 +419,11 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const officerPass = scriptOfficerPass(names, "notary");
           if (officerPass !== undefined) return officerPass;
-          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+          if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
             // Developer exact-session v1 shape: direction-only next is enough.
             // Full route/matches/command must not be required for recommendation.
-            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_OUTPUT_TOOL_NAME, {
+              status: "advice",
               candidates: [{
                 next: { role: "fixer", phase: "apply" },
                 reason: "accepted judge should proceed to fixer apply",
@@ -436,8 +460,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Legal graph capacity: first fresh + nested officers + public nav (withdraw 8→12).
-        faux.setResponses(Array.from({ length: 8 }, () => response));
+        // Measured resume topology: parent + nested officers + 3 public nav prepares.
+        faux.setResponses(Array.from({ length: 10 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
@@ -502,9 +526,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const invocationMarkers = entries.filter(
           (entry) => entry.type === "custom" && (entry as { customType?: string }).customType === "ak-navigator-invocation",
         );
-        assert.ok(invocationMarkers.length >= 1, "exact session carries independent invocation principal marker");
+        assert.equal(invocationMarkers.length, 1, "exact session carries one invocation principal marker");
         const markersBeforeTerminal = invocationMarkers.filter((entry) => entries.indexOf(entry) < acceptedIndex);
-        assert.ok(markersBeforeTerminal.length >= 1, "principal marker is before the role terminal");
+        assert.equal(markersBeforeTerminal.length, 1, "principal marker is before the role terminal");
         const nearest = markersBeforeTerminal[markersBeforeTerminal.length - 1] as {
           data?: { invocationId?: string };
         };
@@ -527,6 +551,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           () => access(resolve(packageRoot, "auditor-roles")),
           (error: NodeJS.ErrnoException) => error.code === "ENOENT",
         );
+      });
       });
       } finally {
         await seeded.close();
@@ -575,6 +600,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
         else await writeFile(configPath, priorConfig, "utf8");
       };
       try {
+      await withHermesTrueUnbound(home, async () => {
       await withAgentDirProviderFixture(faux, agentDir, async () => {
       await withInProcessPi({
         activationLedgerSession: true,
@@ -594,8 +620,8 @@ test("packaged judge escalation emits one typed human decision", async () => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const officerPass = scriptOfficerPass(names, "notary");
           if (officerPass !== undefined) return officerPass;
-          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-            return navigatorPrepareFixtureResponse({ role: "judge", phase: null });
+          if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
+            return navigatorPublicAdviceResponse({ role: "judge", phase: null });
           }
           // Nested public auditor escalate (same scripted decision as dedicated fixture).
           if (names.includes("ak_auditor_output") || names.includes(SOUL_AUDIT_TOOL_NAME)) {
@@ -675,6 +701,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
         );
       });
       });
+      });
       } finally {
         await restoreSeats();
       }
@@ -743,6 +770,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           provider: "ak-coder-offline",
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withHermesTrueUnbound(home, async () => {
         await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
@@ -779,8 +807,8 @@ test("packaged coder apply proves canonical native tdd expansion including colli
             : row.callId;
           const officerOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
-            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              return navigatorPrepareFixtureResponse({ role: "coder", phase: "apply" });
+            if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
+              return navigatorPublicAdviceResponse({ role: "coder", phase: "apply" });
             }
             const officerPass = scriptOfficerPass(names, "inspector");
             if (officerPass !== undefined) return officerPass;
@@ -907,6 +935,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, row.output);
         });
         });
+        });
       },
     );
   }
@@ -945,6 +974,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           provider: `ak-fixer-offline-${phase}`,
           tokenSize: { min: 1000, max: 1000 },
         });
+        await withHermesTrueUnbound(home, async () => {
         await withAgentDirProviderFixture(faux, agentDir, async () => {
         await withInProcessPi({
           activationLedgerSession: true,
@@ -1120,8 +1150,8 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           // Parent tool lists may still advertise inspector; do not treat presence as a summons.
           const officerOrIdle = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
-            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              return navigatorPrepareFixtureResponse({ role: "fixer", phase: "apply" });
+            if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
+              return navigatorPublicAdviceResponse({ role: "fixer", phase: "apply" });
             }
             const officerPass = scriptOfficerPass(names, "inspector");
             if (officerPass !== undefined) return officerPass;
@@ -1153,6 +1183,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
           assert.equal(closure.length, 1, "exactly one sealed Fixer submission closure");
           assert.deepEqual((closure[0] as { data?: { details?: unknown } }).data?.details, output);
+        });
         });
         });
       }
