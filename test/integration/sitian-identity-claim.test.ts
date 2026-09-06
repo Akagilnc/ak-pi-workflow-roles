@@ -30,12 +30,9 @@ function waitChildExit(child: ChildProcess): Promise<number | null> {
 
 async function settleSpawnedChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // already exiting
-  }
-  await waitChildExit(child).catch(() => undefined);
+  // Failures propagate into PAC cleanup: kill/wait must not swallow the true cause.
+  child.kill("SIGTERM");
+  await waitChildExit(child);
 }
 
 async function withHermeticLedgerRoot<T>(
