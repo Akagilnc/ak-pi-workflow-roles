@@ -16,6 +16,7 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -119,6 +120,37 @@ export type PublicResumeRequest = {
   readonly runId: string;
   /** Present when the caller supplied the post-runId argv (including empty string). */
   readonly message?: string;
+  /**
+   * Same-ticket re-summons materials (#637). Present only when a public seat
+   * re-enters via the summons face — never from `ak-role resume`.
+   * Manual resume keeps package envelope / caller message semantics unchanged.
+   */
+  readonly summons?: SameTicketSummonsMaterials;
+};
+
+/**
+ * Open court turn on a retained run (#637).
+ * courtAttemptId + the same summons materials shape already used by re-summons.
+ * Bare resume rehydrates request.summons and rides existing load/buildTurnRequest.
+ * Cleared when this courtAttemptId seals.
+ */
+export type CurrentCourtState = {
+  readonly courtAttemptId: string;
+  readonly summons?: SameTicketSummonsMaterials;
+};
+
+/**
+ * Materials delivered on same-ticket re-summons while reusing the same-run resume seam.
+ * Instruction seats freeze new attachments into the retained run and ride the transport prompt;
+ * notary overrides the source-run activation pointer for this turn only.
+ */
+export type SameTicketSummonsMaterials = {
+  readonly instruction?: string;
+  readonly instructionEmpty?: boolean;
+  readonly attachmentPaths?: readonly string[];
+  /** Notary: this summons' resolved source-run locator (activation pointer). */
+  readonly sourceRunPath?: string;
+  readonly sourceRun?: NotarySourceRunLocator;
 };
 
 /**
@@ -212,7 +244,80 @@ type RoleRunStateDisk = {
   readonly principalWire: RoleRunPrincipalWire;
   readonly phase?: CoderPhase | FixerPhase;
   readonly resumable?: TypedHttp429Observation;
+  /** Open court turn (#637); omit when no unsealed current court. */
+  readonly currentCourt?: CurrentCourtState;
 };
+
+function parseSameTicketSummonsMaterials(
+  raw: unknown,
+): SameTicketSummonsMaterials | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const instruction =
+    typeof record.instruction === "string" ? record.instruction : undefined;
+  const instructionEmpty =
+    typeof record.instructionEmpty === "boolean" ? record.instructionEmpty : undefined;
+  const attachmentPaths = Array.isArray(record.attachmentPaths)
+    ? record.attachmentPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+    : undefined;
+  const sourceRunPath =
+    typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== ""
+      ? record.sourceRunPath
+      : undefined;
+  let sourceRun: NotarySourceRunLocator | undefined;
+  if (
+    record.sourceRun !== null &&
+    typeof record.sourceRun === "object" &&
+    !Array.isArray(record.sourceRun)
+  ) {
+    const sr = record.sourceRun as Record<string, unknown>;
+    if (
+      typeof sr.runId === "string" &&
+      sr.runId.trim() !== "" &&
+      typeof sr.role === "string" &&
+      sr.role.trim() !== "" &&
+      typeof sr.runDirectory === "string" &&
+      sr.runDirectory.trim() !== ""
+    ) {
+      sourceRun = {
+        runId: sr.runId,
+        role: sr.role,
+        runDirectory: sr.runDirectory,
+      };
+    }
+  }
+  if (
+    instruction === undefined &&
+    instructionEmpty === undefined &&
+    (attachmentPaths === undefined || attachmentPaths.length === 0) &&
+    sourceRunPath === undefined &&
+    sourceRun === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(instruction === undefined ? {} : { instruction }),
+    ...(instructionEmpty === undefined ? {} : { instructionEmpty }),
+    ...(attachmentPaths === undefined || attachmentPaths.length === 0
+      ? {}
+      : { attachmentPaths }),
+    ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
+    ...(sourceRun === undefined ? {} : { sourceRun }),
+  };
+}
+
+function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
+    return undefined;
+  }
+  const summons = parseSameTicketSummonsMaterials(record.summons);
+  return {
+    courtAttemptId: record.courtAttemptId,
+    ...(summons === undefined ? {} : { summons }),
+  };
+}
 
 async function readRoleRunStateDisk(
   runDirectory: string,
@@ -290,6 +395,7 @@ async function readRoleRunStateDisk(
     record.phase === "plan" || record.phase === "apply"
       ? record.phase
       : undefined;
+  const currentCourt = parseCurrentCourtState(record.currentCourt);
   return {
     runId: record.runId,
     role: record.role,
@@ -301,6 +407,7 @@ async function readRoleRunStateDisk(
     principalWire,
     ...(phase === undefined ? {} : { phase }),
     ...(resumable === undefined ? {} : { resumable }),
+    ...(currentCourt === undefined ? {} : { currentCourt }),
   };
 }
 
@@ -322,6 +429,7 @@ async function writeRoleRunStateDisk(
     admittedRequestPath: disk.admittedRequestPath,
     ...(disk.phase === undefined ? {} : { phase: disk.phase }),
     ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
+    ...(disk.currentCourt === undefined ? {} : { currentCourt: disk.currentCourt }),
   };
   await writeFile(
     join(runDirectory, RUN_STATE_FILE),
@@ -448,6 +556,7 @@ export async function markRunRunning(
     throw new Error("cannot mark running: run state missing");
   }
   // Omit resumable while a writer is active. Principal wire is passed through uninterpreted.
+  // Preserve open currentCourt across running transitions (#637).
   await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
@@ -458,6 +567,7 @@ export async function markRunRunning(
     admittedRequestPath: current.admittedRequestPath,
     principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
+    ...(current.currentCourt === undefined ? {} : { currentCourt: current.currentCourt }),
   });
 }
 
@@ -482,6 +592,8 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
+  // Preserve open currentCourt: terminal after a failed/incomplete court must still
+  // let bare resume continue that court (#637).
   await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
@@ -492,6 +604,62 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
     admittedRequestPath: current.admittedRequestPath,
     principalWire: current.principalWire,
     ...(current.phase === undefined ? {} : { phase: current.phase }),
+    ...(current.currentCourt === undefined ? {} : { currentCourt: current.currentCourt }),
+  });
+}
+
+/** Read the open court turn on a retained run, if any (#637). */
+export async function readCurrentCourt(
+  runDirectory: string,
+): Promise<CurrentCourtState | undefined> {
+  const current = await readRoleRunStateDisk(runDirectory);
+  return current?.currentCourt;
+}
+
+/** Persist the open court turn identity + materials (#637). */
+export async function recordCurrentCourt(
+  runDirectory: string,
+  court: CurrentCourtState,
+): Promise<void> {
+  const current = await readRoleRunStateDisk(runDirectory);
+  if (current === undefined) {
+    throw new Error("cannot record current court: run state missing");
+  }
+  await writeRoleRunStateDisk(runDirectory, {
+    ...current,
+    currentCourt: court,
+  });
+}
+
+/**
+ * Clear open court after this courtAttemptId seals, or when the open court is
+ * already sealed and bare resume returns to run-scoped idempotence (#637).
+ * When expectedCourtAttemptId is set, clear only if it still matches — never
+ * drop a different court recorded under the writer lease after our judgment.
+ */
+export async function clearCurrentCourt(
+  runDirectory: string,
+  expectedCourtAttemptId?: string,
+): Promise<void> {
+  const current = await readRoleRunStateDisk(runDirectory);
+  if (current === undefined || current.currentCourt === undefined) return;
+  if (
+    expectedCourtAttemptId !== undefined &&
+    current.currentCourt.courtAttemptId !== expectedCourtAttemptId
+  ) {
+    return;
+  }
+  await writeRoleRunStateDisk(runDirectory, {
+    runId: current.runId,
+    role: current.role,
+    state: current.state,
+    bookKey: current.bookKey,
+    projectRoot: current.projectRoot,
+    runDirectory: current.runDirectory,
+    admittedRequestPath: current.admittedRequestPath,
+    principalWire: current.principalWire,
+    ...(current.phase === undefined ? {} : { phase: current.phase }),
+    ...(current.resumable === undefined ? {} : { resumable: current.resumable }),
   });
 }
 
@@ -827,6 +995,43 @@ export async function findRunDirectoryById(
     }
   }
   return undefined;
+}
+
+/**
+ * Locate the latest retained run for one seat+ticket under a book (#637).
+ * Same walk surface as findRunDirectoryById; ticket identity from durable pages.
+ * runId is UUIDv7 — lexicographic max is latest. No parallel index.
+ * Only a truly missing runs directory means no history; damage/permission errors propagate.
+ */
+export async function findLatestRunIdForSeatTicket(input: {
+  readonly home: string;
+  readonly bookKey: string;
+  readonly role: RoleRunRecord["role"];
+  readonly ticketNumber: number;
+}): Promise<string | undefined> {
+  const ledgerHome = resolveActivationLedgerHome(input.home);
+  const runsDir = join(
+    activationBookDirectory(ledgerHome, input.bookKey),
+    "runs",
+  );
+  let entries: string[];
+  try {
+    entries = await readdir(runsDir);
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  const suffix = `@${input.role}`;
+  let best: string | undefined;
+  for (const entry of entries) {
+    if (!entry.endsWith(suffix)) continue;
+    const runId = entry.slice(0, entry.length - suffix.length);
+    if (runId.length === 0) continue;
+    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
+    if (ticketNumber !== input.ticketNumber) continue;
+    if (best === undefined || runId > best) best = runId;
+  }
+  return best;
 }
 
 type LoadedAdmittedRequestFields = {
