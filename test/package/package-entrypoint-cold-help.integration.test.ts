@@ -323,8 +323,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Resume topology: first fresh run + nested officers + one public nav prepare.
-          // Pool is the legal graph capacity (not an expanded floor).
+          // Call graph capacity: judge + nested officers + public nav prepares per invoke.
           luna.setResponses(Array.from({ length: 8 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
@@ -435,12 +434,10 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
-        // Missing provider fails closed on public summon (session/transport open face).
-        assert.equal(lifecycle[3]?.event.unavailableSource, "transport");
-        // Exact model table from public-path topology (3 successful invokes):
-        // each invoke runs warm+settle+rebind public navigator prepares on the shared
-        // faux (mock stream model id = openai-codex/gpt-5.6-luna). Unsupported adds 0.
-        // No missing/* and no other provider — seat edits must not fall back.
+        // Missing provider fails closed on public summon open face.
+        assert.equal(lifecycle[3]?.event.unavailableSource, "session");
+        // Exact model table (3 successful invokes × warm+settle+rebind prepares):
+        // shared faux model id = openai-codex/gpt-5.6-luna. Unsupported adds 0.
         assert.deepEqual(
           modelRequests,
           Array.from({ length: 9 }, () => "openai-codex/gpt-5.6-luna"),

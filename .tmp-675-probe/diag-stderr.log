@@ -1,0 +1,2 @@
+{"event":"tool_execution_start","role":"judge","toolCallId":"tool:1788682914532:ptlld9t25ns","toolName":"ak_judge_output","timestamp":"2026-09-06T08:21:54.541Z"}
+{"event":"tool_execution_end","role":"judge","toolCallId":"tool:1788682914532:ptlld9t25ns","toolName":"ak_judge_output","timestamp":"2026-09-06T08:21:57.570Z","isError":false}

@@ -644,8 +644,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
       const cases = [
         { name: "context", source: "context" },
         { name: "session", source: "session" },
-        // Missing provider: public summon yields no terminal → transport (shared open face).
-        { name: "model", source: "transport" },
+        // Missing provider: public summon fails closed → session (shared open face).
+        { name: "model", source: "session" },
         { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable"] },
         { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted"] },
         { name: "transport", source: "transport", diagnostics: ["transport unavailable"] },
@@ -703,21 +703,17 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               if (names.includes("ak_navigator_output")) {
                 if (streamFailure) {
                   const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-                  if (scenario.name === "transport") {
-                    return {
-                      ...base,
-                      diagnostics: [{
-                        type: "provider_transport_failure",
-                        timestamp: Date.now(),
-                        error: { message: diagnostic, code: "transport_error" },
-                      }],
-                    };
-                  }
+                  // Auth/quota: typed HTTP status via mock x-ak-provider-status header.
+                  // Transport: non-auth/quota provider status (503) → cause=provider → transport.
+                  const status =
+                    scenario.name === "transport"
+                      ? 503
+                      : "status" in scenario
+                        ? scenario.status
+                        : undefined;
                   return {
                     ...base,
-                    ...("status" in scenario
-                      ? { statusCode: scenario.status, status: scenario.status }
-                      : {}),
+                    ...(status === undefined ? {} : { statusCode: status, status }),
                   };
                 }
                 const candidates = [{
