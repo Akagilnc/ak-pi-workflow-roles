@@ -978,7 +978,16 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
     case "navigator":
       return [role, "--project", project, "engine axis probe"];
     case "auditor":
-      return [role, "--project", project, "engine axis probe"];
+      return [
+        role,
+        "--subject",
+        "judge",
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+        "engine axis probe",
+      ];
     case "evidence-child":
       return [role, "--project", project, "engine axis probe"];
     default: {
