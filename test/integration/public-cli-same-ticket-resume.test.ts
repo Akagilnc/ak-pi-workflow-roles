@@ -1,9 +1,10 @@
 /**
  * #637 — one public-entry tracer via runAkRole (cli.ts seat-table resolution):
- * first summons mints + seals → seat-table switch → same-ticket re-summons resume
- * that run under the live seat-table model with a new court attempt and different
- * source-run material (second court does not seal / not pass) → bare resume
- * continues the open court and seals → further bare resume is sealed-idempotent.
+ * first summons mints + seals pass → seat-table switch → same-ticket re-summons
+ * resume that run under the live seat-table model with a new court attempt and
+ * different source-run material (second court does not seal) → bare resume
+ * continues the open court and seals a lawful non-pass status → further bare
+ * resume is sealed-idempotent on that same non-pass status.
  * Temp home is worktree-owned and always cleaned.
  *
  * Observation face is RoleTurnRequest (continuation / activation / model /
@@ -152,7 +153,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
   };
 }
 
-test("#637 public notary tracer: first seal → seat switch → second court no-seal → bare resume → idempotent", async () => {
+test("#637 public notary tracer: first seal → seat switch → second court no-seal → bare resume non-pass → idempotent", async () => {
   const scratch = await openNotaryScratch("home-");
   try {
     const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
@@ -165,6 +166,13 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       ).exitCode,
       0,
     );
+
+    /** Lawful non-pass seal for the open second court (distinct from first pass). */
+    const secondCourtSeal = {
+      status: "bounce" as const,
+      disposition: "rewrite" as const,
+      findings: ["second-court-non-pass"],
+    };
 
     const seen: SeenTurn[] = [];
     let turn = 0;
@@ -189,11 +197,11 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
             seal: false,
           })(extraArgs, options);
         }
-        // Bare resume of open court: seal this court turn.
+        // Bare resume of open court: seal this court turn with lawful non-pass.
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [] },
+          details: secondCourtSeal,
         })(extraArgs, options);
       },
     });
@@ -354,10 +362,12 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? resumed.terminal.roleOutcome.status
         : undefined,
-      "pass",
+      secondCourtSeal.status,
+      "open-court seal status must be the lawful non-pass, not first-court pass",
     );
 
-    // 5) After open court seals, further bare resume is run-scoped sealed-idempotent.
+    // 5) After open court seals non-pass, further bare resume is run-scoped
+    // sealed-idempotent on that same status (not the first-court pass).
     const turnsBeforeIdempotent = turn;
     const idempotent = await runAkRole(["resume", runId], {
       home,
@@ -374,6 +384,13 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.equal(idempotent.exitCode, 0);
     assert.equal(idempotent.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      idempotent.terminal?.roleOutcome.kind === "accepted"
+        ? idempotent.terminal.roleOutcome.status
+        : undefined,
+      secondCourtSeal.status,
+      "idempotent bare resume must present the open-court non-pass status",
+    );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
   }
