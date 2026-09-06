@@ -7,10 +7,10 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
@@ -118,12 +118,18 @@ function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"])
   const runName = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`;
   const ledger = createTempPackageHomeLedger({ prefix: "ak-judge-home-", runName });
   const runDirectory = ledger.runDirectory;
-  // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
-  // resolved promise is fire-and-forget, so the page is on disk immediately.
-  void writeInstitutionalSeatTable(runDirectory, seats);
+  // Register cleanup ownership before seat-page write can throw past the caller.
   activeRunDirs.push(runDirectory);
-  process.env.AK_ROLE_RUN_DIR = runDirectory;
-  return runDirectory;
+  try {
+    // writeInstitutionalSeatTable writes synchronously (writeFileSync); the
+    // resolved promise is fire-and-forget, so the page is on disk immediately.
+    void writeInstitutionalSeatTable(runDirectory, seats);
+    process.env.AK_ROLE_RUN_DIR = runDirectory;
+    return runDirectory;
+  } catch (error) {
+    disposeInstitutionalRunDir(runDirectory);
+    throw error;
+  }
 }
 function disposeInstitutionalRunDir(runDirectory: string): void {
   const index = activeRunDirs.indexOf(runDirectory);
@@ -2181,11 +2187,11 @@ test(
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
     const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
-    const modelRoot = await mkdtemp(worktreeTempPrefix("ak-judge-grace-model-"));
-    const modelSettingPath = join(modelRoot, "navigator-model.json");
-    await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
+    // Own model root at create seam; writeFile + body share withTempRoot cleanup.
+    await withTempRoot("ak-judge-grace-model-", async (modelRoot) => {
+      const modelSettingPath = join(modelRoot, "navigator-model.json");
+      await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
 
-    try {
       const harness = extensionHarness("judge");
       const sentMessages: Array<{ customType?: string; details?: unknown }> = [];
       (harness.pi as { sendMessage?: (message: unknown) => Promise<void> }).sendMessage = async (
@@ -2364,9 +2370,7 @@ test(
         const formatted = formatTerminalResult(terminal);
         assert.ok(formatted.length > 0);
       });
-    } finally {
-      await rm(modelRoot, { recursive: true, force: true });
-    }
+    });
   },
 );
 
@@ -2381,12 +2385,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
   const nestedRunDir = nestedLedger.runDirectory;
-  await writeInstitutionalSeatTable(nestedRunDir, {
-    auditor: { provider: "installed-auditor", model: "installed-auditor" },
-  });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {
+    await writeInstitutionalSeatTable(nestedRunDir, {
+      auditor: { provider: "installed-auditor", model: "installed-auditor" },
+    });
+    process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   {
       const [judge, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
