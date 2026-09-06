@@ -512,9 +512,39 @@ test(
         "accepted",
         "shape-unreadable notary must not accept parent Judge as pass",
       );
-      if (result.terminal?.roleOutcome.kind === "failure") {
-        assert.ok(result.terminal.roleOutcome.diagnostic.length > 0);
-      }
+      const runDir = join(
+        home,
+        ".ak-roles",
+        "books",
+        resolveBookKeyFromGit(project),
+        "runs",
+        "run-e2e-judge-gate-notary-001@judge",
+      );
+      const rows = (await readFile(join(runDir, "session", "session.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: { role?: string; toolName?: string; isError?: boolean; details?: Record<string, unknown> };
+        });
+      const gateNonPass = [...rows].reverse().find(
+        (row) =>
+          row.type === "message"
+          && row.message?.role === "toolResult"
+          && row.message?.toolName === JUDGE_OUTPUT_TOOL_NAME
+          && row.message?.isError === true
+          && row.message?.details !== undefined,
+      );
+      assert.ok(gateNonPass?.message?.details, "durable non-pass toolResult with details");
+      const details = gateNonPass!.message!.details!;
+      // Typed unreadable (or bounce legacy) — never silent infrastructure wash without stage.
+      assert.ok(
+        details.status === "unreadable"
+        || details.status === "bounce"
+        || details.stage === "notary"
+        || typeof details.reason === "string",
+        `expected typed gate non-pass details, got ${JSON.stringify(details)}`,
+      );
     } finally {
       // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }

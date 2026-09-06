@@ -22,6 +22,7 @@ import {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
 } from "../../src/role-runtime.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
@@ -128,7 +129,14 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         { stopReason: "toolUse" },
       );
     }
-    if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+    // Public navigator seat terminates on ak_navigator_output; attendance prepare tool
+    // remains for in-process seams. Same candidate payload either way (#675 r3).
+    const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+      ? NAVIGATOR_OUTPUT_TOOL_NAME
+      : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+        ? NAVIGATOR_PREPARE_TOOL_NAME
+        : undefined;
+    if (navigatorTool !== undefined) {
       if (deliveryMode === "unavailable") {
         navigatorCalls += 1;
         navigatorStartedAt = new Date().toISOString();
@@ -141,16 +149,23 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         navigatorStartedAt = new Date().toISOString();
         await new Promise<void>((resolve) => setTimeout(resolve, 100));
         navigatorCompletedAt = new Date().toISOString();
-        return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-          candidates: [{
-            id: "audit-failure-route",
-            matches: { role: "judge", phase: null },
-            route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-            next: { role: "reviewer", phase: null },
-            reason: "healthy in-flight Navigator preparation",
-            command: "Usage: pi --ak-role reviewer --help",
-          }],
-        }), { stopReason: "toolUse" });
+        const candidates = [{
+          id: "audit-failure-route",
+          matches: { role: "judge", phase: null },
+          route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+          next: { role: "reviewer", phase: null },
+          reason: "healthy in-flight Navigator preparation",
+          command: "Usage: pi --ak-role reviewer --help",
+        }];
+        return fauxAssistantMessage(
+          fauxToolCall(
+            navigatorTool,
+            navigatorTool === NAVIGATOR_OUTPUT_TOOL_NAME
+              ? { status: "advice", candidates }
+              : { candidates },
+          ),
+          { stopReason: "toolUse" },
+        );
       }
     }
     // #675: public auditor uses ak_auditor_output; keep historical soul-audit tool face too.
@@ -215,11 +230,11 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  // Route by active tool surface so scripted province pass runs before auditor legs.
-  // Shared agentDir mock serves parent + nested public officers/auditor + their
-  // Navigator prepares on one faux queue (#675 r3 — no nested-env skip). Capacity
-  // only; not a locked prepare/settlement count contract.
-  faux.setResponses(Array.from({ length: 48 }, () => response));
+  // Shared agentDir mock: parent judge + nested officers/auditor + public navigator
+  // prepares (each attendance prepare is one public navigator turn). Legal call graph
+  // upper bound for single-invoke e2e ≈ parent(judge+2nav) + notary(+2nav) + auditor(+2nav)
+  // + retries; keep headroom without locking a prepare total as spec.
+  faux.setResponses(Array.from({ length: 32 }, () => response));
 
   const model = faux.getModel();
   const provider: Provider = {

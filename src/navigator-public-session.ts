@@ -1,56 +1,20 @@
 /**
- * Navigator attendance session factory (#675).
- * Nested prepare loop uses the shared in-process open seam (no institutional seat page).
- * Direct `ak-role navigator` remains the public one-shot path.
+ * Navigator attendance session factory (#675 r3).
+ * Each prepare turn uses the public navigator activation path (summonPublicRole) —
+ * same seat table and shared envelope as `ak-role navigator`.
+ * Archivist createRecordSession only books route-memory nest under the parent;
+ * no openPiInProcessSession second lifecycle / no agentDir patch on the old path.
  */
 import { sitianReport } from "./sitian-facade.ts";
 import {
-  NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
-  navigatorProviderFailureFromDiagnostics,
   navigatorProviderFailureFromError,
-  navigatorProviderFailureFromStatus,
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   resolveNavigatorSeatSelection,
   type NavigatorProviderFailureFact,
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
-import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-
-function exactRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function runChildCleanup(
-  cleanups: ReadonlyArray<() => void | Promise<void>>,
-  primaryFailure: unknown,
-  label: string,
-): Promise<void> {
-  let cleanupFailure: unknown;
-  for (const cleanup of cleanups) {
-    try {
-      await cleanup();
-    } catch (failure) {
-      cleanupFailure = cleanupFailure === undefined
-        ? failure
-        : new AggregateError([cleanupFailure, failure], `${label} cleanup failed`, {
-          cause: cleanupFailure,
-        });
-    }
-  }
-  if (cleanupFailure === undefined) return;
-  if (primaryFailure !== undefined) {
-    throw new AggregateError(
-      [primaryFailure, cleanupFailure],
-      `${label} execution and cleanup failed`,
-      { cause: primaryFailure },
-    );
-  }
-  throw new AggregateError([cleanupFailure], `${label} cleanup failed`, {
-    cause: cleanupFailure,
-  });
-}
 
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
@@ -59,6 +23,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let thinkingLevel = resolved.thinkingLevel;
     let configuredLabel = resolved.configuredLabel;
 
+    // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
     const { createRecordSession } = await import("./archivist-record-entry.ts");
     const sessionManager = createRecordSession({
       cwd: context.cwd,
@@ -68,126 +33,100 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
-    let observationWrite: Promise<void> = Promise.resolve();
-    const assignProviderFailure = (fact: NavigatorProviderFailureFact | undefined): void => {
-      if (fact !== undefined) providerFailure = fact;
-    };
-    const classifyTerminalMessage = (message: unknown): void => {
-      if (!exactRecord(message)) {
-        assignProviderFailure(navigatorProviderFailureFromError(message));
-        return;
-      }
-      assignProviderFailure(navigatorProviderFailureFromDiagnostics(message.diagnostics));
-      if (providerFailure !== undefined) return;
-      if (message.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(message));
-      if (providerFailure !== undefined) return;
-      const status = typeof message.statusCode === "number"
-        ? message.statusCode
-        : typeof message.status === "number"
-          ? message.status
-          : typeof message.httpStatus === "number"
-            ? message.httpStatus
-            : undefined;
-      if (typeof status === "number") {
-        assignProviderFailure(navigatorProviderFailureFromStatus(status));
-        if (providerFailure === undefined && status >= 400 && status < 600) {
-          assignProviderFailure({ source: "transport", cause: "transport" });
-        }
-        const runDir = process.env.AK_ROLE_RUN_DIR;
-        const provider = typeof message.provider === "string" && message.provider.trim() !== ""
-          ? message.provider
-          : selection.provider;
-        if (typeof runDir === "string" && runDir.trim() !== "" && provider.trim() !== "") {
-          observationWrite = observationWrite.then(() =>
-            recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider }),
+    let disposed = false;
+
+    const resolveHome = async (): Promise<string | undefined> => {
+      const parentFile = context.sessionManager?.getSessionFile?.();
+      if (typeof parentFile === "string" && parentFile.trim() !== "") {
+        try {
+          const { tryHomeFromAkRolesPath, homeFromRunDirectory } = await import(
+            "./activation-ledger-topology.ts"
           );
+          const fromParent = tryHomeFromAkRolesPath(parentFile);
+          if (fromParent !== undefined && fromParent.length > 0) return fromParent;
+          const runDir = parentFile.replace(/\/session\/session\.jsonl$/, "");
+          if (runDir !== parentFile) {
+            try {
+              return homeFromRunDirectory(runDir);
+            } catch {
+              // fall through
+            }
+          }
+        } catch {
+          // fall through
         }
       }
-    };
-
-    // Shared envelope agentDir when present — never invent a parallel credential root
-    // (ADR 0018 / #675). Fall back only when the parent activation left none.
-    const agentDir =
-      typeof process.env.PI_CODING_AGENT_DIR === "string"
-      && process.env.PI_CODING_AGENT_DIR.trim() !== ""
-        ? process.env.PI_CODING_AGENT_DIR
-        : undefined;
-    // Same in-process open seam public roles use (#675): default coding tools + prepare
-    // terminating tool. No noTools:"all" / prepare-only allowlist fork.
-    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
-    let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
-    try {
-      opened = await openPiInProcessSession({
-        cwd: context.cwd,
-        selection,
-        systemPrompt: "",
-        customTools: [tool],
-        sessionManager,
-        label: "Navigator",
-        ...(agentDir === undefined ? {} : { agentDir }),
-      });
-    } catch (error) {
-      const fact = navigatorProviderFailureFromError(error);
-      throw navigatorUnavailableError(fact?.source ?? "session", error, fact?.cause ?? "session");
-    }
-
-    const unsubscribe = opened.handle.subscribe((event) => {
-      if (event.type === "message_end" && event.message !== undefined) {
-        const message = event.message;
-        if (exactRecord(message) && (message.stopReason === "error" || message.stopReason === "aborted")) {
-          classifyTerminalMessage(message);
-        }
-      }
-    });
-
-    let disposal: Promise<void> | undefined;
-    const dispose = (): Promise<void> => {
-      if (disposal === undefined) {
-        disposal = runChildCleanup(
-          [() => unsubscribe(), () => opened.handle.close()],
-          undefined,
-          "Navigator",
-        );
-      }
-      return disposal;
+      const envHome = process.env.HOME;
+      return typeof envHome === "string" && envHome.trim() !== "" ? envHome : undefined;
     };
 
     return {
       prompt: async (text) => {
+        if (disposed) {
+          throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        }
         providerFailure = undefined;
-        observationWrite = Promise.resolve();
-        const failFrom = (error: unknown): never => {
-          if (providerFailure === undefined) {
-            assignProviderFailure({ source: "transport", cause: "transport" });
-          }
-          const fact = providerFailure!;
-          throw navigatorUnavailableError(fact.source, error, fact.cause);
-        };
-        let terminal: unknown;
         try {
-          const turn = await opened.handle.prompt(text);
-          if (turn.stopReason === "error" || turn.stopReason === "aborted") {
-            const cause = turn.errorMessage ?? opened.streamFailure ?? "Navigator provider failure";
-            if (providerFailure === undefined && opened.streamFailure !== undefined) {
-              classifyTerminalMessage(opened.streamFailure);
-            }
-            if (providerFailure === undefined) {
-              assignProviderFailure(navigatorProviderFailureFromError(
-                typeof cause === "object" && cause !== null ? cause : new Error(String(cause)),
-              ));
-            }
-            terminal = cause;
-          } else if (opened.streamFailure !== undefined) {
-            if (providerFailure === undefined) classifyTerminalMessage(opened.streamFailure);
-            terminal = opened.streamFailure;
+          const { summonPublicRole } = await import("./public-role-summons.ts");
+          const home = await resolveHome();
+          // Public activation — same face as `ak-role navigator <instruction>` (#675).
+          const summoned = await summonPublicRole({
+            role: "navigator",
+            argv: [text],
+            cwd: context.cwd,
+            ...(home === undefined ? {} : { home }),
+          });
+
+          const outcome = summoned.terminal?.roleOutcome;
+          if (outcome === undefined) {
+            const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
+            providerFailure = { source: "transport", cause: "transport" };
+            throw navigatorUnavailableError(
+              "transport",
+              new Error(`Navigator public summon produced no terminal (${detail})`),
+            );
           }
+          if (outcome.kind === "failure") {
+            const fact = navigatorProviderFailureFromError(new Error(outcome.diagnostic));
+            providerFailure = fact ?? {
+              source: outcome.cause === "provider" ? "transport" : "session",
+              cause: outcome.cause === "provider" ? "transport" : "session",
+            };
+            throw navigatorUnavailableError(
+              providerFailure.source,
+              new Error(outcome.diagnostic),
+              providerFailure.cause,
+            );
+          }
+          if (outcome.kind === "no_receipt") {
+            // No candidates — attendance no-receipt path.
+            return;
+          }
+          if (outcome.kind !== "accepted") {
+            providerFailure = { source: "session", cause: "session" };
+            throw navigatorUnavailableError(
+              "session",
+              new Error("Navigator public summon returned unusable terminal"),
+            );
+          }
+          const candidates = outcome.decisiveFacts.candidates;
+          if (!Array.isArray(candidates)) {
+            return;
+          }
+          // Rejoin attendance prepare tool sink (same candidate shape as public advice).
+          await tool.execute(
+            "navigator-public-prepare",
+            { candidates },
+            undefined,
+            undefined,
+            context as never,
+          );
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
-          if (providerFailure === undefined) classifyTerminalMessage(error);
-          terminal = error;
+          const fact = navigatorProviderFailureFromError(error);
+          providerFailure = fact ?? { source: "transport", cause: "transport" };
+          throw navigatorUnavailableError(providerFailure.source, error, providerFailure.cause);
         }
-        await observationWrite;
-        if (terminal !== undefined) failFrom(terminal);
       },
       providerFailure: () => providerFailure,
       appendEntry: (customType, data) => {
@@ -199,7 +138,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             cwd: context.cwd,
             sessionParent: sessionManager.getSessionFile(),
             payload: { customType, data },
-            source: "evidence-child-executor",
+            source: "navigator-public-session",
           });
         } catch {
           // best-effort
@@ -222,7 +161,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
           );
         }
-        // Pure host passthrough (#675 / #697): no package-side thinking equality reject.
+        // Seat table applies on the next public summon (#675 / #697).
         const appliedThinking = nextThinking ?? nextParsed.thinkingLevel;
         selection = {
           provider: nextParsed.provider,
@@ -234,7 +173,9 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
       },
       getThinkingLevel: () => thinkingLevel,
       recordPointer: () => sessionManager.getSessionDir(),
-      dispose,
+      dispose: async () => {
+        disposed = true;
+      },
     };
   };
 }
