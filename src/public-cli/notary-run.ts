@@ -119,6 +119,7 @@ export async function runPublicNotary(
       projectRoot,
       role: "notary",
       ticketNumber,
+      freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
         runPublicNotaryResume(

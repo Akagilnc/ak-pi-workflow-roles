@@ -564,6 +564,100 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
   }
 });
 
+test("#724 public new: same-ticket mint stays; explicit new mints fresh; later auto-resume tracks latest", async () => {
+  const scratch = await openNotaryScratch("home-new-");
+  try {
+    const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
+    const seen: SeenTurn[] = [];
+    const inner = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
+    const host = observingSealHost(inner, seen);
+
+    // 1) Ordinary same-ticket summons mints the first run.
+    const first = await runAkRole(
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a072400-0000-7000-8000-00000000n001",
+      },
+    );
+    assert.equal(first.exitCode, 0, "first sealed notary must accept");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    assert.equal(seen[0]!.sourceRun, firstSourcePath);
+    const firstRunId = seen[0]!.runId;
+    const firstRunDirectory = seen[0]!.runDirectory;
+
+    // 2) Explicit fresh summons: same ticket, new verb → distinct run, not resume.
+    const fresh = await runAkRole(
+      [
+        "new",
+        "notary",
+        "--source-run",
+        `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a072400-0000-7000-8000-00000000n002",
+      },
+    );
+    assert.equal(fresh.exitCode, 0, "ak-role new notary must accept as a fresh mint");
+    assert.equal(seen.length, 2, "new must dispatch its own turn");
+    assert.equal(seen[1]!.kind, "initial", "new must not resume the prior run");
+    assert.notEqual(seen[1]!.runId, firstRunId, "new must mint a different runId");
+    assert.notEqual(
+      seen[1]!.runDirectory,
+      firstRunDirectory,
+      "new must own an independent run directory",
+    );
+    assert.equal(seen[1]!.sourceRun, secondSourcePath);
+    const freshRunId = seen[1]!.runId;
+    const freshRunDirectory = seen[1]!.runDirectory;
+
+    const notaryRuns = (await listBookRunDirs(home)).filter((d) => d.includes("@notary"));
+    assert.equal(notaryRuns.length, 2, "ordinary + new must leave two notary run directories");
+
+    // 3) Later ordinary same-ticket summons auto-resumes the latest (the new leg).
+    const third = await runAkRole(
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a072400-0000-7000-8000-00000000n003",
+      },
+    );
+    assert.equal(third.exitCode, 0, "auto-resume of latest leg must accept");
+    assert.equal(seen.length, 3, "third summons must dispatch one resume turn");
+    assert.equal(seen[2]!.kind, "resume", "ordinary re-summons still auto-resumes");
+    assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest run, not the first");
+    assert.equal(seen[2]!.runDirectory, freshRunDirectory);
+    assert.notEqual(seen[2]!.runId, firstRunId);
+  } finally {
+    await rm(scratch.home, { recursive: true, force: true });
+  }
+});
+
 test("#637 held writer lease: re-summons must not record a new currentCourt", async () => {
   const scratch = await openNotaryScratch("home-lease-");
   let heldLease: Awaited<ReturnType<typeof acquireRunWriterLease>> | undefined;
