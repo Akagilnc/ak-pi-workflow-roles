@@ -23,9 +23,7 @@ const entries = [
   "archivist-record-entry",
   // Pure subject nest topology — cold discovery without SessionManager (#636).
   "archivist-record-topology",
-  // Officer ticket-seat pure read + deferred open (#636 public-bin cold graph).
-  "ticket-seat-memory",
-  // ticket-seat-memory → session-opening-materials (#636 non-bundle graph closure).
+  // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).
   "auditor-dossier-tool",

@@ -23,9 +23,15 @@ import {
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
+import {
+  applyInstructionTicketProbe,
+  probeInstructionTicket,
+  ticketNumberFromProbe,
+  tryResumeSameTicketSeatRun,
+} from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
@@ -35,6 +41,7 @@ import {
   loadResumableCountersignRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -82,9 +89,52 @@ export async function runPublicCountersign(
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseCountersignArgvResult;
+  try {
+    parsed = parseCountersignArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #637: same ticket → resume prior countersign run with this summons' materials.
+  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
+  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
+  const projectRoot = parsed.project ?? env.cwd;
+  const ticketProbe = await probeInstructionTicket(
+    parsed.instruction,
+    projectRoot,
+    env,
+  );
+  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
+  if (probedTicketNumber !== undefined) {
+    const summons: SameTicketSummonsMaterials = {
+      instruction: parsed.instruction,
+      instructionEmpty: parsed.instruction.trim() === "",
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role: "countersign",
+      ticketNumber: probedTicketNumber,
+      summons,
+      resume: (runId, materials) =>
+        runPublicCountersignResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+  }
+
   let admitted: AdmittedCountersignInvocation;
   try {
-    const parsed = parseCountersignArgv(argv);
     admitted = await admitCountersignInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -127,7 +177,7 @@ export async function runPublicCountersign(
       ),
     },
   };
-  // Mutable shell: pre-court ticket resolution may rebind activation before executeTurn.
+  // Mutable shell: ticket bind re-projects activation before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
@@ -137,8 +187,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        await resolveSeatTicketBinding(admitted, env);
-        // Re-project activation so Notary gate flag carries the post-admission binding.
+        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
+        await applyInstructionTicketProbe(admitted, ticketProbe);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
@@ -156,8 +206,11 @@ function countersignAdapters(options?: {
   ) => void | Promise<void>;
 }) {
   return {
-    trySettle: (admitted: AdmittedCountersignInvocation, authority: DurablePrincipalAuthority) =>
-      trySettleCountersignTerminalResult(admitted, authority),
+    trySettle: (
+      admitted: AdmittedCountersignInvocation,
+      authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
+    ) => trySettleCountersignTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
     ...(options?.beforeDispatch === undefined
@@ -167,8 +220,11 @@ function countersignAdapters(options?: {
 }
 
 /**
- * Resume a previously admitted Countersign run (#599 / DK-3).
- * Restores role/ticket/attachments/session identity; diarist does not re-run.
+ * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
+ * Restores role/ticket/session identity. Every court re-entry runs the diarist
+ * station first (ADR 0075 refresh-every-court). Same-ticket summons deliver this
+ * turn's instruction + frozen attachments on the resume prompt; manual resume
+ * keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicCountersignResume(
   request: PublicResumeRequest,
@@ -183,18 +239,32 @@ export async function runPublicCountersignResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableCountersignRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildCountersignTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
-    adapters: countersignAdapters(),
+        env.home,
+        effective.runId,
+        env.principalAuthority,
+      ),
+    buildTurnRequest: async (admitted, effective) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        effective.summons,
+      );
+      return buildCountersignTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
+    adapters: countersignAdapters({
+      beforeDispatch: async (admitted) => {
+        await runCountersignDiaristStation(admitted, env);
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
