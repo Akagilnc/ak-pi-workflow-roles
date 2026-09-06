@@ -12,34 +12,27 @@ parameters.
 The machine entrypoint is `claude`. Run from the role project root. Non-interactive
 print mode (`-p` / `--print`) is verified available on this host.
 
-On this host (Claude Code 2.1.233), `--print` with `--output-format=stream-json`
-requires `--verbose` — without it the CLI exits immediately with
-`Error: When using --print, --output-format=stream-json requires --verbose`.
-Include `--verbose` in stream-json argv. Measured with separate fd redirects
-(`1>` / `2>`): NDJSON event rows land on stdout (including intermediate
-`system` / `assistant` activity and a final `type:"result"` row); stderr is
-empty on the success path — except when stdin is an open stream supplying no
-data (e.g. a shell test without redirection): then a benign
-`Warning: no stdin data received in 3s, proceeding without it` lands on stderr
-after a 3-second wait (host-verified 2026-08-28); redirect `< /dev/null` in
-shell tests. The packaged detour tool spawns engines with stdin ignored
-(`/dev/null`), which avoids this path:
+Print mode (`-p`) with `--output-format text` returns the labor body on stdout;
+stderr carries banners only. Measured with separate fd redirects (`1>` / `2>`).
 
 ```bash
-claude -p --verbose --output-format=stream-json "YOUR_LABOR_PROMPT"
+claude -p --output-format text "YOUR_LABOR_PROMPT"
 ```
 
 Pin the Opus model explicitly (`--model opus` verified accepted on this host;
 init event reports `claude-opus-5`):
 
 ```bash
-claude -p --model opus --verbose --output-format=stream-json "YOUR_LABOR_PROMPT"
+claude -p --model opus --output-format text "YOUR_LABOR_PROMPT"
 ```
 
-Use `--output-format=stream-json` (choices measured on this host: `text`, `json`,
-`stream-json`) when long labor needs progressive observability while the engine
-works; take the labor body from the final `result` event's `result` field,
-not from intermediate stream rows.
+Use `--output-format text` (the default): stdout is the labor body and nothing
+else. Never use `--output-format=stream-json` / `--verbose` for labor — the
+returned body goes back into the seat's context, and the event stream is noise:
+measured 2026-09-06 on this host, the same one-sentence task returned 382 bytes
+as `text` and 45,028 bytes as `stream-json --verbose` (118×); a 12-minute labor
+returned 957k chars and killed the seat with a 712k-token request (#675). Progress observability belongs to the runner's
+process watch, not to the returned body.
 
 ## Headless permissions
 

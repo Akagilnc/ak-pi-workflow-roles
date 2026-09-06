@@ -29,16 +29,10 @@ known Kimi model id (example alias shape measured: `kimi-code/k3-256k`):
 kimi -m <model-alias> -p "YOUR_LABOR_PROMPT"
 ```
 
-Use `--output-format stream-json` (choices measured on this host: `text`,
-`stream-json`; default is `text`) when long labor needs progressive observability
-while the engine works. Take the labor body from
-`{"role":"assistant","content":...}` rows, not from `role:meta` rows:
-
-```bash
-kimi -p "YOUR_LABOR_PROMPT" --output-format stream-json
-```
-
-Text / default mode when stream events are not needed. Measured on this host
+Use `--output-format text` (the default). Do not use `stream-json` for labor:
+the returned body goes back into the seat's context and the event stream is
+noise (see `opus.md` for the measured ratio). Progress observability belongs to
+the runner's process watch, not to the returned body. Measured on this host
 with separate fd redirects (`1>` / `2>`): stdout is the labor answer body;
 stderr carries the version line, thinking bullets, and the trailing
 `To resume this session:` hint. Collect the labor body from stdout only — do
