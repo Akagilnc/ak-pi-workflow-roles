@@ -15,6 +15,7 @@ import { join } from "node:path";
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
+import type { RoleTurnHost } from "./host-contracts.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
@@ -193,27 +194,36 @@ async function createSummonEnv(options: {
       : { extraPiArgs: options.extraPiArgs }),
     ...piRecords,
   });
-  // Same host axis table as public CLI (#617 DK-3 / #675): seat.host selects the adapter.
+  // Same host axis table as public CLI (#617 DK-3 / #675 / #729): seat.host is
+  // a description-table key; pi stays the in-process default adapter.
   const hostName = options.seat.host ?? "pi";
   let roleTurnHost = piHost;
-  if (hostName === "grok-build") {
-    const { loadProductionGrokHostFactory } = await import("./public-cli/load-production-grok-host.ts");
-    let hostPromise: Promise<typeof piHost> | undefined;
+  if (hostName !== "pi") {
+    const { lookupHostDescription } = await import("./host-descriptions.ts");
+    const { loadProductionAcpHostFactory } = await import(
+      "./public-cli/load-production-acp-host.ts"
+    );
+    // #729: the description table is the sole host authority — every registered
+    // key loads the same generic ACP factory (no per-host fork). Unregistered
+    // keys fail closed before any turn (#510), as the pre-merge fork did.
+    if (lookupHostDescription(hostName) === undefined) {
+      throw new Error(
+        `public role summons host unregistered: host=${hostName} seat=${options.role}`,
+      );
+    }
+    let hostPromise: Promise<RoleTurnHost> | undefined;
     roleTurnHost = {
       executeTurn: async (request) => {
-        hostPromise ??= loadProductionGrokHostFactory(options.packageRoot).then((create) =>
-          create({
-            packageRoot: options.packageRoot,
-            principalAuthority,
-          }),
+        hostPromise ??= loadProductionAcpHostFactory(options.packageRoot, hostName).then(
+          (create) =>
+            create({
+              packageRoot: options.packageRoot,
+              principalAuthority,
+            }),
         );
         return (await hostPromise).executeTurn(request);
       },
     };
-  } else if (hostName !== "pi") {
-    throw new Error(
-      `public role summons host unregistered: host=${hostName} seat=${options.role}`,
-    );
   }
   return {
     home: options.home,
