@@ -3,7 +3,7 @@
  * shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075). #599: manual resume continues the exact session.
  * Diarist is a prior station on the court pipeline, not a countersign call.
- * Unbound admission resolves ticket via shared seat LLM bind (#635) before the diary station.
+ * Unbound admission reuses a known ticket identity (#709) before the diary station.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
@@ -24,9 +24,8 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
-  ticketNumberFromProbe,
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
@@ -101,17 +100,15 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709: identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveKnownTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+    home: env.home,
+  });
+  if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -121,7 +118,7 @@ export async function runPublicCountersign(
       home: env.home,
       projectRoot,
       role: "countersign",
-      ticketNumber: probedTicketNumber,
+      ticketNumber: reusedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -188,8 +185,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admitted, ticketProbe);
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        await bindReusedTicketNumber(admitted, reusedTicketNumber);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
@@ -275,8 +272,7 @@ export async function runPublicCountersignResume(
  * Caller-invisible — collector failures append durable volume diagnostics and the
  * station continues; issue-source / ADR source-read / watermark honesty failures
  * leave typed durable diagnostics and propagate (失败诚实).
- * Missing ticketNumber (true-unbound after pre-court resolution) skips the station
- * — no diary is minted for a true-unbound run.
+ * An unbound run skips the station — no diary is minted without a ticket identity.
  *
  * Issue body/comments come from the shared GitHub seam only. Attachments stay
  * attachments — never merged and mislabeled as issue-body-comment.

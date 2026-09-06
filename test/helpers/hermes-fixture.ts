@@ -1,17 +1,12 @@
 /**
  * Shared Hermes / gh PATH executable fixtures (#582 / ADR 0075).
- * Real subprocess fixtures for countersign pre-court + diarist — NOT production APIs.
+ * Real subprocess fixture for the diarist collector — NOT a production API.
  * Install-time options only; no env/control dual channels.
  */
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type HermesFixtureOptions = {
-  /**
-   * Resolver stdout when staged body has no `candidates` array.
-   * Default: `{"assertion":"true-unbound"}`.
-   */
-  resolverResponse?: unknown;
   /**
    * Collector stdout when staged body includes `candidates`.
    * Default: `{"selections":[]}`.
@@ -39,10 +34,6 @@ export async function installHermesFixture(
 ): Promise<string> {
   await mkdir(binDir, { recursive: true });
   const hermesPath = join(binDir, "hermes");
-  const resolverDefault =
-    options.resolverResponse === undefined
-      ? { assertion: "true-unbound" }
-      : options.resolverResponse;
   const collectorDefault =
     options.collectorResponse === undefined
       ? { selections: [] }
@@ -89,8 +80,8 @@ if (isCollector) {
   }
 }
 
-process.stdout.write(${embedJson(resolverDefault)});
-process.exit(0);
+process.stderr.write("hermes fixture: staged body is not a collector face\\n");
+process.exit(1);
 `;
   // Write as hermes.cjs then symlink `hermes` so PATH resolution stays bare-name
   // while Node reads the file as CommonJS regardless of package "type".
