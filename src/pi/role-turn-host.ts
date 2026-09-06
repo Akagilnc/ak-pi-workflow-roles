@@ -24,6 +24,7 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
+import { resolvePiDefaultThinkingLevel } from "./pi-default-thinking-level.ts";
 
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
@@ -53,19 +54,21 @@ export function buildExplicitInternalActivationArgs(
 /**
  * Pi argv for seat model. Host only passes through resolved values — no local
  * thinking whitelist. Initial bare provider/model still omits --thinking so Pi
- * defaults apply (#346/#384). On resume, omitted seat thinking emits Pi's
- * DEFAULT_THINKING_LEVEL ("medium") so --session cannot restore stale thinking (#697/#637).
+ * defaults apply (#346/#384). On resume, omitted seat thinking gets the Pi default
+ * already resolved by the caller (sole authority: resolvePiDefaultThinkingLevel)
+ * so --session cannot restore stale thinking (#697/#637).
  */
 function buildSeatModelCliArgs(
   model: RoleTurnModelConfig | undefined,
   continuationKind: RoleTurnRequest["continuation"]["kind"],
+  piDefaultThinking: string | undefined,
 ): string[] {
   if (model === undefined) return [];
   const thinking =
     model.thinking !== undefined
       ? model.thinking
       : continuationKind === "resume"
-        ? "medium"
+        ? piDefaultThinking
         : undefined;
   return [
     "--provider",
@@ -181,6 +184,8 @@ export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
   authority: DurablePrincipalAuthority,
   extraPiArgs: readonly string[] = [],
+  /** Pre-resolved Pi default thinking for resume seat-omit; from resolvePiDefaultThinkingLevel. */
+  piDefaultThinking?: string,
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
   const prompt =
@@ -204,7 +209,11 @@ export function buildPiTurnExtraArgs(
     ...buildActivationFlagArgs(request.activation),
     "--mode",
     "json",
-    ...buildSeatModelCliArgs(request.model, request.continuation.kind),
+    ...buildSeatModelCliArgs(
+      request.model,
+      request.continuation.kind,
+      piDefaultThinking,
+    ),
     prompt,
   ];
 }
@@ -435,10 +444,21 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         };
       }
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
+      // Resume + seat-omit thinking: resolve Pi default once (settings → package constant).
+      const piDefaultThinking =
+        turnRequest.continuation.kind === "resume" &&
+        turnRequest.model !== undefined &&
+        turnRequest.model.thinking === undefined
+          ? await resolvePiDefaultThinkingLevel({
+              agentDir: turnRequest.agentDir,
+              cwd: turnRequest.cwd,
+            })
+          : undefined;
       const extraArgs = buildPiTurnExtraArgs(
         turnRequest,
         config.principalAuthority,
         config.extraPiArgs ?? [],
+        piDefaultThinking,
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
       const env: NodeJS.ProcessEnv = {
