@@ -17,7 +17,6 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
       await projectHostTransitionPriorNative({
         previousHost: "third-adapter",
         liveHost: "grok-build",
-        runDirectory,
         piSessionFile,
       }),
       undefined,
@@ -26,7 +25,6 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
       await projectHostTransitionPriorNative({
         previousHost: "pi",
         liveHost: "third-adapter",
-        runDirectory,
         piSessionFile,
       }),
       undefined,
@@ -44,7 +42,6 @@ test("pi→grok-build projects the present Pi session path", async () => {
       await projectHostTransitionPriorNative({
         previousHost: "pi",
         liveHost: "grok-build",
-        runDirectory,
         piSessionFile,
       }),
       {
@@ -64,7 +61,6 @@ test("grok-build→pi projects the present sitian session path", async () => {
     const transition = await projectHostTransitionPriorNative({
       previousHost: "grok-build",
       liveHost: "pi",
-      runDirectory,
       piSessionFile,
     });
     assert.deepEqual(transition, {

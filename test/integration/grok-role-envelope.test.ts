@@ -719,7 +719,6 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
               return join(request.runDirectory, "session", "session.jsonl");
             },
           },
-          recordCapabilities: async () => {},
           connect: async () => ({
             async request(method, params) {
               acpCalls.push([method, params]);
@@ -734,10 +733,6 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
             },
             notify() {},
             async close() {},
-          }),
-          inspect: async () => ({
-            privateActive: [],
-            akActive: [NOTARY_OUTPUT_TOOL_NAME],
           }),
           prepare: async () => ({
             ...prepared,
@@ -956,7 +951,6 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
         bind: async () => {},
         resolveSessionFile: () => join(request.runDirectory, "session", "session.jsonl"),
       },
-      recordCapabilities: async () => {},
       connect: async () => ({
         async request(method, params) {
           if (method === "session/new") return { sessionId: "real-seam-session" };
@@ -982,7 +976,6 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
         notify() {},
         async close() {},
       }),
-      inspect: async () => ({ privateActive: [], akActive: ["ak_notary_output"] }),
       prepare: async (req) => {
         const prep = await prepareGrokRoleEnvelope({
           request: req,

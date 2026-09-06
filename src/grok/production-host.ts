@@ -6,7 +6,7 @@
  * factory does not create a run-scoped grok home, does not rewrite HOME, and
  * does not copy or scrub auth.json. Sititian records on the run are the dossier.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,7 +14,7 @@ import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../c
 import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../collector-github.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import { loadDoctorCase } from "../doctor-evidence.ts";
-import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
 import { createPiJudgeAuditor } from "../judge-auditor.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "../navigator-attendance.ts";
@@ -29,8 +29,6 @@ import { createComposedGrokRoleTurnHost } from "./role-envelope.ts";
 import {
   connectGrokAcpStdio,
   controlledGrokChildEnv,
-  inspectControlledGrok,
-  type GrokCapabilityDeclaration,
 } from "./role-turn-host.ts";
 import { createGrokSessionIdentityAuthority } from "./session-identity.ts";
 
@@ -120,17 +118,6 @@ export function createGrokRoleRuntimeDependencies(packageRoot: string): RoleRunt
   };
 }
 
-async function recordGrokCapabilities(
-  request: RoleTurnRequest,
-  declaration: GrokCapabilityDeclaration,
-): Promise<void> {
-  await writeFile(
-    join(request.runDirectory, "grok-capabilities.json"),
-    `${JSON.stringify(declaration)}\n`,
-    "utf8",
-  );
-}
-
 /**
  * Assemble the production grok-build RoleTurnHost from the S6 true adapter.
  * Grok subprocesses inherit the operator home; the run directory is sitian-only.
@@ -142,15 +129,6 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
   return createComposedGrokRoleTurnHost({
     sessionIdentity: createGrokSessionIdentityAuthority(principalAuthority),
     roleRuntimeDependencies: createGrokRoleRuntimeDependencies(packageRoot),
-    recordCapabilities: recordGrokCapabilities,
-    async inspect(request) {
-      return inspectControlledGrok({
-        binary: resolveGrokBinary(request.home),
-        cwd: request.cwd,
-        env,
-        packageRoot,
-      });
-    },
     async connect(request) {
       return connectGrokAcpStdio({
         binary: resolveGrokBinary(request.home),
