@@ -733,6 +733,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;
+            const sessionNoReceipt = activeSession.noReceipt?.();
+            if (sessionNoReceipt !== undefined) {
+              // This session already settled without an accepted receipt on its own
+              // budget; one more prompt opens an independent summon, not a delivery
+              // request on the settled session (#675).
+              delivery.recordNestedNoReceipt(sessionNoReceipt);
+              return;
+            }
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);

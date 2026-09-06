@@ -5,7 +5,11 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 
-export type EvidenceChildSummon = (argv: readonly string[]) => Promise<PublicSummonResult>;
+export type EvidenceChildSummon = (
+  argv: readonly string[],
+  /** Parent cancellation forwarded to the nested activation (#675). */
+  signal?: AbortSignal,
+) => Promise<PublicSummonResult>;
 
 export type ReviewerChildExecuteOptions = Readonly<{
   signal?: AbortSignal;
@@ -98,7 +102,7 @@ export async function executeReviewerChild(
     const argv = [`${String(leg.prompt)}${pointer}`];
     const summon =
       options.summonEvidenceChild
-      ?? (async (nextArgv: readonly string[]) => {
+      ?? (async (nextArgv: readonly string[], childSignal?: AbortSignal) => {
         const { summonPublicRole } = await import("./public-role-summons.ts");
         // Parent run home owns nested public seats; leg workspace cwd is a bare worktree.
         let home: string | undefined;
@@ -113,9 +117,10 @@ export async function executeReviewerChild(
           cwd: workspace,
           ...(home === undefined ? {} : { home }),
           ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+          ...(childSignal === undefined ? {} : { signal: childSignal }),
         });
       });
-    const summoned = await summon(argv);
+    const summoned = await summon(argv, options.signal);
     if (options.signal?.aborted) {
       throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
         evidenceChildFailure: "child" as const,

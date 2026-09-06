@@ -47,6 +47,12 @@ export type PublicSummonRequest = {
    * seat extraPiArgs). Callers pass explicitly — no process.env test protocol.
    */
   readonly extraPiArgs?: readonly string[];
+  /**
+   * Parent cancellation. A nested summon is an in-process await over a child
+   * activation; without this the child keeps running (and spending) after the
+   * parent tool call is cancelled (#675).
+   */
+  readonly signal?: AbortSignal;
 };
 
 export type PublicSummonResult = {
@@ -261,6 +267,8 @@ export async function summonPublicRole(
     ...(config.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: config.autoResumeLimit }),
+    // Parent cancellation reaches the nested activation's own turn dispatch.
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -381,6 +389,8 @@ export async function summonGateOfficer(options: {
   readonly home?: string;
   readonly packageRoot?: string;
   readonly io?: CliIo;
+  /** Parent cancellation for the nested officer activation (#675). */
+  readonly signal?: AbortSignal;
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
@@ -396,6 +406,7 @@ export async function summonGateOfficer(options: {
       ...(home === undefined ? {} : { home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.io === undefined ? {} : { io: options.io }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
   return summonPublicRole({
@@ -405,5 +416,6 @@ export async function summonGateOfficer(options: {
     ...(home === undefined ? {} : { home }),
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     ...(options.io === undefined ? {} : { io: options.io }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }

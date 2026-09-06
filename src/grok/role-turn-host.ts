@@ -289,7 +289,15 @@ export function createGrokRoleTurnHost(config: GrokRoleTurnHostConfig): RoleTurn
             priorNativePaths !== undefined && priorNativePaths.length > 0
               ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
               : prepared.prompt;
-          const abortSignal = prepared.abortSignal;
+          // Envelope infra abort and parent cancellation (#675 nested summons) are
+          // the same race face here: either one ends the ACP round and the finally
+          // block cancels + closes the child session.
+          const abortSignal =
+            request.signal === undefined
+              ? prepared.abortSignal
+              : prepared.abortSignal === undefined
+                ? request.signal
+                : AbortSignal.any([prepared.abortSignal, request.signal]);
           const activeConnection = connection;
 
           /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
