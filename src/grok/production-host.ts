@@ -143,7 +143,7 @@ function childEnv(controlledHome: string, packageRoot: string): NodeJS.ProcessEn
 }
 
 /**
- * Single production isolation binding: auth root, GROK_HOME/HOME, and binary
+ * Single production isolation binding: auth root, GROK_HOME, and binary
  * resolution. Production executeTurn passes controlledHome as S6 request.home
  * (seatbelt hang root proven separately by S6 seatbelt tests).
  */
