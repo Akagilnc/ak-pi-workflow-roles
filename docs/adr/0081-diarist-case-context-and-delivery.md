@@ -2,7 +2,7 @@
 
 Status: accepted（2026-09-06 给事中文书审查 `01a0760c-b0e5-754e-ac7c-86994065de75` 对 `678f24d0` 整版修订明确署、准许设计发布及 PR #714 合并；符宝郎核旨 pass。仅设计批准，不代表实现落地。）
 
-每个衙门接手同一张票，都重新寻找 ADR、设计与裁决，付出重复的上下文重建成本。起居郎应在票庭前为本票找齐、整理相关依据，由公共调用入口将起居录直接随案递送；已有原件通过指针引用。本文记录 Owner 已确认的方向及其设计展开；原版及本轮追加决定的整版修订均已审查，署据见状态行，不表示实现已落地或已获直接施工许可。
+每个衙门接手同一张票，都重新寻找 ADR、设计与裁决，付出重复的上下文重建成本。起居郎为本票找齐、整理相关依据，由公共调用入口将起居录直接随案递送（何时跑起居郎归调用者，ADR 0010；2026-09-06 `no-call-rule` 修正，见 ADR 0075）；已有原件通过指针引用。本文记录 Owner 已确认的方向及其设计展开；原版及本轮追加决定的整版修订均已审查，署据见状态行，不表示实现已落地或已获直接施工许可。
 
 ## 已确认的边界
 
@@ -38,7 +38,7 @@ Status: accepted（2026-09-06 给事中文书审查 `01a0760c-b0e5-754e-ac7c-869
 
 ## 与现行制度的关系
 
-- [ADR 0075](0075-ticket-provenance-diarist-pipeline.md)：`cc-sessions-first` 由本页 `cross-host-case-discovery` 扩展；`diarist-llm-collector` 从仅选块扩为搜集与整理；`refresh-every-court` 保留票庭触发，修正“仅新块进入语义处理”为新块增量收录、旧案卷可供整理上下文。已送未选水印只用于避免重复收录劳动，不得屏蔽因新设计而重新相关的旧材料或主动发现新依据；无新增依据与修订时仍可跳过重复整理。`ticket-provenance-file`、`diarist-generates`、`ticket-keyed-history`、`sitian-scope-amendment`、`diarist-before-countersign`、`notary-inner-gate`、`no-backfill`、`names`、`github-face-local-only` 保持。`transcribe-whole-blocks`、`immutable-transcript-dry-exception` 保持完整原话档案，导航不复制设计规范。`no-global-ticket-flag` 沿用 ADR 0079 的既有修正；`diarist-resolves-ticket-llm-layer` 按下文追加决定修正。
+- [ADR 0075](0075-ticket-provenance-diarist-pipeline.md)：`cc-sessions-first` 由本页 `cross-host-case-discovery` 扩展；`diarist-llm-collector` 从仅选块扩为搜集与整理；`refresh-every-court` 保留票庭触发（这是调用者当前用法，不是顺序法；`diarist-before-countersign` 已于 2026-09-06 删除，见 ADR 0075 `no-call-rule`），修正“仅新块进入语义处理”为新块增量收录、旧案卷可供整理上下文。已送未选水印只用于避免重复收录劳动，不得屏蔽因新设计而重新相关的旧材料或主动发现新依据；无新增依据与修订时仍可跳过重复整理。`ticket-provenance-file`、`diarist-generates`、`ticket-keyed-history`、`sitian-scope-amendment`、`diarist-before-countersign`、`notary-inner-gate`、`no-backfill`、`names`、`github-face-local-only` 保持。`transcribe-whole-blocks`、`immutable-transcript-dry-exception` 保持完整原话档案，导航不复制设计规范。`no-global-ticket-flag` 沿用 ADR 0079 的既有修正；`diarist-resolves-ticket-llm-layer` 按下文追加决定修正。
 - [ADR 0077](0077-all-host-session-records-unified-direct-write.md)：保持 `record-scope-phase-two`、`live-session-in-books`，复用工厂宿主直写卷宗，不建搬运。它不等于外部 Codex、Pi 主会话已可自动发现；外部设计会话须从真实存放处读取，不能把所有运行轨迹灌入案卷。
 - [ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md)：保持 `direct-officer-summons`、两个 `ticket-seat-memory-*-principal` 及 `summons-pointer-input`，扩充随案指针材料，不增加票号旗或重设计派工与记忆。
 - [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md)：保持 `records-owner`、`record-entry`，整理结果归司天台；其余键沿现有后出修订，不在本案重定。
@@ -77,7 +77,7 @@ Status: accepted（2026-09-06 给事中文书审查 `01a0760c-b0e5-754e-ac7c-869
 
 首次审已有 issue 时，票号来自调用者派单，不来自尚未生成的起居录；起居郎据此整理该票案卷，后续角色沿案卷使用。本案不再把“首次票号从哪来”作为未决产品问题，也不以补入口衔接为由恢复独立 LLM 认票调用。此前的真无票方案审理仍按其实际对象办理，与首次审已有 issue 区分。
 
-责任与时序：调用者给出的审票对象进入已有起居郎搜集整理轮次，由该轮次理解所给对象并随整理结果交出本票身份；共享入口将其用于现有记录定位、同票会话选择和绑定，在本庭起居录整理完成后才启动或续入给事中审读。身份理解并入已有工作，不另派一个认票模型，也不先让给事中审完再补依据。已有绑定的恢复沿用其身份，不重复推断；缺少已有绑定不等于真无票。这是本案对现行“先独立认票才能进入起居郎”的时序修订，不把旧实现顺序当成必须保留的制度。
+责任与时序：调用者给出的审票对象进入已有起居郎搜集整理轮次，由该轮次理解所给对象并随整理结果交出本票身份；共享入口将其用于现有记录定位、同票会话选择和绑定，再启动或续入给事中审读（起居郎与给事中的先后由调用者决定，本页不规定顺序，2026-09-06 `no-call-rule`）。身份理解并入已有工作，不另派一个认票模型，也不先让给事中审完再补依据。已有绑定的恢复沿用其身份，不重复推断；缺少已有绑定不等于真无票。这是本案对现行“先独立认票才能进入起居郎”的时序修订，不把旧实现顺序当成必须保留的制度。
 
 起居录已有本票身份，后续角色随案沿用，不再单独调用 LLM 找票号。给事中作为票庭入口，调用者可在 prompt 指明审哪张票；Owner 同一会话原话：「其实给事中你在prombt里面说也是一样的。不是非要一个单独的票号」。本次不恢复独立票号参数，也不把任务理解拆成另一个模型工序。按同类调用扫描删除既有额外认票调用及随之作废的独立解析、格式拒收和专属测试；不复制票号真源、不从人读标题取号、不换名重建。真无票审理仍保留。
 
