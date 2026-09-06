@@ -274,12 +274,6 @@ function projectOfficerTerminal(
   };
 }
 
-/** Re-export shared pointer contract (persistence owned by direct-officer-run-pointer). */
-export {
-  DIRECT_OFFICER_RUN_POINTER_KIND,
-  type DirectOfficerRunPointer,
-} from "./archivist-record-entry.ts";
-
 /** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */
 export type GatekeeperProjection = {
   readonly officer: "inspector" | "notary";

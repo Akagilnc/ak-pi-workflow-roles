@@ -25,6 +25,7 @@ import {
 } from "../../src/public-cli/config.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
+import { SHAPE_UNREADABLE_KEY } from "../../src/shape-unreadable-failure.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
@@ -114,6 +115,7 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
         if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
         assert.equal(outcome.cause, "output");
         assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
+          [SHAPE_UNREADABLE_KEY]: true,
           candidate: row.details,
           acceptedReceipt: false,
         });
