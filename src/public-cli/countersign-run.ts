@@ -24,8 +24,9 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
-  applyTicketResolution,
-  resolveInstructionTicket,
+  applyInstructionTicketProbe,
+  probeInstructionTicket,
+  ticketNumberFromProbe,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import { tryHomeFromAkRolesPath } from "../activation-ledger-topology.ts";
@@ -100,14 +101,17 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
+  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
+  // controlled failure (bare pre-admit throw skips terminal settlement).
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketResolution = await resolveInstructionTicket(
+  const ticketProbe = await probeInstructionTicket(
     parsed.instruction,
     projectRoot,
     env,
   );
-  if (ticketResolution.kind === "ticket") {
+  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
+  if (probedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -117,7 +121,7 @@ export async function runPublicCountersign(
       home: env.home,
       projectRoot,
       role: "countersign",
-      ticketNumber: ticketResolution.ticketNumber,
+      ticketNumber: probedTicketNumber,
       summons,
       resume: (runId, materials) =>
         runPublicCountersignResume(
@@ -175,7 +179,6 @@ export async function runPublicCountersign(
   };
   // Mutable shell: ticket bind re-projects activation before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
-  const probedTicket = ticketResolution;
 
   return await runPostAdmissionOneShot({
     admitted,
@@ -184,8 +187,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635: reuse the pre-admit ticket probe via shared seat-ticket-binding seam.
-        await applyTicketResolution(admitted, probedTicket);
+        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
+        await applyInstructionTicketProbe(admitted, ticketProbe);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
