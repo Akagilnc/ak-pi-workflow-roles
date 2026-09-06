@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -144,23 +145,20 @@ function runStamp(
   };
 }
 
-function withStamp(
+async function withStamp(
   options: Parameters<typeof runStamp>[1],
   observe: (result: ReturnType<typeof runStamp>) => void,
-): void {
+): Promise<void> {
   // Own the root at the create seam before setup/parse can throw past finally.
-  const root = mkdtempSync(worktreeTempPrefix("ak-publish-registry-"));
-  try {
+  await withTempRoot("ak-publish-registry-", async (root) => {
     observe(runStamp(root, options));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  });
 }
 
-test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", () => {
+test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", async () => {
   const malicious = 'x$(echo pwned >PWND)y; echo injected" `uname` ';
   const shortSha = "abc1234";
-  withStamp({
+  await withStamp({
     channel: malicious,
     viewHit: false,
     shortSha,
@@ -176,10 +174,10 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
   });
 });
 
-test("legal missing-version publish carries next shortsha artifact identity", () => {
+test("legal missing-version publish carries next shortsha artifact identity", async () => {
   const channel = "next";
   const shortSha = "abc1234";
-  withStamp({ channel, viewHit: false, shortSha }, (result) => {
+  await withStamp({ channel, viewHit: false, shortSha }, (result) => {
     const expected = `0.1.9-${channel}.${shortSha}`;
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "publish");
@@ -190,10 +188,10 @@ test("legal missing-version publish carries next shortsha artifact identity", ()
   });
 });
 
-test("legal existing-version moves next dist-tag only", () => {
+test("legal existing-version moves next dist-tag only", async () => {
   const channel = "next";
   const shortSha = "def5678";
-  withStamp({ channel, viewHit: true, shortSha }, (result) => {
+  await withStamp({ channel, viewHit: true, shortSha }, (result) => {
     const expectedVersion = `0.1.9-${channel}.${shortSha}`;
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "dist-tag");
@@ -205,8 +203,8 @@ test("legal existing-version moves next dist-tag only", () => {
   });
 });
 
-test("latest channel publishes monotonic version without shortsha suffix", () => {
-  withStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" }, (result) => {
+test("latest channel publishes monotonic version without shortsha suffix", async () => {
+  await withStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" }, (result) => {
     const expected = "0.1.9";
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "publish");

@@ -57,6 +57,7 @@ import {
 import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -71,12 +72,7 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-judge-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-judge-", scenario);
 }
 
 /** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */
@@ -107,22 +103,21 @@ async function withPhysicalAliasFixture<T>(
     (async (alias: string) => {
       await unlink(alias);
     });
-  try {
-    // Every fallible step after mkdtemp stays inside the cleanup region.
-    await mkdirWork(physicalRoot);
-    await linkAlias(physicalRoot, aliasRoot);
-    aliasCreated = true;
-    return await body({ physicalRoot, aliasRoot });
-  } finally {
-    try {
-      if (aliasCreated) {
-        await unlinkAlias(aliasRoot);
-      }
-    } finally {
-      // Root removal still runs if alias unlink rejects.
+  // Independent cleanups: unlink failure must not erase primary or skip root rm.
+  return withPrimaryAwareCleanup(
+    async () => {
+      await mkdirWork(physicalRoot);
+      await linkAlias(physicalRoot, aliasRoot);
+      aliasCreated = true;
+      return await body({ physicalRoot, aliasRoot });
+    },
+    async () => {
+      if (aliasCreated) await unlinkAlias(aliasRoot);
+    },
+    async () => {
       await rm(physicalRoot, { recursive: true, force: true });
-    }
-  }
+    },
+  );
 }
 
 async function assertPathGone(path: string): Promise<void> {

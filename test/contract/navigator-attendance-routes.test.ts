@@ -17,6 +17,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 // #685: host-neutral native AgentSession prompt cases culled — providerFailure/
 // terminal-less. C3 §I: 无具名 @navigator 卷，不得用异常面总称结清
@@ -172,8 +173,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
   assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
 
-  const home = await mkdtemp(worktreeTempPrefix("ak-nav-physical-"));
-  try {
+  await withTempRoot("ak-nav-physical-", async (home) => {
     const { realpathSync } = await import("node:fs");
     const physicalIssue = resolve(home, ".ak/work/issues/28");
     const session = resolve(home, ".ak-roles/books/h/runs/judge-navigator/session");
@@ -181,9 +181,7 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
     await mkdir(session, { recursive: true });
     assert.equal(subjectPath(session, physicalIssue), physicalIssue);
     assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
   const legitimate = `work subject: ${adHocRoot} with real task bytes`;

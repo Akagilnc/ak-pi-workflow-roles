@@ -127,7 +127,16 @@ function installInstitutionalRunDir(seats: InstitutionalResolutionPage["seats"])
     process.env.AK_ROLE_RUN_DIR = runDirectory;
     return runDirectory;
   } catch (error) {
-    disposeInstitutionalRunDir(runDirectory);
+    // Dispose must not erase the setup primary (same rule as withPrimaryAwareCleanup).
+    try {
+      disposeInstitutionalRunDir(runDirectory);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Test failed and cleanup failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
@@ -146,11 +155,12 @@ async function withInstitutionalRunDir<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const runDirectory = installInstitutionalRunDir(seats);
-  try {
-    return await run();
-  } finally {
-    disposeInstitutionalRunDir(runDirectory);
-  }
+  return withPrimaryAwareCleanup(
+    () => run(),
+    async () => {
+      disposeInstitutionalRunDir(runDirectory);
+    },
+  );
 }
 // Parent agent process may inject AK_ROLE_RUN_DIR; isolate this file from that binding.
 const ambientRunDirAtLoad = process.env.AK_ROLE_RUN_DIR;
@@ -160,21 +170,27 @@ after(() => {
   else process.env.AK_ROLE_RUN_DIR = ambientRunDirAtLoad;
 });
 afterEach(async () => {
+  // Snapshot then independent cleanups: one run-dir dispose must not skip others
+  // or provider teardowns, and cleanup failure must not erase a prior primary.
+  const runDirs: string[] = [];
   while (activeRunDirs.length > 0) {
-    disposeInstitutionalRunDir(activeRunDirs[activeRunDirs.length - 1]!);
+    runDirs.push(activeRunDirs.pop()!);
   }
-  // Drop any leftover env binding between tests (owned dirs already popped above).
-  delete process.env.AK_ROLE_RUN_DIR;
-  // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
-  // is restored to its original value after nested registrations. Each cleanup runs
-  // independently so one failure cannot skip the rest.
   const providerCleanups: Array<() => Promise<void>> = [];
   while (institutionalProviderCleanups.length > 0) {
     providerCleanups.push(institutionalProviderCleanups.pop()!);
   }
-  if (providerCleanups.length > 0) {
-    await withPrimaryAwareCleanup(async () => {}, ...providerCleanups);
-  }
+  await withPrimaryAwareCleanup(
+    async () => {
+      delete process.env.AK_ROLE_RUN_DIR;
+    },
+    ...runDirs.map(
+      (runDirectory) => async () => {
+        disposeInstitutionalRunDir(runDirectory);
+      },
+    ),
+    ...providerCleanups,
+  );
 });
 
 // The child institutional session (openPiInstitutionalSession) builds its OWN child
@@ -2386,12 +2402,12 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
   const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
   const nestedRunDir = nestedLedger.runDirectory;
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  try {
+  await withPrimaryAwareCleanup(
+    async () => {
     await writeInstitutionalSeatTable(nestedRunDir, {
       auditor: { provider: "installed-auditor", model: "installed-auditor" },
     });
     process.env.AK_ROLE_RUN_DIR = nestedRunDir;
-  {
       const [judge, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/judge-auditor.ts"),
         importSrc("src/doctor-auditor.ts"),
@@ -2644,10 +2660,13 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         );
         assert.equal(escalated.auditCalls, 1);
       }
-  }
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    nestedLedger.dispose();
-  }
+    },
+    async () => {
+      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    },
+    async () => {
+      nestedLedger.dispose();
+    },
+  );
 });

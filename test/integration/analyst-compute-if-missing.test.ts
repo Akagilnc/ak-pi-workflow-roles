@@ -47,6 +47,7 @@ import {
 } from "../../src/analyst-page.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import type { AnalystModelGroupsPage } from "../../src/analyst-model-groups.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -123,8 +124,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-338-business-"));
-  try {
+  return withTempRoot("analyst-338-business-", async (businessRepo) => {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
     execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
@@ -137,19 +137,14 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     const result = await fn(businessRepo);
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-  }
+  });
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("analyst-338-home-"));
-  try {
+  return withTempRoot("analyst-338-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 /** Snapshot of issue page basenames under analyst/issues/. */

@@ -18,17 +18,15 @@ import {
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-explicit-internal-"));
-  try {
+  return withTempRoot("ak-public-cli-explicit-internal-", async (home) => {
     seedGitRepository(home);
     return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {
@@ -497,6 +495,7 @@ test("close settles once on natural return, execution error, and SIGTERM timeout
         stub,
         `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(signal)}, "SIGTERM"); process.exit(143); });
 writeFileSync(${JSON.stringify(ready)}, "ready");
 setInterval(() => {}, 1000);

@@ -29,6 +29,7 @@ import {
   ticketSeatMemorySessionDirectory,
 } from "../../src/ticket-seat-memory.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -245,13 +246,10 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("analyst-gate-home-"));
-  try {
+  return withTempRoot("analyst-gate-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 function judgeAuditorDir(home: string): string {

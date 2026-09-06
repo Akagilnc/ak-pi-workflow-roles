@@ -72,5 +72,10 @@ export function outsideWorktreeTempPrefix(
     if (options.isolateNodeAncestors && hasNodeModulesInAncestry(base)) continue;
     return join(base, label);
   }
-  return join(tmpdir(), label);
+  const reason = options.isolateNodeAncestors
+    ? "no outside-worktree temp base free of node_modules ancestry"
+    : "no outside-worktree temp base available";
+  throw new Error(
+    `outsideWorktreeTempPrefix(${JSON.stringify(label)}): ${reason} (candidates: ${bases.join(", ")})`,
+  );
 }

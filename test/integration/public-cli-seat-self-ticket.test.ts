@@ -46,21 +46,23 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome(
   run: (home: string) => Promise<void>,
 ): Promise<void> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-seat-self-ticket-"));
-  const binDir = join(home, "bin");
-  const priorPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
-    await run(home);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+  await withTempRoot("ak-seat-self-ticket-", async (home) => {
+    const binDir = join(home, "bin");
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+    await withPrimaryAwareCleanup(
+      () => run(home),
+      async () => {
+        if (priorPath === undefined) delete process.env.PATH;
+        else process.env.PATH = priorPath;
+      },
+    );
+  });
 }
 
 function captureIo() {

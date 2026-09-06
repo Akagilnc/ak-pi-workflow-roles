@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { fauxProvider } from "@earendil-works/pi-ai";
 
@@ -16,14 +17,11 @@ const faux = fauxProvider({
 });
 
 async function withAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(worktreeTempPrefix("ak-model-seed-"));
-  try {
+  return await withTempRoot("ak-model-seed-", async (root) => {
     const agentDir = join(root, "agent");
     await mkdir(agentDir, { recursive: true });
     return await run(agentDir);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 }
 
 test("models.json seed treats ENOENT as a fresh file", async () => {

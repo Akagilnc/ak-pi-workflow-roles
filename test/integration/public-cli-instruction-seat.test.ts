@@ -28,6 +28,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 type InstructionSeatCase = {
   readonly role: "gatekeeper" | "navigator";
@@ -117,12 +118,7 @@ const CASES: readonly InstructionSeatCase[] = [
 ];
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-cli-instruction-seat-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-instruction-seat-", scenario);
 }
 
 function captureIo() {

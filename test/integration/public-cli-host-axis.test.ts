@@ -12,6 +12,7 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -29,12 +30,7 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  const home = await mkdtemp(worktreeTempPrefix("ak-host-axis-"));
-  try {
-    await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  await withTempRoot("ak-host-axis-", fn);
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });

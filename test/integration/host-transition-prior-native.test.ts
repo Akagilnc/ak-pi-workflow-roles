@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { projectHostTransitionPriorNative } from "../../src/host-transition-prior-native.ts";
 
 test("unknown previous or live host yields no hostTransition (no inject)", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-host-transition-unknown-"));
-  try {
+  await withTempRoot("ak-host-transition-unknown-", async (root) => {
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
     await mkdir(join(runDirectory, "session"), { recursive: true });
@@ -32,14 +32,11 @@ test("unknown previous or live host yields no hostTransition (no inject)", async
       }),
       undefined,
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("pi→grok-build projects the present Pi session path", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-host-transition-pi-path-"));
-  try {
+  await withTempRoot("ak-host-transition-pi-path-", async (root) => {
     const runDirectory = join(root, "run");
     const piSessionFile = join(runDirectory, "session", "session.jsonl");
     await mkdir(join(runDirectory, "session"), { recursive: true });
@@ -56,14 +53,11 @@ test("pi→grok-build projects the present Pi session path", async () => {
         priorNativePaths: [piSessionFile],
       },
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok-build→pi projects every present updates.jsonl path in sorted order", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-host-transition-paths-"));
-  try {
+  await withTempRoot("ak-host-transition-paths-", async (root) => {
     const runDirectory = join(root, "run");
     const later = join(runDirectory, "grok-home", "sessions", "z-cwd", "s2");
     const earlier = join(runDirectory, "grok-home", "sessions", "a-cwd", "s1");
@@ -83,7 +77,5 @@ test("grok-build→pi projects every present updates.jsonl path in sorted order"
       previousHost: "grok-build",
       priorNativePaths: [pathEarlier, pathLater],
     });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

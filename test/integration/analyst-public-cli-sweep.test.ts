@@ -29,6 +29,7 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -81,29 +82,30 @@ async function withSweepFixture<T>(
   const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-337-business-"));
   const home = await mkdtemp(worktreeTempPrefix("analyst-337-home-"));
   const attachDir = await mkdtemp(worktreeTempPrefix("analyst-337-attach-"));
-  try {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    const result = await fn({
-      home,
-      ledgerHome: join(home, ".ak-roles"),
-      attachDir,
-    });
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-    await rm(home, { recursive: true, force: true });
-    await rm(attachDir, { recursive: true, force: true });
-  }
+  return withPrimaryAwareCleanup(
+    async () => {
+      execFileSync("git", ["init"], { cwd: businessRepo });
+      await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
+      execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        { cwd: businessRepo },
+      );
+      assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
+      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+      const result = await fn({
+        home,
+        ledgerHome: join(home, ".ak-roles"),
+        attachDir,
+      });
+      assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
+      return result;
+    },
+    async () => { await rm(businessRepo, { recursive: true, force: true }); },
+    async () => { await rm(home, { recursive: true, force: true }); },
+    async () => { await rm(attachDir, { recursive: true, force: true }); },
+  );
 }
 
 async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {

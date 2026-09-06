@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { renderFactoryBoardHtml, type FactoryBoardView } from "../../src/factory-board.ts";
 import type { SnapshotTicket } from "../../src/ticket-snapshot.ts";
@@ -126,8 +127,7 @@ async function writeMinimalAcceptedCoderRun(
 }
 
 test("S2 board projects full-precision machine attrs and human-formatted spans (no raw ms)", async () => {
-  const workspace = await mkdtemp(worktreeTempPrefix("human-format-s2-"));
-  try {
+  await withTempRoot("human-format-s2-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     // 1h 1m wall via started/ended; large token count; precise cost.
@@ -187,14 +187,11 @@ test("S2 board projects full-precision machine attrs and human-formatted spans (
     assert.ok(timeText?.[1]);
     assert.notEqual(timeText[1], "2026-08-05T12:00:00.000Z", "local wall clock differs from raw ISO");
     assert.match(timeText[1]!, /\d{4}-\d{2}-\d{2}/, "local time keeps a calendar date shape");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S2 board formats zero/edge metric inputs without inventing machine values", async () => {
-  const workspace = await mkdtemp(worktreeTempPrefix("human-format-edge-"));
-  try {
+  await withTempRoot("human-format-edge-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
     const html = await renderFactoryBoardHtml(
@@ -223,7 +220,5 @@ test("S2 board formats zero/edge metric inputs without inventing machine values"
     assert.ok(costText.includes("0"), "zero cost remains visibly zero");
     const wallText = labeledText(html, "data-wall-label", "1");
     assert.ok(!wallText.includes("NaN") && !wallText.includes("Infinity"));
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });

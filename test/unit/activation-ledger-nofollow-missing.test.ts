@@ -19,10 +19,10 @@ import { join } from "node:path";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailable", async () => {
-  const home = mkdtempSync(worktreeTempPrefix("ak-ledger-nofollow-"));
-  try {
+  return await withTempRoot("ak-ledger-nofollow-", async (home) => {
     // Shim node:fs so production sees a platform without O_NOFOLLOW (exactly
     // the Windows shape): the constants object simply lacks the key.
     const hooksSource = [
@@ -79,7 +79,5 @@ test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailabl
     assert.throws(() => statSync(ledgerPath), (error: unknown) => {
       return (error as { code?: unknown }).code === "ENOENT";
     });
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
+    });
 });

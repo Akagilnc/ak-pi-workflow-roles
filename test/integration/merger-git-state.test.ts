@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test, { after } from "node:test";
 import { createProductionMergerGitState } from "../../src/merger-git-state.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -55,8 +56,7 @@ async function withConflictedRepo<T>(
   run: (fixture: { cwd: string; target: string; source: string }) => Promise<T>,
 ): Promise<T> {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(worktreeTempPrefix("ak-merger-git-"));
-  try {
+  return await withTempRoot("ak-merger-git-", async (cwd) => {
     execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
       stdio: "ignore",
     });
@@ -69,9 +69,7 @@ async function withConflictedRepo<T>(
       target: git(cwd, "rev-parse", "HEAD"),
       source: git(cwd, "rev-parse", "source"),
     });
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+    });
 }
 
 test("production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit", async () => {
@@ -169,8 +167,7 @@ test("production Merger Git seam computes resolutionChangedPaths across clean an
 
 test("production Merger Git seam reports no conflict set after a non-conflicting merge", async () => {
   const template = await baseTemplate();
-  const cwd = await mkdtemp(worktreeTempPrefix("ak-merger-clean-"));
-  try {
+  await withTempRoot("ak-merger-clean-", async (cwd) => {
     execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
       stdio: "ignore",
     });
@@ -183,7 +180,5 @@ test("production Merger Git seam reports no conflict set after a non-conflicting
     git(cwd, "checkout", "main");
     git(cwd, "merge", "--no-commit", "--no-ff", "clean-source");
     assert.deepEqual((await createProductionMergerGitState(cwd).activeMerge()).unmergedPaths, []);
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+    });
 });

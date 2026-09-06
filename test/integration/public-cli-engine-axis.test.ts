@@ -40,6 +40,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -75,12 +76,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-engine-axis-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-engine-axis-", scenario);
 }
 
 function captureIo() {
@@ -227,8 +223,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     // (absorbed from the former dedicated unset-engine test; golden byte
     // reassertion deleted with the frozen-baseline oracle).
     {
-      const cliHome = await mkdtemp(worktreeTempPrefix("ak-engine-unset-"));
-      try {
+      await withTempRoot("ak-engine-unset-", async (cliHome) => {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
           { packageRoot, home: cliHome, io: captureIo().io },
@@ -245,9 +240,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
         );
         assert.equal(unset.exitCode, 0);
         assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, undefined);
-      } finally {
-        await rm(cliHome, { recursive: true, force: true });
-      }
+            });
     }
   });
 });

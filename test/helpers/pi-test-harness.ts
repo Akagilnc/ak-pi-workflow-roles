@@ -364,7 +364,16 @@ export function createTempPackageHomeLedger(input: {
       },
     };
   } catch (error) {
-    rmSync(home, { recursive: true, force: true });
+    // Setup primary must survive dispose failure (same rule as withPrimaryAwareCleanup).
+    try {
+      rmSync(home, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Test failed and cleanup failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
