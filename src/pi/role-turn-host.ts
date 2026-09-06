@@ -50,6 +50,11 @@ export function buildExplicitInternalActivationArgs(
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
 
+/**
+ * Pi argv for seat model. Host only passes through resolved values — no local
+ * thinking whitelist and no package default fill. Bare provider/model omits
+ * --thinking so Pi owns its own default (#346/#384). Explicit thinking only.
+ */
 function buildSeatModelCliArgs(model: RoleTurnModelConfig | undefined): string[] {
   if (model === undefined) return [];
   return [
@@ -426,12 +431,16 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      // Shared envelope isolates this call's court identity: omitting courtAttemptId
+      // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         HOME: request.home,
         PI_CODING_AGENT_DIR: request.agentDir,
         AK_ROLE_RUN_DIR: request.runDirectory,
       };
+      if (request.courtAttemptId === undefined) delete env.AK_ROLE_COURT_ATTEMPT;
+      else env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
       applyEngineChildEnv(env, request.engine);
       if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
         env.AK_CORRELATION_ID = request.correlationId;

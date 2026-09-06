@@ -160,16 +160,16 @@ export async function runPublicCollectorResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableCollectorRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) =>
+    buildTurnRequest: (admitted, effective) =>
       buildCollectorTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: collectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

@@ -130,6 +130,48 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
     await assert.rejects(
       () => resumed.tool().execute("dup-restored", {}, undefined, undefined, resumed.context),
     );
+
+    // #637: a new court-turn attempt (AK_ROLE_COURT_ATTEMPT) may seal again on the
+    // same run without deleting prior seals or relaxing same-attempt sole-final.
+    const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
+    process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
+    try {
+      const reopened = registerTool(f.root);
+      await reopened.start("court-2");
+      await reopened.tool().execute("court-2", {}, undefined, undefined, reopened.context);
+      await reopened.close();
+      const kinds = (await ledgerRecords(f.root)).map((record) => record.kind);
+      assert.ok(kinds.includes("post-seal-anomaly"), "prior same-attempt anomaly kept");
+      assert.equal(kinds.filter((kind) => kind === "sealed").length, 2, "second court turn seals");
+      // Run-scoped latest still sees a seal (manual resume idempotent).
+      assert.deepEqual(await readSealedSubmission(f.root, "run-ledger", f.root), projection);
+      // Current court attempt is isolated — reads only that attempt's seal.
+      assert.deepEqual(
+        await readSealedSubmission(f.root, "run-ledger", { home: f.root, attemptId: "court-turn-2" }),
+        projection,
+      );
+      // Same-attempt post-seal-anomaly after the first seal keeps that attempt unreadable.
+      assert.equal(
+        await readSealedSubmission(f.root, "run-ledger", {
+          home: f.root,
+          attemptId: "run-ledger:attempt",
+        }),
+        undefined,
+        "post-seal-anomaly on an attempt still blocks that attempt's sealed read",
+      );
+      // A court attempt with no rows must not inherit another attempt's seal.
+      assert.equal(
+        await readSealedSubmission(f.root, "run-ledger", {
+          home: f.root,
+          attemptId: "court-turn-empty",
+        }),
+        undefined,
+        "empty court attempt must not present a prior sealed pass",
+      );
+    } finally {
+      if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+      else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
+    }
   });
 });
 

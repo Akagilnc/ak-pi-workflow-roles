@@ -634,8 +634,8 @@ export async function openPiInstitutionalSession(
     }
 
     // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
-    // omits thinkingLevel (Pi default). Pi clamps unsupported levels itself;
-    // we do not re-check or invent defaults.
+    // omits thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent package defaults.
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
@@ -651,6 +651,10 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
+    await session.setModel(effectiveModel);
+    if (options.selection.thinking !== undefined) {
+      session.setThinkingLevel(options.selection.thinking as any);
+    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();
