@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import { connectGrokAcpStdio, controlledGrokChildEnv, prepareControlledGrokHome, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
+import { connectGrokAcpStdio, controlledGrokChildEnv, type GrokAcpConnection } from "../../src/grok/role-turn-host.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const binary = join(homedir(), ".grok", "bin", "grok");
@@ -18,7 +17,7 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
   const connections: GrokAcpConnection[] = [];
   const open = async (options: { toolset?: string; onNotification?: (method: string, params: Readonly<Record<string, unknown>>) => void } = {}) => {
     const connection = await connectGrokAcpStdio({
-      binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home),
+      binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env),
       ...(options.toolset === undefined ? {} : { toolset: options.toolset }),
       ...(options.onNotification === undefined ? {} : { onNotification: options.onNotification }),
     });
@@ -29,7 +28,6 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
     return withPrimaryAwareCleanup(
       async () => {
 
-    await prepareControlledGrokHome(homedir(), home);
     const firstConnection = await open();
     const session = await firstConnection.request("session/new", { cwd: process.cwd(), mcpServers: [], _meta: { yoloMode: false } });
     const sessionId = session.sessionId as string;
@@ -67,7 +65,7 @@ test("real Grok 1.0.13 exposes typed G8/G9/G11/G12", { timeout: 240_000 }, async
     const observedTools: string[] = [];
     const toolCalls: Array<{ rawOutput?: { type?: unknown } }> = [];
     const configured = await connectGrokAcpStdio({
-      binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env, home), toolset: "coding",
+      binary, cwd: process.cwd(), env: controlledGrokChildEnv(process.env), toolset: "coding",
       onNotification(method, params) {
         if (method !== "session/update") return;
         const update = (params as { update?: unknown }).update;

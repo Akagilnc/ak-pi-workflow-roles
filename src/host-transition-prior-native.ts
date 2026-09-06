@@ -3,7 +3,7 @@
  * Closed host discriminators only; unknown previous/live hosts never inject.
  */
 import { access, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { RoleTurnHostTransition } from "./host-contracts.ts";
 
@@ -29,42 +29,33 @@ async function listPiNativeRecordPaths(sessionFile: string): Promise<string[]> {
   }
 }
 
-/** Native Grok updates.jsonl paths under runDirectory/grok-home/sessions, sorted. */
-export async function listGrokNativeRecordPaths(runDirectory: string): Promise<string[]> {
-  const grokSessionsDir = join(runDirectory, "grok-home", "sessions");
-  let encodedCwds;
+/**
+ * Present sitian records.jsonl paths under sessionParent topology (#717).
+ * resolveSitianRecordPathInLedger writes dirname(sessionParent)/<category>/records.jsonl
+ * when sessionParent is inside ledger home — never session.jsonl itself.
+ */
+async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
+  const sessionRoot = dirname(sessionParent);
+  let entries;
   try {
-    encodedCwds = await readdir(grokSessionsDir, { withFileTypes: true });
+    entries = await readdir(sessionRoot, { withFileTypes: true });
   } catch (error) {
     if (isEnoent(error)) return [];
     throw error;
   }
-  const updatesPaths: string[] = [];
-  for (const cwdEntry of encodedCwds) {
-    if (!cwdEntry.isDirectory()) continue;
-    let sessionDirs;
+  const recordPaths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const recordFile = join(sessionRoot, entry.name, "records.jsonl");
     try {
-      sessionDirs = await readdir(join(grokSessionsDir, cwdEntry.name), { withFileTypes: true });
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
-    for (const sessEntry of sessionDirs) {
-      if (!sessEntry.isDirectory()) continue;
-      updatesPaths.push(join(grokSessionsDir, cwdEntry.name, sessEntry.name, "updates.jsonl"));
-    }
-  }
-  updatesPaths.sort();
-  const present: string[] = [];
-  for (const updatesFile of updatesPaths) {
-    try {
-      await access(updatesFile);
-      present.push(updatesFile);
+      await access(recordFile);
+      recordPaths.push(recordFile);
     } catch (error) {
       if (!isEnoent(error)) throw error;
     }
   }
-  return present;
+  recordPaths.sort();
+  return recordPaths;
 }
 
 /**
@@ -72,13 +63,13 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
  * Unknown host names → undefined (no inject). Empty native volume still
  * yields a typed switch (empty path list).
  *
- * Grok native home lives under the live run that wrote it (#617 DK-4 / #637
- * same-run resume). No cross-run previousRunDirectory override.
+ * Pi previous → Pi session.jsonl path.
+ * Grok previous → sitian records on the live run (#717). Grok CLI journals
+ * stay in the operator grok home; they are not copied here.
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
   readonly liveHost: string;
-  readonly runDirectory: string;
   readonly piSessionFile: string;
 }): Promise<RoleTurnHostTransition | undefined> {
   if (input.previousHost === input.liveHost) return undefined;
@@ -92,8 +83,8 @@ export async function projectHostTransitionPriorNative(input: {
       priorNativePaths: paths,
     };
   }
-  // previousHost === "grok-build": DK-7 path handoff only — do not read bytes.
-  const paths = await listGrokNativeRecordPaths(input.runDirectory);
+  // previousHost === "grok-build": sitian path handoff only — do not read bytes.
+  const paths = await listSitianRecordPaths(input.piSessionFile);
   return {
     previousHost: "grok-build",
     priorNativePaths: paths,
