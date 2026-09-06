@@ -998,6 +998,9 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
+    // Public-run fetch observation (in-process-session statusAwareFetch face).
+    let priorFetch: typeof globalThis.fetch | undefined;
+    let fetchWrapped = false;
     const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
@@ -1263,6 +1266,11 @@ export function createRoleRuntimeExtension(
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       envelopeHost.stopKeepalive();
+      if (fetchWrapped && priorFetch !== undefined) {
+        globalThis.fetch = priorFetch;
+        priorFetch = undefined;
+        fetchWrapped = false;
+      }
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1528,25 +1536,19 @@ export function createRoleRuntimeExtension(
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
-    // write failure must surface — never silently drop authorized error evidence.
-    // Provider label falls back when ctx.model is unset on the error path so the
-    // httpStatus observation is not washed away (#675 public navigator auth/quota).
-    roleHost.on("after_provider_response", async (event, ctx) => {
+    // Same observation owner as in-process-session statusAwareFetch → typed-provider-http
+    // sidecar (settlement already merges observation.httpStatus into knownFailure).
+    // after_provider_response covers the success-path onResponse face; fetch wrap covers
+    // non-2xx Responses where openai-completions throws before onResponse (#675).
+    const recordHttpObservation = async (
+      status: number,
+      provider: string,
+      ctx: HostContext,
+    ): Promise<void> => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const status = event.status;
-      if (typeof status !== "number") return;
-      const fromCtx = ctx.model?.provider;
-      const provider =
-        typeof fromCtx === "string" && fromCtx.trim() !== ""
-          ? fromCtx
-          : "unknown";
       try {
-        await recordTypedProviderHttpStatus(runDir, {
-          httpStatus: status,
-          provider,
-        });
+        await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
         if (
           status >= 200 &&
@@ -1559,9 +1561,49 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       }
+    };
+    roleHost.on("after_provider_response", async (event, ctx) => {
+      const status = event.status;
+      if (typeof status !== "number") return;
+      const fromCtx = ctx.model?.provider;
+      const provider =
+        typeof fromCtx === "string" && fromCtx.trim() !== ""
+          ? fromCtx
+          : "unknown";
+      await recordHttpObservation(status, provider, ctx);
     });
 
     roleHost.on("session_start", async (event, ctx) => {
+      // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
+      if (!fetchWrapped && typeof globalThis.fetch === "function") {
+        priorFetch = globalThis.fetch.bind(globalThis);
+        const underlying = priorFetch;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await underlying(input, init);
+          const runDir = process.env.AK_ROLE_RUN_DIR;
+          if (
+            typeof runDir === "string"
+            && runDir.trim() !== ""
+            && typeof response?.status === "number"
+            && (response.status < 200 || response.status >= 300)
+          ) {
+            const provider =
+              typeof ctx.model?.provider === "string" && ctx.model.provider.trim() !== ""
+                ? ctx.model.provider
+                : "unknown";
+            try {
+              await recordTypedProviderHttpStatus(runDir, {
+                httpStatus: response.status,
+                provider,
+              });
+            } catch {
+              // Observation must not break the provider stream (same as in-process-session).
+            }
+          }
+          return response;
+        }) as typeof globalThis.fetch;
+        fetchWrapped = true;
+      }
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;

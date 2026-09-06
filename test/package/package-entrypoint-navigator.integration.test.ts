@@ -684,6 +684,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
             const working = { provider: model.provider, model: model.id };
             await savePublicCliConfig({
+              // Cause matrix scripts terminal provider stops — disable auto-resume so
+              // 429 is classified once (host config face, not pool expansion).
+              autoResumeLimit: 0,
               seats: {
                 navigator: scenario.name === "model"
                   ? { provider: "missing", model: "provider" }
@@ -735,8 +738,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               }
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            // Legal graph capacity (historical matrix pool).
-            faux.setResponses(Array.from({ length: 10 }, () => response));
+            // Measured call graph: nested notary/auditor + attendance prepares under
+            // streamFailure (warm/settle/rebind × quota/auth stops). Exact capacity.
+            faux.setResponses(Array.from({ length: 20 }, () => response));
             try {
             await withAgentDirProviderFixture(faux, agentDir, () =>
               withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {

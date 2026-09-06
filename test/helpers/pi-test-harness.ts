@@ -1246,23 +1246,13 @@ export async function createMockProviderServer(
         // unstructured error-stop to synthetic 500 would wash local/unrecognized
         // failures as provider 5xx testimony (失败诚实).
         if (heldStatus !== undefined && heldStatus >= 400 && heldStatus < 600) {
-          // Return 2xx SSE so the client onResponse fires (openai-completions only
-          // calls onResponse after a successful create()). Carry the provider status
-          // on a typed response header that role-runtime records as HTTP observation.
-          // Emit an error stop body so the session still ends in provider failure.
-          res.writeHead(200, {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-            "x-ak-provider-status": String(heldStatus),
-          });
-          res.write(`data: ${JSON.stringify({
+          res.writeHead(heldStatus, { "content-type": "application/json" });
+          res.end(JSON.stringify({
             error: { message: message.errorMessage ?? message.stopReason },
             ...(messageRecord.body === undefined ? {} : { body: messageRecord.body }),
             ...(messageRecord.code === undefined ? {} : { code: messageRecord.code }),
             ...(messageRecord.errno === undefined ? {} : { errno: messageRecord.errno }),
-          })}\n\ndata: [DONE]\n\n`);
-          res.end();
+          }));
           return;
         }
         // 2xx SSE with an error object: SDK folds the original message into
