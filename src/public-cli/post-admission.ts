@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
@@ -20,6 +20,7 @@ import {
   buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
+import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 
 import type {
@@ -454,6 +455,9 @@ export async function dispatchPostAdmissionTurn<
  * model/engine/timeout axes, restored correlation, and either
  * - manual resume: package envelope / optional caller message (unchanged), or
  * - same-ticket summons: this turn's instruction + frozen attachment paths.
+ * Caller message and summons materials each keep their place: a resume message
+ * keeps manual-resume prompt semantics while open-court frozen attachments still
+ * ride; summons instruction is only the prompt base when no caller message.
  * Seats add only their activation projection. Call prepareSummonsResumeMaterials
  * first when request.summons carries attachment paths.
  */
@@ -471,14 +475,37 @@ export function resumeTurnRequestProjectionOptions(
     ...(env.engine === undefined ? {} : { engine: env.engine }),
     packageRoot: env.packageRoot,
   });
-  const prompt =
-    summonsPrepared !== undefined
-      ? buildInstructionTransportPrompt(summonsPrepared, engineMaterial)
-      : buildResumeContinuationPrompt({
-          packageRoot: env.packageRoot,
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          ...(request.message === undefined ? {} : { message: request.message }),
-        });
+  let prompt: string;
+  if (request.message !== undefined) {
+    // Manual resume caller-message semantics stay authoritative for the prompt.
+    // Open-court frozen attachments still continue when present.
+    if (
+      summonsPrepared !== undefined &&
+      summonsPrepared.attachments.length > 0
+    ) {
+      prompt = buildInstructionTransportPrompt(
+        {
+          instruction: request.message,
+          instructionEmpty: request.message.trim() === "",
+          attachments: summonsPrepared.attachments,
+        },
+        engineMaterial,
+      );
+    } else {
+      prompt = buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        message: request.message,
+      });
+    }
+  } else if (summonsPrepared !== undefined) {
+    prompt = buildInstructionTransportPrompt(summonsPrepared, engineMaterial);
+  } else {
+    prompt = buildResumeContinuationPrompt({
+      packageRoot: env.packageRoot,
+      ...(env.engine === undefined ? {} : { engine: env.engine }),
+    });
+  }
   return {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -496,9 +523,21 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+function isAlreadyFrozenSummonsAttachment(
+  runDirectory: string,
+  attachmentPath: string,
+): boolean {
+  const absolute = isAbsolute(attachmentPath)
+    ? attachmentPath
+    : resolve(attachmentPath);
+  return pathContainedIn(join(runDirectory, "attachments"), absolute);
+}
+
 /**
  * Freeze same-ticket summons attachments into the retained run directory (#637).
  * No-op materials (no paths / instruction-only) skip the freeze.
+ * Paths already under this run's attachments/ are the accepted freeze identity —
+ * reuse them; do not re-freeze from external originals on bare resume.
  * Manual resume never calls this — old attachment semantics stay intact.
  */
 export async function prepareSummonsResumeMaterials(
@@ -519,10 +558,15 @@ export async function prepareSummonsResumeMaterials(
   const instruction = summons.instruction ?? "";
   const instructionEmpty =
     summons.instructionEmpty ?? instruction.trim() === "";
-  const attachments =
-    summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0
-      ? await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory)
-      : [];
+  let attachments: readonly { frozenPath: string }[] = [];
+  if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
+    const alreadyFrozen = summons.attachmentPaths.every((path) =>
+      isAlreadyFrozenSummonsAttachment(runDirectory, path),
+    );
+    attachments = alreadyFrozen
+      ? summons.attachmentPaths.map((frozenPath) => ({ frozenPath }))
+      : await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
+  }
   return { instruction, instructionEmpty, attachments };
 }
 
@@ -531,6 +575,10 @@ export async function prepareSummonsResumeMaterials(
  * package resume envelope (#599 / #633): load → structural rejection → seat
  * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
  * turn builder, and adapters stay on the seat.
+ *
+ * Court open transaction (#637): freeze + currentCourt write run after the
+ * writer lease is held, and persisted summons carry already-frozen attachment
+ * paths so bare resume reuses the accepted snapshot instead of re-freezing.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -580,6 +628,7 @@ export async function runPostAdmissionSeatResume<
       );
       if (sealedForOpen === undefined) {
         // Continue open court: same summons materials + existing courtAttemptId.
+        // Caller message (if any) stays on the request — projection keeps it.
         forceContinuation = true;
         openCourtAttemptId = openCourt.courtAttemptId;
         request = {
@@ -599,39 +648,82 @@ export async function runPostAdmissionSeatResume<
           }
         }
       } else {
+        // Open court already sealed — drop pointer before run-scoped idempotence.
         await clearCurrentCourt(loaded.admitted.runDirectory);
       }
     }
   }
 
-  let turnRequest = await input.buildTurnRequest(loaded.admitted, request);
-
-  // New summons court: mint attempt id and persist court+summons on run-state.
-  // Open-court continue: reuse persisted courtAttemptId (do not mint).
-  if (forceContinuation) {
-    const courtAttemptId =
-      openCourtAttemptId ??
-      (turnRequest.courtAttemptId !== undefined && turnRequest.courtAttemptId.length > 0
-        ? turnRequest.courtAttemptId
-        : randomUUID());
-    turnRequest = { ...turnRequest, courtAttemptId };
-    if (openCourtAttemptId === undefined) {
-      const court: CurrentCourtState = {
-        courtAttemptId,
-        ...(request.summons === undefined ? {} : { summons: request.summons }),
-      };
-      await recordCurrentCourt(loaded.admitted.runDirectory, court);
-    }
+  // Non-court path: build eagerly so sealed short-circuit can run before lease.
+  if (!forceContinuation) {
+    const turnRequest = await input.buildTurnRequest(loaded.admitted, request);
+    return await runPostAdmissionManualResume({
+      admitted: loaded.admitted,
+      env: input.env,
+      io: input.io,
+      request: turnRequest,
+      adapters: input.adapters,
+      ...(input.effectiveEngine === undefined
+        ? {}
+        : { effectiveEngine: input.effectiveEngine }),
+    });
   }
 
+  // Court path: freeze + record currentCourt only after writer lease is held.
+  // Held-lease rejection must not leave a new court identity on disk.
   return await runPostAdmissionManualResume({
     admitted: loaded.admitted,
     env: input.env,
     io: input.io,
-    request: turnRequest,
     adapters: input.adapters,
-    ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
-    ...(forceContinuation ? { forceContinuation: true as const } : {}),
+    ...(input.effectiveEngine === undefined
+      ? {}
+      : { effectiveEngine: input.effectiveEngine }),
+    forceContinuation: true,
+    buildRequestAfterLease: async () => {
+      // Freeze external paths once; rewrite summons to the frozen identity so
+      // currentCourt + later bare resume reuse the accepted snapshot.
+      if (request.summons !== undefined) {
+        const prepared = await prepareSummonsResumeMaterials(
+          loaded.admitted.runDirectory,
+          request.summons,
+        );
+        if (
+          prepared !== undefined &&
+          (request.summons.attachmentPaths?.length ?? 0) > 0
+        ) {
+          request = {
+            ...request,
+            summons: {
+              ...request.summons,
+              attachmentPaths: prepared.attachments.map(
+                (attachment) => attachment.frozenPath,
+              ),
+            },
+          };
+        }
+      }
+
+      let turnRequest = await input.buildTurnRequest(loaded.admitted, request);
+
+      // New summons court: mint attempt id and persist court+summons on run-state.
+      // Open-court continue: reuse persisted courtAttemptId (do not mint).
+      const courtAttemptId =
+        openCourtAttemptId ??
+        (turnRequest.courtAttemptId !== undefined &&
+        turnRequest.courtAttemptId.length > 0
+          ? turnRequest.courtAttemptId
+          : randomUUID());
+      turnRequest = { ...turnRequest, courtAttemptId };
+      if (openCourtAttemptId === undefined) {
+        const court: CurrentCourtState = {
+          courtAttemptId,
+          ...(request.summons === undefined ? {} : { summons: request.summons }),
+        };
+        await recordCurrentCourt(loaded.admitted.runDirectory, court);
+      }
+      return turnRequest;
+    },
   });
 }
 
@@ -746,7 +838,14 @@ export async function runPostAdmissionManualResume<
   admitted: A;
   env: PostAdmissionEnv;
   io: CliIo;
-  request: RoleTurnRequest;
+  /** Eager turn request (non-court path / seats that build before lease). */
+  request?: RoleTurnRequest;
+  /**
+   * Court-opening path (#637): build turn + freeze + record currentCourt only
+   * after the writer lease is held. Mutually exclusive with a prebuilt request
+   * when forceContinuation is set.
+   */
+  buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
   effectiveEngine?: string;
@@ -758,7 +857,16 @@ export async function runPostAdmissionManualResume<
   terminal?: T;
   staleWriterLeaseReclaimed?: true;
 }> {
-  const { admitted, env, io, request, adapters, effectiveEngine, forceContinuation } = input;
+  const {
+    admitted,
+    env,
+    io,
+    adapters,
+    effectiveEngine,
+    forceContinuation,
+    buildRequestAfterLease,
+  } = input;
+  let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;
   const shouldPresent =
@@ -769,7 +877,7 @@ export async function runPostAdmissionManualResume<
   // short-circuit; those still need a real continuation turn.
   // Same-ticket re-summons force a new turn (forceContinuation) and skip this.
   try {
-    if (forceContinuation !== true) {
+    if (forceContinuation !== true && request !== undefined) {
       const existing = await adapters.trySettle(admitted, env.principalAuthority);
       if (
         existing !== undefined &&
@@ -836,6 +944,22 @@ export async function runPostAdmissionManualResume<
       };
     }
     throw error;
+  }
+
+  // Court open transaction under the held lease (freeze + currentCourt record).
+  if (request === undefined) {
+    if (buildRequestAfterLease === undefined) {
+      await lease.release();
+      throw new Error(
+        "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+      );
+    }
+    try {
+      request = await buildRequestAfterLease();
+    } catch (error) {
+      await lease.release();
+      throw error;
+    }
   }
 
   const result = await dispatchPostAdmissionTurn({
