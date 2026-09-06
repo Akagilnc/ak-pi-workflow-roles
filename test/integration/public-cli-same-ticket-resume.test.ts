@@ -20,18 +20,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  prepareSummonsResumeMaterials,
-  resumeTurnRequestProjectionOptions,
-} from "../../src/public-cli/post-admission.ts";
-import {
   acquireRunWriterLease,
   readCurrentCourt,
-  type PublicResumeRequest,
 } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  installGhFixture,
+  installHermesFixture,
+} from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
@@ -379,123 +379,171 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   }
 });
 
-test("#637 court materials: freeze once + caller message keeps resume semantics", async () => {
-  const scratch = await openNotaryScratch("home-materials-");
+test("#637 public inspector: freeze-once currentCourt + bare resume message keeps open court", async () => {
+  await mkdir(WORKTREE_SCRATCH, { recursive: true });
+  const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
+  const priorPath = process.env.PATH;
   try {
-    // freezeAttachmentsIntoRun resolves home from the activation ledger path shape.
-    const runDirectory = join(
-      scratch.home,
-      ".ak-roles",
-      "books",
-      "materials-book",
-      "runs",
-      "01a063700-materials@inspector",
-    );
-    await mkdir(join(runDirectory, "attachments"), { recursive: true });
-    const external = join(scratch.home, "external-attachment.md");
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const binDir = join(home, "bin");
+    await mkdir(binDir, { recursive: true });
+    // Worktree-owned home walks up to package.json type:module; force CJS for fixture bins.
+    await writeFile(join(binDir, "package.json"), '{"type":"commonjs"}\n', "utf8");
+    await installHermesFixture(binDir, {
+      resolverResponse: { assertion: "ticket", ticketNumber: 637 },
+    });
+    await installGhFixture(binDir, {
+      issues: { 637: { body: "#637 materials court", comments: [] } },
+    });
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+
+
+    const external = join(home, "external-attachment.md");
     await writeFile(external, "court-material-v1\n", "utf8");
+    const instruction = "inspect ticket #637 materials";
+    const io = { stdout: (_t: string) => {}, stderr: (_t: string) => {} };
+    const credentials = { "openai-codex": true, xai: true } as const;
 
-    const first = await prepareSummonsResumeMaterials(runDirectory, {
-      instruction: "#637 materials",
-      instructionEmpty: false,
-      attachmentPaths: [external],
-    });
-    assert.ok(first !== undefined);
-    assert.equal(first!.attachments.length, 1);
-    const frozenPath = first!.attachments[0]!.frozenPath;
-    assert.ok(
-      frozenPath.startsWith(join(runDirectory, "attachments")),
-      "first prepare must freeze under run attachments/",
-    );
-    assert.equal(await readFile(frozenPath, "utf8"), "court-material-v1\n");
-
-    // External original moves after the court accepted the freeze snapshot.
-    await writeFile(external, "external-changed-after-freeze\n", "utf8");
-
-    const second = await prepareSummonsResumeMaterials(runDirectory, {
-      instruction: "#637 materials",
-      instructionEmpty: false,
-      attachmentPaths: [frozenPath],
-    });
-    assert.ok(second !== undefined);
-    assert.equal(second!.attachments.length, 1);
-    assert.equal(
-      second!.attachments[0]!.frozenPath,
-      frozenPath,
-      "bare-resume materials must reuse the frozen path, not re-freeze",
-    );
-    assert.equal(
-      await readFile(second!.attachments[0]!.frozenPath, "utf8"),
-      "court-material-v1\n",
-      "reused freeze must keep the accepted snapshot bytes",
-    );
-
-    const under = await readdir(join(runDirectory, "attachments"));
-    assert.equal(
-      under.length,
-      1,
-      "reuse must not mint a second summons freeze directory",
-    );
-
-    // Caller message wins prompt base; frozen attachments still ride.
-    // Projection only reads correlation/message/summons — principal is unused here.
-    const admitted = {
-      runId: "materials-run",
-      runDirectory,
-      role: "inspector" as const,
-      projectRoot: scratch.project,
-      bookKey: "materials",
-      admittedRequestPath: join(runDirectory, "admitted-request.json"),
-      instruction: "birth",
-      instructionEmpty: false,
-      attachments: [],
-      principal: Object.freeze({}),
-    } as unknown as Parameters<typeof resumeTurnRequestProjectionOptions>[0];
-    const request: PublicResumeRequest = {
-      runId: "materials-run",
-      message: "caller resume message",
-      summons: {
-        instruction: "summons instruction must not obscure caller message",
-        instructionEmpty: false,
-        attachmentPaths: [frozenPath],
+    const seen: SeenTurn[] = [];
+    let turn = 0;
+    const inner = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (extraArgs, options) => {
+        turn += 1;
+        if (turn === 1) {
+          return scriptedTerminatingToolSession({
+            role: "inspector",
+            toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          })(extraArgs, options);
+        }
+        if (turn === 2) {
+          return scriptedTerminatingToolSession({
+            role: "inspector",
+            toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+            seal: false,
+          })(extraArgs, options);
+        }
+        return scriptedTerminatingToolSession({
+          role: "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status: "pass", findings: [] },
+        })(extraArgs, options);
       },
-    };
-    const projected = resumeTurnRequestProjectionOptions(
-      admitted,
-      request,
+    });
+    const host = observingSealHost(inner, seen);
+
+    // 1) First inspector summons seals (birth freeze under admitted attachments).
+    const first = await runAkRole(
+      ["inspector", instruction, "--attach", external],
       {
-        home: scratch.home,
-        agentDir: join(scratch.home, "agent"),
+        home,
         packageRoot,
-        cwd: scratch.project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: async () => undefined,
-        roleTurnHost: {
-          executeTurn: async () => {
-            throw new Error("projection-only");
-          },
-        },
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000i001",
       },
-      second,
     );
-    assert.equal(projected.continuation.kind, "resume");
-    assert.match(
-      projected.continuation.prompt,
-      /^caller resume message/,
-      "manual resume caller message must be the prompt base",
+    assert.equal(first.exitCode, 0, "first sealed inspector must accept");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    const runDirectory = seen[0]!.runDirectory;
+    const runId = seen[0]!.runId;
+
+    // 2) Same-ticket re-summons opens a new court with attachment materials (no seal).
+    const second = await runAkRole(
+      ["inspector", instruction, "--attach", external],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000i002",
+      },
     );
-    assert.doesNotMatch(
-      projected.continuation.prompt,
-      /summons instruction must not obscure/,
-      "summons instruction must not replace caller message",
+    assert.notEqual(second.exitCode, 0, "second court without seal must not succeed");
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume");
+    assert.equal(seen[1]!.runDirectory, runDirectory);
+    assert.ok(
+      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
     );
-    assert.match(
-      projected.continuation.prompt,
-      new RegExp(frozenPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-      "open-court frozen attachment path must still ride",
+    const openCourtAttemptId = seen[1]!.courtAttemptId!;
+
+    const openCourt = await readCurrentCourt(runDirectory);
+    assert.ok(openCourt !== undefined, "unsealed second court must persist currentCourt");
+    assert.equal(openCourt!.courtAttemptId, openCourtAttemptId);
+    const frozenPaths = openCourt!.summons?.attachmentPaths ?? [];
+    assert.equal(frozenPaths.length, 1, "currentCourt must carry this court\'s attachment identity");
+    assert.ok(
+      frozenPaths[0]!.startsWith(join(runDirectory, "attachments")),
+      "currentCourt attachmentPaths must be the in-run freeze identity",
+    );
+    assert.notEqual(
+      frozenPaths[0],
+      external,
+      "currentCourt must not keep the external original path",
+    );
+    assert.equal(await readFile(frozenPaths[0]!, "utf8"), "court-material-v1\n");
+
+    const freezeDirsAfterOpen = await readdir(join(runDirectory, "attachments"));
+    // birth admit freeze + one summons freeze directory
+    assert.ok(freezeDirsAfterOpen.length >= 1);
+
+    // External original changes after the court accepted the freeze snapshot.
+    await writeFile(external, "external-changed-after-freeze\n", "utf8");
+    await rm(external, { force: true });
+
+    // 3) Bare resume with caller message continues open court on frozen materials.
+    const resumed = await runAkRole(["resume", runId, "caller-resume-message"], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+    });
+    assert.equal(turn, 3, "bare resume with message must dispatch a real turn");
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(
+      seen[2]!.courtAttemptId,
+      openCourtAttemptId,
+      "caller message resume must continue the open courtAttemptId",
+    );
+    assert.equal(seen[2]!.runDirectory, runDirectory);
+    assert.equal(resumed.exitCode, 0, "open-court resume on frozen materials must accept");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+
+    // Reuse must not mint another summons freeze directory from the missing external path.
+    const freezeDirsAfterResume = await readdir(join(runDirectory, "attachments"));
+    assert.equal(
+      freezeDirsAfterResume.length,
+      freezeDirsAfterOpen.length,
+      "bare resume must reuse frozen paths; no additional freeze directory",
+    );
+    assert.equal(
+      await readFile(frozenPaths[0]!, "utf8"),
+      "court-material-v1\n",
+      "accepted freeze snapshot bytes must remain",
+    );
+    assert.equal(
+      await readCurrentCourt(runDirectory),
+      undefined,
+      "sealed open court clears currentCourt",
     );
   } finally {
-    await rm(scratch.home, { recursive: true, force: true });
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+    await rm(home, { recursive: true, force: true });
   }
 });
 
