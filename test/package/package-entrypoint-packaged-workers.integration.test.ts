@@ -436,7 +436,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        faux.setResponses(Array.from({ length: 8 }, () => response));
+        // Measured floor for nested public notary/auditor + parent navigator/judge on
+        // this auth-resolved path. model/auth contracts stay exact; pool is capacity only.
+        faux.setResponses(Array.from({ length: 16 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;
