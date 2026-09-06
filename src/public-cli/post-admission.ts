@@ -980,60 +980,65 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
-  // Court open/recovery transaction under the held lease (read/judge/clear/
-  // freeze/record). When the builder leaves no courtAttemptId, the same sealed
-  // presenter runs under lease — do not dispatch a doomed turn.
-  if (request === undefined) {
-    if (buildRequestAfterLease === undefined) {
-      await lease.release();
-      throw new Error(
-        "runPostAdmissionManualResume requires request or buildRequestAfterLease",
-      );
-    }
-    try {
+  // Court open/recovery under held lease until dispatch owns release (finally
+  // below). Builder, sealed presenter, and any throw on this seam must release
+  // here — dispatch's finally only runs after handoff.
+  let handedOffToDispatch = false;
+  try {
+    if (request === undefined) {
+      if (buildRequestAfterLease === undefined) {
+        throw new Error(
+          "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+        );
+      }
       request = await buildRequestAfterLease();
-    } catch (error) {
-      await lease.release();
-      throw error;
-    }
 
-    if (
-      request.courtAttemptId === undefined ||
-      request.courtAttemptId.length === 0
-    ) {
-      const presented = await presentSealedAcceptedManualResumeIfAny(
-        sealedIdempotenceInput,
-      );
-      if (presented !== undefined) {
-        await lease.release();
-        return {
-          ...presented,
-          ...(staleWriterLeaseReclaimed === true
-            ? { staleWriterLeaseReclaimed: true as const }
-            : {}),
-        };
+      if (
+        request.courtAttemptId === undefined ||
+        request.courtAttemptId.length === 0
+      ) {
+        const presented = await presentSealedAcceptedManualResumeIfAny(
+          sealedIdempotenceInput,
+        );
+        if (presented !== undefined) {
+          return {
+            ...presented,
+            ...(staleWriterLeaseReclaimed === true
+              ? { staleWriterLeaseReclaimed: true as const }
+              : {}),
+          };
+        }
       }
     }
-  }
 
-  const result = await dispatchPostAdmissionTurn({
-    admitted,
-    env: {
-      ...env,
-      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
-    io,
-    request,
-    lease,
-    adapters,
-    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-  });
-  if (result.terminal !== undefined) {
-    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+    handedOffToDispatch = true;
+    const result = await dispatchPostAdmissionTurn({
+      admitted,
+      env: {
+        ...env,
+        ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+        ...(admitted.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId }),
+      },
+      io,
+      request,
+      lease,
+      adapters,
+      ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+    });
+    if (result.terminal !== undefined) {
+      (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+    }
+    return {
+      ...result,
+      ...(staleWriterLeaseReclaimed === true
+        ? { staleWriterLeaseReclaimed: true as const }
+        : {}),
+    };
+  } finally {
+    if (!handedOffToDispatch) {
+      await lease.release();
+    }
   }
-  return {
-    ...result,
-    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
-  };
 }
