@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { projectHostTransitionPriorNative } from "../../src/host-transition-prior-native.ts";
@@ -56,26 +55,21 @@ test("pi→grok-build projects the present Pi session path", async () => {
     });
 });
 
-test("grok-build→pi projects every present updates.jsonl path in sorted order", async () => {
+test("grok-build→pi projects the present sitian session path", async () => {
   await withTempRoot("ak-host-transition-paths-", async (root) => {
     const runDirectory = join(root, "run");
-    const later = join(runDirectory, "grok-home", "sessions", "z-cwd", "s2");
-    const earlier = join(runDirectory, "grok-home", "sessions", "a-cwd", "s1");
-    await mkdir(later, { recursive: true });
-    await mkdir(earlier, { recursive: true });
-    const pathLater = join(later, "updates.jsonl");
-    const pathEarlier = join(earlier, "updates.jsonl");
-    await writeFile(pathLater, "x", "utf8");
-    await writeFile(pathEarlier, "y", "utf8");
+    const piSessionFile = join(runDirectory, "session", "session.jsonl");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await writeFile(piSessionFile, "{\"type\":\"session\",\"id\":\"s\"}\n", "utf8");
     const transition = await projectHostTransitionPriorNative({
       previousHost: "grok-build",
       liveHost: "pi",
       runDirectory,
-      piSessionFile: join(runDirectory, "session", "session.jsonl"),
+      piSessionFile,
     });
     assert.deepEqual(transition, {
       previousHost: "grok-build",
-      priorNativePaths: [pathEarlier, pathLater],
+      priorNativePaths: [piSessionFile],
     });
     });
 });
