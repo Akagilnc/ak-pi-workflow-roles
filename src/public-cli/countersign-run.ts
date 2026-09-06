@@ -203,8 +203,11 @@ function countersignAdapters(options?: {
   ) => void | Promise<void>;
 }) {
   return {
-    trySettle: (admitted: AdmittedCountersignInvocation, authority: DurablePrincipalAuthority) =>
-      trySettleCountersignTerminalResult(admitted, authority),
+    trySettle: (
+      admitted: AdmittedCountersignInvocation,
+      authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
+    ) => trySettleCountersignTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
     ...(options?.beforeDispatch === undefined

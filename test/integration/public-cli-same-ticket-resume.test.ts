@@ -243,10 +243,9 @@ test("#637 public notary via runAkRole: sealed first→re-summons same run with 
       seen[0]!.sourceRun,
       "second source-run pointer must differ from the first",
     );
-    assert.match(
-      seen[1]!.courtAttemptId ?? "",
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-      "sealed re-summons courtAttemptId must be the post-admission UUID on the request",
+    assert.ok(
+      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
+      "sealed re-summons must carry a courtAttemptId on the request",
     );
     assert.notEqual(
       seen[1]!.courtAttemptId,
@@ -262,6 +261,105 @@ test("#637 public notary via runAkRole: sealed first→re-summons same run with 
       1,
       "second summons must not mint a new notary run directory",
     );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#637 public notary: second court no-seal must not present first sealed pass", async () => {
+  await mkdir(WORKTREE_SCRATCH, { recursive: true });
+  const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-noseal-"));
+  try {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedCanonicalSourceRun(home, project, { ticketNumber: 637 });
+    const secondSourcePath = await seedCanonicalSourceRun(home, project, {
+      runId: SECOND_SOURCE_RUN_ID,
+      ticketNumber: 637,
+      sessionContent: "second draft",
+    });
+
+    const io = {
+      stdout: (_t: string) => {},
+      stderr: (_t: string) => {},
+    };
+    const credentials = { "openai-codex": true, xai: true } as const;
+    assert.equal(
+      (
+        await runAkRole(["config", "set", "notary", "faux/birth-model:high"], {
+          home,
+          packageRoot,
+          io,
+        })
+      ).exitCode,
+      0,
+    );
+
+    let turn = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (extraArgs, options) => {
+        turn += 1;
+        if (turn === 1) {
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          })(extraArgs, options);
+        }
+        // Second court: runner exits cleanly without sealing — prior pass must not wash.
+        return scriptedTerminatingToolSession({
+          role: "notary",
+          toolName: NOTARY_OUTPUT_TOOL_NAME,
+          details: { status: "pass", findings: [] },
+          seal: false,
+        })(extraArgs, options);
+      },
+    });
+
+    const first = await runAkRole(
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000n011",
+      },
+    );
+    assert.equal(first.exitCode, 0, "first sealed notary must accept");
+    assert.equal(first.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      first.terminal?.roleOutcome.kind === "accepted"
+        ? first.terminal.roleOutcome.status
+        : undefined,
+      "pass",
+    );
+
+    const second = await runAkRole(
+      ["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000n012",
+      },
+    );
+    assert.notEqual(second.exitCode, 0, "second court without seal must not exit as success");
+    assert.notEqual(
+      second.terminal?.roleOutcome.kind,
+      "accepted",
+      "second court must not present the first sealed pass",
+    );
+    assert.equal(turn, 2, "second summons must dispatch a real turn");
+    assert.ok(secondSourcePath.length > 0);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

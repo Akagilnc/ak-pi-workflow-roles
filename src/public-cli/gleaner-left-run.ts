@@ -124,8 +124,11 @@ export async function runPublicGleanerLeft(
 
 function gleanerLeftAdapters() {
   return {
-    trySettle: (admitted: AdmittedGleanerLeftInvocation, authority: DurablePrincipalAuthority) =>
-      trySettleGleanerLeftTerminalResult(admitted, authority),
+    trySettle: (
+      admitted: AdmittedGleanerLeftInvocation,
+      authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
+    ) => trySettleGleanerLeftTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
   };
 }

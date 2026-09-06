@@ -563,13 +563,18 @@ export async function executeAuditorChild(
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-    // Institutional child under parent: mint fresh each summons. Parent directory is
-    // placement only — not same-ticket same-seat identity (ADR 0079 / #637). Public
-    // officer seats resume via tryResumeSameTicketSeatRun, not this nest.
+    // Same-ticket same-seat resume via existing subject-keyed record path (ADR 0079 / #637).
+    // Ticket from the parent run's admitted/invocation page; seat from gateSeat/auditor.
+    // No subject → fresh under parent placement. Different seats hash apart; no new nest machine.
     const { createRecordSession } = await import("./archivist-record-entry.ts");
+    const { readRunTicketNumber } = await import("./run-ticket-number.ts");
+    const ticketNumber = await readRunTicketNumber(runDirectory);
+    const memorySubject =
+      ticketNumber === undefined ? undefined : `${ticketNumber}:${seat}`;
     const auditorSessionManager: SessionManager = createRecordSession({
       cwd,
       kind: "auditor-roles",
+      ...(memorySubject === undefined ? {} : { subject: memorySubject }),
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 

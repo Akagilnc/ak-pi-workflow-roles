@@ -184,7 +184,7 @@ export async function runPublicNotary(
 
 function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleNotaryTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) => trySettleNotaryTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
   };
