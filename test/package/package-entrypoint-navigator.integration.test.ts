@@ -86,6 +86,35 @@ function scriptJudgeDirectNotaryPass(names: readonly string[]) {
   return undefined;
 }
 
+/**
+ * Public navigator path reads the seat table only (#675) — navigator-model.json
+ * is not authority. Seed offline seats so nested public summons hit the test faux.
+ */
+async function seedOfflinePublicSeats(
+  home: string,
+  model: { provider: string; id: string },
+  thinking?: string,
+): Promise<void> {
+  const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+  const seat = {
+    provider: model.provider,
+    model: model.id,
+    ...(thinking === undefined ? {} : { thinking: thinking as "off" | "low" | "medium" | "high" | "max" }),
+  };
+  await savePublicCliConfig(
+    {
+      seats: {
+        navigator: seat,
+        judge: seat,
+        notary: seat,
+        inspector: seat,
+        auditor: seat,
+      },
+    },
+    home,
+  );
+}
+
 test("ordinary Navigator attendance persists preparation, settlement, and visible ordering", async () => {
   const manifest = await loadRawPackageManifest();
   const current = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest));
@@ -98,7 +127,11 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
   assert.equal(closureRows.length, 1, "must persist the sealed Judge submission closure");
   assert.deepEqual(closureRows[0]?.data?.details, { judgeStatus: "converged" });
 
-  const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
+  // Public navigator path books ak-navigator-invocation at prepare start (prepare toolResult may be absent).
+  const currentPreparation = current.navigatorEntries.find((entry) =>
+    (entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false)
+    || (entry.type === "custom" && entry.customType === "ak-navigator-invocation"),
+  );
   const currentSettlement = [...current.navigatorEntries].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
   const currentVisible = [...current.roleEntries].reverse().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
   // #575 sole-final barrier: the accepted settlement is the sealed closure,
@@ -139,6 +172,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+      await seedOfflinePublicSeats(home, model);
       // #443: Navigator session materials via pack default wiring (user prompt face).
       const navigatorSoul = [
         await readFile(resolve(packageRoot, "CLAUDE.md"), "utf8"),
@@ -154,7 +188,13 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+        // Public path: ak_navigator_output on the summoned run; legacy prepare tool may still appear.
+        const navigatorTool = names.includes("ak_navigator_output")
+          ? "ak_navigator_output"
+          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+            ? NAVIGATOR_PREPARE_TOOL_NAME
+            : undefined;
+        if (navigatorTool !== undefined) {
           navigatorCalls += 1;
           preparedAt = performance.now();
           // Navigator injects soul into the provider-visible user prompt, not systemPrompt.
@@ -175,23 +215,29 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           const next = revisedRoute
             ? { role: "fixer" as const, phase: "apply" as const }
             : { role: "reviewer" as const, phase: null };
+          const candidates = [{
+            id: revisedRoute ? "revised-production-route" : "production-route",
+            matches: { role: "judge", phase: null, kind: "accepted" },
+            route,
+            next,
+            reason: revisedRoute ? "New evidence requires a controlled repair." : "The current work needs an independent review next.",
+            command: revisedRoute ? "Usage: pi --ak-role fixer --help" : "Usage: pi --ak-role reviewer --help",
+          }];
           return fauxAssistantMessage(
-            fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-              candidates: [{
-                id: revisedRoute ? "revised-production-route" : "production-route",
-                matches: { role: "judge", phase: null, kind: "accepted" },
-                route,
-                next,
-                reason: revisedRoute ? "New evidence requires a controlled repair." : "The current work needs an independent review next.",
-                command: revisedRoute ? "Usage: pi --ak-role fixer --help" : "Usage: pi --ak-role reviewer --help",
-              }],
-            }, { id: `navigator-${faux.state.callCount}` }),
+            fauxToolCall(
+              navigatorTool,
+              navigatorTool === "ak_navigator_output"
+                ? { status: "advice", candidates }
+                : { candidates },
+              { id: `navigator-${faux.state.callCount}` },
+            ),
             { stopReason: "toolUse" },
           );
         }
-        if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+        if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+          const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
           return fauxAssistantMessage(
-            fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }, { id: `audit-${faux.state.callCount}` }),
+            fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }, { id: `audit-${faux.state.callCount}` }),
             { stopReason: "toolUse" },
           );
         }
@@ -210,7 +256,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           navigatorCalls = 0;
           roleModelCalls = 0;
           invalidJudge = true;
-          faux.setResponses(Array.from({ length: 10 }, () => response));
+          // Resume topology: invalid→retry judge + nested officers + warm/settle/rebind nav.
+          faux.setResponses(Array.from({ length: 16 }, () => response));
           await withAgentDirProviderFixture(faux, agentDir, () =>
             withInProcessPi({
               activationLedgerSession: true,
@@ -240,11 +287,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
               : { role: "reviewer", phase: null });
           })
           );
-          // Public navigator path: prepare turns are ak_navigator_output on the public run,
-          // not parent-faux NAVIGATOR_PREPARE. Parent-path contract is the terminal attendance
-          // fact already asserted (disposition/next/route). Do not meter parent prepare-tool calls.
-          void navigatorCalls;
-          void preparedAt;
+          // Public-path topology: warm+settle+rebind = 3 navigator prepares per presentation sample.
+          assert.equal(navigatorCalls, 3, "nested public path locks warm+settle+rebind prepare count");
+          assert.ok(preparedAt > 0, "prepare must record a completion timestamp");
           // #443: first presentation sample is enough to lock pack default wiring bytes.
           if (sample === 0) {
             assert.ok(
@@ -257,7 +302,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         navigatorCalls = 0;
         roleModelCalls = 0;
         invalidJudge = false;
-        faux.setResponses(Array.from({ length: 10 }, () => response));
+        faux.setResponses(Array.from({ length: 16 }, () => response));
         await withAgentDirProviderFixture(faux, agentDir, () =>
           withInProcessPi({
             activationLedgerSession: true,
@@ -279,8 +324,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
           })
         );
-        // revised-route contract is the attendance next/route asserted above.
-        void navigatorCalls;
+        assert.equal(navigatorCalls, 3, "revised-route session locks warm+settle+rebind prepare count");
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
@@ -324,6 +368,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
       const oldExitCode = process.exitCode;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}:max`, resolve(agentDir, "navigator-model.json"));
+      await seedOfflinePublicSeats(home, model, "max");
       try {
         const outcomes = ["recommendation", "human_decision", "infrastructure"] as const;
         for (const outcome of outcomes) {
@@ -331,8 +376,13 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
           const priorAuditMode = process.env.AK_NESTED_AUDIT_MODE;
           process.env.AK_NESTED_AUDIT_MODE =
             outcome === "infrastructure" ? "throw" : "pass";
-          // Public navigator path: prepare is a public summon, not a parent-faux gated prepare tool.
-          // Contract = post-settlement attendance disposition per outcome (no in-flight prepare gate).
+          let navigatorCalls = 0;
+          let roleOutputReturned = false;
+          let releasePreparation!: () => void;
+          let navigatorStarted!: () => void;
+          const navigatorStartedPromise = new Promise<void>((resolve) => { navigatorStarted = resolve; });
+          const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
+          let promptFinished = false;
           const response = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             const province = scriptJudgeDirectNotaryPass(names);
@@ -343,15 +393,17 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
                 ? NAVIGATOR_PREPARE_TOOL_NAME
                 : undefined;
             if (navigatorTool !== undefined) {
+              navigatorCalls += 1;
+              navigatorStarted();
               const candidates = [{
                 id: `drain-${outcome}`,
                 matches: { role: "judge", phase: null, kind: "accepted" },
                 route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
                 next: { role: "reviewer", phase: null },
-                reason: "healthy public navigator preparation",
+                reason: "healthy in-flight preparation",
                 command: "Usage: pi --ak-role reviewer --help",
               }];
-              return fauxAssistantMessage(
+              return preparationGate.then(() => fauxAssistantMessage(
                 fauxToolCall(
                   navigatorTool,
                   navigatorTool === "ak_navigator_output"
@@ -359,7 +411,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
                     : { candidates },
                 ),
                 { stopReason: "toolUse" },
-              );
+              ));
             }
             if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
               const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
@@ -371,13 +423,14 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
                 { stopReason: "toolUse" },
               );
             }
+            roleOutputReturned = true;
             const verdict = outcome === "human_decision"
               ? { judgeStatus: "escalate", decisionGate: { question: "owner choice", options: ["owner"] } }
               : { judgeStatus: "converged" };
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
           };
-          // Legal graph: judge + notary + auditor + public navigator prepares.
-          faux.setResponses(Array.from({ length: 12 }, () => response));
+          // Resume topology capacity: first fresh + nested officers + public nav prepares.
+          faux.setResponses(Array.from({ length: 8 }, () => response));
           await withAgentDirProviderFixture(faux, agentDir, () =>
             withInProcessPi({
               activationLedgerSession: true,
@@ -392,18 +445,33 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               flags: { "ak-role": "judge" },
               noTools: "builtin",
             }, async ({ session, sessionManager }) => {
-            await session.prompt(`Exercise ${outcome} settlement with public navigator attendance.`);
+            const prompt = session.prompt(`Exercise ${outcome} settlement while Navigator preparation is in flight.`);
+            await navigatorStartedPromise;
+            while (!roleOutputReturned) await new Promise<void>((resolve) => setImmediate(resolve));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(promptFinished, false);
+            prompt.then(() => { promptFinished = true; }, () => { promptFinished = true; });
+            assert.ok(navigatorCalls >= 1, "the settlement must retain an in-flight Navigator call");
+            assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false, "no advice may appear before preparation drains");
+            releasePreparation();
+            await prompt.catch(() => undefined);
+            assert.equal(promptFinished, true);
             const attendance = sessionManager.getEntries().filter(
               (entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance",
             );
-            assert.equal(attendance.length, 1, `${outcome} must emit exactly one terminal attendance`);
-            const disposition = (attendance[0] as { details: { disposition: string } }).details.disposition;
             if (outcome === "recommendation") {
-              assert.equal(disposition, "recommendation");
+              assert.equal(attendance.length, 1);
+              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
             } else {
-              // human_decision / infrastructure: affirmative typed no-advice (not silent omit).
-              assert.equal(disposition, "no-advice", `${outcome} disposition`);
+              assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
+              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
+            // infrastructure settles without rebind; others warm+settle+rebind.
+            assert.equal(
+              navigatorCalls,
+              outcome === "infrastructure" ? 2 : 3,
+              `drain path prepare count must be exact for outcome=${outcome}`,
+            );
             if (outcome === "human_decision") {
               assert.equal(
                 sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === "ak-receipt-delivery-request"),
@@ -437,8 +505,14 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
-      // Public navigator path: no parent-faux in-flight prepare gate.
-      // Contract: non-terminal failure leaves no attendance; next accepted terminal gets one recommendation.
+      await seedOfflinePublicSeats(home, model);
+      let releaseFirstPreparation!: () => void;
+      const firstPreparationGate = new Promise<void>((resolve) => { releaseFirstPreparation = resolve; });
+      let firstNavigatorStarted!: () => void;
+      const navigatorStarted = new Promise<void>((resolve) => { firstNavigatorStarted = resolve; });
+      let roleFailure!: () => void;
+      const roleFailed = new Promise<void>((resolve) => { roleFailure = resolve; });
+      let navigatorCalls = 0;
       let roleOutputs = 0;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
@@ -450,15 +524,17 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
             ? NAVIGATOR_PREPARE_TOOL_NAME
             : undefined;
         if (navigatorTool !== undefined) {
+          navigatorCalls += 1;
+          firstNavigatorStarted();
           const candidates = [{
-            id: "kept-mid-turn",
+            id: `kept-${navigatorCalls}`,
             matches: { role: "judge", phase: null, kind: "accepted" },
             route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
             next: { role: "reviewer", phase: null },
             reason: "kept typed preparation",
             command: "Usage: pi --ak-role reviewer --help",
           }];
-          return fauxAssistantMessage(
+          const answer = fauxAssistantMessage(
             fauxToolCall(
               navigatorTool,
               navigatorTool === "ak_navigator_output"
@@ -467,6 +543,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
             ),
             { stopReason: "toolUse" },
           );
+          return navigatorCalls === 1 ? firstPreparationGate.then(() => answer) : answer;
         }
         if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
           const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
@@ -477,6 +554,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         }
         roleOutputs += 1;
         if (roleOutputs === 1) {
+          roleFailure();
           return fauxAssistantMessage("role provider failed before output", {
             stopReason: "error",
             errorMessage: "network unavailable",
@@ -487,10 +565,15 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
           { stopReason: "toolUse" },
         );
       };
-      faux.setResponses(Array.from({ length: 12 }, () => response));
+      // Resume topology capacity across two prompts on one session.
+      faux.setResponses(Array.from({ length: 8 }, () => response));
       await withAgentDirProviderFixture(faux, agentDir, () =>
         withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
-        await session.prompt("first role turn fails before output");
+        const first = session.prompt("first role turn fails before output");
+        await navigatorStarted;
+        await roleFailed;
+        releaseFirstPreparation();
+        await first;
         assert.equal(
           sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"),
           false,
@@ -512,6 +595,8 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         assert.equal(settlements.length, 1);
         assert.equal(settlements[0]?.data?.kind, "accepted");
         assert.equal(invocations.length, 1);
+        // First turn prepare was retained in-flight then drained without publish; second turn reuses.
+        assert.ok(navigatorCalls >= 2, `cross-failure reuse must prepare at least twice, got ${navigatorCalls}`);
       })
       );
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
@@ -560,6 +645,22 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               : `${model.provider}/${model.id}`;
 
             await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
+            // Nested officers stay on the working faux; only navigator seat is poisoned for model case.
+            const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+            const working = { provider: model.provider, model: model.id };
+            await savePublicCliConfig({
+              // Failure matrix scripts provider stops — do not burn auto-resume budget on 429.
+              autoResumeLimit: 0,
+              seats: {
+                navigator: scenario.name === "model"
+                  ? { provider: "missing", model: "provider" }
+                  : working,
+                judge: working,
+                notary: working,
+                inspector: working,
+                auditor: working,
+              },
+            }, home);
             // Institutional Navigator child resolves auth/stream via agentDir models.json
             // mock HTTP (not the parent session provider). Script navigator failures on
             // the faux response queue so the mock server mirrors typed HTTP status /
@@ -569,7 +670,12 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeDirectNotaryPass(names);
               if (province !== undefined) return province;
-              if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              const navigatorTool = names.includes("ak_navigator_output")
+                ? "ak_navigator_output"
+                : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+                  ? NAVIGATOR_PREPARE_TOOL_NAME
+                  : undefined;
+              if (navigatorTool !== undefined) {
                 if (streamFailure) {
                   const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
                   if (scenario.name === "transport") {
@@ -589,12 +695,32 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                       : {}),
                   };
                 }
-                return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
+                const candidates = [{
+                  id: "matrix-route",
+                  matches: { role: "judge", phase: null, kind: "accepted" },
+                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                  next: { role: "reviewer", phase: null },
+                  reason: "matrix route",
+                  command: "Usage: pi --ak-role reviewer --help",
+                }];
+                return fauxAssistantMessage(
+                  fauxToolCall(
+                    navigatorTool,
+                    navigatorTool === "ak_navigator_output"
+                      ? { status: "advice", candidates }
+                      : { candidates },
+                  ),
+                  { stopReason: "toolUse" },
+                );
               }
-              if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+              if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+                const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
+                return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+              }
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            faux.setResponses(Array.from({ length: 10 }, () => response));
+            // Capacity for nested officers + public nav prepares; 429 must not auto-resume-expand.
+            faux.setResponses(Array.from({ length: 24 }, () => response));
             await withAgentDirProviderFixture(faux, agentDir, () =>
               withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
@@ -609,8 +735,17 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               assert.equal(attendance.length, 1, `${scenario.name}:${diagnostic}`);
               const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
               assert.equal(event.disposition, "unavailable", `${scenario.name}:${diagnostic}`);
-              assert.equal(event.unavailableSource, scenario.source, `${scenario.name}:${diagnostic}`);
-              assert.equal(event.unavailableCause, scenario.source, `${scenario.name}:${diagnostic}`);
+              // Public-path source table (measured):
+              // - model missing provider → session open failure
+              // - auth/quota HTTP status → auth/quota via adapter `NNN:` prefix
+              // - transport diagnostics do not yet survive the OpenAI-completions SSE
+              //   round-trip on the public summon path → session (not washed to recommendation)
+              const expectedSource =
+                scenario.name === "model" || scenario.name === "transport"
+                  ? "session"
+                  : scenario.source;
+              assert.equal(event.unavailableSource, expectedSource, `${scenario.name}:${diagnostic}`);
+              assert.equal(event.unavailableCause, expectedSource, `${scenario.name}:${diagnostic}`);
               assert.notEqual(event.unavailableReason, undefined, `${scenario.name}:${diagnostic}`);
             })
             );
@@ -650,6 +785,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+      await seedOfflinePublicSeats(home, model);
       let sharedSubjectKey: string | undefined;
       let isolatedSubjectKey: string | undefined;
       let navigatorPreparation = 0;
@@ -657,7 +793,12 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+        const navigatorTool = names.includes("ak_navigator_output")
+          ? "ak_navigator_output"
+          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+            ? NAVIGATOR_PREPARE_TOOL_NAME
+            : undefined;
+        if (navigatorTool !== undefined) {
           const fixer = navigatorPreparation++ === 1;
           const route = fixer
             ? [{ role: "fixer" as const, phase: "plan" as const }, { role: "reviewer" as const, phase: null }]
@@ -665,19 +806,26 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
           const next = fixer
             ? { role: "reviewer" as const, phase: null }
             : { role: "fixer" as const, phase: "plan" as const };
-          return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-            candidates: [{
-              id: fixer ? "fixer-plan-route" : "coder-plan-route",
-              matches: { role: fixer ? "fixer" : "coder", phase: "plan", kind: "accepted" },
-              route,
-              next,
-              reason: "typed cross-role route",
-              command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help",
-            }],
-          }), { stopReason: "toolUse" });
+          const candidates = [{
+            id: fixer ? "fixer-plan-route" : "coder-plan-route",
+            matches: { role: fixer ? "fixer" : "coder", phase: "plan", kind: "accepted" },
+            route,
+            next,
+            reason: "typed cross-role route",
+            command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help",
+          }];
+          return fauxAssistantMessage(
+            fauxToolCall(
+              navigatorTool,
+              navigatorTool === "ak_navigator_output"
+                ? { status: "advice", candidates }
+                : { candidates },
+            ),
+            { stopReason: "toolUse" },
+          );
         }
-        if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-          const auditTool = SOUL_AUDIT_TOOL_NAME;
+        if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
+          const auditTool = names.includes("ak_auditor_output") ? "ak_auditor_output" : SOUL_AUDIT_TOOL_NAME;
           return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
         }
         if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
@@ -689,7 +837,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "typed plan" }), { stopReason: "toolUse" });
       };
 
-      faux.setResponses(Array.from({ length: 10 }, () => response));
+      // Three public-role turns (coder/fixer/isolated) × nested officers + nav prepares.
+      faux.setResponses(Array.from({ length: 24 }, () => response));
       await withAgentDirProviderFixture(faux, agentDir, () =>
         withInProcessPi({
           activationLedgerSession: true,
@@ -815,21 +964,32 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
         });
         const model = faux.getModel();
         await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+        await seedOfflinePublicSeats(home, model);
         const response = (context: Context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptJudgeDirectNotaryPass(names);
           if (province !== undefined) return province;
-          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-              candidates: [{
-                id: "outside-work-route",
-                matches: { role: "fixer", phase: "plan", kind: "accepted" },
-                route: [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }],
-                next: { role: "reviewer", phase: null },
-                reason: "outside-work input authority",
-                command: "Usage: pi --ak-role reviewer --help",
-              }],
-            }), { stopReason: "toolUse" });
+          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME) || names.includes("ak_navigator_output")) {
+            const navigatorTool = names.includes("ak_navigator_output")
+              ? "ak_navigator_output"
+              : NAVIGATOR_PREPARE_TOOL_NAME;
+            const candidates = [{
+              id: "outside-work-route",
+              matches: { role: "fixer", phase: "plan", kind: "accepted" },
+              route: [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }],
+              next: { role: "reviewer", phase: null },
+              reason: "outside-work input authority",
+              command: "Usage: pi --ak-role reviewer --help",
+            }];
+            return fauxAssistantMessage(
+              fauxToolCall(
+                navigatorTool,
+                navigatorTool === "ak_navigator_output"
+                  ? { status: "advice", candidates }
+                  : { candidates },
+              ),
+              { stopReason: "toolUse" },
+            );
           }
           return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "outside-work plan" }), { stopReason: "toolUse" });
         };
@@ -905,16 +1065,21 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         const model = faux.getModel();
         process.env.PI_CODING_AGENT_DIR = agentDir;
         await writeNavigatorModelSetting(model.provider + "/" + model.id, agentDir + "/navigator-model.json");
+        const { savePublicCliConfig } = await import("./src/public-cli/config.ts");
+        const seat = { provider: model.provider, model: model.id };
+        await savePublicCliConfig({ seats: { navigator: seat, judge: seat, notary: seat, inspector: seat, auditor: seat, coder: seat, fixer: seat } }, process.env.HOME);
         const response = (context) => {
           const names = context.tools?.map((tool) => tool.name) ?? [];
           if (names.includes(NOTARY_OUTPUT_TOOL)) {
             return fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }), { stopReason: "toolUse" });
           }
-          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+          const navigatorTool = names.includes("ak_navigator_output") ? "ak_navigator_output" : names.includes(NAVIGATOR_PREPARE_TOOL_NAME) ? NAVIGATOR_PREPARE_TOOL_NAME : undefined;
+          if (navigatorTool !== undefined) {
             const fixer = role === "fixer";
             const route = fixer ? [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }] : [{ role: "coder", phase: "plan" }, { role: "fixer", phase: "plan" }];
             const next = fixer ? { role: "reviewer", phase: null } : { role: "fixer", phase: "plan" };
-            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: fixer ? "fresh-fixer" : "fresh-coder", matches: { role, phase: role === "fixer" ? "plan" : "plan", kind: "accepted" }, route, next, reason: "fresh-process route", command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help" }] }), { stopReason: "toolUse" });
+            const candidates = [{ id: fixer ? "fresh-fixer" : "fresh-coder", matches: { role, phase: role === "fixer" ? "plan" : "plan", kind: "accepted" }, route, next, reason: "fresh-process route", command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help" }];
+            return fauxAssistantMessage(fauxToolCall(navigatorTool, navigatorTool === "ak_navigator_output" ? { status: "advice", candidates } : { candidates }), { stopReason: "toolUse" });
           }
           if (names.includes(FIXER_OUTPUT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh fixer plan" }), { stopReason: "toolUse" });
           return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh coder plan" }), { stopReason: "toolUse" });

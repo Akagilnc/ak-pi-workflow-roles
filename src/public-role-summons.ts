@@ -246,16 +246,22 @@ export async function summonPublicRole(
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
   const seat = resolveEffectiveSeat(config, options.role, credentials);
-  const env = await createSummonEnv({
-    role: options.role,
-    home,
-    agentDir,
-    cwd: options.cwd,
-    packageRoot,
-    credentials,
-    seat,
-    ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
-  });
+  const env = {
+    ...(await createSummonEnv({
+      role: options.role,
+      home,
+      agentDir,
+      cwd: options.cwd,
+      packageRoot,
+      credentials,
+      seat,
+      ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
+    })),
+    // Host config passthrough only — same face as public CLI (#422 / #675).
+    ...(config.autoResumeLimit === undefined
+      ? {}
+      : { autoResumeLimit: config.autoResumeLimit }),
+  };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
 
