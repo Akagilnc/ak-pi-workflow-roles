@@ -120,9 +120,8 @@ export function createNativeNavigatorSessionFactory(
       }
     };
 
-    // Shared in-process open seam (same session host public roles use for Pi).
-    // Navigator prepare is attendance tooling on the parent run — not a second
-    // institutional role path; seat model comes from resolveNavigatorSeatSelection.
+    // Same in-process open seam public roles use — no tools allowlist / noTools fork (#675).
+    // Prepare tool is registered as a custom tool on the unrestricted surface.
     const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
     let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
     try {
@@ -130,8 +129,6 @@ export function createNativeNavigatorSessionFactory(
         cwd: context.cwd,
         selection,
         systemPrompt: "",
-        noTools: "all",
-        toolsAllowlist: [NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
         sessionManager,
         label: "Navigator",

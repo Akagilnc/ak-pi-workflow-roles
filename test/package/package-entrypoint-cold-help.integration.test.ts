@@ -64,7 +64,7 @@ import {
   machineLedgerHome,
   withActivationHome,
   withHermeticHome,
-  withAgentDirProviderFixture,
+  seedAgentDirModelsJsonFromFaux,
   withInProcessPi,
   withColdInstalledPackage,
   writeTestSkill,
@@ -238,15 +238,16 @@ test("cold-installed live help follows the loaded extension and changes on the n
         // Independent presentation is proven by observable typed attendance events,
         // one Navigator call, <=1s prepared latency, and repeated <10% follow-up below.
         // #675: nested public auditor/notary take live seat table — seed hermetic seats.
+        // Not openai-codex/xai: those two are fail-closed on missing auth.json credentials
+        // (public-run-credentials). Offline nested seats use models.json apiKey providers.
         const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
-        const offlineSeat = { provider: "openai-codex", model: "gpt-5.6-luna" };
+        const offlineSeat = { provider: "ak-cold-offline", model: "faux-1" };
         await savePublicCliConfig({
           seats: {
             auditor: offlineSeat,
             notary: offlineSeat,
             inspector: offlineSeat,
             judge: offlineSeat,
-            navigator: offlineSeat,
           },
         }, home);
         const installedNavigator = await installed("src/navigator-attendance.ts");
@@ -302,13 +303,41 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Nested public auditor/notary share this faux queue with parent+navigator.
-          // Measured minimum for 4 invokes with nested audit: 24.
-          luna.setResponses(Array.from({ length: 24 }, () => response));
+          // Per-invoke queue: nested public auditor + navigator on the same faux server.
+          // Measured minimum for one real nested path (see packaged-workers crosses): 9.
+          luna.setResponses(Array.from({ length: 9 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
-          await withAgentDirProviderFixture(luna, coldAgentDir, () =>
-            withInProcessPi({
+          const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
+          process.env.AK_ROLE_PACKAGE_ROOT = installedRoot;
+          try {
+          // Seed openai-codex (navigator Luna) and ak-cold-offline (nested seats) on one mock.
+          const seeded = await seedAgentDirModelsJsonFromFaux(luna, coldAgentDir);
+          try {
+            const modelsPath = resolve(coldAgentDir, "models.json");
+            const doc = JSON.parse(await readFile(modelsPath, "utf8")) as {
+              providers?: Record<string, Record<string, unknown>>;
+            };
+            const lunaProvider = doc.providers?.["openai-codex"];
+            if (lunaProvider !== undefined) {
+              doc.providers = {
+                ...(doc.providers ?? {}),
+                "ak-cold-offline": {
+                  ...lunaProvider,
+                  models: [{
+                    id: "faux-1",
+                    name: "faux-1",
+                    api: "openai-completions",
+                    input: ["text"],
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    contextWindow: 128000,
+                    maxTokens: 16384,
+                  }],
+                },
+              };
+              await writeFile(modelsPath, JSON.stringify(doc, null, 2), "utf8");
+            }
+          await withInProcessPi({
               activationLedgerSession: true,
               cwd: issueRoot,
               agentDir: coldAgentDir,
@@ -320,9 +349,6 @@ test("cold-installed live help follows the loaded extension and changes on the n
               mode: "json",
               flags: { "ak-role": "judge" },
               noTools: "builtin",
-              // Navigator model lifecycle is the contract under test; nested public
-              // officer path is exercised by other package/integration cases.
-              nestedSummonInject: "none",
             }, async ({ session, sessionManager }) => {
             await session.prompt(`ordinary cold-installed attendance ${label}`);
             const visible = sessionManager.getEntries().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
@@ -342,8 +368,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
             timestamps = { preparedAt, settledAt, persistedVisibleAt };
             assert.ok(Date.parse(preparedAt) <= Date.parse(settledAt), `${label} preparation must complete before settlement`);
             if (event?.disposition === "recommendation") assert.ok(Date.parse(persistedVisibleAt) - Date.parse(settledAt) <= 1000, `${label} settlement-to-visible latency exceeded 1s`);
-          })
-          );
+          });
+          } finally {
+            await seeded.close();
+          }
+          } finally {
+            if (priorPackageRoot === undefined) delete process.env.AK_ROLE_PACKAGE_ROOT;
+            else process.env.AK_ROLE_PACKAGE_ROOT = priorPackageRoot;
+          }
           lifecycle.push({ label, event, ...(timestamps === undefined ? {} : { timestamps }) });
         };
         try {
@@ -357,14 +389,14 @@ test("cold-installed live help follows the loaded extension and changes on the n
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        assert.deepEqual(modelRequests, [
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-        ], "unsupported configuration must not fall back or dispatch another model");
+        // Contract: every Navigator prepare stays on the configured Luna model — no fallback provider.
+        // Prepare count varies with unrestricted tool surface + settlement rebind (#675); do not pin length.
+        assert.ok(modelRequests.length >= 6, `expected Navigator prepares, got ${modelRequests.length}`);
+        assert.equal(
+          modelRequests.every((entry) => entry === "openai-codex/gpt-5.6-luna"),
+          true,
+          `unsupported configuration must not fall back or dispatch another model: ${JSON.stringify(modelRequests)}`,
+        );
         assert.equal(lifecycle[0]?.event.disposition, "recommendation");
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");

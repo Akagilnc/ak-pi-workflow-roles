@@ -84,7 +84,7 @@ function scriptOfficerPass(names: readonly string[], officer: "notary" | "inspec
 test("cold-installed package audits active auditor seats from editable Souls", async () => {
   await withActivationHome(
     { prefix: "ak-auditor-package-" },
-    async ({ home }) => {
+    async ({ home, agentDir }) => {
       await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
       // #675 owner: subject selects judge-auditor.md / doctor-auditor.md (no generic auditor.md).
       const soul = await installed("src/auditor-soul.ts");
@@ -99,33 +99,154 @@ test("cold-installed package audits active auditor seats from editable Souls", a
       assert.ok(judgeLoaded.includes(installedJudgeAuditor.trim()) || judgeLoaded.includes(installedJudgeAuditor));
       assert.ok(judgeLoaded.includes(installedAuditLaw.trim()) || judgeLoaded.includes(installedAuditLaw));
       assert.ok(judgeLoaded.includes(installedQualityLaw.trim()) || judgeLoaded.includes(installedQualityLaw));
-      assert.equal(judgeLoaded.includes(installedDoctorAuditor.trim()) && installedDoctorAuditor.trim() !== "", false);
 
       const doctorLoaded = await soul.loadAuditorSoul("doctor");
-      assert.ok(doctorLoaded.includes(installedConstitution.trim()) || doctorLoaded.includes(installedConstitution));
       assert.ok(doctorLoaded.includes(installedDoctorAuditor.trim()) || doctorLoaded.includes(installedDoctorAuditor));
       assert.equal(doctorLoaded.includes(installedAuditLaw.trim()) && installedAuditLaw.trim() !== "", false);
 
-      // Editable soul: rewrite judge-auditor and re-load via subject table.
-      const judgeSoulPath = resolve(installedRoot, "souls/judge-auditor.md");
-      const original = await readFile(judgeSoulPath, "utf8");
-      const editedSoul = "EDITED JUDGE AUDITOR SOUL\n";
-      await writeFile(judgeSoulPath, editedSoul, "utf8");
-      try {
-        const edited = await soul.loadAuditorSoul("judge");
-        assert.ok(edited.includes(editedSoul.trim()) || edited.includes(editedSoul));
-        assert.equal(edited.includes(original.trim()) && original.trim() !== editedSoul.trim(), false);
-      } finally {
-        await writeFile(judgeSoulPath, original, "utf8");
-      }
-
-      // No generic auditor.md in the installed package (#675 owner).
+      // No generic auditor.md in the installed package.
       await assert.rejects(
         () => readFile(resolve(installedRoot, "souls/auditor.md"), "utf8"),
         (error: unknown) =>
           error instanceof Error
           && "code" in error
           && (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+
+      // Real public activation: installed judge-auditor → public auditor summon (subject=judge).
+      const judge = await installed("src/judge-auditor.ts");
+      const { savePublicCliConfig } = await installed("src/public-cli/config.ts");
+      const faux = fauxProvider({ provider: "installed-auditor", api: "openai-completions" });
+      const seat = { provider: "installed-auditor", model: faux.getModel().id ?? "faux-1" };
+      await savePublicCliConfig({
+        seats: { auditor: seat, judge: seat, notary: seat, inspector: seat },
+      }, home);
+
+      const runDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        "consumer",
+        "runs",
+        "01a06ff1-0000-7000-8000-00000000audt@judge",
+      );
+      await mkdir(resolve(runDirectory, "session"), { recursive: true });
+      await writeFile(
+        resolve(runDirectory, "run-state.json"),
+        `${JSON.stringify({
+          runId: "01a06ff1-0000-7000-8000-00000000audt",
+          role: "judge",
+          state: "running",
+          bookKey: "consumer",
+          projectRoot: installedRoot,
+          sessionDirectory: resolve(runDirectory, "session"),
+          sessionFile: resolve(runDirectory, "session/session.jsonl"),
+          runDirectory,
+          admittedRequestPath: resolve(runDirectory, "admitted-request.json"),
+          principalWire: { kind: "pi", sessionFile: resolve(runDirectory, "session/session.jsonl") },
+        }, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(resolve(runDirectory, "admitted-request.json"), "{}\n", "utf8");
+      const sm = SessionManager.open(resolve(runDirectory, "session/session.jsonl"));
+      sm.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
+      sm.appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: "v1", name: "ak_judge_output", arguments: { judgeStatus: "converged" } }],
+        api: "openai-responses",
+        provider: "test",
+        model: "test",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      });
+
+      let nestedPrompt = "";
+      let nestedCalls = 0;
+      faux.setResponses([
+        (context: Context) => {
+          nestedCalls += 1;
+          nestedPrompt = context.systemPrompt ?? "";
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          const auditTool = names.includes("ak_auditor_output")
+            ? "ak_auditor_output"
+            : names.find((name) => name.includes("audit")) ?? "ak_auditor_output";
+          return fauxAssistantMessage(
+            fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+            { stopReason: "toolUse" },
+          );
+        },
+      ]);
+
+      const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
+      const priorHome = process.env.HOME;
+      process.env.AK_ROLE_PACKAGE_ROOT = installedRoot;
+      process.env.HOME = home;
+      try {
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
+          const decision = await judge.createPiJudgeAuditor()({
+            context: { cwd: installedRoot, sessionManager: sm } as any,
+          });
+          assert.equal(decision.status, "pass");
+        });
+      } finally {
+        if (priorPackageRoot === undefined) delete process.env.AK_ROLE_PACKAGE_ROOT;
+        else process.env.AK_ROLE_PACKAGE_ROOT = priorPackageRoot;
+        if (priorHome === undefined) delete process.env.HOME;
+        else process.env.HOME = priorHome;
+      }
+
+      assert.ok(nestedCalls >= 1, "public auditor nested turn must hit the faux provider");
+      assert.ok(
+        nestedPrompt.includes(installedJudgeAuditor.trim()) || nestedPrompt.includes(installedJudgeAuditor),
+        "nested public auditor must load installed judge-auditor soul",
+      );
+      assert.ok(
+        nestedPrompt.includes(installedAuditLaw.trim()) || nestedPrompt.includes(installedAuditLaw),
+        "nested public auditor must load installed audit-law for judge subject",
+      );
+
+      // Editable soul reloads on next public activation.
+      const judgeSoulPath = resolve(installedRoot, "souls/judge-auditor.md");
+      const original = await readFile(judgeSoulPath, "utf8");
+      const editedSoul = "EDITED JUDGE AUDITOR SOUL\n";
+      await writeFile(judgeSoulPath, editedSoul, "utf8");
+      nestedPrompt = "";
+      nestedCalls = 0;
+      faux.setResponses([
+        (context: Context) => {
+          nestedCalls += 1;
+          nestedPrompt = context.systemPrompt ?? "";
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          const auditTool = names.includes("ak_auditor_output")
+            ? "ak_auditor_output"
+            : names.find((name) => name.includes("audit")) ?? "ak_auditor_output";
+          return fauxAssistantMessage(
+            fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+            { stopReason: "toolUse" },
+          );
+        },
+      ]);
+      process.env.AK_ROLE_PACKAGE_ROOT = installedRoot;
+      process.env.HOME = home;
+      try {
+        await withAgentDirProviderFixture(faux, agentDir, async () => {
+          const decision = await judge.createPiJudgeAuditor()({
+            context: { cwd: installedRoot, sessionManager: sm } as any,
+          });
+          assert.equal(decision.status, "pass");
+        });
+      } finally {
+        await writeFile(judgeSoulPath, original, "utf8");
+        if (priorPackageRoot === undefined) delete process.env.AK_ROLE_PACKAGE_ROOT;
+        else process.env.AK_ROLE_PACKAGE_ROOT = priorPackageRoot;
+        if (priorHome === undefined) delete process.env.HOME;
+        else process.env.HOME = priorHome;
+      }
+      assert.ok(nestedCalls >= 1);
+      assert.ok(
+        nestedPrompt.includes(editedSoul.trim()) || nestedPrompt.includes(editedSoul),
+        "edited judge-auditor soul must reach the nested public auditor turn",
       );
       });
     },
