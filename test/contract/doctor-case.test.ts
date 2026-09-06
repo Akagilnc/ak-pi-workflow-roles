@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -269,11 +269,13 @@ test("case identity is repository-relative with an absolute fallback outside rep
     assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/issues/40/runs");
   });
 
-  await withTempRoot("doctor-identity-outside-", async (outside) => {
-    const outsideRuns = homeRuns(outside, 40);
-    await mkdir(outsideRuns, { recursive: true });
-    assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
-  });
+  // Absolute-fallback arm must sit truly outside any git worktree. worktreeTempPrefix
+  // roots live inside this repo, so stableRunsIdentity would return a relative path.
+  // /tmp create-and-abandon: owner 2026-09-06 forbids deleting outside the worktree.
+  const outside = await mkdtemp(join("/tmp", "doctor-identity-outside-"));
+  const outsideRuns = homeRuns(outside, 40);
+  await mkdir(outsideRuns, { recursive: true });
+  assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
 });
 
 test("case identity discovery propagates unexpected filesystem errors", async () => {

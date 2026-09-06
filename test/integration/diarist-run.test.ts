@@ -630,7 +630,9 @@ for (const failure of SOURCE_READ_FAILURES) {
 test("hermes collector argv: empty toolset boundary (never terminal/process tools)", async () => {
   await withHermeticHome({ prefix: "ak-diarist-toolset-" }, async ({ home }) => {
     const capturePath = join(home, "captured-argv.json");
-    const childScript = join(home, "hermes-child.js");
+    // .cjs: worktree-temp homes sit under the package root (type:module); bare .js
+    // inherits ESM and rejects require(). Same boundary as hermes-fixture.ts.
+    const childScript = join(home, "hermes-child.cjs");
     await writeFile(
       childScript,
       [
