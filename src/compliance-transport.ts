@@ -1,10 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  AK_ROLE_AUDITOR_SUBJECT_ENV,
-  type AuditorSoulRole,
-} from "./auditor-soul.ts";
+import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
@@ -19,7 +15,12 @@ export type ComplianceAuditObservation =
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 export type ComplianceDecision = { status: "pass"; usage?: Usage } | { status: "revise"; violations: readonly unknown[]; usage?: Usage } | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage } | ComplianceNoReceipt;
 
-/** Unreadable compliance candidate — infrastructure failure, not a judgment status (#475). */
+/**
+ * Unreadable compliance candidate observation carrier.
+ * Shape-unreadable must not abort the parent run (CLAUDE.md §0 / ADR 0055).
+ * Callers that still need the observation+candidate pair read these fields;
+ * parent compliance projection maps unreadable to parent-stands pass.
+ */
 export class ComplianceCandidateUnreadableError extends Error {
   readonly observation: ComplianceAuditObservation;
   readonly candidate: unknown;
@@ -47,10 +48,6 @@ const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
 export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | revise | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
 
-export function createComplianceDecisionTool(name: string, description: string) {
-  return { name, description, parameters: complianceDecisionSchema, async execute(_id: string, params: unknown): Promise<AgentToolResult<unknown>> { return { content: [{ type: "text", text: "审计决议已收" }], details: params, terminate: true }; } };
-}
-
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
 export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure" as const;
@@ -72,7 +69,35 @@ export type AuditorParentAttemptBinding = {
 };
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
+
+/** Try to project a lawful compliance decision; undefined when shape is not a known release. */
+export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
+  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
+    return undefined;
+  }
+  const args = arguments_ as Record<string, unknown>;
+  const status = args.status;
+  if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
+  if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
+  if (status === "escalate") {
+    return {
+      status,
+      ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}),
+      ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}),
+      ...(usage === undefined ? {} : { usage }),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Read a compliance candidate. Unreadable shape throws ComplianceCandidateUnreadableError
+ * with observation+candidate retained — callers must not map that throw onto parent abort
+ * (CLAUDE.md §0 / ADR 0055). Prefer tryReadComplianceCandidate at parent projection seams.
+ */
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
+  const projected = tryReadComplianceCandidate(arguments_, usage);
+  if (projected !== undefined) return projected;
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
     throw new ComplianceCandidateUnreadableError(
       { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ as ComplianceArgumentRootType },
@@ -80,10 +105,7 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
       usage,
     );
   }
-  const args = arguments_ as Record<string, unknown>; const status = args.status;
-  if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
-  if (status === "escalate") return { status, ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}), ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}), ...(usage === undefined ? {} : { usage }) };
+  const status = (arguments_ as Record<string, unknown>).status;
   throw new ComplianceCandidateUnreadableError(
     { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" },
     arguments_,
@@ -94,7 +116,7 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 /**
  * Public auditor summon for compliance (#675 / ADR 0062 / owner r11).
  * 审刑院 is the independent audit role; subject (who is audited) selects soul files.
- * Same public path whether nested or direct `ak-role auditor --subject …`.
+ * Same public path whether nested or direct `ak-role auditor --subject … --source-run …`.
  */
 export type AuditorSummon = (
   subject: AuditorSoulRole,
@@ -104,12 +126,10 @@ export type AuditorSummon = (
 export type RunComplianceAuditOptions = {
   /** Who is being audited — selects judge-auditor.md / doctor-auditor.md. */
   readonly subject: AuditorSoulRole;
-  /** @deprecated Fixer-lane hand-delivery only (#242 retires). */
-  serializedInput?: string;
   context: HostContext;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
-  /** Test seam — production uses summonPublicRole({ role: "auditor", argv: ["--subject", subject, …] }). */
+  /** Test seam — production uses summonPublicRole({ role: "auditor", argv: ["--subject", subject, "--source-run", …] }). */
   summonAuditor?: AuditorSummon;
 };
 
@@ -118,14 +138,36 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
   return usageFromPublicSummon(summoned);
 }
 
+function extractFailureCandidate(outcome: {
+  readonly decisiveFacts?: unknown;
+}): unknown | undefined {
+  const facts = outcome.decisiveFacts as Record<string, unknown> | undefined;
+  const secondary =
+    facts !== undefined
+    && typeof facts.secondaryEvidence === "object"
+    && facts.secondaryEvidence !== null
+      ? (facts.secondaryEvidence as Record<string, unknown>)
+      : undefined;
+  if (facts !== undefined && Object.hasOwn(facts, "candidate")) return facts.candidate;
+  if (secondary !== undefined && Object.hasOwn(secondary, "candidate")) return secondary.candidate;
+  return undefined;
+}
+
+/**
+ * Project a public auditor terminal onto the parent compliance decision.
+ * Lawful pass/revise/escalate/no-receipt flow through; shape-unreadable candidate
+ * is retained on the child terminal and parent stands (ADR 0055 / CLAUDE.md §0).
+ * Real provider/engine/disk failures (no retained candidate) stay loud.
+ * Accepted audits always carry real session usage when present (#675 metering).
+ */
 async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) {
     throw new Error(`Auditor public summon produced no terminal (exit ${summoned.exitCode})`);
   }
+  const usage = await usageFromSummonedSession(summoned);
   if (outcome.kind === "no_receipt") {
     const { status: _ignored, kind: _kind, role: _role, decisiveFacts: _facts, ...facts } = outcome;
-    const usage = await usageFromSummonedSession(summoned);
     return {
       status: "no-receipt",
       ...facts,
@@ -133,42 +175,22 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const facts = outcome.decisiveFacts as Record<string, unknown> | undefined;
-    const secondary =
-      facts !== undefined
-      && typeof facts.secondaryEvidence === "object"
-      && facts.secondaryEvidence !== null
-        ? (facts.secondaryEvidence as Record<string, unknown>)
-        : undefined;
-    const candidate =
-      facts !== undefined && Object.hasOwn(facts, "candidate")
-        ? facts.candidate
-        : secondary !== undefined && Object.hasOwn(secondary, "candidate")
-          ? secondary.candidate
-          : undefined;
+    const candidate = extractFailureCandidate(outcome);
     if (candidate !== undefined) {
-      const status =
-        typeof candidate === "object"
-        && candidate !== null
-        && !Array.isArray(candidate)
-        && Object.hasOwn(candidate as object, "status")
-          ? (candidate as { status: unknown }).status
-          : undefined;
-      throw new ComplianceCandidateUnreadableError(
-        {
-          kind: "object-status-unreadable",
-          status: status === undefined ? "missing" : "unknown",
-        },
-        candidate,
-      );
+      // Shape-unreadable candidate stays on the child failure terminal.
+      // Parent work stands — do not throw into failInfrastructure (ADR 0055).
+      return { status: "pass", ...(usage === undefined ? {} : { usage }) };
     }
     throw new Error(outcome.diagnostic);
   }
   if (outcome.kind === "accepted") {
-    return readComplianceCandidate({
+    const projected = tryReadComplianceCandidate({
       status: outcome.status,
       ...outcome.decisiveFacts,
-    });
+    }, usage);
+    if (projected !== undefined) return projected;
+    // Accepted-once but not a lawful release: candidate retained on child; parent stands.
+    return { status: "pass", ...(usage === undefined ? {} : { usage }) };
   }
   throw new Error("Auditor public summon returned unusable terminal kind");
 }
@@ -179,7 +201,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
   const subject = options.subject;
-  const prompt = options.serializedInput ?? AUDITOR_DOSSIER_PROMPT;
   const summon =
     options.summonAuditor
     ?? (async (auditSubject: AuditorSoulRole, sourceRunDirectory: string) => {
@@ -187,29 +208,20 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       const { summonPublicRole } = await import("./public-role-summons.ts");
       const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
       const home = homeFromRunDirectory(sourceRunDirectory);
-      // Publish subject + source-run inputs for public auditor (same for nested and direct).
-      // Scoped to this summon only — never leave a cross-run env residue.
-      const priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-      const priorSubject = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
-      process.env.AK_ROLE_AUDITOR_SOURCE_RUN = sourceRunDirectory;
-      process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = auditSubject;
-      try {
-        return await summonPublicRole({
-          role: "auditor",
-          argv: [
-            "--subject",
-            auditSubject,
-            `卷宗指针：${sourceRunDirectory}\n${prompt}`,
-          ],
-          cwd: options.context.cwd ?? process.cwd(),
-          home,
-        });
-      } finally {
-        if (priorSource === undefined) delete process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-        else process.env.AK_ROLE_AUDITOR_SOURCE_RUN = priorSource;
-        if (priorSubject === undefined) delete process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
-        else process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = priorSubject;
-      }
+      // Same input surface as direct `ak-role auditor --subject … --source-run …`
+      // (no ambient env binding for nested-only source).
+      return await summonPublicRole({
+        role: "auditor",
+        argv: [
+          "--subject",
+          auditSubject,
+          "--source-run",
+          sourceRunDirectory,
+          AUDITOR_DOSSIER_PROMPT,
+        ],
+        cwd: options.context.cwd ?? process.cwd(),
+        home,
+      });
     });
   const summoned = await summon(subject, runDirectory);
   return await projectAuditorTerminal(summoned);

@@ -1,19 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
   cp,
-  lstat,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
-  rename,
+  rm,
   symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,48 +25,6 @@ import {
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-
-/**
- * Owner 2026-09-05: tests/fixtures must not delete directories (no rm/rmSync/rimraf
- * recursive delete). Temp trees live under os.tmpdir() and are left for the OS.
- * When a clean path is required, abandon the old name by rename within tmpdir.
- */
-function staleSibling(path: string): string {
-  return `${path}.stale-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function abandonPath(path: string): Promise<void> {
-  if (!existsSync(path)) return;
-  try {
-    await rename(path, staleSibling(path));
-  } catch {
-    // best-effort; leave in place under tmpdir
-  }
-}
-
-function abandonPathSync(path: string): void {
-  if (!existsSync(path)) return;
-  try {
-    renameSync(path, staleSibling(path));
-  } catch {
-    // best-effort; leave in place under tmpdir
-  }
-}
-
-/** Replace a symlink or abandon a directory, then leave the path free. */
-async function clearPathForReplace(path: string): Promise<void> {
-  if (!existsSync(path)) return;
-  try {
-    const st = await lstat(path);
-    if (st.isSymbolicLink() || st.isFile()) {
-      await unlink(path);
-      return;
-    }
-  } catch {
-    // fall through to abandon
-  }
-  await abandonPath(path);
-}
 
 import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
 import {
@@ -259,7 +215,7 @@ export async function packIsolatedPackage(
       files: entry.files,
     };
   } finally {
-    // Owner 2026-09-05: leave materialization root under tmpdir for OS cleanup.
+    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -333,8 +289,7 @@ async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() 
     try {
       await mkdir(lockDir);
       return async () => {
-        // Release by abandoning the lock dir name — no directory delete.
-        await abandonPath(lockDir);
+        await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -462,7 +417,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
           cacheDir,
         };
       } finally {
-        // Leave materialRoot under tmpdir (owner 2026-09-05 no test dir delete).
+        await rm(materialRoot, { recursive: true, force: true });
       }
     } finally {
       await release();
@@ -572,7 +527,7 @@ export async function getSharedColdInstalledPackage(): Promise<SharedColdInstall
       const raced = await loadReady();
       if (raced) return raced;
 
-      await abandonPath(fixture);
+      await rm(fixture, { recursive: true, force: true });
       await mkdir(fixture, { recursive: true });
       await writeFile(
         resolve(fixture, "package.json"),
@@ -629,14 +584,13 @@ export async function cloneSharedColdInstall(
   dest: string,
 ): Promise<ColdInstalledPackage> {
   const shared = await getSharedColdInstalledPackage();
-  // dest is under a unique hermetic home; abandon only if a prior partial clone exists.
-  await abandonPath(dest);
+  await rm(dest, { recursive: true, force: true });
   await mkdir(dirname(dest), { recursive: true });
   await cp(shared.fixture, dest, { recursive: true, force: true });
   // typebox is registry-installed in the shared fixture; copy bytes rather than
   // relocating npm's checkout-bound symlink.
   const typeboxPath = resolve(dest, "node_modules/typebox");
-  await clearPathForReplace(typeboxPath);
+  await rm(typeboxPath, { recursive: true, force: true });
   await cp(resolve(shared.fixture, "node_modules/typebox"), typeboxPath, {
     recursive: true,
     force: true,
@@ -647,7 +601,7 @@ export async function cloneSharedColdInstall(
   // clone links to this checkout's realpath so resolution stays inside the store.
   for (const rel of COLD_INSTALL_FILE_PEERS) {
     const destPath = resolve(dest, "node_modules", rel);
-    await clearPathForReplace(destPath);
+    await rm(destPath, { recursive: true, force: true });
     await mkdir(dirname(destPath), { recursive: true });
     await symlink(
       await realpath(resolve(packageRoot, "node_modules", rel)),
@@ -834,7 +788,7 @@ export async function withHermeticHome<T>(
       else process.env.PI_OFFLINE = previousOffline;
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
+      await rm(home, { recursive: true, force: true });
     }
   });
 }
@@ -903,7 +857,7 @@ export function createTempPackageHomeLedger(input: {
     sessionDirectory,
     sessionFile,
     dispose() {
-      // Owner 2026-09-05: no directory delete; tmpdir home left for OS cleanup.
+      rmSync(home, { recursive: true, force: true });
     },
   };
 }
@@ -1126,13 +1080,6 @@ export interface InProcessPiOptions {
    * Defaults to a fresh InMemoryCredentialStore when omitted.
    */
   credentials?: CredentialStore;
-  /**
-   * #675 offline nested public summons: arm real nested pi children with the shared
-   * officer-pass faux provider via PublicSummonRequest.extraPiArgs (same face as
-   * public CLI seat extraPiArgs — no process.env test protocol). "provider" (default)
-   * arms it; "none" leaves summon unwrapped so the caller owns nested provider / hooks.
-   */
-  nestedSummonInject?: "provider" | "none";
 }
 
 export interface InProcessPiFixture {
@@ -1616,7 +1563,7 @@ export async function withInstitutionalProviderFixture<T>(
     await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    // Owner 2026-09-05: leave temp agent dir under tmpdir for OS cleanup.
+    await rm(tempAgentDir, { recursive: true, force: true });
   }
 }
 

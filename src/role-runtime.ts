@@ -634,11 +634,6 @@ export type RoleRuntimeDependencies = {
   auditSoulCompliance(
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
-  /** Offline tracers only — same seam as runGatekeeper options.summonOfficer. */
-  summonGateOfficer?(
-    officer: "inspector" | "notary",
-    sourceRunDirectory: string,
-  ): Promise<unknown>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -892,20 +887,17 @@ export function createAuditorRoleRuntime(
     async activate() {
       await base.activate();
       // Same tools whether nested or direct (#675): dossier tool always registered.
-      // Source run: parent pointer env, else this run's AK_ROLE_RUN_DIR; else unbound.
+      // Source run: only the shared --source-run input face (never own-run fallback).
       const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
         await import("./auditor-dossier-tool.ts");
+      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("./auditor-soul.ts");
       const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
       if (already) return;
       const sourceRun =
-        (typeof process.env.AK_ROLE_AUDITOR_SOURCE_RUN === "string"
-          && process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim() !== ""
-          ? process.env.AK_ROLE_AUDITOR_SOURCE_RUN.trim()
-          : undefined)
-        ?? (typeof process.env.AK_ROLE_RUN_DIR === "string"
-          && process.env.AK_ROLE_RUN_DIR.trim() !== ""
-          ? process.env.AK_ROLE_RUN_DIR.trim()
-          : undefined);
+        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+        && process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
+          ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
+          : undefined;
       roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
     },
   };
@@ -1305,11 +1297,6 @@ export function createRoleRuntimeExtension(
       bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
-      ...(dependencies.summonGateOfficer === undefined
-        ? {}
-        : {
-            summonOfficer: dependencies.summonGateOfficer as import("./gatekeeper-role.ts").GateOfficerSummon,
-          }),
     };
     const judge = createJudgeRoleRuntime(
       roleHost,

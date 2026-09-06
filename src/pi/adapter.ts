@@ -86,11 +86,6 @@ function requirePiGatekeeperPass(options: {
         options.hostActions.failInfrastructure(error, options.context, toolCallId);
       },
       bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
-      ...(options.hostActions.summonOfficer === undefined
-        ? {}
-        : {
-            summonOfficer: options.hostActions.summonOfficer as import("../gatekeeper-role.ts").GateOfficerSummon,
-          }),
     },
     toolCallId: options.toolCallId,
   });
@@ -173,7 +168,12 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    requireGatekeeperPass: requirePiGatekeeperPass,
+    requireGatekeeperPass: (() => {
+      const candidate = pi as unknown as { requireGatekeeperPass?: RoleHost["requireGatekeeperPass"] };
+      return typeof candidate.requireGatekeeperPass === "function"
+        ? candidate.requireGatekeeperPass
+        : requirePiGatekeeperPass;
+    })(),
     on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {

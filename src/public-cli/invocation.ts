@@ -567,6 +567,8 @@ export type ParseInstructionArgvResult = {
   project?: string;
   /** Auditor only — audited subject selecting soul materials (#675 owner). */
   subject?: "judge" | "doctor";
+  /** Auditor source-run locator — same input surface for direct and nested (#675). */
+  sourceRun?: string;
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
@@ -600,6 +602,7 @@ function parseInstructionArgv(
   const attachmentPaths: string[] = [];
   let project: string | undefined;
   let subject: "judge" | "doctor" | undefined;
+  let sourceRun: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -631,6 +634,14 @@ function parseInstructionArgv(
         subject = raw;
         continue;
       }
+      if (taken.def.id === "source-run") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw === "") {
+          throw new CliUsageError("auditor --source-run requires a run locator");
+        }
+        sourceRun = raw;
+        continue;
+      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -646,6 +657,7 @@ function parseInstructionArgv(
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
     ...(subject === undefined ? {} : { subject }),
+    ...(sourceRun === undefined ? {} : { sourceRun }),
   };
 }
 

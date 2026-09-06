@@ -441,6 +441,20 @@ const AUDITOR_OPTIONS = [
       zh: "必填受审对象：judge 或 doctor（装 judge-auditor.md / doctor-auditor.md）。",
     },
   },
+  {
+    id: "source-run",
+    owner: "auditor",
+    canonical: "--source-run",
+    aliases: [],
+    valueMetavar: "runId@role|path",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required source run locator of the audited subject volume (same input for direct and nested summons).",
+      zh: "必填受审卷宗 locator（直调与传召同一输入面）。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const EVIDENCE_CHILD_OPTIONS = [
@@ -1234,10 +1248,10 @@ const ROLE_COMMAND_HELP = {
   auditor: {
     command: "auditor",
     summary: "Direct Auditor (审刑院) compliance audit: pass, revise, or escalate.",
-    usage: ["ak-role auditor --subject <judge|doctor> [options] [instruction]"],
+    usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
     examples: [
-      'ak-role auditor --subject judge --attach ./dossier "审：本 run 是否合规。"',
-      'ak-role auditor --subject doctor "审：太医候选是否合规。"',
+      'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
     ],
   },
   "evidence-child": {
