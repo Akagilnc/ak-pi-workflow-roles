@@ -36,7 +36,6 @@ import {
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
-  NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
@@ -51,6 +50,7 @@ import {
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
@@ -288,11 +288,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
                 { stopReason: "toolUse" },
               );
             }
-            const navigatorTool = names.includes("ak_navigator_output")
-              ? "ak_navigator_output"
-              : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-                ? NAVIGATOR_PREPARE_TOOL_NAME
-                : undefined;
+            const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+              ? NAVIGATOR_OUTPUT_TOOL_NAME
+              : undefined;
             if (navigatorTool !== undefined) {
               modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
               const candidates = [{
@@ -306,9 +304,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
               return fauxAssistantMessage(
                 fauxToolCall(
                   navigatorTool,
-                  navigatorTool === "ak_navigator_output"
-                    ? { status: "advice", candidates }
-                    : { candidates },
+                  { status: "advice", candidates },
                 ),
                 { stopReason: "toolUse" },
               );

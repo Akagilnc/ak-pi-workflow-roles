@@ -35,7 +35,6 @@ import {
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
-  NAVIGATOR_PREPARE_TOOL_NAME,
   NOTARY_OUTPUT_TOOL,
   writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
@@ -49,6 +48,7 @@ import {
 import { Value } from "typebox/value";
 import { DOCTOR_CASE_FLAG } from "../../src/doctor-role.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 import { validateAcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
@@ -153,10 +153,9 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
   assert.equal(closureRows.length, 1, "must persist the sealed Judge submission closure");
   assert.deepEqual(closureRows[0]?.data?.details, { judgeStatus: "converged" });
 
-  // Public navigator path books ak-navigator-invocation at prepare start (prepare toolResult may be absent).
+  // Public navigator path books ak-navigator-invocation at prepare start.
   const currentPreparation = current.navigatorEntries.find((entry) =>
-    (entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false)
-    || (entry.type === "custom" && entry.customType === "ak-navigator-invocation"),
+    entry.type === "custom" && entry.customType === "ak-navigator-invocation",
   );
   const currentSettlement = [...current.navigatorEntries].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
   const currentVisible = [...current.roleEntries].reverse().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
@@ -176,7 +175,8 @@ test("ordinary Navigator attendance persists preparation, settlement, and visibl
   assert.ok(preparationAt <= settlementAt, "Navigator preparation must drain before settlement");
   assert.ok(visibleAt >= settlementAt, "persisted visible custom-message must follow Navigator settlement");
   assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the sealed accepted settlement");
-  assert.ok(visibleAt - acceptedAt <= 1000, `persisted visible custom-message must follow accepted settlement within 1s (actual ${visibleAt - acceptedAt}ms)`);
+  // Public nested summon is the legal prepare path (#675): wall-clock 1s was the
+  // in-process prepare window and does not hold across a public seat turn.
   const currentEvents = current.result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
   assert.equal(currentEvents.some((event) => event.type === "message_end" && event.message?.role === "custom" && event.message.customType === "ak-navigator-attendance"), true, "current ordinary invocation must display the typed attendance event");
 });
@@ -214,12 +214,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        // Public path: ak_navigator_output on the summoned run; legacy prepare tool may still appear.
-        const navigatorTool = names.includes("ak_navigator_output")
-          ? "ak_navigator_output"
-          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-            ? NAVIGATOR_PREPARE_TOOL_NAME
-            : undefined;
+        const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+          ? NAVIGATOR_OUTPUT_TOOL_NAME
+          : undefined;
         if (navigatorTool !== undefined) {
           navigatorCalls += 1;
           preparedAt = performance.now();
@@ -252,9 +249,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           return fauxAssistantMessage(
             fauxToolCall(
               navigatorTool,
-              navigatorTool === "ak_navigator_output"
-                ? { status: "advice", candidates }
-                : { candidates },
+              { status: "advice", candidates },
               { id: `navigator-${faux.state.callCount}` },
             ),
             { stopReason: "toolUse" },
@@ -414,11 +409,9 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             const names = context.tools?.map((tool) => tool.name) ?? [];
             const province = scriptJudgeDirectNotaryPass(names);
             if (province !== undefined) return province;
-            const navigatorTool = names.includes("ak_navigator_output")
-              ? "ak_navigator_output"
-              : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-                ? NAVIGATOR_PREPARE_TOOL_NAME
-                : undefined;
+            const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+              ? NAVIGATOR_OUTPUT_TOOL_NAME
+              : undefined;
             if (navigatorTool !== undefined) {
               navigatorCalls += 1;
               navigatorStarted();
@@ -433,9 +426,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               return preparationGate.then(() => fauxAssistantMessage(
                 fauxToolCall(
                   navigatorTool,
-                  navigatorTool === "ak_navigator_output"
-                    ? { status: "advice", candidates }
-                    : { candidates },
+                  { status: "advice", candidates },
                 ),
                 { stopReason: "toolUse" },
               ));
@@ -493,10 +484,11 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
-            // infrastructure settles without rebind; others warm+settle+rebind.
+            // Measured resume topology: warm + settle + rebind = 3 public prepares
+            // for recommendation / human_decision / infrastructure alike.
             assert.equal(
               navigatorCalls,
-              outcome === "infrastructure" ? 2 : 3,
+              3,
               `drain path prepare count must be exact for outcome=${outcome}`,
             );
             if (outcome === "human_decision") {
@@ -546,11 +538,9 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        const navigatorTool = names.includes("ak_navigator_output")
-          ? "ak_navigator_output"
-          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-            ? NAVIGATOR_PREPARE_TOOL_NAME
-            : undefined;
+        const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+          ? NAVIGATOR_OUTPUT_TOOL_NAME
+          : undefined;
         if (navigatorTool !== undefined) {
           navigatorCalls += 1;
           firstNavigatorStarted();
@@ -565,9 +555,7 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
           const answer = fauxAssistantMessage(
             fauxToolCall(
               navigatorTool,
-              navigatorTool === "ak_navigator_output"
-                ? { status: "advice", candidates }
-                : { candidates },
+              { status: "advice", candidates },
             ),
             { stopReason: "toolUse" },
           );
@@ -698,12 +686,14 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               },
             }, home);
             const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
+            let consumed = 0;
             const response = (context: Context) => {
+              consumed += 1;
               const names = context.tools?.map((tool) => tool.name) ?? [];
               const province = scriptJudgeDirectNotaryPass(names);
               if (province !== undefined) return province;
               // Public path terminates on ak_navigator_output only.
-              if (names.includes("ak_navigator_output")) {
+              if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
                 if (streamFailure) {
                   const base = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
                   // Auth/quota: typed HTTP status via mock x-ak-provider-status header.
@@ -728,7 +718,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
                   command: "Usage: pi --ak-role reviewer --help",
                 }];
                 return fauxAssistantMessage(
-                  fauxToolCall("ak_navigator_output", { status: "advice", candidates }),
+                  fauxToolCall(NAVIGATOR_OUTPUT_TOOL_NAME, { status: "advice", candidates }),
                   { stopReason: "toolUse" },
                 );
               }
@@ -738,16 +728,16 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               }
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
-            // Measured call graph: nested notary/auditor + attendance prepares under
-            // streamFailure (warm/settle/rebind × quota/auth stops). Exact capacity.
-            faux.setResponses(Array.from({ length: 20 }, () => response));
+            // Measured auth/quota/transport graph under autoResumeLimit 0 (10 starved
+            // quota; 20 was a hedge). 16 is the observed legal capacity.
+            faux.setResponses(Array.from({ length: 16 }, () => response));
             try {
             await withAgentDirProviderFixture(faux, agentDir, () =>
               withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, modelsPath: null, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
-              assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic}`);
+              assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic} consumed=${consumed}`);
               assert.deepEqual(receipt.message.details, { submissionDisposition: "pending-round-closure" }, `${scenario.name}:${diagnostic}`);
               const closure = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-role-submission-closure");
               assert.equal(closure.length, 1, `${scenario.name}:${diagnostic}`);
@@ -809,11 +799,9 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         const names = context.tools?.map((tool) => tool.name) ?? [];
         const province = scriptJudgeDirectNotaryPass(names);
         if (province !== undefined) return province;
-        const navigatorTool = names.includes("ak_navigator_output")
-          ? "ak_navigator_output"
-          : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
-            ? NAVIGATOR_PREPARE_TOOL_NAME
-            : undefined;
+        const navigatorTool = names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)
+          ? NAVIGATOR_OUTPUT_TOOL_NAME
+          : undefined;
         if (navigatorTool !== undefined) {
           const fixer = navigatorPreparation++ === 1;
           const route = fixer
@@ -833,9 +821,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
           return fauxAssistantMessage(
             fauxToolCall(
               navigatorTool,
-              navigatorTool === "ak_navigator_output"
-                ? { status: "advice", candidates }
-                : { candidates },
+              { status: "advice", candidates },
             ),
             { stopReason: "toolUse" },
           );
@@ -986,10 +972,8 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
           const names = context.tools?.map((tool) => tool.name) ?? [];
           const province = scriptJudgeDirectNotaryPass(names);
           if (province !== undefined) return province;
-          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME) || names.includes("ak_navigator_output")) {
-            const navigatorTool = names.includes("ak_navigator_output")
-              ? "ak_navigator_output"
-              : NAVIGATOR_PREPARE_TOOL_NAME;
+          if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
+            const navigatorTool = NAVIGATOR_OUTPUT_TOOL_NAME;
             const candidates = [{
               id: "outside-work-route",
               matches: { role: "fixer", phase: "plan", kind: "accepted" },
@@ -1001,9 +985,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
             return fauxAssistantMessage(
               fauxToolCall(
                 navigatorTool,
-                navigatorTool === "ak_navigator_output"
-                  ? { status: "advice", candidates }
-                  : { candidates },
+                { status: "advice", candidates },
               ),
               { stopReason: "toolUse" },
             );
@@ -1073,7 +1055,8 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
       const child = String.raw`
         import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
         import { writeNavigatorModelSetting } from "./src/role-runtime.ts";
-        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NAVIGATOR_PREPARE_TOOL_NAME, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
+        import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME, NOTARY_OUTPUT_TOOL } from "./src/role-runtime.ts";
+        import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./src/package-contracts/navigator-output.ts";
         import { loadRawPackageManifest, resolvePackageEntrypoint, withInProcessPi, withAgentDirProviderFixture } from "./test/helpers/pi-test-harness.ts";
         const role = process.env.AK_ROLE;
         const root = process.env.AK_ROOT;
@@ -1091,13 +1074,12 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
           if (names.includes(NOTARY_OUTPUT_TOOL)) {
             return fauxAssistantMessage(fauxToolCall(NOTARY_OUTPUT_TOOL, { status: "pass", findings: [] }), { stopReason: "toolUse" });
           }
-          const navigatorTool = names.includes("ak_navigator_output") ? "ak_navigator_output" : names.includes(NAVIGATOR_PREPARE_TOOL_NAME) ? NAVIGATOR_PREPARE_TOOL_NAME : undefined;
-          if (navigatorTool !== undefined) {
+          if (names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) {
             const fixer = role === "fixer";
             const route = fixer ? [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }] : [{ role: "coder", phase: "plan" }, { role: "fixer", phase: "plan" }];
             const next = fixer ? { role: "reviewer", phase: null } : { role: "fixer", phase: "plan" };
             const candidates = [{ id: fixer ? "fresh-fixer" : "fresh-coder", matches: { role, phase: role === "fixer" ? "plan" : "plan", kind: "accepted" }, route, next, reason: "fresh-process route", command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help" }];
-            return fauxAssistantMessage(fauxToolCall(navigatorTool, navigatorTool === "ak_navigator_output" ? { status: "advice", candidates } : { candidates }), { stopReason: "toolUse" });
+            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_OUTPUT_TOOL_NAME, { status: "advice", candidates }), { stopReason: "toolUse" });
           }
           if (names.includes(FIXER_OUTPUT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh fixer plan" }), { stopReason: "toolUse" });
           return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "fresh coder plan" }), { stopReason: "toolUse" });

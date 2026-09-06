@@ -37,8 +37,8 @@ export default async function doctorFreshProcessProvider(pi: ExtensionAPI): Prom
     captured = true;
     writeFileSync(capturePath, context.systemPrompt ?? "", "utf8");
   };
-  // Deterministic dispatch by real tool names: Navigator institutional child may
-  // consume a turn before Doctor output/audit (#590).
+  // Deterministic dispatch by real tool names: nested public Navigator may
+  // consume a turn before Doctor output/audit (#675).
   const respond = (context: Context) => {
     const navigator = navigatorChildOrUndefined(context, { role: "doctor", phase: null });
     if (navigator !== undefined) return navigator;
