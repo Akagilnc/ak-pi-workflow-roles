@@ -51,6 +51,7 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
+  parseDiaristArgv,
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
@@ -78,6 +79,7 @@ import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -126,6 +128,7 @@ const RESUME_SEAT_DISPATCH: Record<
   inspector: { seat: "inspector", run: runPublicInspectorResume },
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+  diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -168,6 +171,7 @@ export const PUBLIC_ROLE_ARGV = {
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
+  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -1304,6 +1308,31 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: "gleaner-left", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV["gleaner-left"].parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Diarist public run path (#708): 起居郎 is summoned like any other seat.
+    if (parsed.command === "diarist") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "diarist",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicDiarist(
+        parsed.args,
+        createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.diarist.parse,
       );
       return {
         exitCode: result.exitCode,

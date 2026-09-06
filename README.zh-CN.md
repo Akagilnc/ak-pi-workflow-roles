@@ -142,6 +142,7 @@ ak-role resume <runId> "<裁定>"
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
 | **游奕使** | navigator（自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
+| **起居郎** | diarist（`ak-role diarist` 单独传召） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 语义收集是它自己的 turn，机械保全带（来源枚举、逐字反验、幂等落盘、水印）为其工具门禁。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
 
 其余席位：
 
@@ -150,7 +151,6 @@ ak-role resume <runId> "<裁定>"
 | doctor | **太医署** | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建 |
 | analyst | **太史** | 司天台分析席：只读司天记录、出高阶指标；确定性机制，非 LLM，可单独调用 | 已建（[ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)；机器面键 `analyst`，[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445) 拼音清零） |
 | — | **司天台** | 记候簿——只打点、只指针，不分析不执法；二期含每票起居录 kind `ticket-provenance` | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；分析席已由太史承担；起居录见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)；机器面键 `archivist`（[#445](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/445)） |
-| `diarist` | **起居郎** | 为本票搜集、整理决策依据并修订起居录：LLM 语义收集＋机械保全带 | **LLM 角色**（soul、席位表一行、公开入口 `ak-role diarist`、交卷工具；建制施工见 #708 r2；[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`；谁调用、何时调用归调用者，`no-call-rule`） |
 | marshal | **尚书省** | 审→判→修 质量收敛环的省部级驱动角色：调用方递票号与 baseline，尚书省驱动御史台/大理寺/修内司滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛 | 已定名（#145）；席位待落地（#146） |
 | — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建 |
 | — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，需要时另立票 |

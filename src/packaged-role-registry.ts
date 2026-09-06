@@ -11,6 +11,10 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
+import {
+  DIARIST_OUTPUT_TOOL_NAME,
+  DIARIST_SOURCES_FLAG,
+} from "./diarist-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
@@ -184,6 +188,22 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
+  },
+  // #708 / ADR 0075 `diarist-is-role`: 起居郎 is a seat like any other. The
+  // frozen source catalog rides the shared input-flag seam; it is absent for a
+  // true-unbound summons (no ticket → no diary).
+  {
+    role: "diarist",
+    phases: [null],
+    outputTool: DIARIST_OUTPUT_TOOL_NAME,
+    inputFlag: DIARIST_SOURCES_FLAG.name,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/diarist.md",
+      "resources/diarist-collect.md",
+    ],
   },
 ] as const;
 

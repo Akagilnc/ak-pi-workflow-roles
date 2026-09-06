@@ -1,8 +1,6 @@
 /**
  * #582 / #635 — pure argv/ticket parse (no fs/git/public entry).
  * Countersign and notary no longer accept --ticket; analyst --ticket remains.
- * Medium public countersign/diarist station proofs live in
- * test/integration/public-cli-countersign-run.test.ts.
  */
 import assert from "node:assert/strict";
 import test from "node:test";

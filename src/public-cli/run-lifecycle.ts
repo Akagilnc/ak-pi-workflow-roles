@@ -44,6 +44,7 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
+  type AdmittedDiaristInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
@@ -95,7 +96,8 @@ export type RoleRunRecord = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "diarist";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -348,7 +350,8 @@ async function readRoleRunStateDisk(
     record.role !== "gleaner-left" &&
     record.role !== "inspector" &&
     record.role !== "gatekeeper" &&
-    record.role !== "navigator"
+    record.role !== "navigator" &&
+    record.role !== "diarist"
   ) {
     return undefined;
   }
@@ -1444,6 +1447,12 @@ export type LoadedResumableGleanerLeftRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableDiaristRun = {
+  readonly admitted: AdmittedDiaristInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 export type LoadedResumableInstructionSeatRun = {
   readonly admitted: AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
   readonly run: RoleRunRecord;
@@ -1637,7 +1646,7 @@ export async function loadResumableReviewerRun(
 
 /**
  * Load a resumable Countersign run for resume (#599). Ticket binding and
- * attachments restore from the admitted request; diarist does not re-run.
+ * attachments restore from the admitted request.
  */
 export async function loadResumableCountersignRun(
   home: string,
@@ -1700,6 +1709,24 @@ export async function loadResumableGleanerLeftRun(
     role: "gleaner-left",
     ...resumedBaseAdmitted(loaded),
     baseRevision,
+  };
+  return seatLoadedResult(loaded, admitted);
+}
+
+export async function loadResumableDiaristRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableDiaristRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "diarist") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not diarist`,
+    );
+  }
+  const admitted: AdmittedDiaristInvocation = {
+    role: "diarist",
+    ...resumedBaseAdmitted(loaded),
   };
   return seatLoadedResult(loaded, admitted);
 }
@@ -1929,6 +1956,7 @@ export async function peekRoleRunRole(
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "diarist"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

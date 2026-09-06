@@ -408,29 +408,6 @@ export function appendTicketProvenanceDiagnostic(input: {
   });
 }
 
-/** Collector/engine failure true cause — typed diagnostic, not a diary entry. */
-export function appendCollectorFailureDiagnostic(input: {
-  readonly ticketNumber: number;
-  readonly cwd: string;
-  readonly home?: string;
-  readonly collectorError: string;
-  readonly recordedAt?: string;
-}): RecordPointer {
-  const recordedAt = input.recordedAt ?? new Date().toISOString();
-  return appendTicketProvenanceDiagnostic({
-    ticketNumber: input.ticketNumber,
-    cwd: input.cwd,
-    ...(input.home === undefined ? {} : { home: input.home }),
-    source: "diarist-collector-fail",
-    diagnostic: {
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: "collector-failed",
-      cause: input.collectorError,
-      recordedAt,
-    },
-  });
-}
-
 /** Issue-face source acquisition failure — typed diagnostic on the ticket volume. */
 export function appendIssueSourceFailureDiagnostic(input: {
   readonly ticketNumber: number;
