@@ -447,8 +447,7 @@ function flattenThrownFailureLeaves(error: unknown): unknown[] {
 
 /**
  * Project one thrown value into a ControlledFailure leaf.
- * Sole owner for thrown-leaf identity/diagnostic mapping (last-host write concurrent
- * facts reuse this — do not fork a second leaf mapper).
+ * Sole owner for thrown-leaf identity/diagnostic mapping.
  * AggregateError nesting is handled by classifyThrownFailure.
  */
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
@@ -479,7 +478,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
 }
 
 /**
- * Concurrent thrown failures (host + cleanup / last-host write, etc.):
+ * Concurrent thrown failures (host + cleanup, etc.):
  * primary leaf owns cause/diagnostic/identity; remaining leaves stay as
  * details.concurrentFailures so neither fact covers the other.
  */

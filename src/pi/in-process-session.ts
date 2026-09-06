@@ -38,7 +38,6 @@ import type {
   HostInstitutionalSessionOptions,
   HostSessionUsage,
 } from "../host-contracts.ts";
-import { resolvePiDefaultThinkingLevel } from "./pi-default-thinking-level.ts";
 import {
   createStreamIdleGuard,
   isStreamIdleTimeoutError,
@@ -634,23 +633,15 @@ export async function openPiInstitutionalSession(
       }
     }
 
-    // 7. Create AgentSession — thinking is opaque pass-through. Pi clamps
-    // unsupported levels itself; we do not re-check or invent a local whitelist.
-    // #637/#697: createAgentSession restores model/thinking from an existing
-    // session when options omit them. Seat-table values must win: always pass
-    // model; when seat omits thinking, apply sole Pi-default resolver so resume
-    // cannot keep stale session thinking (same authority as CLI host argv path).
-    const seatThinking = options.selection.thinking;
-    const settingsDefault = settings.getDefaultThinkingLevel();
-    const thinkingForOpen =
-      seatThinking ??
-      (await resolvePiDefaultThinkingLevel({
-        ...(settingsDefault === undefined ? {} : { settingsDefault }),
-      }));
+    // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
+    // omits thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent package defaults.
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: thinkingForOpen as any,
+      ...(options.selection.thinking === undefined
+        ? {}
+        : { thinkingLevel: options.selection.thinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -661,7 +652,9 @@ export async function openPiInstitutionalSession(
       ...(customTools.length === 0 ? {} : { customTools }),
     });
     await session.setModel(effectiveModel);
-    session.setThinkingLevel(thinkingForOpen as any);
+    if (options.selection.thinking !== undefined) {
+      session.setThinkingLevel(options.selection.thinking as any);
+    }
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();

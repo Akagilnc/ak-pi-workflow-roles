@@ -19,13 +19,12 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
-  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
-  recordTrueUnboundTicketResolution,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
+  applyTicketResolution,
   resolveInstructionTicket,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
@@ -185,12 +184,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635: reuse the pre-admit ticket probe (already resolved above).
-        if (probedTicket.kind === "ticket") {
-          await bindAdmittedTicketNumber(admitted, probedTicket.ticketNumber);
-        } else {
-          await recordTrueUnboundTicketResolution(admitted);
-        }
+        // #635: reuse the pre-admit ticket probe via shared seat-ticket-binding seam.
+        await applyTicketResolution(admitted, probedTicket);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),

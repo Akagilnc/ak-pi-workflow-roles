@@ -123,6 +123,24 @@ test("host-neutral round closure seals only a sole terminal candidate", async ()
     await assert.rejects(
       () => resumed.tool().execute("dup-restored", {}, undefined, undefined, resumed.context),
     );
+
+    // #637: a new court-turn attempt (AK_ROLE_COURT_ATTEMPT) may seal again on the
+    // same run without deleting prior seals or relaxing same-attempt sole-final.
+    const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
+    process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
+    try {
+      const reopened = registerTool(f.root);
+      await reopened.start("court-2");
+      await reopened.tool().execute("court-2", {}, undefined, undefined, reopened.context);
+      await reopened.close();
+      const kinds = (await ledgerRecords(f.root)).map((record) => record.kind);
+      assert.ok(kinds.includes("post-seal-anomaly"), "prior same-attempt anomaly kept");
+      assert.equal(kinds.filter((kind) => kind === "sealed").length, 2, "second court turn seals");
+      assert.deepEqual(await readSealedSubmission(f.root, "run-ledger", f.root), projection);
+    } finally {
+      if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+      else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
+    }
   });
 });
 

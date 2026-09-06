@@ -165,6 +165,12 @@ export type RoleTurnRequest = {
   readonly timeoutMs?: number;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
+  /**
+   * Same-ticket re-summons only (#637): opens a new court-turn attempt on the
+   * retained run so submission-ledger sole-final is per attempt, not forever.
+   * Manual resume never sets this — sealed idempotent short-circuit stays intact.
+   */
+  readonly courtAttemptId?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */

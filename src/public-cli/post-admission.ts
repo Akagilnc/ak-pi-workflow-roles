@@ -5,6 +5,7 @@
  * initial role facades before entering; manual resume never re-admits.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -176,8 +177,7 @@ export async function presentControlledFailure<
     admitted.principal !== undefined
       ? await inspectJudgeSession(authority.decode(admitted.principal).sessionFile)
       : undefined;
-  // knownFailure channel owns details when present; otherwise caller knownDetails
-  // (e.g. last-host write concurrent leaf on timeout/activation dual failure).
+  // knownFailure channel owns details when present; otherwise caller knownDetails.
   const fromKnownFailure =
     explicitInternalKnownFailureClassificationInput(knownFailure);
   const failure = classifyPostAdmissionFailure({
@@ -526,13 +526,20 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  // Same-ticket re-summons carry materials → force a new court turn even if sealed.
+  // Same-ticket re-summons carry materials → new court turn on the retained run.
+  // forceContinuation skips sealed short-circuit; courtAttemptId opens a fresh
+  // submission-ledger attempt so sole-final applies per turn (old seals kept).
   const forceContinuation = input.request.summons !== undefined;
+  const turnRequest = await input.buildTurnRequest(loaded.admitted);
+  const request =
+    forceContinuation && turnRequest.courtAttemptId === undefined
+      ? { ...turnRequest, courtAttemptId: randomUUID() }
+      : turnRequest;
   return await runPostAdmissionManualResume({
     admitted: loaded.admitted,
     env: input.env,
     io: input.io,
-    request: await input.buildTurnRequest(loaded.admitted),
+    request,
     adapters: input.adapters,
     ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
     ...(forceContinuation ? { forceContinuation: true as const } : {}),
@@ -639,8 +646,9 @@ export async function runPostAdmissionResumable<
  * When the submission ledger is already sealed, project that accepted terminal
  * idempotently — do not dispatch a doomed turn that would append
  * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
- * Same-ticket re-summons (#637) pass forceContinuation so a new court turn still
- * runs with this summons' materials despite a prior sealed acceptance.
+ * Same-ticket re-summons (#637) pass forceContinuation + courtAttemptId so a new
+ * court turn still runs with this summons' materials despite a prior sealed
+ * acceptance, while submission-ledger sole-final stays per-attempt.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
