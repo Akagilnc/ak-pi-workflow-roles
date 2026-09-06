@@ -1,4 +1,5 @@
-// #685 C1: withInProcessPi/createAgentSession host legs culled; production dossiers succeed.
+// #685 C1: withInProcessPi/createAgentSession host legs culled; C3 handoff:
+// docs/research/issue-685-c3-deleted-contract-handoff.md
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
