@@ -18,25 +18,10 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 
-/** True when seat provider is absent from agentDir models.json (model axis). */
-async function seatProviderMissingFromRegistry(provider: string): Promise<boolean> {
-  const agentDir = process.env.PI_CODING_AGENT_DIR;
-  if (typeof agentDir !== "string" || agentDir.trim() === "") return false;
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const doc = JSON.parse(await readFile(join(agentDir, "models.json"), "utf8")) as {
-      providers?: Record<string, unknown>;
-    };
-    return doc.providers?.[provider] === undefined;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Classify public-navigator failure terminal from structured decisiveFacts only
- * (httpStatus / diagnostics / secondaryEvidence) — no diagnostic prose parse.
+ * (httpStatus / diagnostics / secondaryEvidence on the terminal) — same fields
+ * settlement already stamps from typed HTTP observation / provider stop.
  */
 function providerFailureFromPublicTerminal(outcome: {
   readonly cause: string;
@@ -133,19 +118,14 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
-            const missing = await seatProviderMissingFromRegistry(selection.provider);
-            const source = missing ? "model" : "transport";
-            providerFailure = { source, cause: source };
+            providerFailure = { source: "transport", cause: "transport" };
             throw navigatorUnavailableError(
-              source,
+              "transport",
               new Error(`Navigator public summon produced no terminal (${detail})`),
             );
           }
           if (outcome.kind === "failure") {
-            const missing = await seatProviderMissingFromRegistry(selection.provider);
-            providerFailure = missing
-              ? { source: "model", cause: "model" }
-              : providerFailureFromPublicTerminal(outcome);
+            providerFailure = providerFailureFromPublicTerminal(outcome);
             throw navigatorUnavailableError(
               providerFailure.source,
               new Error(outcome.diagnostic),
