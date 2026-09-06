@@ -130,7 +130,6 @@ export function createNativeNavigatorSessionFactory(
         selection,
         systemPrompt:
           `You are Navigator attendance on this parent run. Submit direction via the ${NAVIGATOR_PREPARE_TOOL_NAME} tool in one call. Do not call other tools before that submission.`,
-        toolsAllowlist: ["read", "bash", "edit", "write", NAVIGATOR_PREPARE_TOOL_NAME],
         customTools: [tool],
         sessionManager,
         label: "Navigator",
