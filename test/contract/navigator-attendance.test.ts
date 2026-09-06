@@ -246,9 +246,9 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.deepEqual(events[2].route, revised.candidates[0]!.route);
     assert.deepEqual(harness.modelSettings, [
-      { model: "provider/one", thinkingLevel: "off" },
-      { model: "provider/two", thinkingLevel: "off" },
-      { model: "provider/three", thinkingLevel: "off" },
+      { model: "provider/one" },
+      { model: "provider/two" },
+      { model: "provider/three" },
     ]);
     assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
   } catch (error) {
@@ -407,8 +407,12 @@ test("navigator open failures classify typed reason/status/code, not Error.messa
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
   assert.deepEqual(parseNavigatorModelSetting("openai-codex/gpt-5.6-luna:max"), { provider: "openai-codex", model: "gpt-5.6-luna", thinkingLevel: "max" });
-  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
-  assert.throws(() => parseNavigatorModelSetting("provider/model:backup"));
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:medium"), { provider: "provider", model: "model", thinkingLevel: "medium" });
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:xhigh"), { provider: "provider", model: "model", thinkingLevel: "xhigh" });
+  // Bare provider/model omits thinkingLevel — no invented default.
+  assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model" });
+  // Suffix is opaque pass-through; no whitelist reject.
+  assert.deepEqual(parseNavigatorModelSetting("provider/model:backup"), { provider: "provider", model: "model", thinkingLevel: "backup" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);

@@ -461,16 +461,6 @@ function cliResultFromRoleRun(result: {
   };
 }
 
-const THINKING_LEVELS = new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
-
 function defaultIo(): CliIo {
   return {
     stdout: (text) => {
@@ -505,10 +495,8 @@ type ParsedGlobal = {
 };
 
 function parseThinking(value: string): PublicThinkingLevel {
-  if (!THINKING_LEVELS.has(value)) {
-    throw new CliUsageError(`unknown thinking level: ${value}`);
-  }
-  return value as PublicThinkingLevel;
+  // #683: opaque pass-through — no local whitelist.
+  return value;
 }
 
 function parseArgv(argv: readonly string[]): ParsedGlobal {

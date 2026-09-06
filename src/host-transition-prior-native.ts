@@ -71,12 +71,18 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
  * Project one hostTransition only for a real switch between known hosts.
  * Unknown host names → undefined (no inject). Empty native volume still
  * yields a typed switch (empty path list).
+ *
+ * Grok native home lives under the run that wrote it. Ticket-seat memory
+ * cross-run switches pass `previousRunDirectory` from last-host metadata so
+ * the scan does not look at an empty fresh run (#636 / #617 DK-4).
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
   readonly liveHost: string;
   readonly runDirectory: string;
   readonly piSessionFile: string;
+  /** Prior run that held Grok native records when principal continued across runs. */
+  readonly previousRunDirectory?: string;
 }): Promise<RoleTurnHostTransition | undefined> {
   if (input.previousHost === input.liveHost) return undefined;
   if (!isKnownRoleTurnHost(input.previousHost) || !isKnownRoleTurnHost(input.liveHost)) {
@@ -90,7 +96,8 @@ export async function projectHostTransitionPriorNative(input: {
     };
   }
   // previousHost === "grok-build": DK-7 path handoff only — do not read bytes.
-  const paths = await listGrokNativeRecordPaths(input.runDirectory);
+  const grokRoot = input.previousRunDirectory ?? input.runDirectory;
+  const paths = await listGrokNativeRecordPaths(grokRoot);
   return {
     previousHost: "grok-build",
     priorNativePaths: paths,

@@ -102,16 +102,6 @@ export type InvocationModelOverride = {
   host?: string;
 };
 
-export const THINKING_LEVELS = new Set<PublicThinkingLevel>([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
-
 export function publicCliConfigPath(home: string): string {
   if (typeof home !== "string" || home.trim() === "") {
     throw new Error("home must be explicitly provided");
@@ -336,17 +326,10 @@ export function parseModelSpec(
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking: PublicThinkingLevel | undefined = fallbackThinking;
-  // #346: no colon → bare provider/model is legal. Colon present (any index,
-  // including 0) → suffix must be a typed PublicThinkingLevel (empty/unknown
-  // stay format rejects; never swallow ":…" into the model name).
+  // #346/#683: no colon → bare provider/model is legal. Colon present → suffix
+  // is opaque thinking pass-through (no local whitelist); never swallow into model.
   if (thinkingSplit !== -1) {
-    const maybeThinking = trimmed.slice(thinkingSplit + 1);
-    if (!THINKING_LEVELS.has(maybeThinking as PublicThinkingLevel)) {
-      throw new Error(
-        `model specification must be provider/model[:thinking], got ${spec}`,
-      );
-    }
-    thinking = maybeThinking as PublicThinkingLevel;
+    thinking = trimmed.slice(thinkingSplit + 1);
     modelPart = trimmed.slice(0, thinkingSplit);
   }
   const slash = modelPart.indexOf("/");
@@ -507,14 +490,9 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   if (typeof raw.model !== "string" || raw.model.trim() === "") {
     throw new Error(`config seat ${seat} requires model`);
   }
-  // #384: thinking is optional on persistent seats; when present it must be typed.
-  if (raw.thinking !== undefined) {
-    if (
-      typeof raw.thinking !== "string" ||
-      !THINKING_LEVELS.has(raw.thinking as PublicThinkingLevel)
-    ) {
-      throw new Error(`config seat ${seat} requires a valid thinking level`);
-    }
+  // #384/#683: thinking is optional opaque pass-through; when present must be a string.
+  if (raw.thinking !== undefined && typeof raw.thinking !== "string") {
+    throw new Error(`config seat ${seat} thinking must be a string`);
   }
   const parsed: PersistentSeatConfig = {
     provider: raw.provider as string,

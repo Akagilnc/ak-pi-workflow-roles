@@ -1997,6 +1997,12 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           join(coords.sessionDirectory, "host-issued-principal.jsonl"),
         );
       },
+      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+        return fixturePrincipal(
+          coordinates.sessionDirectory,
+          coordinates.sessionFile,
+        );
+      },
       decode(value: unknown) {
         const coords = piDurablePrincipalAuthority.decode(value);
         return Object.assign({}, coords, { __durableCoords: true });
@@ -2073,6 +2079,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     // Host-denied availability must fail honestly without a typed accepted Terminal.
     const blockingAuthority = {
       issue: principalAuthority.issue,
+      seal: principalAuthority.seal,
       decode: principalAuthority.decode,
       async isAvailable() {
         return false;

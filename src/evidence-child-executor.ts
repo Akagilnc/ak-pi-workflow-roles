@@ -26,6 +26,12 @@ import {
 } from "./compliance-transport.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { sitianReport } from "./sitian-facade.ts";
+import {
+  isTicketSeatMemorySeat,
+  readRunTicketNumber,
+  ticketSeatMemorySubject,
+  TICKET_SEAT_MEMORY_KIND,
+} from "./ticket-seat-memory.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -88,25 +94,8 @@ async function buildEvidenceChildSystemPrompt(
 
 // ── shared constants / types ──────────────────────────────────────────────
 
-export const AUDITOR_TURN_LIMIT = 32;
 export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 
-export type AuditorLastResponseFacts = {
-  readonly stopReason: AssistantMessage["stopReason"];
-  readonly toolNames: readonly string[];
-};
-export class AuditorTurnLimitError extends Error {
-  constructor(
-    readonly limit: number,
-    readonly observedTurns?: number,
-    readonly lastResponse?: AuditorLastResponseFacts,
-  ) {
-    super(observedTurns === undefined
-      ? `Auditor exceeded ${limit} turns`
-      : `Auditor exhausted its ${limit}-turn limit after ${observedTurns} provider turns`);
-    this.name = "AuditorTurnLimitError";
-  }
-}
 export type AuditorDecisionTool = {
   name: string;
   description: string;
@@ -581,9 +570,16 @@ export async function executeAuditorChild(
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
+    // #636: ticket+seat subject resumes the same nest (navigator subject path); no ticket → fresh nest.
+    const ticketNumber = await readRunTicketNumber(runDirectory);
+    const memorySubject =
+      ticketNumber !== undefined && isTicketSeatMemorySeat(seat)
+        ? ticketSeatMemorySubject(ticketNumber, seat)
+        : undefined;
     const auditorSessionManager: SessionManager = createRecordSession({
       cwd,
-      kind: "auditor-roles",
+      kind: TICKET_SEAT_MEMORY_KIND,
+      ...(memorySubject === undefined ? {} : { subject: memorySubject }),
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 
@@ -640,7 +636,6 @@ export async function executeAuditorChild(
       });
     } catch {}
 
-    let turns = 0;
     const sessionUsage = emptyUsage();
     let boundaryResponse: AssistantMessage | undefined;
     let retentionFailure: unknown;
@@ -682,8 +677,8 @@ export async function executeAuditorChild(
         // A native unknown-tool receipt ("Tool <name> not found") is not an
         // evidence-tool failure: the child session has no such tool registered,
         // so its errored toolResult must not short-circuit the auditor (it keeps
-        // prompting to the turn limit, mirroring the pre-migration
-        // registeredToolNames exclusion in findToolFailure).
+        // prompting, mirroring the pre-migration registeredToolNames exclusion
+        // in findToolFailure).
         if (detailText !== undefined && /^Tool\s+.+ not found$/.test(detailText.trim())) return;
         const failure = detailText === undefined
           ? new Error(event.toolName ?? "evidence tool failed")
@@ -696,7 +691,6 @@ export async function executeAuditorChild(
         evidenceToolFailures.set(event.toolCallId, failure);
       }
       if (event.type === "message_end" && event.role === "assistant" && boundaryResponse === undefined) {
-        turns += 1;
         if (event.usage) addUsage(sessionUsage, event.usage);
         const msg = event.message as AssistantMessage | undefined;
         retainedResponse = msg;
@@ -730,7 +724,7 @@ export async function executeAuditorChild(
               }
             }
           }
-          if (turns >= AUDITOR_TURN_LIMIT || msg.stopReason === "error") boundaryResponse = msg;
+          if (msg.stopReason === "error") boundaryResponse = msg;
         }
       }
       if (event.type === "turn_end") {
@@ -861,14 +855,6 @@ export async function executeAuditorChild(
         : assistants.find((message) =>
           message.content.some((part) => part.type === "toolCall" && part.name === tool.name));
 
-      if (boundaryResponse !== undefined && boundaryResponse.stopReason !== "error" && !decisionSubmitted && noReceiptLifecycle === undefined) {
-        const toolNames = boundaryResponse.content.flatMap((part) => part.type === "toolCall" ? [part.name] : []);
-        throw new AuditorTurnLimitError(AUDITOR_TURN_LIMIT, turns, {
-          stopReason: boundaryResponse.stopReason,
-          toolNames,
-        });
-      }
-
       if (response !== undefined) {
         try {
           if (retentionFailure !== undefined) throw retentionFailure;
@@ -989,7 +975,7 @@ export function createNativeNavigatorSessionFactory(
   return async ({ context, subject, modelSettingPath, tool }) => {
     const resolved = await resolveNavigatorSeatSelection(context, modelSettingPath, defaultModelSettingPath);
     let selection = resolved.selection;
-    let thinkingLevel = resolved.thinkingLevel;
+    let thinkingLevel: string | undefined = resolved.thinkingLevel;
     let configuredLabel = resolved.configuredLabel;
 
     const { createRecordSession } = await import("./archivist-record-entry.ts");
@@ -1131,7 +1117,7 @@ export function createNativeNavigatorSessionFactory(
         }
       },
       entries: () => sessionManager.getEntries(),
-      setModel: async (next, nextThinking) => {
+      setModel: async (next) => {
         let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
         try {
           nextParsed = parseNavigatorModelSetting(next);
@@ -1147,16 +1133,11 @@ export function createNativeNavigatorSessionFactory(
             `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
           );
         }
-        if (nextParsed.thinkingLevel !== nextThinking || thinkingLevel !== nextThinking) {
-          throw new NavigatorUnavailableError(
-            "thinking",
-            `Navigator thinking level ${nextThinking} is unavailable for ${next}`,
-          );
-        }
+        // Thinking is opaque pass-through; no stick/availability re-check.
         selection = {
           provider: nextParsed.provider,
           model: nextParsed.model,
-          thinking: nextParsed.thinkingLevel,
+          ...(nextParsed.thinkingLevel === undefined ? {} : { thinking: nextParsed.thinkingLevel }),
         };
         thinkingLevel = nextParsed.thinkingLevel;
         configuredLabel = next;

@@ -55,6 +55,12 @@ export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
       sessionFile: coordinates.sessionFile,
     });
   },
+  seal(coordinates: DurablePrincipalCoordinates): DurablePrincipal {
+    return encode({
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+    });
+  },
   decode(value: unknown): DurablePrincipalCoordinates {
     const record = value as Partial<DurablePrincipalCoordinates> | null;
     if (record === null || typeof record !== "object") {

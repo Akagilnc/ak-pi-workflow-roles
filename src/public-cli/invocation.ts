@@ -24,6 +24,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
+import { readRunTicketNumber } from "../ticket-seat-memory.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -72,7 +73,7 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { loadPublicCliConfig, THINKING_LEVELS } from "./config.ts";
+import { loadPublicCliConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
   resolveInstitutionalSeatSelections,
@@ -310,7 +311,7 @@ async function writeAdmittedRequestPersistence(
 /**
  * Effective provider/model selection recorded on the invocation identity page.
  * thinking is present only when the caller/seat supplied it — bare model omits it.
- * Restored values are bounded to typed PublicThinkingLevel (never arbitrary string).
+ * Thinking is opaque pass-through (#683); no local whitelist filter on restore.
  */
 export type InvocationEffectiveModel = {
   readonly provider: string;
@@ -416,9 +417,8 @@ export async function recordEffectiveInvocationModel(
       ? {
           provider: next.provider,
           model: next.model,
-          ...(typeof next.thinking === "string" &&
-          THINKING_LEVELS.has(next.thinking as PublicThinkingLevel)
-            ? { thinking: next.thinking as PublicThinkingLevel }
+          ...(typeof next.thinking === "string"
+            ? { thinking: next.thinking }
             : {}),
         }
       : undefined;
@@ -1005,30 +1005,13 @@ async function freezeAttachments(
 
 /**
  * Read ticketNumber from a retained source run's admitted-request.json,
- * falling back to invocation.json. Same typed integer rules as resume restore.
+ * falling back to invocation.json. Sole implementation lives in ticket-seat-memory
+ * (shared with officer nest discovery / auditor subject binding).
  */
 export async function readTicketNumberFromSourceRun(
   runDirectory: string,
 ): Promise<number | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
-    try {
-      const raw = JSON.parse(
-        await readFile(join(runDirectory, page), "utf8"),
-      ) as unknown;
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const ticketNumber = (raw as Record<string, unknown>).ticketNumber;
-      if (
-        typeof ticketNumber === "number" &&
-        Number.isSafeInteger(ticketNumber) &&
-        ticketNumber >= 1
-      ) {
-        return ticketNumber;
-      }
-    } catch {
-      // Missing or unreadable page → try next; unbound if none yield a ticket.
-    }
-  }
-  return undefined;
+  return readRunTicketNumber(runDirectory);
 }
 
 function ticketAdmissionFields(
