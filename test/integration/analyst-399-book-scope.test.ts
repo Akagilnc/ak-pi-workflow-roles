@@ -27,6 +27,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -275,9 +276,7 @@ async function withBookScopeWorld<T>(
 // D1
 test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set", async () => {
   await withBookScopeWorld(async ({ home, mainRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const bare = captureIo();
       const bareResult = await runAkRole(["analyst"], { packageRoot, home, io: bare.io });
       assert.equal(bareResult.exitCode, 0, bare.stderr.join(""));
@@ -308,18 +307,14 @@ test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set",
       assert.equal(ticketIds.includes(RUN_MAIN_TICKET_B), false);
       // Damaged ticket-A run is unreadable exclusion, not silent drop (D7 sample).
       assert.ok(body.page.unreadable.some((u) => u.runId === RUN_DAMAGED));
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
 // D2
 test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", async () => {
   await withBookScopeWorld(async ({ home, mainRoot, worktreeRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(worktreeRoot);
-    try {
+    await withProcessCwd(worktreeRoot, async () => {
       const bare = captureIo();
       const bareResult = await runAkRole(["analyst"], { packageRoot, home, io: bare.io });
       assert.equal(bareResult.exitCode, 0, bare.stderr.join(""));
@@ -339,9 +334,7 @@ test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", 
       assert.equal(rejectResult.exitCode, 2);
       assert.match(rejected.stderr.join(""), /project-root/i);
       assert.match(rejected.stderr.join(""), /deleted|bare|--ticket/i);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
@@ -359,9 +352,7 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
       },
     );
 
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(["analyst", "--ticket", String(TICKET_A)], {
         packageRoot,
@@ -378,9 +369,7 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
         [RUN_WORKTREE_TICKET_A, RUN_MAIN_TICKET_A].sort(),
       );
       assert.doesNotMatch(stdout.join("") + stderr.join(""), /library index|index miss/i);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
@@ -500,9 +489,7 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
 // D6
 test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback", async () => {
   await withBookScopeWorld(async ({ home, mainRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["analyst", "--ticket", String(TICKET_EMPTY)],
@@ -519,9 +506,7 @@ test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback
       assert.equal(body.page.issueNumber, TICKET_EMPTY);
       assert.deepEqual(body.page.legs, []);
       assert.equal(body.page.unreadableCount, 0);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 

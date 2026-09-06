@@ -46,6 +46,7 @@ import {
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("Navigator preparation overlaps settlement, waits for the same call, and presents one typed event", async () => {
   const root = await mkdtemp(worktreeTempPrefix("navigator-attendance-"));
@@ -90,8 +91,7 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
 });
 
 test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-rejected-prepare-"));
-  try {
+  await withTempRoot("navigator-rejected-prepare-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -105,12 +105,11 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
     assert.equal(events[0]?.disposition, "recommendation");
-  } finally { await cleanupTempDir(root); }
+  });
 });
 
 test("a duplicate Navigator prepare batch cannot publish its first provisional recommendation", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-duplicate-prepare-"));
-  try {
+  await withTempRoot("navigator-duplicate-prepare-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -141,12 +140,11 @@ test("a duplicate Navigator prepare batch cannot publish its first provisional r
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(events.length, 1);
     assert.equal(events[0]?.reason, "Only the corrected batch is lawful.");
-  } finally { await cleanupTempDir(root); }
+  });
 });
 
 test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-rejected-exhaustion-"));
-  try {
+  await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -163,12 +161,11 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
       { reason: "root rejection two", diagnosticAvailable: true },
     ]);
     assert.equal(lifecycle?.data.terminalToolCalled, true);
-  } finally { await cleanupTempDir(root); }
+  });
 });
 
 test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-prepare-transport-"));
-  try {
+  await withTempRoot("navigator-prepare-transport-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -181,7 +178,7 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
     assert.equal(events[0]?.disposition, "unavailable");
     assert.equal(events[0]?.unavailableSource, "transport");
     assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);
-  } finally { await cleanupTempDir(root); }
+  });
 });
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {

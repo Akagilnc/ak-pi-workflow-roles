@@ -329,13 +329,16 @@ test("a sealed append failure never returns accepted", async () => {
       if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
       return { content: [], details: { judgeStatus: "converged" }, terminate: true };
     });
-    try {
-      await failing.start("seal-failure");
-      await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
-      await assert.rejects(failing.close());
-      assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
-    } finally {
-      if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        await failing.start("seal-failure");
+        await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
+        await assert.rejects(failing.close());
+        assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
+      },
+      async () => {
+        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
+      },
+    );
   });
 });

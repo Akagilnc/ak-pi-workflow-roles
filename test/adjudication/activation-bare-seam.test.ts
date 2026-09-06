@@ -25,6 +25,7 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -223,45 +224,48 @@ test("append failure preserves original cause and aborts nonzero", async () => {
     const bookDir = join(machineLedgerHome(home), "books", bookKey);
     chmodSync(bookDir, 0o555);
     let aborts = 0;
-    try {
-      const { handlers } = captureExtensionHandlers(
-        (pi) => createPiRoleRuntimeExtension({
-          loadJudgeSoul: async () => "LAW",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationTraceWriter: () => {},
-        })(pi),
-        { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
-      );
-      const ctx = activationExtensionContext({
-        cwd: home,
-        home,
-        bookKey,
-        sessionFile,
-        abort() { aborts++; },
-      });
-      await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-        assert.ok(error instanceof Error);
-        const codes: string[] = [];
-        let current: unknown = error;
-        const seen = new Set<unknown>();
-        while (current !== null && typeof current === "object" && !seen.has(current)) {
-          seen.add(current);
-          if ("code" in current && typeof (current as { code: unknown }).code === "string") {
-            codes.push((current as { code: string }).code);
-          }
-          current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
-        }
-        assert.ok(
-          codes.includes("EACCES") || codes.includes("EPERM"),
-          `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
+    await withPrimaryAwareCleanup(
+      async () => {
+        const { handlers } = captureExtensionHandlers(
+          (pi) => createPiRoleRuntimeExtension({
+            loadJudgeSoul: async () => "LAW",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+            activationTraceWriter: () => {},
+          })(pi),
+          { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
         );
-        return true;
-      });
-      assert.equal(aborts, 1);
-      assert.equal(process.exitCode, 1);
-    } finally {
-      chmodSync(bookDir, 0o755);
-    }
+        const ctx = activationExtensionContext({
+          cwd: home,
+          home,
+          bookKey,
+          sessionFile,
+          abort() { aborts++; },
+        });
+        await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          const codes: string[] = [];
+          let current: unknown = error;
+          const seen = new Set<unknown>();
+          while (current !== null && typeof current === "object" && !seen.has(current)) {
+            seen.add(current);
+            if ("code" in current && typeof (current as { code: unknown }).code === "string") {
+              codes.push((current as { code: string }).code);
+            }
+            current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
+          }
+          assert.ok(
+            codes.includes("EACCES") || codes.includes("EPERM"),
+            `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
+          );
+          return true;
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+      },
+      async () => {
+        chmodSync(bookDir, 0o755);
+      },
+    );
   });
 });
 

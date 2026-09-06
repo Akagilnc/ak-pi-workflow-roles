@@ -21,7 +21,7 @@ import test from "node:test";
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-dispatch-throw-", fn);
@@ -32,14 +32,16 @@ type LoopDispatchResult={exitCode:number;terminal?:TerminalResult};
 
 function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[]){
   // Mirrors the dispatcher lease contract: release runs even when dispatch throws.
-  return async(_extraArgs:readonly string[], lease:{release():Promise<void>}):Promise<LoopDispatchResult>=>{
-    try{
-      callsRef.n+=1;
-      throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
-    }finally{
-      await lease.release();
-    }
-  };
+  return async(_extraArgs:readonly string[], lease:{release():Promise<void>}):Promise<LoopDispatchResult>=>
+    withPrimaryAwareCleanup(
+      async () => {
+        callsRef.n+=1;
+        throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
+      },
+      async () => {
+        await lease.release();
+      },
+    );
 }
 
 type PointerEntry={data?:{file?:unknown};};

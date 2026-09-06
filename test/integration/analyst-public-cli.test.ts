@@ -32,6 +32,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -228,9 +229,7 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         issueNumber: TICKET_C4,
       }, { home });
 
-      const previousCwd = process.cwd();
-      process.chdir(repo);
-      try {
+      await withProcessCwd(repo, async () => {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
           ["analyst", "--ticket", String(TICKET_C4)],
@@ -249,9 +248,7 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         assert.equal(page.issueNumber, TICKET_C4);
         assert.deepEqual(page.legs, oracle.page.legs);
         assert.ok(page.legs.some((leg) => leg.runId === runId));
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });
@@ -266,9 +263,7 @@ test("analyst public CLI bare call: whole book from cwd git common-dir", async (
         ticketNumber: 77,
         runId,
       });
-      const previousCwd = process.cwd();
-      process.chdir(repo);
-      try {
+      await withProcessCwd(repo, async () => {
         const { io, stdout, stderr } = captureIo();
         const result = await runAkRole(["analyst"], { packageRoot, home, io });
         assert.equal(result.exitCode, 0, stderr.join(""));
@@ -278,9 +273,7 @@ test("analyst public CLI bare call: whole book from cwd git common-dir", async (
         assert.equal(body.page.bookKey, bookKey);
         assert.equal(body.page.issueNumber, undefined);
         assert.ok(body.page.legs.some((leg) => leg.runId === runId));
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });
@@ -333,27 +326,21 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     // Must sit outside this git worktree so analyst sees a true non-repo cwd.
     // Outside isolation root is not deleted (r12/r6 outside-worktree rule).
     const nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-336-nongit-"));
-    const previousCwd = process.cwd();
-    process.chdir(nonGit);
-    try {
+    await withProcessCwd(nonGit, async () => {
       const { io, stderr } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
       assert.match(stderr.join(""), /git repository|common-dir|inside a repository/i);
       const after = await snapshotAnalystDir(ledgerHome);
       assertSnapshotsEqual(before, after);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
 test("analyst public CLI bare --ticket with no bindings: live empty page, not library-index miss", async () => {
   await withBusinessRepo(async (businessRepo) => {
     await withTempHome(async (home) => {
-      const previousCwd = process.cwd();
-      process.chdir(businessRepo);
-      try {
+      await withProcessCwd(businessRepo, async () => {
         const { io, stdout, stderr } = captureIo();
         const result = await runAkRole(
           ["analyst", "--ticket", String(TICKET_EMPTY)],
@@ -372,9 +359,7 @@ test("analyst public CLI bare --ticket with no bindings: live empty page, not li
         assert.deepEqual(body.page.legs, []);
         assert.equal(body.page.unreadableCount, 0);
         assert.doesNotMatch(stdout.join(""), /library index/i);
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });

@@ -1583,37 +1583,40 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     const lockPath = join(runDirectory, "writer.lock");
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
-    try {
-      const { io: io2, stdout, stderr } = captureIo();
-      const blocked = await runAkRole(["resume", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: io2,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+    await withPrimaryAwareCleanup(
+      async () => {
+        const { io: io2, stdout, stderr } = captureIo();
+        const blocked = await runAkRole(["resume", runId], {
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          dispatches += 1;
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-        }),
-      });
-      // Concurrent resume rejected before second dispatch.
-      assert.equal(dispatches, 0);
-      assert.equal(stdout.length, 0);
-      assert.equal(stderr.length >= 1, true);
-      assert.notEqual(blocked.exitCode, 0);
-      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
-    } finally {
-      await lease.release();
-    }
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: io2,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            dispatches += 1;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+          }),
+        });
+        // Concurrent resume rejected before second dispatch.
+        assert.equal(dispatches, 0);
+        assert.equal(stdout.length, 0);
+        assert.equal(stderr.length >= 1, true);
+        assert.notEqual(blocked.exitCode, 0);
+        assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
+      },
+      async () => {
+        await lease.release();
+      },
+    );
 
     // Direct lease double-acquire also fails closed.
     const first = await acquireRunWriterLease(runDirectory);
@@ -1813,12 +1816,15 @@ test("#418 lease release recovery path emits no false diagnostic", async () => {
     const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
     // EACCES unlink → chmod retry recovers; the success path must stay silent.
     await chmod(runDirectory, 0o500);
-    try {
-      await lease.release();
-      assert.equal(diagnostics.length, 0);
-    } finally {
-      await chmod(runDirectory, 0o755);
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        await lease.release();
+        assert.equal(diagnostics.length, 0);
+      },
+      async () => {
+        await chmod(runDirectory, 0o755);
+      },
+    );
   });
 });
 

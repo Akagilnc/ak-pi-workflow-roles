@@ -833,36 +833,37 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
   let physicalRoot = "";
   let aliasRoot = "";
   const unlinkRejected = new Error("unlink rejected");
-  try {
-    await assert.rejects(
-      () =>
-        withPhysicalAliasFixture(
-          async (paths) => {
-            physicalRoot = paths.physicalRoot;
-            aliasRoot = paths.aliasRoot;
-            await access(physicalRoot);
-            await access(aliasRoot);
-          },
-          {
-            unlinkAlias: async () => {
-              throw unlinkRejected;
+  await withPrimaryAwareCleanup(
+    async () => {
+      await assert.rejects(
+        () =>
+          withPhysicalAliasFixture(
+            async (paths) => {
+              physicalRoot = paths.physicalRoot;
+              aliasRoot = paths.aliasRoot;
+              await access(physicalRoot);
+              await access(aliasRoot);
             },
-          },
-        ),
-      (error: unknown) => error === unlinkRejected,
-    );
-    assert.notEqual(physicalRoot, "");
-    assert.notEqual(aliasRoot, "");
-    // Nested finally still removed the physical root despite unlink rejection.
-    await assertPathGone(physicalRoot);
-    // Alias intentionally retained (dangling after root rm); lstat avoids follow.
-    assert.equal((await lstat(aliasRoot)).isSymbolicLink(), true);
-  } finally {
-    // Test owns residual alias cleanup so the baseline stays clean.
-    if (aliasRoot !== "") {
-      await unlink(aliasRoot).catch(() => undefined);
-    }
-  }
+            {
+              unlinkAlias: async () => {
+                throw unlinkRejected;
+              },
+            },
+          ),
+        (error: unknown) => error === unlinkRejected,
+      );
+      assert.notEqual(physicalRoot, "");
+      assert.notEqual(aliasRoot, "");
+      // Nested finally still removed the physical root despite unlink rejection.
+      await assertPathGone(physicalRoot);
+      // Alias intentionally retained (dangling after root rm); lstat avoids follow.
+      assert.equal((await lstat(aliasRoot)).isSymbolicLink(), true);
+    },
+    async () => {
+      // Test owns residual alias cleanup so the baseline stays clean.
+      if (aliasRoot !== "") await unlink(aliasRoot);
+    },
+  );
   await assertPathGone(aliasRoot);
 });
 

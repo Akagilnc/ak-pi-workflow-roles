@@ -107,7 +107,7 @@ test("isHeadMatchedProjectInstruction: worktree permission failure stays loud wi
       },
     );
         },
-      async () => { await chmod(join(root, "CLAUDE.md"), 0o644).catch(() => undefined); }
+      async () => { await chmod(join(root, "CLAUDE.md"), 0o644); }
     );
   });
 });

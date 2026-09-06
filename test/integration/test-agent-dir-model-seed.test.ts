@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { fauxProvider } from "@earendil-works/pi-ai";
 
@@ -27,12 +27,15 @@ async function withAgentDir<T>(run: (agentDir: string) => Promise<T>): Promise<T
 test("models.json seed treats ENOENT as a fresh file", async () => {
   await withAgentDir(async (agentDir) => {
     const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-    try {
-      const parsed = JSON.parse(await readFile(join(agentDir, "models.json"), "utf8"));
-      assert.ok(parsed.providers["ak-model-seed-test"]);
-    } finally {
-      await seeded.close();
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        const parsed = JSON.parse(await readFile(join(agentDir, "models.json"), "utf8"));
+        assert.ok(parsed.providers["ak-model-seed-test"]);
+      },
+      async () => {
+        await seeded.close();
+      },
+    );
   });
 });
 
