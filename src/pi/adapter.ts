@@ -168,12 +168,7 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    requireGatekeeperPass: (() => {
-      const candidate = pi as unknown as { requireGatekeeperPass?: RoleHost["requireGatekeeperPass"] };
-      return typeof candidate.requireGatekeeperPass === "function"
-        ? candidate.requireGatekeeperPass
-        : requirePiGatekeeperPass;
-    })(),
+    requireGatekeeperPass: requirePiGatekeeperPass,
     on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {

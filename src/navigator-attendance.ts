@@ -593,11 +593,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const modelPromise = (async () => {
         try {
           // Same resolution authority as createNativeNavigatorSessionFactory (#590).
-          const resolved = await resolveNavigatorSeatSelection(
-            options.context,
-            options.modelSettingPath,
-            options.modelSettingPath ?? navigatorModelSettingPath(),
-          );
+          const resolved = await resolveNavigatorSeatSelection(options.context);
           return resolved.configuredLabel;
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
