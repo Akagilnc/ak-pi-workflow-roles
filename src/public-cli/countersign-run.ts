@@ -104,7 +104,6 @@ export async function runPublicCountersign(
   // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
   // controlled failure (bare pre-admit throw skips terminal settlement).
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
-  // #724: `ak-role new` sets freshSummons — skip lookup, mint new; probe still binds ticket.
   const projectRoot = parsed.project ?? env.cwd;
   const ticketProbe = await probeInstructionTicket(
     parsed.instruction,
@@ -112,7 +111,7 @@ export async function runPublicCountersign(
     env,
   );
   const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined && env.freshSummons !== true) {
+  if (probedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -123,6 +122,7 @@ export async function runPublicCountersign(
       projectRoot,
       role: "countersign",
       ticketNumber: probedTicketNumber,
+      freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
         runPublicCountersignResume(

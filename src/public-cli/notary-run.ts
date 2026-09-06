@@ -93,7 +93,6 @@ export async function runPublicNotary(
   // #637: same ticket → resume prior notary run with this summons' source-run pointer.
   // Source-run structural failures stay usage rejections; lookup/resume failures surface
   // (no bare catch→fresh). Only true absence of a prior run mints new.
-  // #724: `ak-role new` sets freshSummons — skip lookup, mint new.
   const projectRoot = parsed.project ?? env.cwd;
   let source;
   try {
@@ -110,7 +109,7 @@ export async function runPublicNotary(
     throw error;
   }
   const ticketNumber = await readRunTicketNumber(source.runDirectory);
-  if (ticketNumber !== undefined && env.freshSummons !== true) {
+  if (ticketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -120,6 +119,7 @@ export async function runPublicNotary(
       projectRoot,
       role: "notary",
       ticketNumber,
+      freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
         runPublicNotaryResume(
