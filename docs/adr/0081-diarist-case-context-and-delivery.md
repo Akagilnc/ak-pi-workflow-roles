@@ -10,14 +10,17 @@ status: proposed
 
 以下 decision keys 绑定本次会话的 Owner 原话；未逐字覆盖的技术展开不冒充 Owner 裁定。
 
-| key | 决定 | Owner 原话 |
-| --- | --- | --- |
-| `case-context-purpose` | 案卷替各衙门集中本案依据，不只是验证表 | 「我现在更想解决的不是验证问题。而是每一个衙门都要去汪洋大海里捞adr 裁决，设计这些东西」 |
-| `record-not-command` | 记录已有结果与决定，不改变现有提要求、打回和裁决方式 | 「这里不是提要求的地方。而是记录做了什么的地方。现有的提要求的逻辑不变。」 |
-| `automatic-case-material` | 公共入口直接挂案卷；Soul 解释用途，不负责派送 | 「不应该在soul里要求读，应该是直接挂给衙门。soul里只需要说明这个文件是什么就足够了」 |
-| `court-refresh-retained` | 保留票庭刷新；本轮先补足设计修订与案卷可用性 | 「票庭刷新没有问题。后续施工原则上本来也不该修改设计。如果遇到需要修改的。起居郎补修订。」 |
-| `revision-recourt` | 设计修订重新过庭 | 对“修订后的票再过一次票庭”的答复：「确实应该。可以直接写到工厂仓库的 claude.md」 |
-| `original-pointers` | 多数已有材料通过指针引用，避免平行真源 | 「为了避免重复真源，里面很多东西是指针」 |
+| key | 决定 | Owner 原话与定位 | 承接 |
+| --- | --- | --- | --- |
+| `case-context-purpose` | 案卷替各衙门集中本案依据，不只是验证表 | L14851：「我现在更想解决的不是验证问题。而是每一个衙门都要去汪洋大海里捞adr 裁决，设计这些东西」 | — |
+| `record-not-command` | 记录已有结果，现有提要求逻辑不变 | L14827：「这里不是提要求的地方。而是记录做了什么的地方。现有的提要求的逻辑不变。」 | — |
+| `automatic-case-material` | 公共入口直接挂案卷；Soul 解释用途，不负责派送 | L14931：「不应该在soul里要求读，应该是直接挂给衙门。soul里只需要说明这个文件是什么就足够了」 | — |
+| `court-refresh-retained` | 保留票庭刷新；起居郎补设计修订 | L14895：「票庭刷新没有问题。后续施工原则上本来也不该修改设计。」及「如果遇到需要修改的。起居郎补修订。」 | — |
+| `revision-recourt` | 设计修订重新过庭 | L14952 提问“修订后的票再过一次票庭”，L14961 答：「确实应该。可以直接写到工厂仓库的 claude.md」 | — |
+| `original-pointers` | 多数已有材料通过指针引用，避免平行真源 | L14797：「为了避免重复真源，里面很多东西是指针」 | — |
+| `cross-host-case-discovery` | 主动搜集本案材料，不限于 Claude 会话 | L15136 提案“不能只等票面把链接列好，也不能只读 Claude 会话”；L15145 Owner 答「那你倒是做啊！」并指定 grill-with-docs。授权本轮设计，不宣称实现已获施工批准。 | — |
+
+上表 L 行号指向本次会话原件 `/Users/akagilnc/.codex/sessions/2026/08/02/rollout-2026-08-02T12-34-34-019fc089-a755-7d80-b8ff-de4692b4d300.jsonl`；这是设计取证指针，不是公开包运行前提。提案与答复分别注明身份，不把助手提案写成 Owner 原话。
 
 设计修订的施工规则唯一真源是 [CLAUDE.md](../../CLAUDE.md)“设计修订后重新过庭”，本页只引用。普通施工、每轮审查和新材料出现不另增刷新站点；不建后台监视器、不靠主会话额外记得调用补录。进度表、必检清单和各衙门逐轮回填不属本轮交付。
 
@@ -31,11 +34,19 @@ status: proposed
 
 递送时序须在本轮认票、以及适用的票庭刷新完成之后；仅在受理时冻结附件不足以满足这一点。材料定位与递送复用现有司天台读取、按票运行索引、原生会话读取核和公共请求投影，不为起居录建立平行索引或记忆机制。
 
+系统随案提供的起居录引用与调用者附件是两类材料：前者在本轮递送时指向已刷新案卷，后者继续遵守原有受理冻结与恢复语义，不替换其历史内容。用途说明由角色材料拥有，机器递送文本仅中立标识材料，不复述 Soul。
+
+语义整理结果也经司天台唯一入口留录，再派生到现有人读视图；Markdown 不单独保存“当前方向”这一新事实。原始记录与历次整理保留，整理结果只是有出处的解释，不获得独立于原件的法源地位。不另建存储、平行缓存或专属索引。
+
 ## 与现行制度的关系
 
-- **ADR 0075**：扩充 `cc-sessions-first` 的来源范围，以及起居郎仅从冻结候选中选块的职责；保持每票组织、起居郎独家修录、司天台记录真源、票庭前序和增量刷新。原件对话的完整誊录与不可变档案例外保留；设计、ADR、裁决的导航采用指针，不把导航重写成另一份规范。现有历史记录不删改，不顺带给全部存量票补档。
-- **ADR 0077**：复用工厂各宿主的已有记录，保持直写司天台，不另建会话搬运流水线。它不等于外部 Codex、Pi 主会话已可自动发现；外部设计会话仍须从其真实存放处读取。宿主原始记录与起居录是不同用途，不把全部运行轨迹灌入案卷。
-- **ADR 0079**：复用按票定位、同票 resume 与公共指针递送。扩大随案材料覆盖，不增加全局票号参数，不重新设计角色记忆或派工拓扑。
+- [ADR 0075](0075-ticket-provenance-diarist-pipeline.md)：`cc-sessions-first` 由本页 `cross-host-case-discovery` 扩展；`diarist-llm-collector` 从仅选块扩为搜集与整理；`refresh-every-court` 保留票庭触发，修正“仅新块进入语义处理”为新块增量收录、旧案卷可供整理上下文。已送未选水印只用于避免重复收录劳动，不得屏蔽因新设计而重新相关的旧材料或主动发现新依据；无新增依据与修订时仍可跳过重复整理。`ticket-provenance-file`、`diarist-generates`、`ticket-keyed-history`、`sitian-scope-amendment`、`diarist-before-countersign`、`notary-inner-gate`、`no-backfill`、`names`、`github-face-local-only` 保持。`transcribe-whole-blocks`、`immutable-transcript-dry-exception` 保持完整原话档案，导航不复制设计规范。`no-global-ticket-flag` 与 `diarist-resolves-ticket-llm-layer` 沿用 ADR 0079 的既有修正。
+- [ADR 0077](0077-all-host-session-records-unified-direct-write.md)：保持 `record-scope-phase-two`、`live-session-in-books`，复用工厂宿主直写卷宗，不建搬运。它不等于外部 Codex、Pi 主会话已可自动发现；外部设计会话须从真实存放处读取，不能把所有运行轨迹灌入案卷。
+- [ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md)：保持 `direct-officer-summons`、两个 `ticket-seat-memory-*-principal` 及 `summons-pointer-input`，扩充随案指针材料，不增加票号旗或重设计派工与记忆。
+- [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md)：保持 `records-owner`、`record-entry`，整理结果归司天台；其余键沿现有后出修订，不在本案重定。
+- [ADR 0073](0073-machine-text-neutrality-law.md)：保持全中文、不复述 Soul、只许中立描述；递送不夹带新的审查指令。
+- [ADR 0078](0078-decision-key-ledgers-name-successor-issues.md)：遵守 `successor-column`、`successor-values`、`successor-not-status`、`reader-verifies-live`；未立施工票，承接列为 —。
+- [ADR 0080](0080-resume-entrypoints-share-settlement-disposition.md)：`separate-resume-entrypoints`、`single-settlement-disposition`、`class-wide-disposition-cleanup` 均不改，案卷递送不新增终局与续跑判定。
 - Soul 中的手工找录要求随实际自动递送接线一并收窄为用途说明；本设计不提前修改 Soul，也不改变任何衙门的审理权与裁决标准。
 
 ## 验收场景
@@ -46,6 +57,9 @@ status: proposed
 - Owner 拍定设计修订后重过票庭：起居郎补录，后续同票新调用及 resume 均拿到更新后的案卷；普通施工不产生逐轮刷新。
 - 角色从公共入口接手，只需沿随案提供的引用就能读取起居录；检验真实调用收到的材料，而不是只检查文件已生成或 Soul 写了“读取”。
 - 没有新决定的日常施工，不增加起居郎轮次、必检清单或机械停工条件。
+- 旧案卷和已送水印都已存在，新修订引用以前未入选的讨论：本次可重新判断该材料并联系历史，不因水印漏掉依据；无需重新全量誊录旧卷。
+- 首次调用、同票再传召、手动恢复均能读取系统递送的本票案卷；手工附件仍保持出生时冻结内容，两者不相互覆写。
+- 真无票对象继续既有无票审理；绑定票缺录、案卷不可读、引用原件不可核实分别如实呈现对应情况，不伪造完整案卷、通过或新停工闸。
 
 这些是行为验收场景，不是逐条新增永久测试的清单；验证采用现有质量法，真实宿主递送效果以实际调用证据核验。
 
