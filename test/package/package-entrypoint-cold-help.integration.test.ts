@@ -272,7 +272,6 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const modelRequests: string[] = [];
         const lifecycle: Array<{ label: string; event: any; timestamps?: { preparedAt: string; settledAt: string; persistedVisibleAt: string } }> = [];
         const invoke = async (label: string) => {
-          let parentPrepareCounted = false;
           const response = (context: Context, _options: unknown, _state: unknown, requestModel: { provider: string; id: string }) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NOTARY_OUTPUT_TOOL)) {
@@ -282,13 +281,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
               );
             }
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              // Parent model-setting contract (#675 r2 exact-3): one parent prepare per
-              // successful invoke. Nested officer navigator prepares share Luna but are
-              // independent seats — do not inflate the parent model-setting assertion.
-              if (!parentPrepareCounted) {
-                parentPrepareCounted = true;
-                modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
-              }
+              modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
                 candidates: [{
                   id: "cold-luna-route",
