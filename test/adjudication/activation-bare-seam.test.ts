@@ -3,7 +3,7 @@ import {
   chmodSync,
   mkdirSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,6 +24,8 @@ import {
   withActivationHome,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -117,11 +119,15 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
       { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
     );
-    // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
+    // Non-git arm cwd must sit truly outside this worktree's upward Git discovery.
+    // worktreeTempPrefix roots inherit checkout .git; outside create-and-abandon only
+    // (owner 2026-09-06: do not delete outside the worktree). Hermetic HOME/ledger
+    // stay under worktree; durable-session arms below seedGitRepository(home).
+    const nonGitCwd = await mkdtemp(outsideWorktreeTempPrefix("ak-act-nongit-cwd-"));
     // Pre-create a ledger session so non-git fails on book-key, not session placement.
     const bookKey = activationBookKeyFor(home);
     const ctx = activationExtensionContext({
-      cwd: home,
+      cwd: nonGitCwd,
       home,
       bookKey,
       abort() { aborts++; },
@@ -197,7 +203,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     await rejectSessionClass("relative path", "relative/session.jsonl");
 
     // Outside-home /tmp pointer with no file: still rejected (cannot materialize outside home).
-    await rejectSessionClass("outside-home /tmp", join(tmpdir(), "ak-act-outside-session.jsonl"));
+    await rejectSessionClass("outside-home /tmp", worktreeTempPrefix("ak-act-outside-session.jsonl"));
 
     // Consumer-repository pointer with no file: still rejected (cannot materialize outside home).
     await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
@@ -218,45 +224,48 @@ test("append failure preserves original cause and aborts nonzero", async () => {
     const bookDir = join(machineLedgerHome(home), "books", bookKey);
     chmodSync(bookDir, 0o555);
     let aborts = 0;
-    try {
-      const { handlers } = captureExtensionHandlers(
-        (pi) => createPiRoleRuntimeExtension({
-          loadJudgeSoul: async () => "LAW",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-          activationTraceWriter: () => {},
-        })(pi),
-        { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
-      );
-      const ctx = activationExtensionContext({
-        cwd: home,
-        home,
-        bookKey,
-        sessionFile,
-        abort() { aborts++; },
-      });
-      await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-        assert.ok(error instanceof Error);
-        const codes: string[] = [];
-        let current: unknown = error;
-        const seen = new Set<unknown>();
-        while (current !== null && typeof current === "object" && !seen.has(current)) {
-          seen.add(current);
-          if ("code" in current && typeof (current as { code: unknown }).code === "string") {
-            codes.push((current as { code: string }).code);
-          }
-          current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
-        }
-        assert.ok(
-          codes.includes("EACCES") || codes.includes("EPERM"),
-          `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
+    await withPrimaryAwareCleanup(
+      async () => {
+        const { handlers } = captureExtensionHandlers(
+          (pi) => createPiRoleRuntimeExtension({
+            loadJudgeSoul: async () => "LAW",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+            activationTraceWriter: () => {},
+          })(pi),
+          { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
         );
-        return true;
-      });
-      assert.equal(aborts, 1);
-      assert.equal(process.exitCode, 1);
-    } finally {
-      chmodSync(bookDir, 0o755);
-    }
+        const ctx = activationExtensionContext({
+          cwd: home,
+          home,
+          bookKey,
+          sessionFile,
+          abort() { aborts++; },
+        });
+        await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          const codes: string[] = [];
+          let current: unknown = error;
+          const seen = new Set<unknown>();
+          while (current !== null && typeof current === "object" && !seen.has(current)) {
+            seen.add(current);
+            if ("code" in current && typeof (current as { code: unknown }).code === "string") {
+              codes.push((current as { code: string }).code);
+            }
+            current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
+          }
+          assert.ok(
+            codes.includes("EACCES") || codes.includes("EPERM"),
+            `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
+          );
+          return true;
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+      },
+      async () => {
+        chmodSync(bookDir, 0o755);
+      },
+    );
   });
 });
 

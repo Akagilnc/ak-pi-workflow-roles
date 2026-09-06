@@ -1,8 +1,7 @@
 // #420 整改拆分：接缝与恢复家族
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
@@ -26,11 +25,10 @@ import type { RoleEnvelopeHost, RoleHost } from "../../src/host-contracts.ts";
 import {
   context,
   candidate,
-  cleanupTempDir,
   sessionHarness,
   attendance,
-  settleAnsweringRebind,
-} from "../helpers/navigator-attendance-kit.ts";
+  settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
@@ -40,10 +38,12 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   assert.equal(resolveNavigatorAuthorityMaterial(undefined, undefined), undefined);
   assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
 
-  const root = await mkdtemp(join(tmpdir(), "navigator-input-authority-"));
+  await withTempRoot("navigator-input-authority-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const workRoot = resolve(root, ".ak/work/issues/91");
     await mkdir(workRoot, { recursive: true });
     const packetPath = resolve(workRoot, "fix-packet.md");
@@ -52,8 +52,7 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
 
     const sessionCtx = (cwd: string, sessionDir: string) => ({
       cwd,
-      sessionManager: { getSessionDir: () => sessionDir },
-    }) as never;
+      sessionManager: { getSessionDir: () => sessionDir } }) as never;
     const fixerPi = { getFlag: (name: string) => name === "ak-fix-packet" ? packetPath : undefined };
     const noInputPi = { getFlag: () => undefined };
     const fixerCtx = sessionCtx(workRoot, resolve(workRoot, "runs/fixer/session"));
@@ -92,11 +91,11 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     assert.equal(neither.subjectProvenance, "placeholder");
     assert.equal(neither.authority, "");
     assert.equal("contextError" in neither, false);
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
+    );
+  });
 });
 
 test("prepare tool accepts direction-only and broken ancillary shape once without retry", async () => {
@@ -105,8 +104,7 @@ test("prepare tool accepts direction-only and broken ancillary shape once withou
 
   // Direction-only v1 shape: usable next survives without route/matches/reason/command/ids.
   const directionOnly = {
-    candidates: [{ next: { role: "fixer", phase: "apply" } }],
-  };
+    candidates: [{ next: { role: "fixer", phase: "apply" } }] };
   const first = await tool.execute("direction-only", directionOnly as never, undefined, undefined, {} as never);
   assert.equal(accepted.length, 1, "direction-only batch must be accepted");
   assert.equal((first as { terminate?: boolean }).terminate, true);
@@ -118,9 +116,7 @@ test("prepare tool accepts direction-only and broken ancillary shape once withou
       matches: { role: "coder", phase: "apply", kind: "accepted" },
       route: [{ role: "coder", phase: "apply" }],
       next: { role: "reviewer", phase: null },
-      command: "Usage: model prose must not gate acceptance",
-    }],
-  };
+      command: "Usage: model prose must not gate acceptance" }] };
   const second = await tool.execute("broken-ancillary", brokenAncillary as never, undefined, undefined, {} as never);
   assert.equal(accepted.length, 2, "broken ancillary shape still accepted once");
   assert.equal((second as { terminate?: boolean }).terminate, true);
@@ -145,16 +141,14 @@ test("prepare provider schema admits object-root nested malformation through rea
     const validated = validateToolArguments(tool as never, {
       id: payload.name,
       name: tool.name,
-      arguments: structuredClone(payload.args),
-    } as never);
+      arguments: structuredClone(payload.args) } as never);
     const result = await tool.execute(payload.name, validated as never, undefined, undefined, {} as never);
     assert.equal((result as { terminate?: boolean }).terminate, true, `${payload.name} must terminate once`);
   }
   assert.equal(accepted.length, payloads.length, "every object-root payload reaches the unique execute sink exactly once");
 
   // Usable next survives nested malformation after real validate→execute→settle.
-  const root = await mkdtemp(join(tmpdir(), "navigator-schema-gate-"));
-  try {
+  await withTempRoot("navigator-schema-gate-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -169,14 +163,11 @@ test("prepare provider schema admits object-root nested malformation through rea
           next: { role: "fixer", phase: "apply" },
           route: "not-an-array",
           matches: "not-an-object",
-          reason: 7,
-        }],
-      };
+          reason: 7 }] };
       const malformed = validateToolArguments(harness.tool() as never, {
         id: "live-usable",
         name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: structuredClone(usableArgs),
-      } as never);
+        arguments: structuredClone(usableArgs) } as never);
       await harness.tool().execute("live-usable", malformed as never, undefined, undefined, {} as never);
       harness.release();
       // Malformed matches normalize away → unmatched → one settlement-bound rebind; next still passes through.
@@ -206,8 +197,7 @@ test("prepare provider schema admits object-root nested malformation through rea
       const validated = validateToolArguments(harness.tool() as never, {
         id: name,
         name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: structuredClone(args),
-      } as never);
+        arguments: structuredClone(args) } as never);
       await harness.tool().execute(name, validated as never, undefined, undefined, {} as never);
       harness.release();
       // No usable next → no rebind; settles unavailable immediately.
@@ -223,16 +213,11 @@ test("prepare provider schema admits object-root nested malformation through rea
       assert.equal(events[0]?.unavailableSource, "unknown");
       assert.equal(typeof events[0]?.unavailableReason, "string");
     }
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-direction-only-"));
-  try {
+  await withTempRoot("navigator-direction-only-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -279,9 +264,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
       const brokenRoute = {
         candidates: [{
           route: [{ role: "coder", phase: "apply" }],
-          next: { role: "reviewer", phase: null },
-        }],
-      };
+          next: { role: "reviewer", phase: null } }] };
       await harness.tool().execute(
         "broken-route",
         brokenRoute,
@@ -333,16 +316,11 @@ test("direction-only prepare settles recommendation; missing next is honest unav
       assert.equal(events[0].unavailableCause, "unknown");
       assert.notEqual(events[0].unavailableReason, undefined);
     }
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("advice command derives phase token from registry metadata for every packaged role", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-command-registry-"));
-  try {
+  await withTempRoot("navigator-command-registry-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -405,16 +383,11 @@ test("advice command derives phase token from registry metadata for every packag
         assert.equal(events[0]?.command, expected, `${entry.role}/${String(phase)}`);
       }
     }
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-no-invented-route-"));
-  try {
+  await withTempRoot("navigator-no-invented-route-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -428,8 +401,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
         loadRoleHelp: async (r) => `help ${r}`,
         createSession: harness.factory,
         modelSettingPath: setting,
-        onEvent: async (event) => { events.push(event); },
-      });
+        onEvent: async (event) => { events.push(event); } });
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       await harness.tool().execute("batch", batch as never, undefined, undefined, {} as never);
@@ -473,13 +445,11 @@ test("completed Fixer/Coder settlement does not invent next without model/author
       loadRoleHelp: async (r) => `help ${r}`,
       createSession: harness.factory,
       modelSettingPath: setting,
-      onEvent: async (event) => { events.push(event); },
-    });
+      onEvent: async (event) => { events.push(event); } });
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     const explicit = {
-      candidates: [{ next: { role: "coder", phase: "apply" }, reason: "authority names coder apply next" }],
-    };
+      candidates: [{ next: { role: "coder", phase: "apply" }, reason: "authority names coder apply next" }] };
     await harness.tool().execute(
       "explicit",
       explicit,
@@ -497,16 +467,11 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     );
     assert.equal(events[0]?.disposition, "recommendation");
     assert.deepEqual(events[0]?.next, { role: "coder", phase: "apply" });
-  } catch (error) {
-    await cleanupTempDir(root, error);
-    throw error;
-  }
-  await cleanupTempDir(root);
+  });
 });
 
 test("empty authority at prepare is honest context unavailable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-empty-authority-"));
-  try {
+  await withTempRoot("navigator-empty-authority-", async (root) => {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const events: any[] = [];
@@ -523,8 +488,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
       createSession: async () => {
         throw new Error("session must not open without authority");
       },
-      onEvent: async (event) => { events.push(event); },
-    });
+      onEvent: async (event) => { events.push(event); } });
     nav.prepare();
     await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
     assert.equal(events.length, 1);
@@ -533,15 +497,15 @@ test("empty authority at prepare is honest context unavailable", async () => {
     assert.equal(events[0].unavailableCause, "context");
     assert.equal(events[0].next, undefined);
     assert.notEqual(events[0].unavailableReason, undefined);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
-  const root = await mkdtemp(join(tmpdir(), "navigator-admitted-request-"));
+  await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runDir = join(root, "run-public-judge");
     await mkdir(runDir, { recursive: true });
     const sessionDir = join(runDir, "session");
@@ -554,8 +518,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
         runId: "run-public-1",
         instruction: prose,
         instructionEmpty: false,
-        attachments: [],
-      }),
+        attachments: [] }),
       "utf8",
     );
 
@@ -563,8 +526,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     const judgePi = { getFlag: () => undefined };
     const judgeCtx = {
       cwd: root,
-      sessionManager: { getSessionDir: () => join(process.env.AK_ROLE_RUN_DIR!, "session") },
-    } as never;
+      sessionManager: { getSessionDir: () => join(process.env.AK_ROLE_RUN_DIR!, "session") } } as never;
 
     const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
     assert.equal(loaded.subject, prose);
@@ -602,8 +564,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
         role: "fixer",
         instruction: prose,
         instructionEmpty: false,
-        attachments: [],
-      }),
+        attachments: [] }),
       "utf8",
     );
     process.env.AK_ROLE_RUN_DIR = wrongRoleRun;
@@ -622,8 +583,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
         role: "judge",
         instruction: "",
         instructionEmpty: true,
-        attachments: [],
-      }),
+        attachments: [] }),
       "utf8",
     );
     process.env.AK_ROLE_RUN_DIR = emptyRun;
@@ -631,11 +591,11 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");
     assert.equal(empty.subject.includes(prose), false);
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
+    );
+  });
 });
 
 test("host-neutral envelope drives shared registration and session lifecycle", async () => {
@@ -665,16 +625,14 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         },
         setActiveTools() {},
         getActiveTools() { return []; },
-        appendEntry() {},
-      };
+        appendEntry() {} };
 
       const envelopeHost: RoleEnvelopeHost = {
         host: pi as RoleHost,
         appendEntry: pi.appendEntry,
         sendMessage() {},
         startKeepalive() {},
-        stopKeepalive() {},
-      };
+        stopKeepalive() {} };
       createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         auditSoulCompliance: async () => ({ status: "pass" }),
@@ -682,24 +640,20 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
           subjectKey: `${runDir}/work`,
           subject: prose,
           authority: prose,
-          subjectProvenance: "role_input",
-        }),
+          subjectProvenance: "role_input" }),
         createNavigatorAttendance: (options) => {
           observed = {
             subject: options.subject,
             authority: options.authority,
-            subjectKey: options.subjectKey,
-          };
+            subjectKey: options.subjectKey };
           return {
             prepare() {},
             setWorkContext() {},
             warmHelp() {},
             isPreparing: () => false,
             settle: async () => {},
-            dispose() {},
-          };
-        },
-      })(envelopeHost);
+            dispose() {} };
+        } })(envelopeHost);
 
       const sessionDir = join(runDir, "session");
       await mkdir(sessionDir, { recursive: true });
@@ -707,8 +661,7 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
       await handlers.get("session_start")?.({}, {
         cwd: home,
         sessionManager,
-        abort() {},
-      });
+        abort() {} });
 
       assert.ok(observed, "Navigator attendance must be constructed");
       assert.equal(observed.subject, prose);
@@ -746,8 +699,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
         return [];
       },
       setActiveTools() {},
-      appendEntry() {},
-    };
+      appendEntry() {} };
 
     let latestContext: {
       subject?: string;
@@ -766,15 +718,13 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
         subjectKey: join(home, ".ak/work"),
         subject: `work subject: ${join(home, ".ak/work")}`,
         authority: "",
-        subjectProvenance: "placeholder" as const,
-      }),
+        subjectProvenance: "placeholder" as const }),
       createNavigatorAttendance: (options) => {
         latestContext = {
           subject: options.subject,
           authority: options.authority,
           subjectProvenance: "placeholder",
-          contextError: options.contextError,
-        };
+          contextError: options.contextError };
         return {
           prepare() {
             prepareCalls += 1;
@@ -790,16 +740,13 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
               subject: next.subject,
               authority: next.authority,
               subjectProvenance: next.subjectProvenance,
-              contextError: next.contextError,
-            };
+              contextError: next.contextError };
           },
           warmHelp() {},
           isPreparing: () => false,
           settle: async () => {},
-          dispose() {},
-        };
-      },
-    })(pi as never);
+          dispose() {} };
+      } })(pi as never);
 
     const sessionDir = join(
       home,

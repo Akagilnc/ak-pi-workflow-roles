@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import test from "node:test";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
@@ -20,6 +20,7 @@ import {
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 function registerTool(
   root: string,
@@ -70,7 +71,7 @@ function registerTool(
 }
 
 async function fixture() {
-  const root = await mkdtemp(`${tmpdir()}/ak-submission-ledger-`);
+  const root = await mkdtemp(worktreeTempPrefix("ak-submission-ledger-"));
   execFileSync("git", ["init", "-q", root]);
   return { root, ...registerTool(root) };
 }
@@ -88,10 +89,16 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const f = await fixture();
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
-  try { await run(f); } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(f.root, { recursive: true, force: true });
-  }
+  await withPrimaryAwareCleanup(
+    () => run(f),
+    async () => {
+      if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = priorRun;
+    },
+    async () => {
+      await rm(f.root, { recursive: true, force: true });
+    },
+  );
 }
 
 test("host-neutral round closure seals only a sole terminal candidate", async () => {
@@ -364,13 +371,16 @@ test("a sealed append failure never returns accepted", async () => {
       if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
       return { content: [], details: { judgeStatus: "converged" }, terminate: true };
     });
-    try {
-      await failing.start("seal-failure");
-      await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
-      await assert.rejects(failing.close());
-      assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
-    } finally {
-      if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
-    }
+    await withPrimaryAwareCleanup(
+      async () => {
+        await failing.start("seal-failure");
+        await failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context);
+        await assert.rejects(failing.close());
+        assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
+      },
+      async () => {
+        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
+      },
+    );
   });
 });

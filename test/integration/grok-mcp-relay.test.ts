@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
-import { tmpdir } from "node:os";
+import { unlink } from "node:fs/promises";
+import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { worktreePackageRoot } from "../helpers/worktree-temp.ts";
 
-import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { packageRoot, withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const relayPath = join(packageRoot, "src/grok/mcp-relay.mjs");
 
@@ -17,41 +18,66 @@ async function withRelay(
   handleUpstream: UpstreamHandler,
   run: (child: ReturnType<typeof spawn>, replies: AsyncIterator<string>) => Promise<void>,
 ): Promise<{ exitCode: number | null }> {
-  const dir = await mkdtemp(join(tmpdir(), "ak-mcp-relay-"));
-  const socketPath = join(dir, "upstream.sock");
+  // Short relative sun_path under package root (tests run with cwd=package root).
+  // .test-tmp- prefix reuses existing gitignore; no deep mkdtemp path in the bind address.
+  const socketName = `.test-tmp-r${process.pid.toString(36)}${Date.now().toString(36)}.sock`;
+  const socketAbs = join(worktreePackageRoot, socketName);
   const token = "relay-token";
-  const server = createServer((socket) => {
-    const lines = createInterface({ input: socket });
-    lines.on("line", (line) => {
-      const message = JSON.parse(line) as { id: number; method: string; params?: unknown };
-      handleUpstream(message, socket);
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, resolve);
-  });
-  const child = spawn(process.execPath, [relayPath], {
-    env: { ...process.env, AK_GROK_MCP_SOCKET: socketPath, AK_GROK_MCP_TOKEN: token },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const lines = createInterface({ input: child.stdout! });
-  const replies = lines[Symbol.asyncIterator]();
-  try {
-    await run(child, replies);
-    if (child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {
-        child.once("exit", () => resolve());
-        child.once("error", () => resolve());
+  let server: Server | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  let lines: ReturnType<typeof createInterface> | undefined;
+  // Acquire nothing before cleanup ownership: server/child only inside body.
+  // Listener/child/cleanup share worktreePackageRoot as the socket base while
+  // keeping a short relative sun_path (do not listen on the absolute path).
+  return withPrimaryAwareCleanup(
+    async () => {
+      server = createServer((socket) => {
+        const upstreamLines = createInterface({ input: socket });
+        upstreamLines.on("line", (line) => {
+          const message = JSON.parse(line) as { id: number; method: string; params?: unknown };
+          handleUpstream(message, socket);
+        });
       });
-    }
-    return { exitCode: child.exitCode };
-  } finally {
-    lines.close();
-    child.kill("SIGTERM");
-    server.close();
-    await rm(dir, { recursive: true, force: true });
-  }
+      await withProcessCwd(worktreePackageRoot, async () => {
+        await new Promise<void>((resolve, reject) => {
+          server!.once("error", reject);
+          server!.listen(socketName, resolve);
+        });
+      });
+      child = spawn(process.execPath, [relayPath], {
+        cwd: worktreePackageRoot,
+        env: { ...process.env, AK_GROK_MCP_SOCKET: socketName, AK_GROK_MCP_TOKEN: token },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      lines = createInterface({ input: child.stdout! });
+      const replies = lines[Symbol.asyncIterator]();
+      await run(child, replies);
+      if (child.exitCode === null && child.signalCode === null) {
+        await new Promise<void>((resolve) => {
+          child!.once("exit", () => resolve());
+          child!.once("error", () => resolve());
+        });
+      }
+      return { exitCode: child.exitCode };
+    },
+    async () => {
+      lines?.close();
+      child?.kill("SIGTERM");
+    },
+    async () => {
+      if (server === undefined) return;
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+    async () => {
+      try {
+        await unlink(socketAbs);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    },
+  );
 }
 
 test("MCP relay drains an in-flight tools/call after stdin EOF", { timeout: 8000 }, async () => {

@@ -1,6 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -21,7 +22,6 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -53,11 +53,11 @@ import {
   packageRoot,
   persistActivationSessionFile,
   withActivationHome,
-  withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -72,12 +72,7 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-judge-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-judge-", scenario);
 }
 
 /** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */
@@ -90,7 +85,7 @@ async function withPhysicalAliasFixture<T>(
     unlinkAlias?: (aliasRoot: string) => Promise<void>;
   },
 ): Promise<T> {
-  const physicalRoot = await mkdtemp(join(tmpdir(), "ak-nav-subject-"));
+  const physicalRoot = await mkdtemp(worktreeTempPrefix("ak-nav-subject-"));
   const aliasRoot = `${physicalRoot}-alias`;
   let aliasCreated = false;
   const mkdirWork =
@@ -108,22 +103,21 @@ async function withPhysicalAliasFixture<T>(
     (async (alias: string) => {
       await unlink(alias);
     });
-  try {
-    // Every fallible step after mkdtemp stays inside the cleanup region.
-    await mkdirWork(physicalRoot);
-    await linkAlias(physicalRoot, aliasRoot);
-    aliasCreated = true;
-    return await body({ physicalRoot, aliasRoot });
-  } finally {
-    try {
-      if (aliasCreated) {
-        await unlinkAlias(aliasRoot);
-      }
-    } finally {
-      // Root removal still runs if alias unlink rejects.
+  // Independent cleanups: unlink failure must not erase primary or skip root rm.
+  return withPrimaryAwareCleanup(
+    async () => {
+      await mkdirWork(physicalRoot);
+      await linkAlias(physicalRoot, aliasRoot);
+      aliasCreated = true;
+      return await body({ physicalRoot, aliasRoot });
+    },
+    async () => {
+      if (aliasCreated) await unlinkAlias(aliasRoot);
+    },
+    async () => {
       await rm(physicalRoot, { recursive: true, force: true });
-    }
-  }
+    },
+  );
 }
 
 async function assertPathGone(path: string): Promise<void> {
@@ -839,36 +833,37 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
   let physicalRoot = "";
   let aliasRoot = "";
   const unlinkRejected = new Error("unlink rejected");
-  try {
-    await assert.rejects(
-      () =>
-        withPhysicalAliasFixture(
-          async (paths) => {
-            physicalRoot = paths.physicalRoot;
-            aliasRoot = paths.aliasRoot;
-            await access(physicalRoot);
-            await access(aliasRoot);
-          },
-          {
-            unlinkAlias: async () => {
-              throw unlinkRejected;
+  await withPrimaryAwareCleanup(
+    async () => {
+      await assert.rejects(
+        () =>
+          withPhysicalAliasFixture(
+            async (paths) => {
+              physicalRoot = paths.physicalRoot;
+              aliasRoot = paths.aliasRoot;
+              await access(physicalRoot);
+              await access(aliasRoot);
             },
-          },
-        ),
-      (error: unknown) => error === unlinkRejected,
-    );
-    assert.notEqual(physicalRoot, "");
-    assert.notEqual(aliasRoot, "");
-    // Nested finally still removed the physical root despite unlink rejection.
-    await assertPathGone(physicalRoot);
-    // Alias intentionally retained (dangling after root rm); lstat avoids follow.
-    assert.equal((await lstat(aliasRoot)).isSymbolicLink(), true);
-  } finally {
-    // Test owns residual alias cleanup so the baseline stays clean.
-    if (aliasRoot !== "") {
-      await unlink(aliasRoot).catch(() => undefined);
-    }
-  }
+            {
+              unlinkAlias: async () => {
+                throw unlinkRejected;
+              },
+            },
+          ),
+        (error: unknown) => error === unlinkRejected,
+      );
+      assert.notEqual(physicalRoot, "");
+      assert.notEqual(aliasRoot, "");
+      // Nested finally still removed the physical root despite unlink rejection.
+      await assertPathGone(physicalRoot);
+      // Alias intentionally retained (dangling after root rm); lstat avoids follow.
+      assert.equal((await lstat(aliasRoot)).isSymbolicLink(), true);
+    },
+    async () => {
+      // Test owns residual alias cleanup so the baseline stays clean.
+      if (aliasRoot !== "") await unlink(aliasRoot);
+    },
+  );
   await assertPathGone(aliasRoot);
 });
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { AgentSession, SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -12,8 +12,9 @@ import { executeReviewerChild, projectSharedChildFailure } from "../../src/revie
 import { executeEvidenceChild } from "../../src/evidence-child-executor.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
-test("shared child classifications project without relabeling unrelated errors", () => {
+test("shared child classifications project without relabeling unrelated errors", async () => {
   for (const classification of ["provider", "child", "unknown"] as const) {
     const error = Object.assign(new Error(classification), { evidenceChildFailure: classification });
     assert.equal(projectSharedChildFailure(error), error);
@@ -40,10 +41,10 @@ function evidenceChildContext(cwd: string, faux: ReturnType<typeof fauxProvider>
 }
 
 test("aborted evidence without remote testimony projects unknown, not child", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-aborted-"));
+  return await withTempRoot("ak-sp1-aborted-", async (cwd) => {
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
-  try {
+
     const faux = fauxProvider({ provider: "sp1-aborted-unknown" });
     faux.setResponses([fauxAssistantMessage("stream cut", { stopReason: "aborted", errorMessage: "stream cut" })]);
     await writeInstitutionalSeatTable(runDirectory, {
@@ -63,9 +64,7 @@ test("aborted evidence without remote testimony projects unknown, not child", as
         return true;
       },
     );
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+    });
 });
 
 test("evidence-child cleanup runs handle.close even when unsubscribe throws and preserves every cause", async () => {
@@ -73,7 +72,7 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
   const previousBaseUrl = process.env.OPENAI_BASE_URL;
   process.env.OPENAI_API_KEY = "sk-test";
   process.env.OPENAI_BASE_URL = "http://127.0.0.1:1";
-  const cwd = await mkdtemp(join(tmpdir(), "ak-sp1-cleanup-"));
+  return await withTempRoot("ak-sp1-cleanup-", async (cwd) => {
   const runDirectory = join(cwd, "run");
   await mkdir(runDirectory, { recursive: true });
   let subscribes = 0;
@@ -100,7 +99,9 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
     disposes += 1;
     return originalDispose.apply(this, args);
   };
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const faux = fauxProvider({ provider: "openai" });
     // Through the real provider entry the evidence child resolves its seat from
     // the child-local ModelRuntime and would need a scripted response to produce
@@ -129,15 +130,15 @@ test("evidence-child cleanup runs handle.close even when unsubscribe throws and 
         return true;
       },
     );
-  } finally {
-    AgentSession.prototype.subscribe = originalSubscribe;
-    AgentSession.prototype.dispose = originalDispose;
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previousKey;
-    if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
-    else process.env.OPENAI_BASE_URL = previousBaseUrl;
-    await rm(cwd, { recursive: true, force: true });
-  }
+        },
+      async () => { AgentSession.prototype.subscribe = originalSubscribe; },
+      async () => { AgentSession.prototype.dispose = originalDispose; },
+      async () => { if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey; },
+      async () => { if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = previousBaseUrl; }
+    );
+  });
 });
 
 test("nonzero engine diagnostic uses the last stdout row when stderr is empty", () => {

@@ -6,3 +6,6 @@ dist/
 # Claude Code session dir (local only)
 .claude/
 
+# worktree-local test fixture roots (#685 r12 / #612)
+.test-tmp/
+.test-tmp-*

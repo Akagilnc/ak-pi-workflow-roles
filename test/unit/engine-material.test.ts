@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 — engine material is optional notes, not a closed name catalog.
  * Entry-reachable delivery is covered by public-cli-engine-axis tracer.
@@ -6,9 +7,9 @@
  */
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   appendEngineSessionMaterial,
@@ -17,7 +18,7 @@ import {
   listEngineMaterialNames,
 } from "../../src/package-resources/engine-material.ts";
 
-test("assertLegalEngineName rejects only real path hazards; consecutive dots pass", () => {
+test("assertLegalEngineName rejects only real path hazards; consecutive dots pass", async () => {
   // Real hazards: traversal parents, separators, NUL, exact "." / "..".
   // Well-formed names (incl. company..opus) are never rejected for missing notes (#376).
   assert.throws(
@@ -47,7 +48,7 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
   assert.equal(assertLegalEngineName("company..opus"), "company..opus");
 });
 
-test("appendEngineSessionMaterial: engine name line; notes also carry path", () => {
+test("appendEngineSessionMaterial: engine name line; notes also carry path", async () => {
   // Structured coordinates only — no presentation-header pin (#495 S4 / ADR 0073).
   const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
   assert.equal(nameOnly.includes("- engine: company..opus"), true);
@@ -66,8 +67,7 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
 });
 
 test("packaged notes directory is discovery-only; missing notes is not an error", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-engine-empty-"));
-  try {
+  await withTempRoot("ak-engine-empty-", async (root) => {
     assert.deepEqual(listEngineMaterialNames(root), []);
     await mkdir(join(root, "resources", "engines"), { recursive: true });
     await writeFile(join(root, "resources", "engines", "only.md"), "x\n", "utf8");
@@ -91,7 +91,5 @@ test("packaged notes directory is discovery-only; missing notes is not an error"
     });
     assert.deepEqual(bare, { name: "opus" });
     assert.equal(bare && "materialPath" in bare && bare.materialPath !== undefined, false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

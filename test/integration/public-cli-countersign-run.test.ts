@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -5,7 +6,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -44,20 +44,22 @@ import { DiaristIssueSourceError } from "../../src/diarist.ts";
 import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
 import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
-  const binDir = join(home, "bin");
-  await installHermesFixture(binDir);
-  const priorPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
-    return await scenario(home);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-countersign-", async (home) => {
+    const binDir = join(home, "bin");
+    await installHermesFixture(binDir);
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+    return withPrimaryAwareCleanup(
+      () => scenario(home),
+      async () => {
+        if (priorPath === undefined) delete process.env.PATH;
+        else process.env.PATH = priorPath;
+      },
+    );
+  });
 }
 
 function captureIo() {

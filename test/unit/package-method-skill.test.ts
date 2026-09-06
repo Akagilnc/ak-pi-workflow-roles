@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 package-owned method Skill seam — empty home, no network, exact provenance.
  */
@@ -10,9 +11,9 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
@@ -26,20 +27,22 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 const originalHome = process.env.HOME;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
+  return await withTempRoot("ak-empty-home-method-", async (home) => {
   process.env.HOME = home;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     // Empty home: no ~/.agents/skills at all.
     await assert.rejects(
       () => access(join(home, ".agents", "skills")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
     return await run();
-  } finally {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    await rm(home, { recursive: true, force: true });
-  }
+        },
+      async () => { if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome; }
+    );
+  });
 }
 
 test("packaged tdd method loads from package root in empty home with upstream identity and current-byte provenance", async () => {
@@ -95,8 +98,7 @@ test("packaged tdd method loads from package root in empty home with upstream id
 
 test("provenance without immutable upstream commit is rejected", async () => {
   await withEmptyHome(async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-no-commit-"));
-    try {
+    await withTempRoot("ak-method-no-commit-", async (tempRoot) => {
       const packageRootTemp = join(tempRoot, "pkg");
       const methodDir = join(packageRootTemp, "resources/methods/tdd");
       await cp(join(packageRoot, "resources/methods/tdd"), methodDir, {
@@ -112,9 +114,7 @@ test("provenance without immutable upstream commit is rejected", async () => {
         () => loadPackagedMethodSkillMaterial(packageRootTemp, "tdd"),
         /upstream\.commit/,
       );
-    } finally {
-      await rm(tempRoot, { recursive: true, force: true });
-    }
+        });
   });
 });
 

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   classifyGrokInspection,
@@ -96,8 +97,7 @@ function canDenyInitializeMeta() {
 }
 
 test("grok host closes an accepted ACP turn through the typed round boundary", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-accept-"));
-  try {
+  await withTempRoot("ak-grok-accept-", async (home) => {
     const localRequest = turnRequest({ runDirectory: join(home, "run"), home, agentDir: join(home, "agent") });
     const calls: Array<[string, unknown]> = [];
     const capabilities: unknown[] = [];
@@ -131,14 +131,11 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
       mcpServers: [{ name: "ak-role", command: "node", args: ["server.js"] }],
       _meta: { systemPromptOverride: "law", yoloMode: false },
     }]);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-fixer-deny-"));
-  try {
+  return await withTempRoot("ak-grok-fixer-deny-", async (home) => {
     const localRequest = turnRequest({
       runDirectory: join(home, "run"),
       home,
@@ -166,14 +163,11 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
     assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
     // Presence of the hook file is the external hang signal; do not lock matcher text.
     await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host records preToolUseDeny false when the host cannot deny", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-grok-nodeny-"));
-  try {
+  return await withTempRoot("ak-grok-nodeny-", async (home) => {
     const localRequest = turnRequest({
       runDirectory: join(home, "run"),
       home,
@@ -200,9 +194,7 @@ test("grok host records preToolUseDeny false when the host cannot deny", async (
     assert.equal((await host.executeTurn(localRequest)).code, 0);
     assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
     await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });
 
 
@@ -245,8 +237,7 @@ test("grok resume reuses native ACP session via session/load when an ACP binding
 });
 
 test("grok host does not reject a non-xai provider before ACP capabilities", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-non-xai-"));
-  try {
+  return await withTempRoot("ak-grok-non-xai-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run"), home: join(root, "home"), agentDir: join(root, "agent") });
     const host = createGrokRoleTurnHost({
       sessionIdentity,
@@ -271,9 +262,7 @@ test("grok host does not reject a non-xai provider before ACP capabilities", asy
     });
     assert.equal(result.knownFailure, undefined);
     assert.equal(result.code, 0);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host rejects a model absent from typed ACP capabilities", async () => {
@@ -306,8 +295,7 @@ test("grok host rejects a model absent from typed ACP capabilities", async () =>
 });
 
 test("grok host serializes concurrent ACP prompts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-serial-"));
-  try {
+  return await withTempRoot("ak-grok-serial-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -345,14 +333,11 @@ test("grok host serializes concurrent ACP prompts", async () => {
     releaseFirst();
     await Promise.all([first, second]);
     assert.equal(promptCount, 2);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok refusal is a typed failure and cancels instead of closing as accepted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-refusal-"));
-  try {
+  return await withTempRoot("ak-grok-refusal-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const calls: string[] = [];
     const host = createGrokRoleTurnHost({
@@ -376,14 +361,11 @@ test("grok refusal is a typed failure and cancels instead of closing as accepted
     assert.equal(result.knownFailure?.identity?.code, "refusal");
     assert.equal(calls.includes("session/close"), false);
     assert.equal(calls.includes("session/cancel"), true);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host delivers a typed rejection and resubmits in the same ACP session", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-retry-"));
-  try {
+  return await withTempRoot("ak-grok-retry-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const prompts: unknown[] = [];
     let rounds = 0;
@@ -409,14 +391,11 @@ test("grok host delivers a typed rejection and resubmits in the same ACP session
     assert.equal(prompts.length, 2);
     assert.equal((prompts[0] as { sessionId: string }).sessionId, "retry-session");
     assert.equal((prompts[1] as { sessionId: string }).sessionId, "retry-session");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host aborts a hanging session/prompt when prepare abortSignal fires", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-abort-"));
-  try {
+  return await withTempRoot("ak-grok-abort-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
     const closes: string[] = [];
@@ -467,14 +446,11 @@ test("grok host aborts a hanging session/prompt when prepare abortSignal fires",
     assert.deepEqual(closes, ["close"]);
     // Hang resolver must not be required for loud terminal.
     releasePrompt?.();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host does not send session/prompt when abortSignal is already aborted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-preabort-"));
-  try {
+  return await withTempRoot("ak-grok-preabort-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const promptCalls: unknown[] = [];
     const knownFailure = {
@@ -509,14 +485,11 @@ test("grok host does not send session/prompt when abortSignal is already aborted
     const result = await host.executeTurn(local);
     assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
     assert.equal(promptCalls.length, 0, "session/prompt must not be sent when already aborted");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host drains late in-flight prompt rejection after abort wins race", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-drain-"));
-  try {
+  return await withTempRoot("ak-grok-drain-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const abort = new AbortController();
     const knownFailure = {
@@ -561,14 +534,11 @@ test("grok host drains late in-flight prompt rejection after abort wins race", a
     assert.deepEqual(result, { code: null, stderr: "", timedOut: false, knownFailure });
     // Rejecting late after abort won race must be safely drained without unhandled rejection
     rejectPrompt?.(new Error("late ACP socket disconnect"));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host reports typed round closure failure instead of accepting no submission", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-nosub-"));
-  try {
+  return await withTempRoot("ak-grok-nosub-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const cancels: unknown[] = [];
     const knownFailure = {
@@ -592,12 +562,10 @@ test("grok host reports typed round closure failure instead of accepting no subm
     });
     assert.deepEqual(await host.executeTurn(local), { code: null, stderr: "", timedOut: false, knownFailure });
     assert.deepEqual(cancels, [["session/cancel", { sessionId: "s1" }]]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
-test("structured inspect classifies builtin, AK, and private sources by provenance", () => {
+test("structured inspect classifies builtin, AK, and private sources by provenance", async () => {
   assert.deepEqual(classifyGrokInspection({
     skills: [
       { name: "builtin", source: { type: "bundled" } },
@@ -626,7 +594,7 @@ test("structured inspect classifies builtin, AK, and private sources by provenan
   });
 });
 
-test("HEAD-matched calling-repo projectInstructions leave privateActive without becoming AK injection", () => {
+test("HEAD-matched calling-repo projectInstructions leave privateActive without becoming AK injection", async () => {
   assert.deepEqual(classifyGrokInspection({
     projectInstructions: [
       { path: "/work/CLAUDE.md", scope: "project" },
@@ -642,7 +610,7 @@ test("HEAD-matched calling-repo projectInstructions leave privateActive without 
   });
 });
 
-test("controlled child env disables every compat source with one parameterized rule", () => {
+test("controlled child env disables every compat source with one parameterized rule", async () => {
   const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
   for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
     for (const kind of ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"]) {
@@ -694,8 +662,7 @@ test("inspect→activation surfaces provenance infrastructure failure without pr
 
 test("grok host enters session/new when inspect akActive is empty but prepared MCP is present", async () => {
   // External packageRoot is injected at prepare, not via Grok-native inspect paths.
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-external-mcp-"));
-  try {
+  await withTempRoot("ak-grok-external-mcp-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const methods: string[] = [];
     const host = createGrokRoleTurnHost({
@@ -722,9 +689,7 @@ test("grok host enters session/new when inspect akActive is empty but prepared M
     assert.deepEqual(await host.executeTurn(local), { code: 0, stderr: "", timedOut: false });
     assert.equal(methods.includes("session/new"), true);
     assert.equal(methods.includes("session/prompt"), true);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("grok host rejects ak-config-missing only when prepared MCP servers are absent", async () => {
@@ -747,8 +712,7 @@ test("grok host rejects ak-config-missing only when prepared MCP servers are abs
 });
 
 test("grok host keeps session/close failure loud after typed round acceptance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-grok-close-boom-"));
-  try {
+  await withTempRoot("ak-grok-close-boom-", async (root) => {
     const local = turnRequest({ runDirectory: join(root, "run") });
     const connection: GrokAcpConnection = {
       async request(method) {
@@ -777,7 +741,5 @@ test("grok host keeps session/close failure loud after typed round acceptance", 
         && error.message === "unexpected close fault"
         && (error as { code?: unknown }).code === "acp-permission-missing-allow-once",
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

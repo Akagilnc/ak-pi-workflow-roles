@@ -4,8 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile } from "node:fs/promises";
+import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { join } from "node:path";
 
 import {
@@ -23,14 +23,7 @@ export async function withTempHome<T>(
   scenario: (home: string) => Promise<T>,
   options: { prefix?: string } = {},
 ): Promise<T> {
-  const home = await mkdtemp(
-    join(tmpdir(), options.prefix ?? "ak-public-cli-fail-"),
-  );
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", scenario);
 }
 
 export function captureIo() {

@@ -7,6 +7,8 @@ import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import type {
   AnalystAcceptanceSuccessReworkSection,
@@ -28,7 +30,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { fixtureHome, withBusinessRepo } from "../helpers/analyst-fixture-kit.ts";
-import { machineLedgerHome, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { machineLedgerHome, seedGitRepository, withProcessCwd } from "../helpers/pi-test-harness.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { isolatedTestProcessEnv } from "../helpers/test-process-fixtures.ts";
 
@@ -57,62 +59,52 @@ test("public ak-role bundle assembles B1-B4 + gate-cycles metric families withou
   const { buildPublicAkRoleBin } = (await import(buildUrl)) as {
     buildPublicAkRoleBin: (outfile?: string) => Promise<void>;
   };
-  // Pin under /tmp (not os.tmpdir()): Linux CI tmpdir is /tmp, so a flat bin at
-  // /tmp/<id>/main.js makes naive join(bin,"..","..") === "/" and host-pi link
-  // attempts mkdir('/node_modules/...'). macOS os.tmpdir() is deeper and hides
-  // that footgun; keep the CI shape locally (same pattern as host-pi-runtime).
-  const binDir = await mkdtemp(join("/tmp", "analyst-bundle-bin-"));
+  // Worktree-owned sibling roots: shallow bin path still outside package source tree.
+  const binDir = await mkdtemp(worktreeTempPrefix("analyst-bundle-bin-"));
   const binPath = join(binDir, "main.js");
-  const project = await mkdtemp(join("/tmp", "analyst-bundle-cwd-"));
-  const profileHome = await mkdtemp(join("/tmp", "analyst-bundle-profile-"));
+  const project = await mkdtemp(worktreeTempPrefix("analyst-bundle-cwd-"));
+  const profileHome = await mkdtemp(worktreeTempPrefix("analyst-bundle-profile-"));
   await withBusinessRepo(async () => {
-    try {
-      const previousCwd = process.cwd();
-      process.chdir(packageRoot);
-      try {
-        await buildPublicAkRoleBin(binPath);
-      } finally {
-        process.chdir(previousCwd);
-      }
-      // Prove the shipped layout has no sibling family tree next to the bin.
-      await rm(join(binDir, "analyst-metric-families"), {
-        recursive: true,
-        force: true,
-      });
+    await withPrimaryAwareCleanup(
+      async () => {
+        await withProcessCwd(packageRoot, async () => {
+          await buildPublicAkRoleBin(binPath);
+        });
+        // Prove the shipped layout has no sibling family tree next to the bin.
 
-      seedGitRepository(project);
-      const bookKey = basename(project);
-      const ledgerHome = machineLedgerHome(profileHome);
-      const srcBook = join(fixtureHome, "books", BOOK);
-      const dstBook = join(ledgerHome, "books", bookKey);
-      await cp(srcBook, dstBook, { recursive: true });
+        seedGitRepository(project);
+        const bookKey = basename(project);
+        const ledgerHome = machineLedgerHome(profileHome);
+        const srcBook = join(fixtureHome, "books", BOOK);
+        const dstBook = join(ledgerHome, "books", bookKey);
+        await cp(srcBook, dstBook, { recursive: true });
 
-      const env = withTestUserProfileEnv(
-        isolatedTestProcessEnv({ home: profileHome }),
-        profileHome,
-      );
-      // Real bin execution; stdout is free presentation — contract is the typed page (ADR 0052).
-      execFileSync(process.execPath, [binPath, "analyst"], {
-        cwd: project,
-        encoding: "utf8",
-        env,
-      });
-      const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
-      const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
-      assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
-      assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
-      assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
-      assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
-      assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
-      assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
-      assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
-      assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
-      assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
-      assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
-    } finally {
-      await rm(binDir, { recursive: true, force: true });
-      await rm(project, { recursive: true, force: true });
-      await rm(profileHome, { recursive: true, force: true });
-    }
+        const env = withTestUserProfileEnv(
+          isolatedTestProcessEnv({ home: profileHome }),
+          profileHome,
+        );
+        // Real bin execution; stdout is free presentation — contract is the typed page (ADR 0052).
+        execFileSync(process.execPath, [binPath, "analyst"], {
+          cwd: project,
+          encoding: "utf8",
+          env,
+        });
+        const pagePath = analystIssuePagePath(ledgerHome, { bookKey });
+        const page = JSON.parse(await readFile(pagePath, "utf8")) as PageWithMetricFamilies;
+        assert.ok(page.legWallClock, "B1 must be reachable from public bundle");
+        assert.ok(page.b2FrameBucketsActions, "B2 must be reachable from public bundle");
+        assert.ok(page.acceptanceSuccessRework, "B3 must be reachable from public bundle");
+        assert.ok(page.roundTimeline, "B4 must be reachable from public bundle");
+        assert.ok(page.gateCycles, "gate-cycles must be reachable from public bundle");
+        assert.equal(page.legWallClock.kind, "analyst-leg-wall-clock");
+        assert.equal(page.b2FrameBucketsActions.kind, "analyst-b2-frame-buckets-actions");
+        assert.equal(page.acceptanceSuccessRework.kind, "analyst-acceptance-success-rework");
+        assert.equal(page.roundTimeline.kind, "analyst-round-timeline");
+        assert.equal(page.gateCycles.kind, "analyst-gate-cycles");
+      },
+      async () => { await rm(binDir, { recursive: true, force: true }); },
+      async () => { await rm(project, { recursive: true, force: true }); },
+      async () => { await rm(profileHome, { recursive: true, force: true }); },
+    );
   });
 });

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -45,8 +46,7 @@ function receipt() {
 }
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
-  const home = await mkdtemp(join(tmpdir(), "collector-groups-"));
-  try {
+  return await withTempRoot("collector-groups-", async (home) => {
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
@@ -79,7 +79,5 @@ test("typed groups travel from real output settlement into the report artifact",
     const artifact = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: { groups: unknown[] } };
     assert.deepEqual(artifact.receipt.groups, receipt().groups);
     assert.equal(stdout.length > 0, true);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });
