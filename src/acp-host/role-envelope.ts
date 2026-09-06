@@ -22,9 +22,9 @@ import {
   type RoleRuntimeDependencies,
 } from "../role-runtime.ts";
 import {
-  createGrokRoleTurnHost,
-  type GrokPreparedTurn,
-  type GrokRoleTurnHostConfig,
+  createAcpRoleTurnHost,
+  type AcpPreparedTurn,
+  type AcpRoleTurnHostConfig,
 } from "./role-turn-host.ts";
 import {
   GatekeeperDecisionError,
@@ -51,7 +51,7 @@ export function parseCanonicalSkillInvocation(prompt: string): { readonly name: 
 }
 
 /** Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods. */
-export function buildGrokSkillExpansion(
+export function buildAcpSkillExpansion(
   methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
   prompt: string,
 ): HostSkillExpansionEvidence | undefined {
@@ -67,7 +67,7 @@ export function buildGrokSkillExpansion(
   });
 }
 
-export function projectGrokActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
+export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
   const activation = request.activation;
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
   const inputFlag = packagedRoleInputFlag(activation.role);
@@ -115,25 +115,25 @@ async function listen(server: Server, path: string): Promise<void> {
  * Build one AK-owned MCP projection from the shared eight-seat envelope.
  * The child process is a protocol relay only; all tools execute in this process.
  */
-export function createComposedGrokRoleTurnHost(
-  config: Omit<GrokRoleTurnHostConfig, "prepare"> & {
+export function createComposedAcpRoleTurnHost(
+  config: Omit<AcpRoleTurnHostConfig, "prepare"> & {
     readonly roleRuntimeDependencies: RoleRuntimeDependencies;
     readonly socketPath?: (request: RoleTurnRequest) => string;
   },
 ) {
-  return createGrokRoleTurnHost({
+  return createAcpRoleTurnHost({
     ...config,
-    prepare: (request) => prepareGrokRoleEnvelope({
+    prepare: (request) => prepareAcpRoleEnvelope({
       request,
       dependencies: config.roleRuntimeDependencies,
       // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
       sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
-      socketPath: config.socketPath?.(request) ?? `/tmp/ak-grok-mcp-${randomUUID()}.sock`,
+      socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
     }),
   });
 }
 
-export async function prepareGrokRoleEnvelope(options: {
+export async function prepareAcpRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   readonly socketPath: string;
@@ -143,9 +143,9 @@ export async function prepareGrokRoleEnvelope(options: {
    * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
    */
   readonly sessionFile?: string;
-}): Promise<GrokPreparedTurn> {
+}): Promise<AcpPreparedTurn> {
   const { request } = options;
-  const flags = projectGrokActivationFlags(request);
+  const flags = projectAcpActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
@@ -170,7 +170,7 @@ export async function prepareGrokRoleEnvelope(options: {
   }
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
-  // #617 DK-4: header layout only — never Grok conversation/tool writeback into Pi JSONL.
+  // #617 DK-4: header layout only — never host conversation/tool writeback into Pi JSONL.
   let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
@@ -236,16 +236,16 @@ export async function prepareGrokRoleEnvelope(options: {
     deliverSubmissionRejection(value) { rejection = value; },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
-        return buildGrokSkillExpansion(methodSkills, prompt);
+        return buildAcpSkillExpansion(methodSkills, prompt);
       },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
     getFlag(name) { return flags.get(name); },
     registerTool(tool) { tools.set(tool.name, tool); },
-    // The real AK-owned surface only; Grok's builtin surface is host-side and
+    // The real AK-owned surface only; the host builtin surface is host-side and
     // observable after session/new, never echoed back into role-requested names.
     getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
-    // Grok receives tool choice as role guidance; every tool registered for the
+    // The host receives tool choice as role guidance; every tool registered for the
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
     getActiveTools() { return [...preferredTools]; },
@@ -581,13 +581,13 @@ export async function prepareGrokRoleEnvelope(options: {
     }
     if (cleanupFailures.length === 1) throw cleanupFailures[0];
     if (cleanupFailures.length > 1) {
-      throw new AggregateError(cleanupFailures, "Grok envelope dispose cleanup failures", {
+      throw new AggregateError(cleanupFailures, "ACP envelope dispose cleanup failures", {
         cause: cleanupFailures[0],
       });
     }
   };
 
-  const closeRound: GrokPreparedTurn["closeRound"] = async () => {
+  const closeRound: AcpPreparedTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
       const roundCalls = [...calls];
@@ -607,7 +607,7 @@ export async function prepareGrokRoleEnvelope(options: {
     }
     if (closure !== undefined) {
       // Pi flushes navigator attendance on agent_settled; session/prompt
-      // resolution is grok-build's equivalent round boundary.
+      // resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
       return { accepted: true as const };
     }
@@ -675,8 +675,8 @@ export async function prepareGrokRoleEnvelope(options: {
         command: process.execPath,
         args: [relay],
         env: [
-          { name: "AK_GROK_MCP_SOCKET", value: options.socketPath },
-          { name: "AK_GROK_MCP_TOKEN", value: token },
+          { name: "AK_ACP_MCP_SOCKET", value: options.socketPath },
+          { name: "AK_ACP_MCP_TOKEN", value: token },
         ],
       }],
       systemPrompt: { body: systemPromptBody, materials: readingMaterials },
@@ -694,7 +694,7 @@ export async function prepareGrokRoleEnvelope(options: {
     } catch (cleanupFailure) {
       throw new AggregateError(
         [error, cleanupFailure],
-        "prepareGrokRoleEnvelope activation failed and its dispose cleanup also failed",
+        "prepareAcpRoleEnvelope activation failed and its dispose cleanup also failed",
         { cause: error },
       );
     }

@@ -2,15 +2,15 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { DurablePrincipal, DurablePrincipalAuthority } from "../host-contracts.ts";
-import type { GrokSessionIdentityAuthority } from "./role-turn-host.ts";
-
-/** ACP binding filename written only by the grok host on initial bind. */
-export const GROK_ACP_SESSION_BINDING = "grok-acp-session.json";
+import type { AcpSessionIdentityAuthority } from "./role-turn-host.ts";
 
 /** Durable ACP binding stored beside the host-owned session principal. */
-export function createGrokSessionIdentityAuthority(authority: DurablePrincipalAuthority): GrokSessionIdentityAuthority {
+export function createAcpSessionIdentityAuthority(
+  authority: DurablePrincipalAuthority,
+  sessionBindingFile: string,
+): AcpSessionIdentityAuthority {
   const bindingPath = (principal: DurablePrincipal): string =>
-    join(authority.decode(principal).sessionDirectory, GROK_ACP_SESSION_BINDING);
+    join(authority.decode(principal).sessionDirectory, sessionBindingFile);
   return {
     resolveSessionFile(principal) {
       return authority.decode(principal).sessionFile;
@@ -19,7 +19,7 @@ export function createGrokSessionIdentityAuthority(authority: DurablePrincipalAu
       try {
         const value: unknown = JSON.parse(await readFile(bindingPath(principal), "utf8"));
         if (typeof value !== "object" || value === null || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
-          throw new Error("durable Grok ACP session binding is invalid");
+          throw new Error("durable ACP session binding is invalid");
         }
         return (value as { sessionId: string }).sessionId;
       } catch (error) {
