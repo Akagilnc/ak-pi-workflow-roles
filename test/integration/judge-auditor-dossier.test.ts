@@ -84,7 +84,7 @@ async function withAuditorChildObservation<T>(
     ]);
   };
   // Arm a tripwire even when the body expects zero calls — any unexpected
-  // child open increments the same counter the healthy path uses.
+  // provider HTTP response increments the same counter the healthy path uses.
   armPassResponse();
   return withInstitutionalProviderFixture(faux, () =>
     run({ faux, childCalls: () => childCalls, armPassResponse }),
@@ -131,7 +131,7 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
           return true;
         },
       );
-      assert.equal(childCalls(), 0, "missing-dossier must not open child provider");
+      assert.equal(childCalls(), 0, "missing-dossier keeps provider HTTP responses at zero");
     });
   } finally {
     if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
@@ -161,7 +161,7 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
           return true;
         },
       );
-      assert.equal(childCalls(), 0, "missing-subject must not open child provider");
+      assert.equal(childCalls(), 0, "missing-subject keeps provider HTTP responses at zero");
     });
   } finally {
     await rm(root, { recursive: true, force: true });

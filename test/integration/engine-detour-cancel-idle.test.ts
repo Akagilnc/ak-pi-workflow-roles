@@ -1,6 +1,8 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * Detour cancellation propagation + terminal process failures.
+ * Detour cancellation propagation + spawn-miss cause seam + silent-idle survival.
+ * Narrow call-input only — does NOT cover public-CLI empty-output / exit-23 cause
+ * 贯穿 or the full engine-detour failure table (C3 #685 §D 未结).
  * Package-owned tool idle backstop removed — no 183s execute kill path here.
  */
 import assert from "node:assert/strict";
