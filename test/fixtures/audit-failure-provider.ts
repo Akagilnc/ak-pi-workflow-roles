@@ -230,11 +230,12 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  // Shared agentDir mock: parent judge + nested officers/auditor + public navigator
-  // prepares (each attendance prepare is one public navigator turn). Legal call graph
-  // upper bound for single-invoke e2e ≈ parent(judge+2nav) + notary(+2nav) + auditor(+2nav)
-  // + retries; keep headroom without locking a prepare total as spec.
-  faux.setResponses(Array.from({ length: 32 }, () => response));
+  // Shared agentDir mock legal call graph (single-invoke e2e, no nested-env skip):
+  // base: judge(1)+parentNav(2)+notary(1)+nav(2)+auditor(1)+nav(2)=9
+  // mystery/unreadable parent-stands may auto-resume the judge leg once more (+9)
+  // + concurrent nested public navigator turns overlapping the same mock ≈ +6
+  // Pin 24 = measured graph for parent-stands + gate e2e, not open headroom.
+  faux.setResponses(Array.from({ length: 24 }, () => response));
 
   const model = faux.getModel();
   const provider: Provider = {

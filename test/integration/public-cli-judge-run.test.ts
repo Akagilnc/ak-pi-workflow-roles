@@ -537,14 +537,9 @@ test(
       );
       assert.ok(gateNonPass?.message?.details, "durable non-pass toolResult with details");
       const details = gateNonPass!.message!.details!;
-      // Typed unreadable (or bounce legacy) — never silent infrastructure wash without stage.
-      assert.ok(
-        details.status === "unreadable"
-        || details.status === "bounce"
-        || details.stage === "notary"
-        || typeof details.reason === "string",
-        `expected typed gate non-pass details, got ${JSON.stringify(details)}`,
-      );
+      // Shape-unreadable officer → typed unreadable non-pass (not forged bounce, not bare infra).
+      assert.equal(details.status, "unreadable", JSON.stringify(details));
+      assert.equal(details.officer, "notary", JSON.stringify(details));
     } finally {
       // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
