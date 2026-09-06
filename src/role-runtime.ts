@@ -1629,7 +1629,25 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        if (dependencies.createNavigatorAttendance !== undefined) {
+        // Navigator attendance is for work-role runs (route advice after terminal).
+        // Province officers / auditor / evidence-child / navigator-self are short
+        // instruction seats — nested gate/compliance must not multiply Luna prepares
+        // on the parent model-setting path (#675 exact prepare contract).
+        const navigatorAttendanceRoles = new Set([
+          "judge",
+          "coder",
+          "fixer",
+          "doctor",
+          "reviewer",
+          "collector",
+          "merger",
+          "countersign",
+          "gleaner-left",
+        ]);
+        if (
+          dependencies.createNavigatorAttendance !== undefined
+          && navigatorAttendanceRoles.has(entry.role)
+        ) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

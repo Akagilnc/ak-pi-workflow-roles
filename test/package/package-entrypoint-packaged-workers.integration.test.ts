@@ -436,14 +436,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Pool length stays 8 (original capacity literal). Nested public path may
-        // take more turns than institutional; each factory step re-arms one slot so
-        // the queue does not starve mid-path without raising the declared length.
-        const rearming = ((...args: Parameters<typeof response>) => {
-          faux.appendResponses([rearming]);
-          return response(...args);
-        }) as typeof response;
-        faux.setResponses(Array.from({ length: 8 }, () => rearming));
+        faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;

@@ -258,18 +258,11 @@ test(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as any);
-      // Accepted path may seal via pending-round-closure then submission-closure; either
-      // the toolResult details or the sealed closure must carry judgeStatus converged.
-      const hasToolResult = rows.some(
-        (row) => row.type === "message" && row.message?.toolName === "ak_judge_output" && row.message?.isError === false
-          && (row.message?.details?.judgeStatus === "converged"
-            || row.message?.details?.submissionDisposition === "pending-round-closure"),
-      );
-      const hasClosure = rows.some(
+      // One external visible sealed receipt: submission-closure carries judgeStatus.
+      assert.equal(rows.some(
         (row) => row.type === "custom" && row.customType === "ak-role-submission-closure"
           && row.data?.details?.judgeStatus === "converged",
-      );
-      assert.equal(hasToolResult || hasClosure, true, "parent Judge accepted receipt must stand after unreadable audit");
+      ), true, "parent Judge sealed submission-closure must stand after unreadable audit");
     } finally {
       // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup.
     }
