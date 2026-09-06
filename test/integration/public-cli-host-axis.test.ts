@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -247,6 +247,41 @@ test("grok-build selection and execution have no provider restriction", async ()
     assert.equal(grokTurns, 1, spec);
     assert.equal(grokProviders[0], spec.split("/")[0], spec);
   }
+}));
+
+test("public grok-build turn inherits operator HOME and leaves sitian-only run records", async () => homeTest(async (home) => {
+  const envDump = join(home, "child-env.json");
+  await mkdir(join(home, ".grok", "bin"), { recursive: true });
+  const binary = join(home, ".grok", "bin", "grok");
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(envDump)}, JSON.stringify(process.env));
+if (process.argv.includes("inspect")) {
+  process.stdout.write(JSON.stringify({
+    skills: [], plugins: [], agents: [], hooks: [], mcpServers: [], projectInstructions: [],
+  }));
+}
+process.exit(0);
+`,
+    { encoding: "utf8" },
+  );
+  await chmod(binary, 0o755);
+  await configureJudge(home, "grok-build");
+  const result = await runAkRole(["judge", "public-grok-sitian"], productionBase(home));
+  assert.equal(result.hostFailure, undefined);
+
+  const booksRoot = join(home, ".ak-roles", "books");
+  const books = await readdir(booksRoot);
+  assert.ok(books.length >= 1);
+  const runsRoot = join(booksRoot, books[0]!, "runs");
+  const runs = await readdir(runsRoot);
+  assert.equal(runs.length, 1);
+  const children = await readdir(join(runsRoot, runs[0]!));
+  assert.equal(children.some((name) => name.endsWith("-home")), false);
+  const dumped = JSON.parse(await readFile(envDump, "utf8")) as NodeJS.Dict<string>;
+  assert.equal(dumped.HOME, process.env.HOME);
 }));
 
 /** #595: birth host is a typed invocation field at admission. */

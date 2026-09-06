@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
@@ -134,7 +133,7 @@ test("grok host closes an accepted ACP turn through the typed round boundary", a
     });
 });
 
-test("grok host installs PreToolUse deny only for Fixer when the host can deny", async () => {
+test("grok host does not install PreToolUse deny into operator home for Fixer", async () => {
   return await withTempRoot("ak-grok-fixer-deny-", async (home) => {
     const localRequest = turnRequest({
       runDirectory: join(home, "run"),
@@ -160,9 +159,8 @@ test("grok host installs PreToolUse deny only for Fixer when the host can deny",
       prepare: prepareWithLayout(async () => ({ accepted: true })),
     });
     assert.equal((await host.executeTurn(localRequest)).code, 0);
-    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: true }]);
-    // Presence of the hook file is the external hang signal; do not lock matcher text.
-    await readFile(join(home, "hooks", "ak-bash-seatbelt.json"), "utf8");
+    assert.deepEqual(capabilities, [{ nativeToolNarrowing: false, preToolUseDeny: false }]);
+    await assert.rejects(readFile(join(home, "hooks", "ak-bash-seatbelt.json")));
     });
 });
 
@@ -611,36 +609,41 @@ test("HEAD-matched calling-repo projectInstructions leave privateActive without 
 });
 
 test("controlled child env disables every compat source with one parameterized rule", async () => {
-  const env = controlledGrokChildEnv({ PATH: "/bin" }, "/run/grok-home");
+  const env = controlledGrokChildEnv({ PATH: "/bin", HOME: "/op" });
   for (const vendor of ["CLAUDE", "CURSOR", "CODEX"]) {
     for (const kind of ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"]) {
       assert.equal(env[`GROK_${vendor}_${kind}_ENABLED`], "false", `${vendor}/${kind}`);
     }
   }
-  assert.equal(env.HOME, "/run/grok-home");
-  assert.equal(env.GROK_HOME, "/run/grok-home");
+  assert.equal(env.HOME, "/op");
   assert.equal(env.GROK_MEMORY, "0");
   assert.equal(env.GROK_SUBAGENTS, "0");
 });
 
-test("grok host rejects an uncontrolled personalized session before model work", async () => {
+test("grok host proceeds when inspect reports operator-home private config", async () => {
   let connected = false;
   const host = createGrokRoleTurnHost({
     sessionIdentity,
     recordCapabilities: async () => {},
-    connect: async () => { connected = true; throw new Error("must not connect"); },
+    connect: async () => {
+      connected = true;
+      return {
+        async request(method) {
+          if (method === "initialize") return canDenyInitializeMeta();
+          if (method === "session/new") return { sessionId: "s1" };
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          if (method === "session/close") return {};
+          throw new Error(method);
+        },
+        notify() {},
+        async close() {},
+      };
+    },
     inspect: async () => ({ privateActive: ["user-plugin"], akActive: [] }),
     prepare: async () => prepared(async () => ({ accepted: true })),
   });
-  assert.deepEqual(await host.executeTurn(request), {
-    code: null, stderr: "", timedOut: false,
-    knownFailure: {
-      cause: "activation",
-      identity: { name: "UncontrolledGrokSession", code: "private-config-active" },
-      details: { privateActive: ["user-plugin"] },
-    },
-  });
-  assert.equal(connected, false);
+  assert.deepEqual(await host.executeTurn(request), { code: 0, stderr: "", timedOut: false });
+  assert.equal(connected, true);
 });
 
 test("inspect→activation surfaces provenance infrastructure failure without private-config-active", async () => {
