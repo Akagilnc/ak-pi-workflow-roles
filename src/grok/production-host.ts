@@ -286,15 +286,14 @@ async function recordGrokCapabilities(
 }
 
 /**
- * Which run directory owns GROK_HOME for this turn (#636 / ADR 0077).
- * Same-host ticket-seat resume reopens the prior native home; otherwise the live run.
+ * Which run directory owns GROK_HOME for this turn.
+ * Optional nativeHomeRunDirectory override; otherwise the live run.
  * Private to the production host — not a test seam.
  */
 function resolveProductionGrokIsolationRunDirectory(
-  request: Pick<RoleTurnRequest, "runDirectory" | "continuation" | "nativeHomeRunDirectory">,
+  request: Pick<RoleTurnRequest, "runDirectory" | "nativeHomeRunDirectory">,
 ): string {
   if (
-    request.continuation.kind === "resume" &&
     typeof request.nativeHomeRunDirectory === "string" &&
     request.nativeHomeRunDirectory.length > 0
   ) {
@@ -342,9 +341,6 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
 
   return {
     executeTurn(request) {
-      // #636 same-host ticket-seat resume: reopen the prior run's grok-home so
-      // session/load hits the ACP storage that bound the shared principal.
-      // Fresh runs and cross-host arrivals keep isolating under request.runDirectory.
       const isolationRunDirectory = resolveProductionGrokIsolationRunDirectory(request);
       const execution = serial.then(() =>
         withProductionGrokIsolation(

@@ -166,17 +166,11 @@ export type RoleTurnRequest = {
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
   /**
-   * Grok native isolation run for ticket-seat resume (#636 / ADR 0079):
-   * reopen grok-home under this prior run (ACP storage). Covers same-host,
-   * same-run retry after a new run, and return-to-Grok after another host.
-   * Absent → isolate under runDirectory. Never a cross-host byte handoff.
+   * Optional Grok native isolation run directory override. Absent → isolate under
+   * runDirectory. Same-run resume (#637) keeps the live run home.
    */
   readonly nativeHomeRunDirectory?: string;
-  /**
-   * Production Grok isolation notes the actual open event here after bind succeeds
-   * (#636). Open is not the same event as turn return/throw — post-admission uses
-   * this fact for last-host ownership instead of inferring open from the turn outcome.
-   */
+  /** Production Grok isolation may note the actual open event after bind succeeds. */
   readonly noteNativeHomeOpened?: (runDirectory: string) => void;
 };
 

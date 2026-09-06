@@ -73,7 +73,7 @@ export async function listGrokNativeRecordPaths(runDirectory: string): Promise<s
  * yields a typed switch (empty path list).
  *
  * Grok native home lives under the run that wrote it. Ticket-seat memory
- * cross-run switches pass `previousRunDirectory` from last-host metadata so
+ * cross-run switches may pass `previousRunDirectory` from prior-host metadata so
  * the scan does not look at an empty fresh run (#636 / #617 DK-4).
  */
 export async function projectHostTransitionPriorNative(input: {

@@ -26,12 +26,6 @@ import {
 } from "./compliance-transport.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { sitianReport } from "./sitian-facade.ts";
-import {
-  isTicketSeatMemorySeat,
-  readRunTicketNumber,
-  ticketSeatMemorySubject,
-  TICKET_SEAT_MEMORY_KIND,
-} from "./ticket-seat-memory.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
 import { engineNameFromEnv } from "./engine-detour.ts";
 import {
@@ -518,7 +512,6 @@ function auditorSeatKey(gateSeat: GateOfficerSeat | undefined): string {
 export async function executeAuditorChild(
   options: AuditorRoleOptions,
 ): Promise<{ decision: unknown; response: AssistantMessage; noReceiptLifecycle?: NoReceiptLifecycleFacts }> {
-  const { createRecordSession } = await import("./archivist-record-entry.ts");
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
   if (runDirectory === undefined) {
     throw new Error(`${options.roleLabel} requires a run directory carrying the institutional resolution page`);
@@ -570,16 +563,11 @@ export async function executeAuditorChild(
     const parentHeader = parentSessionManager?.getHeader?.();
     const parentSessionFile = parentSessionManager?.getSessionFile?.();
     const parentAttemptEntryId = parentSessionManager?.getLeafId?.();
-    // #636: ticket+seat subject resumes the same nest (navigator subject path); no ticket → fresh nest.
-    const ticketNumber = await readRunTicketNumber(runDirectory);
-    const memorySubject =
-      ticketNumber !== undefined && isTicketSeatMemorySeat(seat)
-        ? ticketSeatMemorySubject(ticketNumber, seat)
-        : undefined;
+    // Parent-nested auditor-roles: fresh volume per summons (no cross-run subject nest).
+    const { createRecordSession } = await import("./archivist-record-entry.ts");
     const auditorSessionManager: SessionManager = createRecordSession({
       cwd,
-      kind: TICKET_SEAT_MEMORY_KIND,
-      ...(memorySubject === undefined ? {} : { subject: memorySubject }),
+      kind: "auditor-roles",
       ...(parentSessionManager === undefined ? {} : { parent: parentSessionManager }),
     });
 
