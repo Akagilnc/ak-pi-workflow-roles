@@ -1172,10 +1172,10 @@ export async function runAkRole(
     // Rewrites onto the role command with freshSummons; auto-resume and resume stay intact.
     if (parsed.command === "new") {
       const role = parsed.args[0];
-      if (role === undefined || role.trim() === "" || role.startsWith("-")) {
+      if (role === undefined) {
         throw new CliUsageError("usage: ak-role new <role> …");
       }
-      if (!isPublicCallableRole(role) && role !== "analyst") {
+      if (!isPublicCallableRole(role)) {
         throw new CliUsageError(`usage: ak-role new <role> …; unknown role: ${role}`);
       }
       parsed = {
