@@ -154,6 +154,10 @@ export type AdmittedEvidenceChildInvocation = AdmittedRoleInvocationBase & {
   readonly role: "evidence-child";
 };
 
+export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "diarist";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -239,6 +243,7 @@ export type AdmittedRoleInvocation =
   | AdmittedNavigatorInvocation
   | AdmittedAuditorInvocation
   | AdmittedEvidenceChildInvocation
+  | AdmittedDiaristInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -577,6 +582,7 @@ export type ParseCountersignArgvResult = ParseInstructionArgvResult;
 export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
 export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
+export type ParseDiaristArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
@@ -597,7 +603,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -870,6 +876,10 @@ export function parseEvidenceChildArgv(args: readonly string[]): ParseEvidenceCh
   return parseInstructionArgv(args, "evidence-child");
 }
 
+export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
+  return parseInstructionArgv(args, "diarist");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -1069,6 +1079,7 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
 
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
 
 /**
  * Shared instruction-seat admission for Judge and Inspector: project check,
@@ -1077,7 +1088,7 @@ export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
  * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1212,6 +1223,16 @@ export async function admitEvidenceChildInvocation(
   options: AdmitEvidenceChildInvocationOptions,
 ): Promise<AdmittedEvidenceChildInvocation> {
   return admitStandardMaterialInvocation("evidence-child", options);
+}
+
+/**
+ * Admit a direct Diarist (起居郎) run (#708): freeze attachments, persist the
+ * request, reserve session placement — same instruction-seat face.
+ */
+export async function admitDiaristInvocation(
+  options: AdmitDiaristInvocationOptions,
+): Promise<AdmittedDiaristInvocation> {
+  return admitStandardMaterialInvocation("diarist", options);
 }
 
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */

@@ -42,7 +42,8 @@ export type TerminalRoleName =
   | "gatekeeper"
   | "navigator"
   | "auditor"
-  | "evidence-child";
+  | "evidence-child"
+  | "diarist";
 
 /** Merger/Collector residual only — Notary/audit residual abolished (#475). */
 export type ResidualIncompleteTerminalOutcome = {

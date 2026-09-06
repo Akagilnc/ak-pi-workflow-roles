@@ -982,6 +982,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
         "engine axis probe",
       ];
     case "evidence-child":
+    case "diarist":
       return [role, "--project", project, "engine axis probe"];
     default: {
       const _exhaustive: never = role;
@@ -992,7 +993,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 15);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 16);
     await withTempHome(async (home) => {
       const binDir = join(home, "bin");
       await installHermesFixture(binDir);

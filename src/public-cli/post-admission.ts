@@ -330,8 +330,8 @@ export async function dispatchPostAdmissionTurn<
 
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    // beforeDispatch (e.g. countersign diarist station) runs after running is
-    // marked — its failures must settle the run, not leave it permanently running.
+    // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
+    // its failures must settle the run, not leave it permanently running.
     if (adapters.beforeDispatch !== undefined) {
       try {
         await adapters.beforeDispatch(admitted);
