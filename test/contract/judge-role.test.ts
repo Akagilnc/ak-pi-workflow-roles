@@ -193,32 +193,42 @@ async function registerInstitutionalProviderFixture(
   extraProviders: ReadonlyArray<{ provider: string; id: string }> = [],
   observers: { onModel?: (modelId: string, body: Record<string, unknown>) => void } = {},
 ): Promise<void> {
-  const mock = await createMockProviderServer(faux, observers);
+  // Own temp agent dir before mock listen so mkdtemp failure cannot leave a live server.
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const tempAgentDir = mkdtempSync(worktreeTempPrefix("ak-judge-provider-"));
-  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-  const providers: Record<string, unknown> = {
-    [faux.provider.id]: {
-      baseUrl: mock.baseUrl,
-      api: "openai-completions",
-      apiKey: "test-key",
-      models: [gateModelDefinition(faux.getModel().id)],
-    },
-  };
-  for (const entry of extraProviders) {
-    if (providers[entry.provider] === undefined) {
-      providers[entry.provider] = {
+  let mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined;
+  try {
+    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+    mock = await createMockProviderServer(faux, observers);
+    const providers: Record<string, unknown> = {
+      [faux.provider.id]: {
         baseUrl: mock.baseUrl,
         api: "openai-completions",
         apiKey: "test-key",
-        models: [],
-      };
+        models: [gateModelDefinition(faux.getModel().id)],
+      },
+    };
+    for (const entry of extraProviders) {
+      if (providers[entry.provider] === undefined) {
+        providers[entry.provider] = {
+          baseUrl: mock.baseUrl,
+          api: "openai-completions",
+          apiKey: "test-key",
+          models: [],
+        };
+      }
+      (providers[entry.provider] as { models: unknown[] }).models.push(gateModelDefinition(entry.id));
     }
-    (providers[entry.provider] as { models: unknown[] }).models.push(gateModelDefinition(entry.id));
+    writeFileSync(join(tempAgentDir, "models.json"), JSON.stringify({ providers }, null, 2), "utf8");
+  } catch (error) {
+    if (mock !== undefined) await mock.close();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    rmSync(tempAgentDir, { recursive: true, force: true });
+    throw error;
   }
-  writeFileSync(join(tempAgentDir, "models.json"), JSON.stringify({ providers }, null, 2), "utf8");
   institutionalProviderCleanups.push(async () => {
-    await mock.close();
+    if (mock !== undefined) await mock.close();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     rmSync(tempAgentDir, { recursive: true, force: true });

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
-import { join } from "node:path";
+import { unlink } from "node:fs/promises";
+import { createServer, type Server, type Socket } from "node:net";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { worktreePackageRoot } from "../helpers/worktree-temp.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -13,45 +14,92 @@ const relayPath = join(packageRoot, "src/grok/mcp-relay.mjs");
 
 type UpstreamHandler = (message: { id: number; method: string; params?: unknown }, socket: Socket) => void;
 
+function isRelativeInside(rel: string): boolean {
+  return rel.length > 0 && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+}
+
+/** Prefer a short relative sun_path so deep checkout absolute paths do not truncate/collide. */
+async function listenUnixSocket(server: Server, socketName: string, socketAbs: string): Promise<void> {
+  const rel = relative(process.cwd(), socketAbs);
+  const bindPath = isRelativeInside(rel)
+    ? rel
+    : Buffer.byteLength(socketAbs) < 100
+      ? socketAbs
+      : null;
+  if (bindPath !== null) {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(bindPath, resolve);
+    });
+    return;
+  }
+  // Deep absolute path + cwd outside package root: brief chdir for short relative bind.
+  const previousCwd = process.cwd();
+  process.chdir(worktreePackageRoot);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketName, resolve);
+    });
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
+
 async function withRelay(
   handleUpstream: UpstreamHandler,
   run: (child: ReturnType<typeof spawn>, replies: AsyncIterator<string>) => Promise<void>,
 ): Promise<{ exitCode: number | null }> {
-  const dir = await mkdtemp(worktreeTempPrefix("ak-mcp-relay-"));
-  const socketPath = join(dir, "upstream.sock");
+  // Short relative socket under package root — no long mkdtemp path in sun_path.
+  const socketName = `.r${process.pid.toString(36)}${Date.now().toString(36)}.sock`;
+  const socketAbs = join(worktreePackageRoot, socketName);
   const token = "relay-token";
-  const server = createServer((socket) => {
-    const lines = createInterface({ input: socket });
-    lines.on("line", (line) => {
-      const message = JSON.parse(line) as { id: number; method: string; params?: unknown };
-      handleUpstream(message, socket);
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, resolve);
-  });
-  const child = spawn(process.execPath, [relayPath], {
-    env: { ...process.env, AK_GROK_MCP_SOCKET: socketPath, AK_GROK_MCP_TOKEN: token },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const lines = createInterface({ input: child.stdout! });
-  const replies = lines[Symbol.asyncIterator]();
-  try {
-    await run(child, replies);
-    if (child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {
-        child.once("exit", () => resolve());
-        child.once("error", () => resolve());
+  let server: Server | undefined;
+  let child: ReturnType<typeof spawn> | undefined;
+  let lines: ReturnType<typeof createInterface> | undefined;
+  // Acquire nothing before cleanup ownership: server/child only inside body.
+  return withPrimaryAwareCleanup(
+    async () => {
+      server = createServer((socket) => {
+        const upstreamLines = createInterface({ input: socket });
+        upstreamLines.on("line", (line) => {
+          const message = JSON.parse(line) as { id: number; method: string; params?: unknown };
+          handleUpstream(message, socket);
+        });
       });
-    }
-    return { exitCode: child.exitCode };
-  } finally {
-    lines.close();
-    child.kill("SIGTERM");
-    server.close();
-    await rm(dir, { recursive: true, force: true });
-  }
+      await listenUnixSocket(server, socketName, socketAbs);
+      child = spawn(process.execPath, [relayPath], {
+        cwd: worktreePackageRoot,
+        env: { ...process.env, AK_GROK_MCP_SOCKET: socketName, AK_GROK_MCP_TOKEN: token },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      lines = createInterface({ input: child.stdout! });
+      const replies = lines[Symbol.asyncIterator]();
+      await run(child, replies);
+      if (child.exitCode === null && child.signalCode === null) {
+        await new Promise<void>((resolve) => {
+          child!.once("exit", () => resolve());
+          child!.once("error", () => resolve());
+        });
+      }
+      return { exitCode: child.exitCode };
+    },
+    async () => {
+      lines?.close();
+      child?.kill("SIGTERM");
+    },
+    async () => {
+      if (server === undefined) return;
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+    async () => {
+      await unlink(socketAbs).catch(() => {
+        /* socket may already be gone */
+      });
+    },
+  );
 }
 
 test("MCP relay drains an in-flight tools/call after stdin EOF", { timeout: 8000 }, async () => {

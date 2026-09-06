@@ -52,7 +52,7 @@ import {
   readAcceptedActivationFacts,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
@@ -320,9 +320,9 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
 
     // Non-git cwd must loudly reject even when GIT_DIR points at another repository.
-    // Isolation root must sit outside this worktree's upward Git discovery; /tmp
+    // Isolation root must sit outside this worktree's upward Git discovery; outside
     // named root is not deleted (owner 2026-09-06 directory boundary).
-    const nonGit = mkdtempSync(join("/tmp", "ak-book-topo-nongit-"));
+    const nonGit = mkdtempSync(outsideWorktreeTempPrefix("ak-book-topo-nongit-"));
     const previousGitDir = process.env.GIT_DIR;
     const previousGitCommon = process.env.GIT_COMMON_DIR;
     const previousGitWorkTree = process.env.GIT_WORK_TREE;
@@ -354,8 +354,8 @@ test("book key follows git common-dir host basename across worktrees, rename, an
 
 test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
   const root = mkdtempSync(worktreeTempPrefix("ak-book-infra-"));
-  // Non-git control cwd must sit outside this worktree; /tmp named root is not deleted.
-  const nonGitCwd = mkdtempSync(join("/tmp", "ak-book-infra-nongit-"));
+  // Non-git control cwd must sit outside this worktree; outside named root is not deleted.
+  const nonGitCwd = mkdtempSync(outsideWorktreeTempPrefix("ak-book-infra-nongit-"));
   try {
     const cwd = join(root, "workspace");
     mkdirSync(cwd);

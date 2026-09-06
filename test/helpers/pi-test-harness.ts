@@ -22,7 +22,7 @@ import {
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
 import { fileURLToPath } from "node:url";
-import { withPrimaryAwareCleanup } from "./primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "./primary-aware-cleanup.ts";
 import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { promisify } from "node:util";
 
@@ -185,33 +185,27 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(worktreeTempPrefix("ak-pack-mat-"));
-  return withPrimaryAwareCleanup(
-    async () => {
-      await materializePackageTree(root, {
-        nodeModules: options.nodeModules ?? "symlink",
-      });
-      const { stdout } = await execFileAsync(
-        "npm",
-        ["pack", "--json", "--pack-destination", packDestination],
-        { cwd: root, maxBuffer: 10 * 1024 * 1024 },
-      );
-      const pack = JSON.parse(stdout) as Array<{
-        filename: string;
-        files: Array<{ path: string }>;
-      }>;
-      const entry = pack[0]!;
-      return {
-        root,
-        tarball: resolve(packDestination, entry.filename),
-        filename: entry.filename,
-        files: entry.files,
-      };
-    },
-    async () => {
-      await rm(root, { recursive: true, force: true });
-    },
-  );
+  return withTempRoot("ak-pack-mat-", async (root) => {
+    await materializePackageTree(root, {
+      nodeModules: options.nodeModules ?? "symlink",
+    });
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["pack", "--json", "--pack-destination", packDestination],
+      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const pack = JSON.parse(stdout) as Array<{
+      filename: string;
+      files: Array<{ path: string }>;
+    }>;
+    const entry = pack[0]!;
+    return {
+      root,
+      tarball: resolve(packDestination, entry.filename),
+      filename: entry.filename,
+      files: entry.files,
+    };
+  });
 }
 
 export interface RawPackageManifest {
@@ -269,38 +263,35 @@ export async function withHermeticHome<T>(
 ): Promise<T> {
   return await withProcessGlobalLock(async () => {
     // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
-    const home = await mkdtemp(
-      worktreeTempPrefix(options.prefix ?? "ak-pi-test-"),
-    );
-    const agentDir = resolve(home, ".pi-agent");
-    await mkdir(agentDir, { recursive: true });
-    const previousHome = process.env.HOME;
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousOffline = process.env.PI_OFFLINE;
-    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-    process.env.HOME = home;
-    // Pin host-Pi surfaces so in-process children do not inherit machine agent
-    // dir, ambient run bindings, or online catalog refresh (CI strips these via
-    // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.PI_OFFLINE = "1";
-    delete process.env.AK_ROLE_RUN_DIR;
-    return withPrimaryAwareCleanup(
-      () => scenario({ home, agentDir }),
-      async () => {
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-        if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-        else process.env.PI_OFFLINE = previousOffline;
-        if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      },
-      async () => {
-        await rm(home, { recursive: true, force: true });
-      },
-    );
+    // Own the root at the create seam before mkdir/env setup can throw.
+    return withTempRoot(options.prefix ?? "ak-pi-test-", async (home) => {
+      const agentDir = resolve(home, ".pi-agent");
+      await mkdir(agentDir, { recursive: true });
+      const previousHome = process.env.HOME;
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const previousOffline = process.env.PI_OFFLINE;
+      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+      process.env.HOME = home;
+      // Pin host-Pi surfaces so in-process children do not inherit machine agent
+      // dir, ambient run bindings, or online catalog refresh (CI strips these via
+      // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.PI_OFFLINE = "1";
+      delete process.env.AK_ROLE_RUN_DIR;
+      return withPrimaryAwareCleanup(
+        () => scenario({ home, agentDir }),
+        async () => {
+          if (previousHome === undefined) delete process.env.HOME;
+          else process.env.HOME = previousHome;
+          if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+          else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+          if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+          else process.env.PI_OFFLINE = previousOffline;
+          if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+          else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+        },
+      );
+    });
   });
 }
 
@@ -348,29 +339,34 @@ export function createTempPackageHomeLedger(input: {
   dispose(): void;
 } {
   const home = mkdtempSync(worktreeTempPrefix(input.prefix));
-  const bookKey = basename(home);
-  const ledgerHome = machineLedgerHome(home);
-  const runDirectory = join(
-    ledgerHome,
-    "books",
-    bookKey,
-    "runs",
-    input.runName ?? "test-run",
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  mkdirSync(sessionDirectory, { recursive: true });
-  const sessionFile = join(sessionDirectory, "session.jsonl");
-  return {
-    home,
-    bookKey,
-    ledgerHome,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    dispose() {
-      rmSync(home, { recursive: true, force: true });
-    },
-  };
+  try {
+    const bookKey = basename(home);
+    const ledgerHome = machineLedgerHome(home);
+    const runDirectory = join(
+      ledgerHome,
+      "books",
+      bookKey,
+      "runs",
+      input.runName ?? "test-run",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    mkdirSync(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    return {
+      home,
+      bookKey,
+      ledgerHome,
+      runDirectory,
+      sessionDirectory,
+      sessionFile,
+      dispose() {
+        rmSync(home, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    rmSync(home, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Book key for a git cwd whose common-dir host basename is the directory name. */
@@ -764,56 +760,57 @@ export async function withInstitutionalProviderFixture<T>(
   faux: ReturnType<typeof fauxProvider>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const mock = await createMockProviderServer(faux);
+  // Own temp agent dir at create seam first; start mock only inside the body so a
+  // failed mkdtemp never leaves a live listener, and setup throws still close it.
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(worktreeTempPrefix("ak-institutional-agent-"));
-  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-  return withPrimaryAwareCleanup(
-    async () => {
-      const modelsPath = resolve(tempAgentDir, "models.json");
-      const model = faux.getModel() as {
-        id: string;
-        reasoning?: boolean;
-        thinkingLevelMap?: Record<string, string>;
-      };
-      await writeFile(modelsPath, JSON.stringify({
-        providers: {
-          [faux.provider.id]: {
-            baseUrl: mock.baseUrl,
-            api: "openai-completions",
-            apiKey: "test",
-            models: [{
-              id: model.id,
-              name: model.id,
+  return withTempRoot("ak-institutional-agent-", async (tempAgentDir) => {
+    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+    let mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined;
+    return withPrimaryAwareCleanup(
+      async () => {
+        mock = await createMockProviderServer(faux);
+        const modelsPath = resolve(tempAgentDir, "models.json");
+        const model = faux.getModel() as {
+          id: string;
+          reasoning?: boolean;
+          thinkingLevelMap?: Record<string, string>;
+        };
+        await writeFile(modelsPath, JSON.stringify({
+          providers: {
+            [faux.provider.id]: {
+              baseUrl: mock.baseUrl,
               api: "openai-completions",
-              // Preserve faux model reasoning / thinking map so institutional
-              // children honor Navigator :max the same way the parent session does.
-              reasoning: model.reasoning === true,
-              ...(model.thinkingLevelMap === undefined
-                ? {}
-                : { thinkingLevelMap: model.thinkingLevelMap }),
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: 128000,
-              maxTokens: 16384,
-              compat: { requiresToolResultName: true },
-            }],
+              apiKey: "test",
+              models: [{
+                id: model.id,
+                name: model.id,
+                api: "openai-completions",
+                // Preserve faux model reasoning / thinking map so institutional
+                // children honor Navigator :max the same way the parent session does.
+                reasoning: model.reasoning === true,
+                ...(model.thinkingLevelMap === undefined
+                  ? {}
+                  : { thinkingLevelMap: model.thinkingLevelMap }),
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 16384,
+                compat: { requiresToolResultName: true },
+              }],
+            },
           },
-        },
-      }, null, 2), "utf8");
-      return await run();
-    },
-    async () => {
-      await mock.close();
-    },
-    async () => {
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    },
-    async () => {
-      await rm(tempAgentDir, { recursive: true, force: true });
-    },
-  );
+        }, null, 2), "utf8");
+        return await run();
+      },
+      async () => {
+        if (mock !== undefined) await mock.close();
+      },
+      async () => {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      },
+    );
+  });
 }
 
 /**

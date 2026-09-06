@@ -6,6 +6,7 @@ import test from "node:test";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, DoctorSubmissionContractError, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -271,8 +272,8 @@ test("case identity is repository-relative with an absolute fallback outside rep
 
   // Absolute-fallback arm must sit truly outside any git worktree. worktreeTempPrefix
   // roots live inside this repo, so stableRunsIdentity would return a relative path.
-  // /tmp create-and-abandon: owner 2026-09-06 forbids deleting outside the worktree.
-  const outside = await mkdtemp(join("/tmp", "doctor-identity-outside-"));
+  // Outside create-and-abandon: owner 2026-09-06 forbids deleting outside the worktree.
+  const outside = await mkdtemp(outsideWorktreeTempPrefix("doctor-identity-outside-"));
   const outsideRuns = homeRuns(outside, 40);
   await mkdir(outsideRuns, { recursive: true });
   assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
