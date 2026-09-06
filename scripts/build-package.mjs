@@ -108,7 +108,7 @@ export async function buildGrokProductionHost(
   });
   // role-envelope resolves ./mcp-relay.mjs from import.meta.url — keep it beside the bundle.
   await copyFile(
-    resolve("src/grok/mcp-relay.mjs"),
+    resolve("src/acp-host/mcp-relay.mjs"),
     join(dirname(outfile), "mcp-relay.mjs"),
   );
 }

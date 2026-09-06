@@ -2,9 +2,9 @@
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 
-const socketPath = process.env.AK_GROK_MCP_SOCKET;
-const token = process.env.AK_GROK_MCP_TOKEN;
-if (!socketPath || !token) throw new Error("AK Grok MCP relay identity is missing");
+const socketPath = process.env.AK_ACP_MCP_SOCKET;
+const token = process.env.AK_ACP_MCP_TOKEN;
+if (!socketPath || !token) throw new Error("AK ACP MCP relay identity is missing");
 
 const upstream = connect(socketPath);
 const waiters = new Map();
@@ -45,7 +45,7 @@ upstream.on("error", (error) => settle(error));
 upstream.on("close", () => {
   // Shutdown may already be requested (stdin EOF) while an RPC is still
   // in flight. Outstanding waiters must still settle, or drain never ends.
-  if (!exiting) settle(new Error("AK Grok MCP upstream closed"));
+  if (!exiting) settle(new Error("AK ACP MCP upstream closed"));
   maybeExit();
 });
 createInterface({ input: upstream }).on("line", (line) => {
@@ -56,7 +56,7 @@ createInterface({ input: upstream }).on("line", (line) => {
   if (waiter === undefined) return;
   waiters.delete(message.id);
   if (message.error !== undefined) {
-    const error = new Error(typeof message.error.message === "string" ? message.error.message : "AK Grok MCP relay failure");
+    const error = new Error(typeof message.error.message === "string" ? message.error.message : "AK ACP MCP relay failure");
     error.code = message.error.code;
     error.cause = message.error;
     waiter.reject(error);
