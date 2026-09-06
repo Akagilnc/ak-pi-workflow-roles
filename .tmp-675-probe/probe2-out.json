@@ -1,0 +1,140 @@
+[
+  {
+    "probe": "A-navigator-ticket-675",
+    "exits": {
+      "first": 0,
+      "second": 0,
+      "resume": 0
+    },
+    "kinds": {
+      "first": "accepted",
+      "second": "accepted",
+      "resume": "accepted"
+    },
+    "turn": 2,
+    "seen": [
+      {
+        "kind": "initial",
+        "runId": "01a067500-0000-7000-8000-00000000a001",
+        "model": "nav-model",
+        "thinking": "high",
+        "same": true
+      },
+      {
+        "kind": "resume",
+        "runId": "01a067500-0000-7000-8000-00000000a001",
+        "model": "live-nav",
+        "thinking": "low",
+        "courtAttemptId": "792831e2-9fd4-4c38-b858-82889eab779c",
+        "same": true
+      }
+    ],
+    "runs": [
+      {
+        "entry": "01a067500-0000-7000-8000-00000000a001@navigator",
+        "ticket": null,
+        "role": "navigator"
+      }
+    ]
+  },
+  {
+    "probe": "B-judge-nav-true-unbound",
+    "disposition": "recommendation",
+    "hits": [
+      "ak-probe-offline/faux-1:ak_judge_output",
+      "ak-probe-offline/faux-1:ak_notary_output",
+      "ak-probe-offline/faux-1:ak_navigator_output",
+      "ak-probe-offline/faux-1:ak_navigator_output",
+      "ak-probe-offline/faux-1:ak_auditor_output",
+      "ak-probe-offline/faux-1:ak_navigator_output"
+    ],
+    "navHits": 3,
+    "runs": [
+      {
+        "entry": "01a06ff1-0000-7000-8000-00000000inpr@judge",
+        "ticket": null,
+        "role": "judge"
+      },
+      {
+        "entry": "01a075d0-a06f-787c-afe5-a0844cfc2edf@notary",
+        "ticket": null,
+        "role": "notary"
+      },
+      {
+        "entry": "01a075d0-a26f-7696-8116-629bb0de2029@navigator",
+        "ticket": null,
+        "role": "navigator"
+      },
+      {
+        "entry": "01a075d0-a57a-7386-b397-db52ccb96d09@navigator",
+        "ticket": null,
+        "role": "navigator"
+      },
+      {
+        "entry": "01a075d0-b07d-7ecf-9472-0a96d0a865d9@auditor",
+        "ticket": null,
+        "role": "auditor"
+      },
+      {
+        "entry": "01a075d0-ba03-7539-bc61-9feddf69d15c@navigator",
+        "ticket": null,
+        "role": "navigator"
+      }
+    ],
+    "roleCounts": {
+      "judge": 1,
+      "notary": 1,
+      "navigator": 3,
+      "auditor": 1
+    }
+  },
+  {
+    "probe": "C-judge-nav-ticket-675",
+    "disposition": "unavailable",
+    "unavailableSource": "session",
+    "hits": [
+      "ak-probe-offline/faux-1:ak_judge_output",
+      "ak-probe-offline/faux-1:ak_notary_output",
+      "ak-probe-offline/faux-1:ak_auditor_output"
+    ],
+    "navHits": 0,
+    "runs": [
+      {
+        "entry": "01a06ff1-0000-7000-8000-00000000inpr@judge",
+        "ticket": null,
+        "role": "judge"
+      },
+      {
+        "entry": "01a075d0-c4b4-78ff-b154-48fee4e42d06@notary",
+        "ticket": null,
+        "role": "notary"
+      },
+      {
+        "entry": "01a075d0-c632-7b55-99bd-7a689d6ee553@navigator",
+        "ticket": null,
+        "role": "navigator"
+      },
+      {
+        "entry": "01a075d0-cd54-746e-aaac-f78ea20ae45b@navigator",
+        "ticket": null,
+        "role": "navigator"
+      },
+      {
+        "entry": "01a075d0-cd96-7c05-bcb6-ac8c029b36f0@auditor",
+        "ticket": null,
+        "role": "auditor"
+      },
+      {
+        "entry": "01a075d0-d3d1-7f7c-a8d7-88571c099667@navigator",
+        "ticket": null,
+        "role": "navigator"
+      }
+    ],
+    "roleCounts": {
+      "judge": 1,
+      "notary": 1,
+      "navigator": 3,
+      "auditor": 1
+    }
+  }
+]
