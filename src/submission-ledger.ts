@@ -56,7 +56,17 @@ function runIdentity(context: HostContext): string {
   throw new Error("提交账需要已受理的 run 身份");
 }
 
+/**
+ * Court-turn attempt identity (#637 same-ticket re-summons).
+ * AK_ROLE_COURT_ATTEMPT is injected only for a new court turn on an already-retained
+ * run (forceContinuation / summons). Manual resume and first mint omit it so the
+ * session-stable id keeps sole-final + sealed-idempotent semantics.
+ */
+export const COURT_ATTEMPT_ENV = "AK_ROLE_COURT_ATTEMPT" as const;
+
 function attemptIdentity(context: HostContext, runId: string): string {
+  const courtAttempt = process.env[COURT_ATTEMPT_ENV];
+  if (typeof courtAttempt === "string" && courtAttempt.length > 0) return courtAttempt;
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
@@ -103,15 +113,54 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: str
   };
 }
 
-/** Settlement read seam: typed sealed projection only, never host session JSONL. */
+/** Optional court-turn scope for settlement reads (#637). */
+export type SubmissionLedgerReadScope = {
+  readonly home?: string;
+  /** When set, only this court attempt's ledger rows participate. */
+  readonly attemptId?: string;
+};
+
+function resolveReadScope(
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): SubmissionLedgerReadScope {
+  if (homeOrScope === undefined) return {};
+  if (typeof homeOrScope === "string") return { home: homeOrScope };
+  return homeOrScope;
+}
+
+function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
+  if (typeof record.subject === "object" && record.subject !== null) {
+    const fromSubject = (record.subject as { attemptId?: unknown }).attemptId;
+    if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
+  }
+  if (typeof record.payload === "object" && record.payload !== null) {
+    const fromPayload = (record.payload as { attemptId?: unknown }).attemptId;
+    if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
+  }
+  return undefined;
+}
+
+function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
+  owned: readonly T[],
+  attemptId: string | undefined,
+): readonly T[] {
+  if (attemptId === undefined) return owned;
+  return owned.filter((record) => recordAttemptId(record) === attemptId);
+}
+
+/** Settlement read seam: typed sealed projection only, never host session JSONL.
+ * Omit attemptId for run-scoped latest sealed (manual resume idempotent).
+ * Pass attemptId for the current court turn so a prior seal cannot wash this turn. */
 export async function readSealedSubmission(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<SealedSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind === "post-seal-anomaly") return undefined;
     if (record?.kind !== "sealed") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
@@ -124,11 +173,13 @@ export async function readSealedSubmission(
 export async function readAuditEscalationSubmission(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<AuditEscalationSubmissionProjection | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
     if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
@@ -143,11 +194,13 @@ export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "ou
 export async function readLatestSubmissionOutcome(
   cwd: string,
   runId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<LatestSubmissionOutcome | undefined> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
-  for (let index = owned.length - 1; index >= 0; index -= 1) {
-    const record = owned[index];
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  for (let index = scoped.length - 1; index >= 0; index -= 1) {
+    const record = scoped[index];
     if (record?.kind !== "outcome") continue;
     const payload = record.payload as Partial<LatestSubmissionOutcome> | undefined;
     if (payload?.type === "outcome" && typeof payload.outcome === "string") {
@@ -157,14 +210,27 @@ export async function readLatestSubmissionOutcome(
   return undefined;
 }
 
-type LedgerState = { prior?: RecordPointer; sealed: boolean; sequence: number };
+type LedgerState = { prior?: RecordPointer; sealedAttemptIds: Set<string>; sequence: number };
+
+function sealedAttemptIdFromRecord(record: { kind: string; payload?: unknown }): string | undefined {
+  if (record.kind !== "sealed") return undefined;
+  const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
+  return payload?.type === "sealed" && typeof payload.attemptId === "string" && payload.attemptId.length > 0
+    ? payload.attemptId
+    : undefined;
+}
 
 async function restoreState(cwd: string, runId: string, home?: string): Promise<LedgerState> {
   const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, home);
   const last = owned.at(-1);
+  const sealedAttemptIds = new Set<string>();
+  for (const record of owned) {
+    const attemptId = sealedAttemptIdFromRecord(record);
+    if (attemptId !== undefined) sealedAttemptIds.add(attemptId);
+  }
   return {
     ...(last === undefined ? {} : { prior: { identity: last.identity, recordFile: file, kind: last.kind, level: last.level } }),
-    sealed: owned.some((record) => record.kind === "sealed"),
+    sealedAttemptIds,
     sequence: owned.reduce((maximum, record) => {
       const payload = record.payload as Partial<SubmissionLedgerEvent> | undefined;
       return payload?.type === "candidate" && typeof payload.sequence === "number" ? Math.max(maximum, payload.sequence) : maximum;
@@ -220,7 +286,9 @@ export function createSubmissionLedgerHost(
       const runId = runIdentity(context);
       const attemptId = attemptIdentity(context, runId);
       const state = await stateFor(context, runId);
-      if (state.sealed) appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
+      if (state.sealedAttemptIds.has(attemptId)) {
+        appendFor(state, context, runId, attemptId, { type: "post-seal-anomaly", attemptId, toolCallId, toolName });
+      }
     } catch (error) {
       failInfrastructure(error, context);
     }
@@ -261,7 +329,7 @@ export function createSubmissionLedgerHost(
       if (typeof status !== "string" || status.length === 0) throw new Error("提交账封账缺少 acceptedFacts.status");
       const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = { kind: "accepted", role: candidate.role, status, decisiveFacts: details };
       appendFor(state, candidate.context, runId, attemptId, { type: "sealed", attemptId, toolCallId: candidate.toolCallId, accepted: candidate.result.details, projection });
-      state.sealed = true;
+      state.sealedAttemptIds.add(attemptId);
       await projectClosure(projection, context);
       context.abort();
     } catch (error) {
@@ -281,7 +349,7 @@ export function createSubmissionLedgerHost(
           const attemptId = attemptIdentity(context, runId);
           const state = await stateFor(context, runId);
           const append = (event: SubmissionLedgerEvent) => appendFor(state, context, runId, attemptId, event);
-          if (state.sealed) throw new Error("提交账已封账");
+          if (state.sealedAttemptIds.has(attemptId)) throw new Error("提交账已封账");
           // #541 / #575: shared infra-declaration fail lives on the ledger seam,
           // before any role execute or sole-final work (one owner for every seat).
           // #641 chain②: seats may opt into bouncing a machine-verified normal

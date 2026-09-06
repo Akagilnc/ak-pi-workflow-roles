@@ -166,26 +166,19 @@ export async function bindProductionGrokIsolation(
  * and AK seatbelt hooks via settleProductionGrokHomeCleanup (no silent catch)
  * while preserving the session dossier under runDirectory/grok-home. Success,
  * typed-result, and throw paths all clean up; cleanup failure and primary+cleanup
- * both surface.
- *
- * `noteOpened` fires only after bind succeeds — the actual open event, distinct
- * from turn return/throw — so last-host ownership can retain the opened run
- * even when the body or cleanup later throws (#636).
+ * both surface. Same-run Grok isolation only — no cross-run home override (#637).
  */
 export async function withProductionGrokIsolation<T>(
   runDirectory: string,
   operatorHome: string,
   packageRoot: string,
   run: (binding: ProductionGrokIsolationBinding) => Promise<T>,
-  noteOpened?: (runDirectory: string) => void,
 ): Promise<T> {
   let binding: ProductionGrokIsolationBinding | undefined;
   let primaryFailure: ProductionGrokPrimaryFailure = NO_PRODUCTION_GROK_PRIMARY_FAILURE;
   let value!: T;
   try {
     binding = await bindProductionGrokIsolation(runDirectory, operatorHome, packageRoot);
-    // Open fact: bind succeeded under runDirectory. Not deferred to turn outcome.
-    noteOpened?.(runDirectory);
     value = await run(binding);
   } catch (error) {
     primaryFailure = { present: true, value: error };
@@ -286,25 +279,8 @@ async function recordGrokCapabilities(
 }
 
 /**
- * Which run directory owns GROK_HOME for this turn (#636 / ADR 0077).
- * Same-host ticket-seat resume reopens the prior native home; otherwise the live run.
- * Private to the production host — not a test seam.
- */
-function resolveProductionGrokIsolationRunDirectory(
-  request: Pick<RoleTurnRequest, "runDirectory" | "continuation" | "nativeHomeRunDirectory">,
-): string {
-  if (
-    request.continuation.kind === "resume" &&
-    typeof request.nativeHomeRunDirectory === "string" &&
-    request.nativeHomeRunDirectory.length > 0
-  ) {
-    return request.nativeHomeRunDirectory;
-  }
-  return request.runDirectory;
-}
-
-/**
  * Assemble the production grok-build RoleTurnHost from the S6 true adapter.
+ * Isolation always under the live request.runDirectory (same-run resume keeps it).
  */
 export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOptions): RoleTurnHost {
   const { packageRoot, principalAuthority } = options;
@@ -342,13 +318,9 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
 
   return {
     executeTurn(request) {
-      // #636 same-host ticket-seat resume: reopen the prior run's grok-home so
-      // session/load hits the ACP storage that bound the shared principal.
-      // Fresh runs and cross-host arrivals keep isolating under request.runDirectory.
-      const isolationRunDirectory = resolveProductionGrokIsolationRunDirectory(request);
       const execution = serial.then(() =>
         withProductionGrokIsolation(
-          isolationRunDirectory,
+          request.runDirectory,
           request.home,
           packageRoot,
           async (binding) => {
@@ -360,7 +332,6 @@ export function createProductionGrokRoleTurnHost(options: ProductionGrokHostOpti
               turn = undefined;
             }
           },
-          request.noteNativeHomeOpened,
         ),
       );
       serial = execution.then(

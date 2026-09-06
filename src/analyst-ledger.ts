@@ -25,7 +25,6 @@ import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
   extractSessionToolIntervals,
-  intervalRowsForMatchingBinding,
   LedgerSessionJsonlError,
   readLedgerSessionJsonl,
   type LedgerSessionRow,
@@ -46,11 +45,6 @@ import {
   readAnalystGateCyclesFromAuditorRoles,
   type AnalystGateCycleRound,
 } from "./analyst-gate-cycles-read.ts";
-import {
-  isTicketSeatRunBindingRow,
-  resolveTicketSeatMemoryNestDirectories,
-  ticketSeatRunBindingRunId,
-} from "./ticket-seat-memory.ts";
 
 export type { AnalystGateCycleRound } from "./analyst-gate-cycles-read.ts";
 
@@ -210,16 +204,9 @@ async function resolveSessionFile(
 }
 
 /**
- * Attribute session rows to one run (#636 D).
+ * Attribute session rows to one run.
  * Private run volumes (session under runDirectory) keep the whole file.
- * Shared ticket-seat main volumes must carry this run's binding interval;
- * whole-volume stats would let later continuations pollute earlier runs.
- * Unbounded external volumes stay honest missing — never silent full ownership.
- *
- * `closed` on shared intervals: a later binding ended ownership before EOF of
- * the provided rows. On damaged-prefix recovery, only closed intervals keep
- * full frame/model/tool facts — open intervals may have lost rows to the bad line.
- * Private volumes are never closed against a prefix (the whole file is this run).
+ * External volumes stay honest missing — never silent full ownership.
  */
 function attributeSessionRowsForRun(input: {
   readonly rows: readonly LedgerSessionRow[];
@@ -236,19 +223,10 @@ function attributeSessionRowsForRun(input: {
   if (pathContainedIn(input.runDirectory, input.sessionFile)) {
     return { kind: "attributed", rows: input.rows, closed: false };
   }
-  const interval = intervalRowsForMatchingBinding(
-    input.rows,
-    isTicketSeatRunBindingRow,
-    (row) => ticketSeatRunBindingRunId(row) === input.runId,
-  );
-  if (interval === undefined) {
-    return {
-      kind: "missing-boundary",
-      reason:
-        "shared session volume has no ticket-seat run binding for this run",
-    };
-  }
-  return { kind: "attributed", rows: interval.rows, closed: interval.closed };
+  return {
+    kind: "missing-boundary",
+    reason: "session volume is outside the run directory",
+  };
 }
 
 /**
@@ -382,8 +360,7 @@ async function classifyScopedRun(input: {
   let partialFirstFrameAt: AnalystFirstFrameAt = { status: "absent" };
   let partialLastFrameAt: AnalystOptionalTimestamp = { status: "absent" };
 
-  // 1) session timeline — shared ticket-seat volumes slice to this run's binding.
-  // Damage after a closed binding interval must not erase that run's full facts.
+  // 1) session timeline from the run-private volume.
   const sessionFile = await resolveSessionFile(input.runDirectory);
   let rows: readonly LedgerSessionRow[] | undefined;
   const admitAttributed = (
@@ -516,21 +493,13 @@ async function classifyScopedRun(input: {
   // Nested auditor-roles gate pairs stay inside the sole scan (families must
   // not readdir this tree again). Missing directory → []. Damaged discovered
   // nested JSONL is page-local unreadable — never silently under-count rounds.
-  // #636: ticket-seat memory nests via sole discovery helper.
   let gateCycles: readonly AnalystGateCycleRound[];
   try {
-    const memoryNests = await resolveTicketSeatMemoryNestDirectories({
-      runDirectory: input.runDirectory,
-      seats: ["inspector", "notary"],
-    });
-    const directories = [
-      join(input.runDirectory, "session", "auditor-roles"),
-      ...memoryNests,
-    ];
     const parentSessionFile = join(input.runDirectory, "session", "session.jsonl");
-    gateCycles = await readAnalystGateCyclesFromAuditorRoles(directories, {
-      parentSessionFile,
-    });
+    gateCycles = await readAnalystGateCyclesFromAuditorRoles(
+      join(input.runDirectory, "session", "auditor-roles"),
+      { parentSessionFile },
+    );
   } catch (error) {
     return {
       kind: "unreadable",

@@ -34,11 +34,10 @@ import {
 import {
   extractSessionTimestampSpan,
   intervalRowsAroundAnchor,
-  LedgerSessionJsonlError,
   readLedgerSessionJsonl,
   type LedgerSessionRow,
 } from "./ledger-session-read.ts";
-import { isTicketSeatRunBindingRow } from "./ticket-seat-memory.ts";
+
 
 /** One completed gate round: direct officer receipt or historical province/officer pair. */
 /** Honest origin discriminant: direct summons vs historical province dispatch. */
@@ -349,22 +348,7 @@ async function classifyAuditorVolume(
   filePath: string,
 ): Promise<readonly ClassifiedVolume[]> {
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
-  // Shared ticket-seat main volumes are the exception: later-run damage after a
-  // closed binding must not erase earlier gate rounds (same ownership rule as
-  // timeline attribution). Pure nested gate volumes without run bindings stay loud.
-  let rows: readonly LedgerSessionRow[];
-  try {
-    rows = await readLedgerSessionJsonl(filePath);
-  } catch (error) {
-    if (
-      error instanceof LedgerSessionJsonlError
-      && error.prefixRows.some((row) => isTicketSeatRunBindingRow(row))
-    ) {
-      rows = error.prefixRows;
-    } else {
-      throw error;
-    }
-  }
+  const rows = await readLedgerSessionJsonl(filePath);
   const accepted = extractAllAcceptedGateToolCalls(rows);
   // Rejected-only / non-gate volumes omit (empty accepted set).
   if (accepted.length === 0) return [];
@@ -455,9 +439,7 @@ function pairGateRounds(
  * ENOENT (directory truly absent) → []. ENOTDIR and other errors propagate
  * (failure honesty — damaged topology must not wash to zero rounds).
  *
- * #636 ticket-seat memory may place officer volumes under book-level subject
- * digests shared across parent runs; pass `parentSessionFile` to keep only
- * rounds whose attempt binding names that parent.
+ * Pass `parentSessionFile` to keep only rounds whose attempt binding names that parent.
  */
 export async function readAnalystGateCyclesFromAuditorRoles(
   auditorRolesDirectory: string | readonly string[],

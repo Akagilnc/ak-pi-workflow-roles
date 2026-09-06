@@ -124,8 +124,11 @@ export async function runPublicGleanerLeft(
 
 function gleanerLeftAdapters() {
   return {
-    trySettle: (admitted: AdmittedGleanerLeftInvocation, authority: DurablePrincipalAuthority) =>
-      trySettleGleanerLeftTerminalResult(admitted, authority),
+    trySettle: (
+      admitted: AdmittedGleanerLeftInvocation,
+      authority: DurablePrincipalAuthority,
+      scope?: { readonly courtAttemptId?: string },
+    ) => trySettleGleanerLeftTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
   };
 }
@@ -147,16 +150,16 @@ export async function runPublicGleanerLeftResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableGleanerLeftRun(
       env.home,
-      request.runId,
+      effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted) =>
+    buildTurnRequest: (admitted, effective) =>
       buildGleanerLeftTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: gleanerLeftAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
