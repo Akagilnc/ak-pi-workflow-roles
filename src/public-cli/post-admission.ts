@@ -826,6 +826,66 @@ export async function runPostAdmissionResumable<
 }
 
 /**
+ * Single authority for manual-resume run-scoped sealed-accepted presentation
+ * (#599 / #648 / #672 / #637). Used both before lease (eager request path) and
+ * after court-recovery builder under lease when no courtAttemptId remains.
+ * Returns undefined to fall through to dispatch; never rebuilds the gate.
+ */
+async function presentSealedAcceptedManualResumeIfAny<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  adapters: PostAdmissionAdapters<A, T>;
+  shouldPresent: (terminal: T) => boolean;
+}): Promise<{ exitCode: number; admitted: A; terminal?: T } | undefined> {
+  const { admitted, env, io, adapters, shouldPresent } = input;
+  try {
+    const existing = await adapters.trySettle(admitted, env.principalAuthority);
+    if (
+      existing !== undefined &&
+      existing.roleOutcome.kind === "accepted" &&
+      shouldPresent(existing)
+    ) {
+      (existing as { autoResumeCount?: number }).autoResumeCount = 0;
+      io.stdout(formatTerminalResult(existing));
+      return {
+        exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
+        admitted,
+        terminal: existing,
+      };
+    }
+  } catch (error) {
+    // Settlement-owned sealed disposition: sealed accepted + publication/settle
+    // throw fail closed without redispatch; authority failure preserves cause.
+    const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
+    if (disposition.kind === "block") {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown:
+            disposition.reason === "authority-failed"
+              ? disposition.cause
+              : error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+    // Pre-dispatch settle failure without a sealed accepted projection is not
+    // proof of seal; fall through to dispatch so the attempt path can settle
+    // or fail honestly.
+  }
+  return undefined;
+}
+
+/**
  * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
  * When the submission ledger is already sealed, project that accepted terminal
  * idempotently — do not dispatch a doomed turn that would append
@@ -875,52 +935,23 @@ export async function runPostAdmissionManualResume<
   const shouldPresent =
     adapters.shouldPresentSettled ??
     ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+  const sealedIdempotenceInput = {
+    admitted,
+    env,
+    io,
+    adapters,
+    shouldPresent,
+  } as const;
 
   // Sealed accepted receipt only — audit_escalation / residual failure must not
   // short-circuit; those still need a real continuation turn.
-  // Same-ticket re-summons force a new turn (forceContinuation) and skip this.
-  try {
-    if (forceContinuation !== true && request !== undefined) {
-      const existing = await adapters.trySettle(admitted, env.principalAuthority);
-      if (
-        existing !== undefined &&
-        existing.roleOutcome.kind === "accepted" &&
-        shouldPresent(existing)
-      ) {
-        (existing as { autoResumeCount?: number }).autoResumeCount = 0;
-        io.stdout(formatTerminalResult(existing));
-        return {
-          exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
-          admitted,
-          terminal: existing,
-        };
-      }
-    }
-  } catch (error) {
-    // Settlement-owned sealed disposition (#648 / #599 / #672): sealed accepted +
-    // publication/settle throw fail closed without redispatch; authority failure
-    // preserves true cause. Manual resume only presents — does not rebuild the gate.
-    const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
-    if (disposition.kind === "block") {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown:
-            disposition.reason === "authority-failed"
-              ? disposition.cause
-              : error,
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
-    }
-    // Pre-dispatch settle failure without a sealed accepted projection is not
-    // proof of seal; fall through to dispatch so the attempt path can settle
-    // or fail honestly.
+  // Same-ticket re-summons / court recovery forceContinuation skips the pre-lease
+  // face; post-builder reuses the same presenter when no courtAttemptId remains.
+  if (forceContinuation !== true && request !== undefined) {
+    const presented = await presentSealedAcceptedManualResumeIfAny(
+      sealedIdempotenceInput,
+    );
+    if (presented !== undefined) return presented;
   }
 
   let lease: RunWriterLease;
@@ -950,8 +981,8 @@ export async function runPostAdmissionManualResume<
   }
 
   // Court open/recovery transaction under the held lease (read/judge/clear/
-  // freeze/record). When the builder leaves no courtAttemptId, present
-  // run-scoped sealed idempotence under the same lease — do not dispatch.
+  // freeze/record). When the builder leaves no courtAttemptId, the same sealed
+  // presenter runs under lease — do not dispatch a doomed turn.
   if (request === undefined) {
     if (buildRequestAfterLease === undefined) {
       await lease.release();
@@ -970,48 +1001,17 @@ export async function runPostAdmissionManualResume<
       request.courtAttemptId === undefined ||
       request.courtAttemptId.length === 0
     ) {
-      try {
-        const existing = await adapters.trySettle(
-          admitted,
-          env.principalAuthority,
-        );
-        if (
-          existing !== undefined &&
-          existing.roleOutcome.kind === "accepted" &&
-          shouldPresent(existing)
-        ) {
-          await lease.release();
-          (existing as { autoResumeCount?: number }).autoResumeCount = 0;
-          io.stdout(formatTerminalResult(existing));
-          return {
-            exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
-            admitted,
-            terminal: existing,
-            ...(staleWriterLeaseReclaimed === true
-              ? { staleWriterLeaseReclaimed: true as const }
-              : {}),
-          };
-        }
-      } catch (error) {
-        const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
-        if (disposition.kind === "block") {
-          await lease.release();
-          return (await presentControlledFailure(
-            admitted,
-            {
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown:
-                disposition.reason === "authority-failed"
-                  ? disposition.cause
-                  : error,
-            },
-            adapters,
-            env.principalAuthority,
-            io,
-          )) as { exitCode: number; admitted: A; terminal: T };
-        }
+      const presented = await presentSealedAcceptedManualResumeIfAny(
+        sealedIdempotenceInput,
+      );
+      if (presented !== undefined) {
+        await lease.release();
+        return {
+          ...presented,
+          ...(staleWriterLeaseReclaimed === true
+            ? { staleWriterLeaseReclaimed: true as const }
+            : {}),
+        };
       }
     }
   }
