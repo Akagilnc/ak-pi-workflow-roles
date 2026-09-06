@@ -5,6 +5,7 @@
  * mechanical source catalog the turn selects from (`diarist-collector-is-own-turn`).
  * Who calls it and in what order is the caller's business (ADR 0010 `no-call-rule`).
  */
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -39,6 +40,7 @@ import {
 import {
   loadResumableDiaristRun,
   markRunAdmitted,
+  readRoleRunIdentity,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -99,12 +101,22 @@ export function buildDiaristTurnRequest(
  * Mechanical source enumeration for a bound summons: establish the per-ticket
  * volume, freeze this turn's candidate catalog into the run dossier.
  * A true-unbound summons has no ticket, so no diary is minted — undefined.
+ *
+ * A run that has not settled yet (crash-resume, open-court continuation) keeps
+ * the catalog its candidateIndexes were minted against — re-enumerating there
+ * would rebind the role's indexes to bytes it never saw. Only a settled run
+ * re-enumerates on the next same-ticket summons (ADR 0075 增量).
  */
 async function freezeDiaristSourceCatalog(
   admitted: AdmittedDiaristInvocation,
   env: Pick<DiaristRunEnv, "cwd" | "home">,
 ): Promise<string | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
+  const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
+  if (existsSync(path)) {
+    const identity = await readRoleRunIdentity(admitted.runDirectory);
+    if (identity !== undefined && identity.state !== "terminal") return path;
+  }
   const issueFace = await loadDiaristIssueFace({
     ticketNumber: admitted.ticketNumber,
     projectRoot: admitted.projectRoot,
@@ -117,7 +129,6 @@ async function freezeDiaristSourceCatalog(
     issueFace,
     sessionCwds: [admitted.projectRoot, env.cwd],
   });
-  const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
   await writeFile(path, serializeDiaristSourceCatalog(catalog), "utf8");
   return path;
 }
@@ -259,8 +270,9 @@ export async function runPublicDiarist(
 
 /**
  * Resume a previously admitted Diarist run (#708 / ADR 0079 同票传召 = resume).
- * Each re-entry re-enumerates fresh sources; the offered watermark keeps the
- * pass incremental so already-seen blocks are not re-offered.
+ * A re-entry into a settled run re-enumerates fresh sources; the offered
+ * watermark keeps the pass incremental so already-seen blocks are not
+ * re-offered. An unfinished run keeps its frozen catalog (see freeze above).
  */
 export async function runPublicDiaristResume(
   request: PublicResumeRequest,

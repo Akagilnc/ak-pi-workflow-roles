@@ -40,7 +40,6 @@ import {
   ticketProvenanceEntryIdentity,
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
-import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
 import { readSitianRecords } from "./sitian-facade.ts";
 import { execFileSync } from "node:child_process";
 
@@ -391,7 +390,7 @@ export type DiaristCommitFacts = {
   readonly ticketNumber: number;
   /** Candidates offered to the diarist this turn. */
   readonly offered: number;
-  /** Entries appended to the volume this turn. */
+  /** New entries this turn actually put on the volume (entry-count delta). */
   readonly appended: number;
   /** Selections rejected by verbatim reverse-verify. */
   readonly rejectedQuotes: number;
@@ -432,7 +431,11 @@ export async function commitDiaristSelections(input: {
   const volumePaths = ensureTicketProvenanceVolume(ticketNumber, cwd, input.catalog.home);
 
   const anchors: DiaristAnchorSet = buildDiaristAnchors({ ticketNumber });
-  const accepted: TicketProvenanceEntry[] = [];
+  // Entry-count baseline: sitian entry identity already makes a repeat of an
+  // already-recorded block a no-op append, so the honest `appended` is what the
+  // volume gained — not how many rows survived verify.
+  const before = await readTicketProvenance(ticketNumber, cwd, input.catalog.home);
+  let acceptedRows = 0;
   let rejectedQuotes = 0;
   let unknownCandidate = false;
 
@@ -465,7 +468,7 @@ export async function commitDiaristSelections(input: {
       entry: projected.entry,
       source: "diarist",
     });
-    accepted.push(projected.entry);
+    acceptedRows += 1;
   }
 
   // Watermark advances only after the durable volume writes above, so a crash
@@ -490,7 +493,7 @@ export async function commitDiaristSelections(input: {
   return {
     ticketNumber,
     offered: input.catalog.candidates.length,
-    appended: accepted.length,
+    appended: volume.entries.length - before.entries.length,
     rejectedQuotes,
     watermarked,
     volumeRecordFile: volumePaths.recordFile,
@@ -498,7 +501,7 @@ export async function commitDiaristSelections(input: {
     collectorStatus:
       input.catalog.candidates.length === 0
         ? "skipped-no-fresh"
-        : accepted.length > 0
+        : acceptedRows > 0
           ? "ok"
           : input.selections.length === 0
             ? "empty-selection"
