@@ -165,6 +165,12 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /**
+   * Parent cancellation for a nested activation (role-inside-role public summons,
+   * #675). The host terminates its child when this aborts; a public CLI process
+   * has no parent to observe and leaves it absent.
+   */
+  readonly signal?: AbortSignal;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
   /**

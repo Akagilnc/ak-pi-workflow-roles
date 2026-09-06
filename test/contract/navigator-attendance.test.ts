@@ -286,6 +286,33 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
   });
 });
 
+test("a session that settled without a receipt is not re-summoned for delivery", async () => {
+  await withTempRoot("navigator-nested-no-receipt-", async (root) => {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    harness.settleWithoutReceipt("no typed candidate batch");
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    // Each prompt is an independent public summon: a delivery request after the
+    // session settled opens new sessions instead of pressing the one that owes
+    // the receipt.
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.filter((entry: any) => entry?.customType === "ak-no-receipt-lifecycle");
+    assert.equal(lifecycle.length, 1);
+    const facts = (lifecycle[0] as any).data;
+    assert.equal(facts.terminalToolCalled, true);
+    assert.deepEqual(facts.rejectedReceipts, [
+      { reason: "no typed candidate batch", diagnosticAvailable: true },
+    ]);
+    assert.equal(facts.runPointer, "/fixture/navigator-record");
+  });
+});
+
 test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
   await withTempRoot("navigator-unavailable-", async (root) => {
     const setting = join(root, "model.json");

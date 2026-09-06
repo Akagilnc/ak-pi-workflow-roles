@@ -209,6 +209,8 @@ export type PiSpawnRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    /** Parent cancellation; the child gets the same graceful SIGTERM as a budget. */
+    signal?: AbortSignal;
   },
 ) => Promise<{
   code: number | null;
@@ -342,9 +344,17 @@ export function createDefaultPiSpawnRunner(options: {
           child.kill("SIGTERM");
         }, spawnOptions.timeoutMs);
       };
+      // Parent cancellation reaches the nested activation: same graceful SIGTERM,
+      // same single close settlement. SIGKILL stays forbidden (#675 / ADR 0010).
+      const parentSignal = spawnOptions.signal;
+      const terminateForParentAbort = (): void => {
+        child.kill("SIGTERM");
+      };
+      parentSignal?.addEventListener("abort", terminateForParentAbort, { once: true });
       let identityRecorded: Promise<void> = Promise.resolve();
       child.once("spawn", () => {
         hasSpawned = true;
+        if (parentSignal?.aborted === true) terminateForParentAbort();
         armTimeoutAfterChildReady();
         const runDirectory = spawnOptions.env.AK_ROLE_RUN_DIR;
         if (
@@ -367,11 +377,13 @@ export function createDefaultPiSpawnRunner(options: {
           return;
         }
         if (timer !== undefined) clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", terminateForParentAbort);
         settled = true;
         reject(error);
       });
       child.on("close", (code) => {
         if (timer !== undefined) clearTimeout(timer);
+        parentSignal?.removeEventListener("abort", terminateForParentAbort);
         void identityRecorded.then(
           () => {
             if (settled) return;
@@ -480,6 +492,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         cwd: request.cwd,
         env,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
     },
   };

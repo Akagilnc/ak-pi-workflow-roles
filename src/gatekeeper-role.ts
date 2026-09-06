@@ -15,7 +15,7 @@ import {
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
-import { retainedShapeUnreadableCandidate } from "./shape-unreadable-failure.ts";
+import { retainedShapeUnreadable } from "./shape-unreadable-failure.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -83,6 +83,8 @@ export class GatekeeperEscalationError extends Error {
 export type GateOfficerSummon = (
   officer: "inspector" | "notary",
   sourceRunDirectory: string,
+  /** Parent cancellation forwarded to the nested activation (#675). */
+  signal?: AbortSignal,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -249,9 +251,9 @@ function projectOfficerTerminal(
   }
   if (outcome.kind === "failure") {
     // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
-    const shapeCandidate = retainedShapeUnreadableCandidate(outcome.decisiveFacts);
-    if (shapeCandidate !== undefined) {
-      return shapeUnreadable(officer, shapeCandidate, outcome.diagnostic);
+    const shape = retainedShapeUnreadable(outcome.decisiveFacts);
+    if (shape !== undefined) {
+      return shapeUnreadable(officer, shape.candidate, outcome.diagnostic);
     }
     return {
       status: "transport_failure",
@@ -308,15 +310,16 @@ export async function projectGatekeeperRun(
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
           sourceRunDirectory,
           cwd: options.context.cwd ?? process.cwd(),
+          ...(officerSignal === undefined ? {} : { signal: officerSignal }),
         });
       });
-    summoned = await summon(officer, runDirectory);
+    summoned = await summon(officer, runDirectory, options.signal);
   } catch (error) {
     return {
       officer,

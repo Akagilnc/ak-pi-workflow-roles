@@ -315,6 +315,51 @@ setInterval(() => {}, 1000);
   });
 });
 
+test("a parent abort terminates the nested activation with SIGTERM", async () => {
+  await withTempHome(async (home) => {
+    const signalFile = join(home, "signal");
+    const ready = join(home, "ready");
+    const runDirectory = join(home, "run");
+    const stub = join(home, "abort-child.mjs");
+    await mkdir(runDirectory, { recursive: true });
+    await writeExecutableStub(
+      stub,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => {
+  writeFileSync(${JSON.stringify(signalFile)}, "SIGTERM");
+  process.exit(143);
+});
+writeFileSync(${JSON.stringify(ready)}, "ready");
+setInterval(() => {}, 1000);
+`,
+    );
+
+    // Nested public summons await a child activation in-process; a cancelled parent
+    // must stop the child instead of letting it run and spend on (#675 T5/T6).
+    const baseSpawn = createDefaultPiSpawnRunner({});
+    const host = createPiRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      spawnRunner: async (args, options) =>
+        baseSpawn(args, { ...options, env: { ...options.env, PI_BINARY: stub } }),
+    });
+
+    const parent = new AbortController();
+    const resultPromise = host.executeTurn({
+      ...minimalTurnRequest(home, runDirectory),
+      signal: parent.signal,
+    });
+    await waitForFile(ready, resultPromise);
+    parent.abort();
+    const result = await resultPromise;
+
+    assert.equal(await readFile(signalFile, "utf8"), "SIGTERM");
+    assert.equal(result.timedOut, false, "parent abort is not a timeout");
+    assert.notEqual(result.code, 0);
+  });
+});
+
 test("turn host canonicalizes an aliased role entry once for argv", async () => {
   await withTempHome(async (home) => {
     const packageAlias = join(home, "package-alias");

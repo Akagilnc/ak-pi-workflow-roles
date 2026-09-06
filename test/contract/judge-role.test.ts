@@ -1,6 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import assert from "node:assert/strict";
 import { parentInheritedSeats, seatSelection, type SeatSelection } from "../helpers/seat-selection.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -144,18 +145,33 @@ after(() => {
   if (ambientRunDirAtLoad === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = ambientRunDirAtLoad;
 });
-afterEach(() => {
+afterEach(async () => {
+  // Snapshot then independent cleanups: one run-dir dispose must not skip others
+  // or provider teardowns, and cleanup failure must not erase a prior primary.
+  // Provider teardown is async (mock.close()) — awaited, never discarded (#685 C4).
+  const runDirs: string[] = [];
   while (activeRunDirs.length > 0) {
-    disposeInstitutionalRunDir(activeRunDirs[activeRunDirs.length - 1]!);
+    runDirs.push(activeRunDirs.pop()!);
   }
-  // Drop any leftover env binding between tests (owned dirs already popped above).
-  delete process.env.AK_ROLE_RUN_DIR;
-  defaultGateSummon = undefined;
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
+  const providerCleanups: Array<() => Promise<void>> = [];
   while (institutionalProviderCleanups.length > 0) {
-    void institutionalProviderCleanups.pop()!();
+    providerCleanups.push(institutionalProviderCleanups.pop()!);
   }
+  defaultGateSummon = undefined;
+  await withPrimaryAwareCleanup(
+    async () => {
+      // Drop any leftover env binding between tests (owned dirs already popped above).
+      delete process.env.AK_ROLE_RUN_DIR;
+    },
+    ...runDirs.map(
+      (runDirectory) => async () => {
+        disposeInstitutionalRunDir(runDirectory);
+      },
+    ),
+    ...providerCleanups,
+  );
 });
 
 // The child institutional session (openPiInProcessSession) builds its OWN child

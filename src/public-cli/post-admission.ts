@@ -111,6 +111,12 @@ export type PostAdmissionEnv = {
   autoResumeLimit?: number;
   createRunId?: () => string;
   /**
+   * Parent cancellation for a nested public summon (#675). Every dispatched turn
+   * carries it so an aborted parent terminates the nested activation; a CLI
+   * process has no parent and leaves it absent.
+   */
+  signal?: AbortSignal;
+  /**
    * #724 explicit fresh summons (`ak-role new <role>`): skip same-ticket auto-resume
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
@@ -302,7 +308,7 @@ export async function dispatchPostAdmissionTurn<
               piSessionFile: principalCoordinates.sessionFile,
             })
           : undefined;
-      turnRequest = request;
+      turnRequest = env.signal === undefined ? request : { ...request, signal: env.signal };
       if (hostTransition !== undefined) {
         turnRequest = { ...turnRequest, hostTransition };
       }

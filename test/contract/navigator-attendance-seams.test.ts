@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import { createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
@@ -781,3 +781,37 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
   });
 });
 
+test("public navigator session takes a seat edit for the next summon instead of failing model", async () => {
+  await withTempRoot("navigator-public-seat-", async (root) => {
+    const priorHome = process.env.HOME;
+    process.env.HOME = root;
+    const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+    await withPrimaryAwareCleanup(
+      async () => {
+        await savePublicCliConfig(
+          { seats: { navigator: { provider: "provider", model: "one" } } },
+          root,
+        );
+        const session = await createNativeNavigatorSessionFactory()({
+          context: { cwd: root, sessionManager: undefined } as never,
+          subject: "seat edit between prepares",
+          tool: undefined as never,
+        });
+        // Every prompt is an independent public summon whose nested CLI reads the
+        // live seat table (#675 验收② / #617 DK-3): a seat edit between prepares
+        // applies on the next summon and never makes attendance unavailable.
+        await savePublicCliConfig(
+          { seats: { navigator: { provider: "other", model: "two", thinking: "high" } } },
+          root,
+        );
+        await session.setModel?.("other/two:high", "high");
+        assert.equal(session.getThinkingLevel?.(), "high");
+        await session.dispose();
+      },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME;
+        else process.env.HOME = priorHome;
+      },
+    );
+  });
+});

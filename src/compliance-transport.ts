@@ -6,7 +6,7 @@ import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { retainedShapeUnreadableCandidate } from "./shape-unreadable-failure.ts";
+import { retainedShapeUnreadable } from "./shape-unreadable-failure.ts";
 
 export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
 export type ComplianceAuditObservation =
@@ -133,6 +133,8 @@ export function readComplianceCandidate(arguments_: unknown, usage?: Usage): Com
 export type AuditorSummon = (
   subject: AuditorSoulRole,
   sourceRunDirectory: string,
+  /** Parent cancellation forwarded to the nested activation (#675). */
+  signal?: AbortSignal,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
@@ -199,9 +201,9 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   }
   if (outcome.kind === "failure") {
     // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
-    const shapeCandidate = retainedShapeUnreadableCandidate(outcome.decisiveFacts);
-    if (shapeCandidate !== undefined) {
-      return unreadableDecision(shapeCandidate, usage);
+    const shape = retainedShapeUnreadable(outcome.decisiveFacts);
+    if (shape !== undefined) {
+      return unreadableDecision(shape.candidate, usage);
     }
     throw new Error(outcome.diagnostic);
   }
@@ -226,7 +228,11 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
   const subject = options.subject;
   const summon =
     options.summonAuditor
-    ?? (async (auditSubject: AuditorSoulRole, sourceRunDirectory: string) => {
+    ?? (async (
+      auditSubject: AuditorSoulRole,
+      sourceRunDirectory: string,
+      auditSignal?: AbortSignal,
+    ) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
       const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
@@ -244,8 +250,9 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,
+        ...(auditSignal === undefined ? {} : { signal: auditSignal }),
       });
     });
-  const summoned = await summon(subject, runDirectory);
+  const summoned = await summon(subject, runDirectory, options.signal);
   return await projectAuditorTerminal(summoned);
 }

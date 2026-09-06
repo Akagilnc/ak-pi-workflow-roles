@@ -11,6 +11,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
+import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
@@ -158,6 +159,12 @@ export type NavigatorPreparationSession = {
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   providerFailure?(): NavigatorProviderFailureFact | undefined;
+  /**
+   * Facts of a nested session that already settled without an accepted receipt.
+   * Present means its own delivery budget is spent — another prompt would open an
+   * independent summon rather than press the session that owes the receipt.
+   */
+  noReceipt?(): NoReceiptLifecycleFacts | undefined;
   setModel?(model: string, thinkingLevel?: string): Promise<void>;
   getThinkingLevel?(): string | undefined;
   recordPointer(): string;

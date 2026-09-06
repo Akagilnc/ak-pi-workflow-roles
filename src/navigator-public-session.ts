@@ -17,6 +17,7 @@ import {
   type NavigatorProviderFailureFact,
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
+import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 /**
  * Classify public-navigator failure terminal from structured decisiveFacts only
@@ -57,9 +58,7 @@ function providerFailureFromPublicTerminal(outcome: {
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
     const resolved = await resolveNavigatorSeatSelection(context);
-    let selection = resolved.selection;
     let thinkingLevel = resolved.thinkingLevel;
-    let configuredLabel = resolved.configuredLabel;
 
     // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
     const { createRecordSession } = await import("./archivist-record-entry.ts");
@@ -71,6 +70,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
+    let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
 
@@ -105,6 +105,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
         }
         providerFailure = undefined;
+        noReceipt = undefined;
         const run = (async () => {
         try {
           const { summonPublicRole } = await import("./public-role-summons.ts");
@@ -135,7 +136,9 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             );
           }
           if (outcome.kind === "no_receipt") {
-            // No candidates — attendance no-receipt path.
+            // The nested session spent its own delivery budget; attendance settles
+            // no-receipt on these facts instead of opening another summon (#675).
+            noReceipt = outcome;
             return;
           }
           if (outcome.kind !== "accepted") {
@@ -172,6 +175,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         }
       },
       providerFailure: () => providerFailure,
+      noReceipt: () => noReceipt,
       appendEntry: (customType, data) => {
         sessionManager.appendCustomEntry(customType, data);
         try {
@@ -195,24 +199,11 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        if (
-          nextParsed.provider !== selection.provider
-          || nextParsed.model !== selection.model
-        ) {
-          throw new NavigatorUnavailableError(
-            "model",
-            `Navigator model switch requires a new session: ${configuredLabel} → ${next}`,
-          );
-        }
-        // Seat table applies on the next public summon (#675 / #697).
-        const appliedThinking = nextThinking ?? nextParsed.thinkingLevel;
-        selection = {
-          provider: nextParsed.provider,
-          model: nextParsed.model,
-          ...(appliedThinking === undefined ? {} : { thinking: appliedThinking }),
-        };
-        thinkingLevel = appliedThinking;
-        configuredLabel = next;
+        // No live provider session is pinned here: every prompt is an independent
+        // public summon whose nested CLI reads the current seat table (#675 验收②
+        // / #617 DK-3). A seat edit between prepares therefore applies on the next
+        // summon — it is never an unavailable session.
+        thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
       getThinkingLevel: () => thinkingLevel,
       recordPointer: () => sessionManager.getSessionDir(),
