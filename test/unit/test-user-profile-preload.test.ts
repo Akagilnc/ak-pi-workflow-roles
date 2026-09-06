@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #604: test-process user-profile preload redirects os.userInfo().homedir
  * so cold bins never write the operator's real machine home. Production code
@@ -20,17 +21,17 @@ const PRELOAD = fileURLToPath(
   new URL("../../scripts/test-user-profile-preload.cjs", import.meta.url),
 );
 
-test("parent process packageMachineHome still follows real user profile", () => {
+test("parent process packageMachineHome still follows real user profile", async () => {
   assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
 });
 
 test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {
   // Spaced temp preload path: bare `--require $path` truncates; encoding must keep it one token.
-  const spacedRoot = mkdtempSync(worktreeTempPrefix("ak test user profile "));
+  await withTempRoot("ak test user profile ", async (spacedRoot) => {
   const preloadPath = join(spacedRoot, "pre load.cjs");
   const profileHome = mkdtempSync(join(spacedRoot, "profile "));
   const callerNodeOptions = "--unhandled-rejections=strict";
-  try {
+
     copyFileSync(PRELOAD, preloadPath);
     const env = withTestUserProfileEnv(
       { ...process.env, NODE_OPTIONS: callerNodeOptions },
@@ -84,10 +85,7 @@ test("withTestUserProfileEnv child: package home = temp; realMachineHome stays o
     assert.equal(body.packageHome, profileHome);
     assert.equal(body.realHome, REAL_PASSWD_HOME);
     assert.equal(body.preserved, REAL_PASSWD_HOME);
-  } finally {
-    // Own the outer spaced root (preload copy + profile home live under it).
-    rmSync(spacedRoot, { recursive: true, force: true });
-  }
+    });
 });
 
 test("unavailable mode: userInfo / packageMachineHome throw ERR_SYSTEM_ERROR", async () => {

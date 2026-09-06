@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
@@ -27,20 +27,22 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 const originalHome = process.env.HOME;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-empty-home-method-"));
+  return await withTempRoot("ak-empty-home-method-", async (home) => {
   process.env.HOME = home;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     // Empty home: no ~/.agents/skills at all.
     await assert.rejects(
       () => access(join(home, ".agents", "skills")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
     return await run();
-  } finally {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    await rm(home, { recursive: true, force: true });
-  }
+        },
+      async () => { if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome; }
+    );
+  });
 }
 
 test("packaged tdd method loads from package root in empty home with upstream identity and current-byte provenance", async () => {

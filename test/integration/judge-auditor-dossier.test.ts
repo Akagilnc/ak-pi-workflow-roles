@@ -12,6 +12,7 @@ import { AuditMaterialsUnavailableError, JUDGE_OUTPUT_TOOL_NAME } from "../../sr
 import { AUDITOR_DOSSIER_PROMPT } from "../../src/compliance-transport.ts";
 import { writeInstitutionalSeatTable, seatSelection } from "../helpers/institutional-seat-table.ts";
 import { withInstitutionalProviderFixture } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 /** Host context for auditor. Child session builds its own ModelRegistry (#518) — do not fake parent registry touch counters. */
 function auditContext(
@@ -92,10 +93,10 @@ async function withAuditorChildObservation<T>(
 }
 
 test("judge auditor bare-Pi seam proceeds when subjects are on the books", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-judge-bare-pi-"));
+  return await withTempRoot("ak-judge-bare-pi-", async (root) => {
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  try {
+
     const sessionManager = SessionManager.inMemory();
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
     seedJudgeSubjects(sessionManager);
@@ -110,9 +111,7 @@ test("judge auditor bare-Pi seam proceeds when subjects are on the books", async
     assert.equal(decision.status, "pass");
     // Same observation the negative paths assert stays at zero.
     assert.equal(childCalls, 1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a nonexistent path", async () => {
@@ -140,10 +139,10 @@ test("judge auditor throws missing-dossier when AK_ROLE_RUN_DIR points at a none
 });
 
 test("judge auditor throws missing-subject when candidate verdict is not on the books", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-judge-missing-subject-"));
+  return await withTempRoot("ak-judge-missing-subject-", async (root) => {
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  try {
+
     const sessionManager = SessionManager.inMemory(root);
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
     sessionManager.appendMessage({
@@ -163,16 +162,14 @@ test("judge auditor throws missing-subject when candidate verdict is not on the 
       );
       assert.equal(childCalls(), 0, "missing-subject keeps provider HTTP responses at zero");
     });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });
 
 test("judge auditor spawn carries no projected materials in the user prompt", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-judge-zero-input-"));
+  return await withTempRoot("ak-judge-zero-input-", async (root) => {
   const runDirectory = join(root, "run");
   await mkdir(runDirectory);
-  try {
+
     const sessionManager = SessionManager.inMemory(root);
     (sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
     seedJudgeSubjects(sessionManager);
@@ -213,7 +210,5 @@ test("judge auditor spawn carries no projected materials in the user prompt", as
     assert.ok(observedUserTexts !== undefined, "auditor child must issue one provider turn");
     // Fixed production call-input envelope only (zero projection of parent materials).
     assert.deepEqual(observedUserTexts, [AUDITOR_DOSSIER_PROMPT]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

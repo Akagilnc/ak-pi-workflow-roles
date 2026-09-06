@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { createReviewerWorkspaceOwner } from "../../src/reviewer-workspace.ts";
@@ -41,15 +42,16 @@ test("Reviewer workspace ignores a sibling ref created after pin read", async ()
       }
     },
   });
-  try {
-    const batch = await owner.prepare(fixture.target, ["standards"]);
-    assert.equal(git(batch.workspaces[0]!.path, "rev-parse", "HEAD^{commit}"), fixture.targetHead);
-    assert.equal(git(batch.workspaces[0]!.path, "branch", "--list", "sibling-writer"), "");
-    await owner.dispose(batch.workspaces[0]!);
-  } finally {
-    await owner.shutdown();
-    await rm(fixture.root, { recursive: true, force: true });
-  }
+  await withPrimaryAwareCleanup(
+    async () => {
+      const batch = await owner.prepare(fixture.target, ["standards"]);
+      assert.equal(git(batch.workspaces[0]!.path, "rev-parse", "HEAD^{commit}"), fixture.targetHead);
+      assert.equal(git(batch.workspaces[0]!.path, "branch", "--list", "sibling-writer"), "");
+      await owner.dispose(batch.workspaces[0]!);
+    },
+    async () => { await owner.shutdown(); },
+    async () => { await rm(fixture.root, { recursive: true, force: true }); },
+  );
 });
 
 test("Reviewer workspace rejects a changed target HEAD", async () => {
@@ -61,13 +63,14 @@ test("Reviewer workspace rejects a changed target HEAD", async () => {
       }
     },
   });
-  try {
-    await assert.rejects(
-      owner.prepare(fixture.target, ["standards"]),
-      /target identity no longer matches/,
-    );
-  } finally {
-    await owner.shutdown();
-    await rm(fixture.root, { recursive: true, force: true });
-  }
+  await withPrimaryAwareCleanup(
+    async () => {
+      await assert.rejects(
+        owner.prepare(fixture.target, ["standards"]),
+        /target identity no longer matches/,
+      );
+    },
+    async () => { await owner.shutdown(); },
+    async () => { await rm(fixture.root, { recursive: true, force: true }); },
+  );
 });

@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -101,21 +102,23 @@ async function conflictedRepository(root: string) {
 }
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(worktreeTempPrefix("ak-public-role-table-"));
+  return await withTempRoot("ak-public-role-table-", async (home) => {
   const binDir = join(home, "bin");
   await installHermesFixture(binDir);
   const priorPath = process.env.PATH;
   process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const project = join(home, "work");
     await mkdir(project);
     seedGitProject(project);
     return await run(home, project);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+        },
+      async () => { if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath; }
+    );
+  });
 }
 
 function captureIo() {

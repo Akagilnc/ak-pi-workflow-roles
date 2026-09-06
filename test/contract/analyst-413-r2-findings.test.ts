@@ -32,21 +32,15 @@ import {
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const ABSENT_METRIC = { status: "absent" as const };
-
-function withTempLedgerHome(): string {
-  const home = mkdtempSync(worktreeTempPrefix("analyst-413r2-home-"));
-  mkdirSync(join(home, ".ak-roles", "analyst"), { recursive: true });
-  return home;
-}
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
 test("U1: library-index read boundary rejects null/non-object/rows-not-array with the file path", async () => {
-  const home = withTempLedgerHome();
-  try {
+  await withTempRoot("analyst-413r2-home-", async (home) => {
+    mkdirSync(join(home, ".ak-roles", "analyst"), { recursive: true });
     const indexPath = analystLibraryIndexPath(join(home, ".ak-roles"));
     const malformed: unknown[] = [
       null,
@@ -83,9 +77,7 @@ test("U1: library-index read boundary rejects null/non-object/rows-not-array wit
     );
     const page = await readAnalystLibraryIndexPage(join(home, ".ak-roles"));
     assert.deepEqual(page?.rows, []);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
+  });
 });
 
 // ---- U3: non-ambiguous synthetic classification (unit face) ----

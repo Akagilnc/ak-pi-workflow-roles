@@ -31,7 +31,7 @@ import {
   attendance,
   settleAnsweringRebind,
 } from "../helpers/navigator-attendance-kit.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
@@ -41,10 +41,12 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   assert.equal(resolveNavigatorAuthorityMaterial(undefined, undefined), undefined);
   assert.equal(resolveNavigatorAuthorityMaterial("", undefined), undefined);
 
-  const root = await mkdtemp(worktreeTempPrefix("navigator-input-authority-"));
+  await withTempRoot("navigator-input-authority-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const workRoot = resolve(root, ".ak/work/issues/91");
     await mkdir(workRoot, { recursive: true });
     const packetPath = resolve(workRoot, "fix-packet.md");
@@ -93,11 +95,11 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     assert.equal(neither.subjectProvenance, "placeholder");
     assert.equal(neither.authority, "");
     assert.equal("contextError" in neither, false);
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
+    );
+  });
 });
 
 test("prepare tool accepts direction-only and broken ancillary shape once without retry", async () => {
@@ -537,9 +539,11 @@ test("empty authority at prepare is honest context unavailable", async () => {
 });
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("navigator-admitted-request-"));
+  await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runDir = join(root, "run-public-judge");
     await mkdir(runDir, { recursive: true });
     const sessionDir = join(runDir, "session");
@@ -629,11 +633,11 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");
     assert.equal(empty.subject.includes(prose), false);
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => { if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
+    );
+  });
 });
 
 test("host-neutral envelope drives shared registration and session lifecycle", async () => {

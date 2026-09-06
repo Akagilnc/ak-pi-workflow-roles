@@ -199,9 +199,9 @@ test("executeTurn resume after settle scrubs residual AK seatbelt hooks", async 
   // #594 F1: residual AK hooks under controlled home must not survive settle into the
   // next executeTurn. Inspect goes through real inspectControlledGrok → classifyGrokInspection
   // (faux binary reports filesystem hooks the way grok inspect does — source.type=user).
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-resume-hooks-"));
+  return await withTempRoot("ak-grok-resume-hooks-", async (root) => {
   const home = join(root, "controlled");
-  try {
+
     await mkdir(home, { recursive: true });
     const binary = join(root, "grok-inspect-faux.mjs");
     await writeFile(binary, `#!/usr/bin/env node
@@ -317,7 +317,5 @@ process.stdout.write(JSON.stringify({
     });
     assert.equal(resumeResult.code, 0);
     assert.equal(resumeResult.knownFailure, undefined);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    });
 });

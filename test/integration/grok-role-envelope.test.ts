@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createConnection } from "node:net";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 /** #604: nest grok run dirs under home/.ak-roles so session path-derive finds package home. */
 function grokRunDirectory(home: string, runName: string): string {
@@ -85,13 +86,15 @@ test("Grok projection maps public activations onto the shared envelope", () => {
 });
 
 test("Grok MCP projection activates shared Judge materials and all active AK tools", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-envelope-"));
+  await withTempRoot("ak-grok-envelope-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorEngine = process.env.AK_ROLE_ENGINE;
   delete process.env.AK_ROLE_RUN_DIR;
   // Tool-list contract is engine-free; ambient factory AK_ROLE_ENGINE must not leak detour.
   delete process.env.AK_ROLE_ENGINE;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     const request = {
       principal: {}, activation: { role: "judge" }, methods: [],
@@ -108,28 +111,35 @@ test("Grok MCP projection activates shared Judge materials and all active AK too
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       const server = prepared.mcpServers[0] as McpServer;
       const listed = await listThroughMcp(server) as { tools?: Array<{ name: string }> };
       const names = listed.tools?.map(({ name }) => name) ?? [];
       // Judge output is required; shared envelope may also register engine detour.
       assert.ok(names.includes(JUDGE_OUTPUT_TOOL_NAME));
       assert.equal(names.filter((name) => name === JUDGE_OUTPUT_TOOL_NAME).length, 1);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      },
+      async () => {
+        if (priorEngine === undefined) delete process.env.AK_ROLE_ENGINE; else process.env.AK_ROLE_ENGINE = priorEngine;
+      }
+    );
+  });
 });
 
 test("Grok envelope loads soul once and keeps typed materials empty for judge", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-soul-load-"));
+  return await withTempRoot("ak-grok-soul-load-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     // Observable contract: loadJudgeSoul is invoked once; materials stay empty
     // (no preloaded duplicate readingMaterial — #632). Free-text body injection
@@ -152,24 +162,29 @@ test("Grok envelope loads soul once and keeps typed materials empty for judge", 
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       assert.equal(soulLoads, 1);
       assert.deepEqual(prepared.systemPrompt.materials, []);
       assert.equal(prepared.mcpServers.length, 1);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok dispose closes MCP server even when session_shutdown rejects", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-shutdown-failure-"));
+  await withTempRoot("ak-grok-shutdown-failure-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     const prepared = await prepareGrokRoleEnvelope({
       request: {
@@ -207,10 +222,12 @@ test("Grok dispose closes MCP server even when session_shutdown rejects", async 
       });
       socket.once("error", () => resolve());
     });
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok Skill expansion evidence aligns with the packaged canonical binding", async () => {
@@ -223,10 +240,12 @@ test("Grok Skill expansion evidence aligns with the packaged canonical binding",
 });
 
 test("Grok MCP projection expands the canonical Coder tdd Skill from typed methods", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-coder-"));
+  await withTempRoot("ak-grok-coder-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     const taskPath = join(root, "task.md");
     const tddPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
@@ -251,28 +270,33 @@ test("Grok MCP projection expands the canonical Coder tdd Skill from typed metho
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       // The shared input transform rewrites the prompt to the canonical Skill invocation.
       assert.equal(prepared.prompt, "/skill:tdd decide");
       // Coder agent-start carries no typed reading materials on this path.
       assert.deepEqual(prepared.systemPrompt.materials, []);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok typed infrastructureFailure aborts the round and closeRound returns knownFailure", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-infra-fail-"));
+  await withTempRoot("ak-grok-infra-fail-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const diagnostic = "劳务引擎 agy authentication timed out (case #593)";
     const prepared = await prepareGrokRoleEnvelope({
       request: {
@@ -288,7 +312,8 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       assert.ok(prepared.abortSignal instanceof AbortSignal);
       assert.equal(prepared.abortSignal.aborted, false);
 
@@ -307,28 +332,35 @@ test("Grok typed infrastructureFailure aborts the round and closeRound returns k
       assert.ok("failure" in closure, "infrastructure declaration must not fall to MissingSubmission or retry");
       assert.equal(closure.failure.identity?.name, "InfrastructureFailure");
       assert.equal(closure.failure.diagnostic, diagnostic);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    // failInfrastructure stamps exitCode=1 under print mode; restore for the test process.
-    process.exitCode = priorExitCode;
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        process.exitCode = priorExitCode;
+      },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok infra abort fills knownFailure before hanging tool_result projection so closeRound cannot race MissingSubmission", async () => {
   // #593 r3 finding 1: hostAbort must not win an empty infrastructureRoundFailure slot
   // while tool_result projection (navigator settle) is still in flight.
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-infra-race-"));
+  await withTempRoot("ak-grok-infra-race-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const diagnostic = "infra abort/projection race (#593 r3)";
     let releaseSettle!: () => void;
     const settleHang = new Promise<void>((resolve) => {
@@ -392,24 +424,32 @@ test("Grok infra abort fills knownFailure before hanging tool_result projection 
       releaseSettle?.();
       await prepared.dispose?.();
     }
-  } finally {
-    process.exitCode = priorExitCode;
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => {
+        process.exitCode = priorExitCode;
+      },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok pre-execution observation failure terminates as typed InfrastructureFailure not MissingSubmission", async () => {
   // #593 r3 finding 2: tool_execution_start / tool_call throws must share the same
   // non-correctable infra pathway (slot + hostAbort), not bare outer RPC only.
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-preexec-infra-"));
+  await withTempRoot("ak-grok-preexec-infra-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const diagnostic = "observation writer failed at tool_execution_start (#593 r3)";
     const prepared = await prepareGrokRoleEnvelope({
       request: {
@@ -428,7 +468,8 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
         },
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       assert.ok(prepared.abortSignal instanceof AbortSignal);
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, JUDGE_OUTPUT_TOOL_NAME, {
@@ -451,22 +492,30 @@ test("Grok pre-execution observation failure terminates as typed InfrastructureF
       if (reply.error === undefined) {
         assert.equal((reply.result as { isError?: boolean })?.isError, true);
       }
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    process.exitCode = priorExitCode;
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        process.exitCode = priorExitCode;
+      },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok MCP projection routes a correctable rejection as a structured non-pass", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-coder-reject-"));
+  await withTempRoot("ak-grok-coder-reject-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     const taskPath = join(root, "task.md");
     // Method path whose body disagrees with the packaged canonical binding, so
@@ -495,7 +544,8 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, CODER_OUTPUT_TOOL_NAME, { status: "completed", report: "done" });
       assert.equal(reply.error, undefined);
@@ -513,20 +563,24 @@ test("Grok MCP projection routes a correctable rejection as a structured non-pas
       assert.equal(closure.retry.code, "coder_skill_expansion_evidence_missing");
       assert.equal(closure.retry.toolCallIds.length, 1);
       assert.equal(typeof closure.retry.toolCallIds[0], "string");
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("public Notary source-run ticket: admit→activation→ACP systemPromptOverride folds typed bound", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-notary-ticket-"));
+  return await withTempRoot("ak-grok-notary-ticket-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     // Real public admission needs a git project book + retained source-run under ledger.
     const project = join(root, "project");
     await mkdir(project, { recursive: true });
@@ -623,7 +677,8 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       // Structured authority after real admit→activation→agent-start (typed bound, not prompt text).
       const expectedBound = projectNotarySessionBound({
         sourceRun: admitted.sourceRun,
@@ -709,20 +764,24 @@ test("public Notary source-run ticket: admit→activation→ACP systemPromptOver
       assert.equal(overrideEmpty, prepared.systemPrompt.body);
       assert.notEqual(overrideWithBound, overrideEmpty);
       assert.notEqual(overrideWithBound, overrideOtherTicket);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok MCP projection seals only after closeRound typed boundary; terminal candidate alone does not accept", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-notary-"));
+  await withTempRoot("ak-grok-notary-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const socketPath = join(root, "mcp.sock");
     // Production run face is `<runId>@<role>`; settlement reads bare admitted.runId.
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ac";
@@ -761,7 +820,8 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
         }),
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(reply.error, undefined);
@@ -785,20 +845,24 @@ test("Grok MCP projection seals only after closeRound typed boundary; terminal c
       assert.equal(sealed?.kind, "accepted");
       assert.equal(sealed?.role, "notary");
       assert.equal(sealed?.status, "pass");
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok delayed sibling after terminal candidate is not early-accepted at closeRound", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-sibling-"));
+  await withTempRoot("ak-grok-sibling-", async (root) => {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runId = "01a0551c-77b9-73e5-a62a-61bd812266ad";
     const runDirectory = grokRunDirectory(root, `${runId}@notary`);
     const prepared = await prepareGrokRoleEnvelope({
@@ -831,7 +895,8 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
         }),
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       const server = prepared.mcpServers[0] as McpServer;
       const terminal = await callThroughMcp(server, NOTARY_OUTPUT_TOOL_NAME, { status: "pass", findings: [] });
       assert.equal(terminal.error, undefined);
@@ -849,22 +914,26 @@ test("Grok delayed sibling after terminal candidate is not early-accepted at clo
       assert.equal(closure.retry.code, "non-sole-round");
       assert.equal(closure.retry.toolCallIds.length, 2);
       assert.equal(await readSealedSubmission(process.cwd(), runId, root), undefined);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries, and re-prompt succeeds in same ACP session", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-real-seam-"));
+  return await withTempRoot("ak-grok-real-seam-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a6";
     const socketPath = join(root, "mcp.sock");
     const request = {
@@ -940,23 +1009,29 @@ test("real-seam: non-sole submit triggers turn_end rejection, closeRound retries
     assert.equal((prompts[0] as { sessionId: string }).sessionId, "real-seam-session");
     assert.equal((prompts[1] as { sessionId: string }).sessionId, "real-seam-session");
     assert.ok(await readSealedSubmission(process.cwd(), runId, root) !== undefined);
-  } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+        },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok MCP projection extracts typed evidence keys from failInfrastructure thrown error", async () => {
   // Doctor has no gatekeeper-before-audit: auditCompliance throw reaches failInfrastructure
   // with the original error, so closeRound.details must carry NAVIGATOR evidence keys.
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-infra-evidence-"));
+  await withTempRoot("ak-grok-infra-evidence-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorExitCode = process.exitCode;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a7";
     const runDir = grokRunDirectory(root, `${runId}@doctor`);
     const casePath = join(root, "case.json");
@@ -1011,7 +1086,8 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       assert.ok(prepared.abortSignal instanceof AbortSignal);
       const server = prepared.mcpServers[0] as McpServer;
       const reply = await callThroughMcp(server, DOCTOR_OUTPUT_TOOL_NAME, {
@@ -1038,24 +1114,32 @@ test("Grok MCP projection extracts typed evidence keys from failInfrastructure t
       assert.deepEqual(details.submission, { case: patient.identity });
       assert.equal(details.observation, "provider stream stalled");
       assert.equal(details.candidate, null);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    process.exitCode = priorExitCode;
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        process.exitCode = priorExitCode;
+      },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 test("Grok MCP projection routes thrown correctable submission error as retry without arming infrastructure", async () => {
-  const root = await mkdtemp(worktreeTempPrefix("ak-grok-worker-reminder-"));
+  await withTempRoot("ak-grok-worker-reminder-", async (root) => {
   const priorHome = process.env.HOME;
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   process.env.HOME = root;
   delete process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runId = "01a034f1-75bf-71a6-bcf5-d1299145b1a8";
     const socketPath = join(root, "mcp.sock");
     const taskPath = join(root, "task.md");
@@ -1076,7 +1160,8 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
         activationTraceWriter: async () => {},
       },
     });
-    try {
+    await withPrimaryAwareCleanup(
+      async () => {
       const server = prepared.mcpServers[0] as McpServer;
       // In plan phase, completed requires plan report
       const reply = await callThroughMcp(server, CODER_OUTPUT_TOOL_NAME, { status: "completed", report: "" });
@@ -1088,14 +1173,18 @@ test("Grok MCP projection routes thrown correctable submission error as retry wi
       assert.equal(closure.accepted, false);
       assert.ok("retry" in closure, "thrown correctable reminder must route to retry");
       assert.equal(closure.retry.toolCallIds.length, 1);
-    } finally {
-      await prepared.dispose?.();
-    }
-  } finally {
-    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-    await rm(root, { recursive: true, force: true });
-  }
+      },
+      async () => { await prepared?.dispose?.(); },
+    );
+        },
+      async () => {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      },
+      async () => {
+        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      }
+    );
+  });
 });
 
 /** Collector Grok-seam fixtures: one fake transport with a long-body courtesy comment. */
@@ -1144,12 +1233,14 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
   const priorExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
-    const root = await mkdtemp(worktreeTempPrefix("ak-grok-collector-"));
+    await withTempRoot("ak-grok-collector-", async (root) => {
     const priorHome = process.env.HOME;
     const priorRun = process.env.AK_ROLE_RUN_DIR;
     process.env.HOME = root;
     delete process.env.AK_ROLE_RUN_DIR;
-    try {
+      return withPrimaryAwareCleanup(
+        async () => {
+
       const runId = "grok-collector";
       const { body, dependencies } = grokCollectorDependencies(root);
       const prepared = await prepareGrokRoleEnvelope({
@@ -1162,7 +1253,8 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
         socketPath: join(root, "mcp.sock"),
         dependencies,
       });
-      try {
+      await withPrimaryAwareCleanup(
+        async () => {
         const server = prepared.mcpServers[0] as McpServer;
         const observe = await callThroughMcp(server, COLLECTOR_OBSERVE_TOOL, {});
         assert.equal(observe.error, undefined);
@@ -1202,14 +1294,18 @@ test("Grok collector keeps observe bounded, opens full bodies by pointer, and re
         const outcome = await readLatestSubmissionOutcome(process.cwd(), runId, root);
         assert.equal(outcome?.outcome, "correctable-rejection");
         assert.equal(outcome?.code, "typed-bounce");
-      } finally {
-        await prepared.dispose?.();
-      }
-    } finally {
-      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
-      if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
-      await rm(root, { recursive: true, force: true });
-    }
+        },
+        async () => { await prepared?.dispose?.(); },
+      );
+            },
+        async () => {
+          if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+        },
+        async () => {
+          if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+        }
+      );
+    });
   } finally {
     process.exitCode = priorExitCode;
   }
