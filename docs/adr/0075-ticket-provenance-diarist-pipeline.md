@@ -1,6 +1,6 @@
 # 0075 — 司天台每票起居录（ticket-provenance）与起居郎（角色）
 
-Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e46b-7e1b-8d5d-cb618de4c1ae` countersignStatus=converged 全票全审第七轮署；decision keys 与绑定原话见 #582；**2026-09-06 原地修正**：起居郎建制为角色，删调用顺序键，见 #582 r2 票面与下表 `diarist-is-role` / `no-call-rule`；陛下「直接修正老的adr。我不认为让adr越来越多有什么好处」）
+Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e46b-7e1b-8d5d-cb618de4c1ae` countersignStatus=converged 全票全审第七轮署；decision keys 与绑定原话见 #582；**2026-09-06 原地修正**：起居郎建制为角色，删调用顺序键，见 #708 r2 修订（#582 已关）与下表 `diarist-is-role` / `no-call-rule`；陛下「直接修正老的adr。我不认为让adr越来越多有什么好处」）
 
 ## 承继 / 修正关系
 
