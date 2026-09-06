@@ -2,7 +2,9 @@
  * Shared LLM ticket binding for public court seats (#635).
  * One path: unbound admission → diarist instruction assertion → bindAdmittedTicketNumber.
  * No CLI --ticket and no attachment frontmatter binding.
+ * #637: same-ticket prior-run lookup → resume decision also lives here (shared seam).
  */
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   createGhTicketExistenceChecker,
   createHermesDiaristTicketResolver,
@@ -15,6 +17,11 @@ import {
   recordTrueUnboundTicketResolution,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
+import {
+  findLatestRunIdForSeatTicket,
+  type RoleRunRecord,
+  type SameTicketSummonsMaterials,
+} from "./run-lifecycle.ts";
 
 export type SeatTicketBindingEnv = {
   readonly packageRoot?: string;
@@ -69,4 +76,31 @@ export async function resolveSeatTicketBinding(
     await recordTrueUnboundTicketResolution(admitted);
   }
   return resolution;
+}
+
+/**
+ * Shared same-ticket → resume decision (#637).
+ * Looks up the latest retained run for seat+ticket; when found, runs resume with
+ * this summons' materials. Lookup/resume failures propagate (失败诚实) — never
+ * wash into a fresh mint. Returns undefined only when no prior run exists.
+ */
+export async function tryResumeSameTicketSeatRun<T>(input: {
+  readonly home: string;
+  readonly projectRoot: string;
+  readonly role: RoleRunRecord["role"];
+  readonly ticketNumber: number;
+  readonly summons?: SameTicketSummonsMaterials;
+  readonly resume: (
+    runId: string,
+    summons: SameTicketSummonsMaterials | undefined,
+  ) => Promise<T>;
+}): Promise<T | undefined> {
+  const previousRunId = await findLatestRunIdForSeatTicket({
+    home: input.home,
+    bookKey: resolveBookKeyFromGit(input.projectRoot),
+    role: input.role,
+    ticketNumber: input.ticketNumber,
+  });
+  if (previousRunId === undefined) return undefined;
+  return await input.resume(previousRunId, input.summons);
 }

@@ -50,14 +50,29 @@ export function buildExplicitInternalActivationArgs(
   return ["--no-extensions", "-e", selectedRoleEntry, ...extraArgs];
 }
 
-function buildSeatModelCliArgs(model: RoleTurnModelConfig | undefined): string[] {
+/**
+ * Pi argv for seat model. Host only passes through resolved values — no local
+ * thinking whitelist. Initial bare provider/model still omits --thinking so Pi
+ * defaults apply (#346/#384). On resume, omitted seat thinking emits Pi's
+ * DEFAULT_THINKING_LEVEL ("medium") so --session cannot restore stale thinking (#697/#637).
+ */
+function buildSeatModelCliArgs(
+  model: RoleTurnModelConfig | undefined,
+  continuationKind: RoleTurnRequest["continuation"]["kind"],
+): string[] {
   if (model === undefined) return [];
+  const thinking =
+    model.thinking !== undefined
+      ? model.thinking
+      : continuationKind === "resume"
+        ? "medium"
+        : undefined;
   return [
     "--provider",
     model.provider,
     "--model",
     model.model,
-    ...(model.thinking === undefined ? [] : ["--thinking", model.thinking]),
+    ...(thinking === undefined ? [] : ["--thinking", thinking]),
   ];
 }
 
@@ -189,7 +204,7 @@ export function buildPiTurnExtraArgs(
     ...buildActivationFlagArgs(request.activation),
     "--mode",
     "json",
-    ...buildSeatModelCliArgs(request.model),
+    ...buildSeatModelCliArgs(request.model, request.continuation.kind),
     prompt,
   ];
 }

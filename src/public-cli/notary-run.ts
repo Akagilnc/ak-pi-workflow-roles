@@ -4,21 +4,21 @@
  * the shared post-admission seam; this module keeps only Notary adapters.
  * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
   buildNotaryTransportPrompt,
-  readTicketNumberFromSourceRun,
   type AdmittedNotaryInvocation,
   type ParseNotaryArgvResult,
 } from "./invocation.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
@@ -27,10 +27,10 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  findLatestRunIdForSeatTicket,
   loadResumableNotaryRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -90,36 +90,44 @@ export async function runPublicNotary(
     throw error;
   }
 
-  // #637: same ticket → resume prior notary run before minting a new one.
+  // #637: same ticket → resume prior notary run with this summons' source-run pointer.
+  // Source-run structural failures stay usage rejections; lookup/resume failures surface
+  // (no bare catch→fresh). Only true absence of a prior run mints new.
   const projectRoot = parsed.project ?? env.cwd;
+  let source;
   try {
-    const source = await resolveNotarySourceRunLocator({
+    source = await resolveNotarySourceRunLocator({
       projectRoot,
       sourceRun: parsed.sourceRun,
       home: env.home,
     });
-    const ticketNumber = await readTicketNumberFromSourceRun(source.runDirectory);
-    if (ticketNumber !== undefined) {
-      const previousRunId = await findLatestRunIdForSeatTicket({
-        home: env.home,
-        bookKey: resolveBookKeyFromGit(projectRoot),
-        role: "notary",
-        ticketNumber,
-      });
-      if (previousRunId !== undefined) {
-        return await runPublicNotaryResume({ runId: previousRunId }, env, io);
-      }
-    }
   } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
     if (error instanceof NotarySourceRunError) {
       presentStructuralRejection(new CliUsageError(error.message, { cause: error }), io);
       return { exitCode: 2 };
     }
     throw error;
+  }
+  const ticketNumber = await readRunTicketNumber(source.runDirectory);
+  if (ticketNumber !== undefined) {
+    const summons: SameTicketSummonsMaterials = {
+      sourceRunPath: source.runDirectory,
+      sourceRun: source,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role: "notary",
+      ticketNumber,
+      summons,
+      resume: (runId, materials) =>
+        runPublicNotaryResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
   }
 
   let admitted: AdmittedNotaryInvocation;
@@ -183,8 +191,9 @@ function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
 }
 
 /**
- * Resume a previously admitted Notary run (#633). Source-run locator restores
- * from the durable admitted request (never re-resolved); the session principal reopens.
+ * Resume a previously admitted Notary run (#633 / #637). Manual resume restores
+ * source-run from the durable admitted request. Same-ticket re-summons deliver
+ * this turn's source-run activation pointer while reopening the same session.
  */
 export async function runPublicNotaryResume(
   request: PublicResumeRequest,
@@ -199,22 +208,37 @@ export async function runPublicNotaryResume(
     request,
     env,
     io,
-    load: () => {
+    load: async () => {
       if (request.message !== undefined) {
         throw new CliUsageError(
           "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
         );
       }
-      return loadResumableNotaryRun(
+      const loaded = await loadResumableNotaryRun(
         env.home,
         request.runId,
         env.principalAuthority,
       );
+      const summons = request.summons;
+      if (
+        summons?.sourceRunPath !== undefined &&
+        summons.sourceRun !== undefined
+      ) {
+        return {
+          admitted: {
+            ...loaded.admitted,
+            sourceRunPath: summons.sourceRunPath,
+            sourceRun: summons.sourceRun,
+          },
+        };
+      }
+      return loaded;
     },
-    buildTurnRequest: (admitted) => buildNotaryTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
+    buildTurnRequest: (admitted) =>
+      buildNotaryTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, request, env),
+      ),
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

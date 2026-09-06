@@ -11,9 +11,15 @@ import { join } from "node:path";
 import {
   buildResumeContinuationPrompt,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
+import {
+  buildInstructionTransportPrompt,
+  freezeAttachmentsIntoRun,
+} from "./invocation.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 
 import type {
   ControlledFailureCause,
@@ -416,15 +422,35 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
- * Shared resume continuation projection (#471 / #600 / #633): seat-table
- * model/engine/timeout axes, restored correlation, and the package resume
- * envelope (message optional). Seats add only their activation projection.
+ * Shared resume continuation projection (#471 / #600 / #633 / #637): seat-table
+ * model/engine/timeout axes, restored correlation, and either
+ * - manual resume: package envelope / optional caller message (unchanged), or
+ * - same-ticket summons: this turn's instruction + frozen attachment paths.
+ * Seats add only their activation projection. Call prepareSummonsResumeMaterials
+ * first when request.summons carries attachment paths.
  */
 export function resumeTurnRequestProjectionOptions(
   admitted: AdmittedRoleInvocation,
   request: PublicResumeRequest,
   env: PostAdmissionEnv,
+  summonsPrepared?: {
+    readonly instruction: string;
+    readonly instructionEmpty: boolean;
+    readonly attachments: readonly { frozenPath: string }[];
+  },
 ): RoleTurnRequestProjectionOptions {
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
+  const prompt =
+    summonsPrepared !== undefined
+      ? buildInstructionTransportPrompt(summonsPrepared, engineMaterial)
+      : buildResumeContinuationPrompt({
+          packageRoot: env.packageRoot,
+          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          ...(request.message === undefined ? {} : { message: request.message }),
+        });
   return {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -437,13 +463,39 @@ export function resumeTurnRequestProjectionOptions(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
+      prompt,
     },
   };
+}
+
+/**
+ * Freeze same-ticket summons attachments into the retained run directory (#637).
+ * No-op materials (no paths / instruction-only) skip the freeze.
+ * Manual resume never calls this — old attachment semantics stay intact.
+ */
+export async function prepareSummonsResumeMaterials(
+  runDirectory: string,
+  summons: SameTicketSummonsMaterials | undefined,
+): Promise<
+  | {
+      readonly instruction: string;
+      readonly instructionEmpty: boolean;
+      readonly attachments: readonly { frozenPath: string }[];
+    }
+  | undefined
+> {
+  if (summons === undefined) return undefined;
+  if (summons.instruction === undefined && (summons.attachmentPaths?.length ?? 0) === 0) {
+    return undefined;
+  }
+  const instruction = summons.instruction ?? "";
+  const instructionEmpty =
+    summons.instructionEmpty ?? instruction.trim() === "";
+  const attachments =
+    summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0
+      ? await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory)
+      : [];
+  return { instruction, instructionEmpty, attachments };
 }
 
 /**
@@ -460,7 +512,7 @@ export async function runPostAdmissionSeatResume<
   env: PostAdmissionEnv;
   io: CliIo;
   load: () => Promise<{ admitted: A }>;
-  buildTurnRequest: (admitted: A) => RoleTurnRequest;
+  buildTurnRequest: (admitted: A) => RoleTurnRequest | Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
@@ -474,13 +526,16 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
+  // Same-ticket re-summons carry materials → force a new court turn even if sealed.
+  const forceContinuation = input.request.summons !== undefined;
   return await runPostAdmissionManualResume({
     admitted: loaded.admitted,
     env: input.env,
     io: input.io,
-    request: input.buildTurnRequest(loaded.admitted),
+    request: await input.buildTurnRequest(loaded.admitted),
     adapters: input.adapters,
     ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
+    ...(forceContinuation ? { forceContinuation: true as const } : {}),
   });
 }
 
@@ -584,6 +639,8 @@ export async function runPostAdmissionResumable<
  * When the submission ledger is already sealed, project that accepted terminal
  * idempotently — do not dispatch a doomed turn that would append
  * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
+ * Same-ticket re-summons (#637) pass forceContinuation so a new court turn still
+ * runs with this summons' materials despite a prior sealed acceptance.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -596,13 +653,15 @@ export async function runPostAdmissionManualResume<
   adapters: PostAdmissionAdapters<A, T>;
   /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
   effectiveEngine?: string;
+  /** Same-ticket re-summons: skip sealed-accepted short-circuit and dispatch. */
+  forceContinuation?: boolean;
 }): Promise<{
   exitCode: number;
   admitted?: A;
   terminal?: T;
   staleWriterLeaseReclaimed?: true;
 }> {
-  const { admitted, env, io, request, adapters, effectiveEngine } = input;
+  const { admitted, env, io, request, adapters, effectiveEngine, forceContinuation } = input;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;
   const shouldPresent =
@@ -611,20 +670,23 @@ export async function runPostAdmissionManualResume<
 
   // Sealed accepted receipt only — audit_escalation / residual failure must not
   // short-circuit; those still need a real continuation turn.
+  // Same-ticket re-summons force a new turn (forceContinuation) and skip this.
   try {
-    const existing = await adapters.trySettle(admitted, env.principalAuthority);
-    if (
-      existing !== undefined &&
-      existing.roleOutcome.kind === "accepted" &&
-      shouldPresent(existing)
-    ) {
-      (existing as { autoResumeCount?: number }).autoResumeCount = 0;
-      io.stdout(formatTerminalResult(existing));
-      return {
-        exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
-        admitted,
-        terminal: existing,
-      };
+    if (forceContinuation !== true) {
+      const existing = await adapters.trySettle(admitted, env.principalAuthority);
+      if (
+        existing !== undefined &&
+        existing.roleOutcome.kind === "accepted" &&
+        shouldPresent(existing)
+      ) {
+        (existing as { autoResumeCount?: number }).autoResumeCount = 0;
+        io.stdout(formatTerminalResult(existing));
+        return {
+          exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
+          admitted,
+          terminal: existing,
+        };
+      }
     }
   } catch (error) {
     // Settlement-owned sealed disposition (#648 / #599 / #672): sealed accepted +

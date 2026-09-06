@@ -633,19 +633,21 @@ export async function openPiInstitutionalSession(
       }
     }
 
-    // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
-    // omits thinkingLevel (Pi default). Pi clamps unsupported levels itself;
-    // we do not re-check or invent defaults.
-    // #637/#697: createAgentSession may restore model/thinking from an existing
-    // session file when options omit them; seat-table values must win. Always
-    // pass model; re-apply setModel/setThinkingLevel after open so resume
-    // cannot keep a stale session model over the live seat table.
+    // 7. Create AgentSession — thinking is opaque pass-through. Pi clamps
+    // unsupported levels itself; we do not re-check or invent a local whitelist.
+    // #637/#697: createAgentSession restores model/thinking from an existing
+    // session when options omit them. Seat-table values must win: always pass
+    // model; when seat omits thinking, apply Pi settings default (else Pi's
+    // DEFAULT_THINKING_LEVEL "medium") so resume cannot keep stale session thinking.
+    const seatThinking = options.selection.thinking;
+    const thinkingForOpen =
+      seatThinking ??
+      settings.getDefaultThinkingLevel() ??
+      ("medium" as const);
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      ...(options.selection.thinking === undefined
-        ? {}
-        : { thinkingLevel: options.selection.thinking as any }),
+      thinkingLevel: thinkingForOpen as any,
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -656,9 +658,7 @@ export async function openPiInstitutionalSession(
       ...(customTools.length === 0 ? {} : { customTools }),
     });
     await session.setModel(effectiveModel);
-    if (options.selection.thinking !== undefined) {
-      session.setThinkingLevel(options.selection.thinking as any);
-    }
+    session.setThinkingLevel(thinkingForOpen as any);
 
     // 8. Event subscriptions
     const listeners = new Set<(event: HostInstitutionalSessionEvent) => void>();

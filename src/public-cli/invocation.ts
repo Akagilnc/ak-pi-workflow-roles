@@ -1004,13 +1004,20 @@ async function freezeAttachments(
 }
 
 /**
- * Read ticketNumber from a retained source run's admitted-request.json,
- * falling back to invocation.json (#635 source-run inheritance).
+ * Freeze summons attachments into an already-retained run (#637 same-ticket resume).
+ * Writes under attachments/summons-<key>/ so prior freeze names stay intact.
+ * Manual resume never calls this — birth attachments keep their original semantics.
  */
-export async function readTicketNumberFromSourceRun(
+export async function freezeAttachmentsIntoRun(
+  attachmentPaths: readonly string[],
   runDirectory: string,
-): Promise<number | undefined> {
-  return readRunTicketNumber(runDirectory);
+  summonsKey: string = `s-${Date.now().toString(36)}`,
+): Promise<readonly FrozenAttachment[]> {
+  if (attachmentPaths.length === 0) return [];
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
+  const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  return freezeAttachments(attachmentPaths, attachmentsDirectory);
 }
 
 function ticketAdmissionFields(
@@ -2331,7 +2338,7 @@ export async function admitNotaryInvocation(options: {
   });
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   const ticketFields = ticketAdmissionFields(
-    await readTicketNumberFromSourceRun(sourceRun.runDirectory),
+    await readRunTicketNumber(sourceRun.runDirectory),
   );
 
   const admitted = {
