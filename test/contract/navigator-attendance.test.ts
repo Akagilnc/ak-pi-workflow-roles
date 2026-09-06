@@ -196,40 +196,60 @@ test("live help changes the next hint without a static template or fabricated ta
 
 test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
   await withTempRoot("navigator-route-", async (root) => {
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/one" }));
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = await attendance(setting, harness, events);
-    nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.ok(events[0].route);
-    await writeFile(setting, JSON.stringify({ model: "provider/two" }));
-    nav.prepare();
-    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events[1].route, undefined);
-    assert.equal(harness.prompts(), 2);
-    await writeFile(setting, JSON.stringify({ model: "provider/three" }));
-    nav.prepare();
-    while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
-    const original = candidate().candidates[0]!;
-    const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
-    await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.deepEqual(events[2].route, revised.candidates[0]!.route);
-    assert.deepEqual(harness.modelSettings, [
-      { model: "provider/one" },
-      { model: "provider/two" },
-      { model: "provider/three" },
-    ]);
-    assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
+    // Hermetic HOME seat table is the sole model authority (#675).
+    const priorHome = process.env.HOME;
+    process.env.HOME = root;
+    const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+    try {
+      await savePublicCliConfig(
+        { seats: { navigator: { provider: "provider", model: "one" } } },
+        root,
+      );
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "ignored/legacy" }));
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events);
+      nav.prepare();
+      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.ok(events[0].route);
+      await savePublicCliConfig(
+        { seats: { navigator: { provider: "provider", model: "two" } } },
+        root,
+      );
+      nav.prepare();
+      while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+      await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events[1].route, undefined);
+      assert.equal(harness.prompts(), 2);
+      await savePublicCliConfig(
+        { seats: { navigator: { provider: "provider", model: "three" } } },
+        root,
+      );
+      nav.prepare();
+      while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
+      const original = candidate().candidates[0]!;
+      const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
+      await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
+      harness.release();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.deepEqual(events[2].route, revised.candidates[0]!.route);
+      // #675 ⑥: bare provider/model has no invented thinking default.
+      assert.deepEqual(harness.modelSettings, [
+        { model: "provider/one" },
+        { model: "provider/two" },
+        { model: "provider/three" },
+      ]);
+      assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+    }
   });
 });
 
@@ -263,6 +283,33 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
     // One attendance instance keeps one exact principal across settles.
     assert.equal(events[1]?.invocationId, events[0]?.invocationId);
     assert.equal(harness.prompts(), 2);
+  });
+});
+
+test("a session that settled without a receipt is not re-summoned for delivery", async () => {
+  await withTempRoot("navigator-nested-no-receipt-", async (root) => {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    harness.settleWithoutReceipt("no typed candidate batch");
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    // Each prompt is an independent public summon: a delivery request after the
+    // session settled opens new sessions instead of pressing the one that owes
+    // the receipt.
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.filter((entry: any) => entry?.customType === "ak-no-receipt-lifecycle");
+    assert.equal(lifecycle.length, 1);
+    const facts = (lifecycle[0] as any).data;
+    assert.equal(facts.terminalToolCalled, true);
+    assert.deepEqual(facts.rejectedReceipts, [
+      { reason: "no typed candidate batch", diagnosticAvailable: true },
+    ]);
+    assert.equal(facts.runPointer, "/fixture/navigator-record");
   });
 });
 
@@ -371,7 +418,7 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(parseNavigatorModelSetting("provider/model:xhigh"), { provider: "provider", model: "model", thinkingLevel: "xhigh" });
   // Bare provider/model omits thinkingLevel — no invented default.
   assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model" });
-  // Suffix is opaque pass-through; no whitelist reject.
+  // Suffix is opaque pass-through; no whitelist reject (#683 / #675 ⑥).
   assert.deepEqual(parseNavigatorModelSetting("provider/model:backup"), { provider: "provider", model: "model", thinkingLevel: "backup" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });

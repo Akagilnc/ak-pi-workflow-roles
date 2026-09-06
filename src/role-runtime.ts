@@ -92,6 +92,16 @@ import {
   NAVIGATOR_TOOL_SPEC,
   type NavigatorRuntimeDependencies,
 } from "./navigator-role.ts";
+import {
+  AUDITOR_TOOL_SPEC,
+  type AuditorRuntimeDependencies,
+} from "./auditor-role.ts";
+import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
+import {
+  EVIDENCE_CHILD_TOOL_SPEC,
+  type EvidenceChildRuntimeDependencies,
+} from "./evidence-child-role.ts";
+import { EVIDENCE_CHILD_ACCEPTED_TEXT } from "./package-contracts/evidence-child-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
@@ -349,14 +359,11 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { executeAuditorChild } from "./evidence-child-executor.ts";
-export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
-  createOfficerDecisionTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
@@ -397,7 +404,13 @@ export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisi
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
 export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
-export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
+export {
+  AUDITOR_SOUL_ROLES,
+  AK_ROLE_AUDITOR_SUBJECT_ENV,
+  loadAuditorSoul,
+  loadAuditorSoulFromSubjectInput,
+  resolveAuditorSubject,
+} from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
@@ -461,6 +474,8 @@ type ActivationRuntime = {
   inspector: { activate(): Promise<void> };
   gatekeeper: { activate(): Promise<void> };
   navigator: { activate(): Promise<void> };
+  auditor: { activate(): Promise<void> };
+  evidenceChild: { activate(): Promise<void> };
   diarist: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
@@ -510,6 +525,8 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
     case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
+    case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
+    case "evidence-child": return { id: "load-and-install", run: async () => runtime.evidenceChild.activate() };
     case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -618,6 +635,8 @@ export type RoleRuntimeDependencies = {
   loadInspectorSoul?(): Promise<string>;
   loadGatekeeperSoul?(): Promise<string>;
   loadNavigatorSoul?(): Promise<string>;
+  loadAuditorSoul?(): Promise<string>;
+  loadEvidenceChildSoul?(): Promise<string>;
   loadDiaristSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
@@ -879,6 +898,41 @@ export function createNavigatorRoleRuntime(
   );
 }
 
+/** #675: public 审刑院 seat on the shared filed-officer envelope. */
+export function createAuditorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: AuditorRuntimeDependencies,
+) {
+  const base = createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "auditor",
+      tool: AUDITOR_TOOL_SPEC,
+      acceptedText: AUDITOR_ACCEPTED_TEXT,
+      soulTag: "auditor",
+    },
+    dependencies,
+  );
+  return {
+    async activate() {
+      await base.activate();
+      // Same tools whether nested or direct (#675): dossier tool always registered.
+      // Source run: only the shared --source-run input face (never own-run fallback).
+      const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
+        await import("./auditor-dossier-tool.ts");
+      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("./auditor-soul.ts");
+      const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
+      if (already) return;
+      const sourceRun =
+        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+        && process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
+          ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
+          : undefined;
+      roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
+    },
+  };
+}
+
 /**
  * #708: 起居郎 public seat on the shared filed-officer envelope.
  * Semantic collection happened in this role's own turn; the accept hook runs the
@@ -944,6 +998,23 @@ function loadFrozenDiaristCatalog(
     throw new Error("Diarist source catalog flag must be a nonempty path");
   }
   return loadDiaristSourceCatalog(raw);
+}
+
+/** #675: public evidence-child seat on the shared filed-officer envelope. */
+export function createEvidenceChildRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: EvidenceChildRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "evidence-child",
+      tool: EVIDENCE_CHILD_TOOL_SPEC,
+      acceptedText: EVIDENCE_CHILD_ACCEPTED_TEXT,
+      soulTag: "evidence-child",
+    },
+    dependencies,
+  );
 }
 
 export function createCountersignRoleRuntime(
@@ -1027,6 +1098,9 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
+    // Public-run fetch observation (in-process-session statusAwareFetch face).
+    let priorFetch: typeof globalThis.fetch | undefined;
+    let fetchWrapped = false;
     const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
@@ -1037,6 +1111,9 @@ export function createRoleRuntimeExtension(
           return;
         }
         const settlePromise = attendance.settle(settlement);
+        // Attach catch immediately so a late rejection after grace timeout cannot
+        // surface as unhandledRejection / stale-ctx after session dispose (#675).
+        void settlePromise.catch(() => undefined);
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
@@ -1063,7 +1140,6 @@ export function createRoleRuntimeExtension(
           pendingNavigatorPresentation = { event, report };
         }
         await attendance.dispose();
-        void settlePromise.catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
       await pending;
@@ -1290,6 +1366,11 @@ export function createRoleRuntimeExtension(
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       envelopeHost.stopKeepalive();
+      if (fetchWrapped && priorFetch !== undefined) {
+        globalThis.fetch = priorFetch;
+        priorFetch = undefined;
+        fetchWrapped = false;
+      }
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1458,6 +1539,18 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNavigatorSoul();
       },
     });
+    const auditor = createAuditorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadAuditorSoul) throw new Error("Auditor runtime dependencies are not configured");
+        return dependencies.loadAuditorSoul();
+      },
+    });
+    const evidenceChild = createEvidenceChildRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadEvidenceChildSoul) throw new Error("Evidence-child runtime dependencies are not configured");
+        return dependencies.loadEvidenceChildSoul();
+      },
+    });
     const diarist = createDiaristRoleRuntime(
       roleHost,
       {
@@ -1553,20 +1646,19 @@ export function createRoleRuntimeExtension(
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
-    // write failure must surface — never silently drop authorized error evidence.
-    roleHost.on("after_provider_response", async (event, ctx) => {
+    // Same observation owner as in-process-session statusAwareFetch → typed-provider-http
+    // sidecar (settlement already merges observation.httpStatus into knownFailure).
+    // after_provider_response covers the success-path onResponse face; fetch wrap covers
+    // non-2xx Responses where openai-completions throws before onResponse (#675).
+    const recordHttpObservation = async (
+      status: number,
+      provider: string,
+      ctx: HostContext,
+    ): Promise<void> => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = ctx.model?.provider;
-      if (typeof provider !== "string" || provider.trim() === "") return;
-      const status = event.status;
-      if (typeof status !== "number") return;
       try {
-        await recordTypedProviderHttpStatus(runDir, {
-          httpStatus: status,
-          provider,
-        });
+        await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
         if (
           status >= 200 &&
@@ -1579,9 +1671,49 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       }
+    };
+    roleHost.on("after_provider_response", async (event, ctx) => {
+      const status = event.status;
+      if (typeof status !== "number") return;
+      const fromCtx = ctx.model?.provider;
+      const provider =
+        typeof fromCtx === "string" && fromCtx.trim() !== ""
+          ? fromCtx
+          : "unknown";
+      await recordHttpObservation(status, provider, ctx);
     });
 
     roleHost.on("session_start", async (event, ctx) => {
+      // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
+      if (!fetchWrapped && typeof globalThis.fetch === "function") {
+        priorFetch = globalThis.fetch.bind(globalThis);
+        const underlying = priorFetch;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await underlying(input, init);
+          const runDir = process.env.AK_ROLE_RUN_DIR;
+          if (
+            typeof runDir === "string"
+            && runDir.trim() !== ""
+            && typeof response?.status === "number"
+            && (response.status < 200 || response.status >= 300)
+          ) {
+            const provider =
+              typeof ctx.model?.provider === "string" && ctx.model.provider.trim() !== ""
+                ? ctx.model.provider
+                : "unknown";
+            try {
+              await recordTypedProviderHttpStatus(runDir, {
+                httpStatus: response.status,
+                provider,
+              });
+            } catch {
+              // Observation must not break the provider stream (same as in-process-session).
+            }
+          }
+          return response;
+        }) as typeof globalThis.fetch;
+        fetchWrapped = true;
+      }
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;
@@ -1634,6 +1766,8 @@ export function createRoleRuntimeExtension(
         inspector,
         gatekeeper,
         navigator,
+        auditor,
+        evidenceChild,
         diarist,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
@@ -1653,7 +1787,14 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        if (dependencies.createNavigatorAttendance !== undefined) {
+        // Same public activation face for every role (#675 / owner 09-06): no nested-env
+        // skip, no work-role whitelist. Attendance attaches when the envelope supplies it.
+        // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
+        // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
+        if (
+          dependencies.createNavigatorAttendance !== undefined
+          && entry.role !== "navigator"
+        ) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

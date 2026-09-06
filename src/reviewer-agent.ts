@@ -7,7 +7,7 @@ import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "
 import { normalizeReviewerFailureDiagnostic } from "./reviewer-failure-diagnostic.ts";
 
 type ReviewerLegRunResultCommon = Readonly<{ target: ReviewerTargetSnapshot; prompt: ReviewerPromptText; workspaceDisposition: ReviewerWorkspaceDisposition }>;
-export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never }>;
+export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: unknown; usage: ReviewerUsage; failure?: never }>;
 export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; diagnostic: string; cause?: unknown; report?: never; usage?: never }>;
 export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
 type Envelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;

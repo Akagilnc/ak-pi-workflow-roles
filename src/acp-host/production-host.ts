@@ -23,6 +23,7 @@ import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-s
 import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
+import { loadAuditorSoulFromSubjectInput } from "../auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import { createComposedAcpRoleTurnHost } from "./role-envelope.ts";
@@ -61,6 +62,8 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
+    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
+    loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),

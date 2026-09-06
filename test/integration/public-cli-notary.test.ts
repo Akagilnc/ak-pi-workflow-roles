@@ -23,6 +23,7 @@ import {
   resolveActivationLedgerHome,
 } from "../../src/activation-ledger-topology.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { SHAPE_UNREADABLE_KEY } from "../../src/shape-unreadable-failure.ts";
 import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
@@ -491,6 +492,7 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(result.terminal.roleOutcome.cause, "output");
       assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.secondaryEvidence, {
+        [SHAPE_UNREADABLE_KEY]: true,
         candidate: bad,
         acceptedReceipt: false,
       });

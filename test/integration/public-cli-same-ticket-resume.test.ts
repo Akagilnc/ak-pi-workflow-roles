@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -393,6 +394,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
 });
 
@@ -561,6 +563,162 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
     await rm(home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test("#675/#637 public auditor: same-ticket re-summons resume prior run under live seat axes", async () => {
+  const scratch = await openNotaryScratch("home-auditor-");
+  try {
+    const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
+    // Source-runs already carry ticket #637; auditor inherits that ticket (notary face).
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "auditor", "faux/birth-auditor:high"],
+          { home, packageRoot, io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    const seen: SeenTurn[] = [];
+    let turn = 0;
+    const inner = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (extraArgs, options) => {
+        turn += 1;
+        if (turn === 1) {
+          return scriptedTerminatingToolSession({
+            role: "auditor",
+            toolName: AUDITOR_OUTPUT_TOOL_NAME,
+            details: {
+              status: "pass",
+              violations: [],
+              conflicts: [],
+              decisionGate: null,
+            },
+          })(extraArgs, options);
+        }
+        // Second court: exit without seal so prior pass does not wash.
+        return scriptedTerminatingToolSession({
+          role: "auditor",
+          toolName: AUDITOR_OUTPUT_TOOL_NAME,
+          details: {
+            status: "pass",
+            violations: [],
+            conflicts: [],
+            decisionGate: null,
+          },
+          seal: false,
+        })(extraArgs, options);
+      },
+    });
+    const host = observingSealHost(inner, seen);
+
+    const first = await runAkRole(
+      [
+        "auditor",
+        "--subject",
+        "judge",
+        "--source-run",
+        `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+        "审：本 run 是否合规。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a067500-0000-7000-8000-00000000a001",
+      },
+    );
+    assert.equal(first.exitCode, 0, "first sealed auditor must accept");
+    assert.equal(first.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    assert.equal(seen[0]!.model?.model, "birth-auditor");
+    assert.equal(seen[0]!.model?.thinking, "high");
+
+    const auditorRunsAfterFirst = (await listBookRunDirs(home)).filter((d) =>
+      d.includes("@auditor"),
+    );
+    assert.equal(auditorRunsAfterFirst.length, 1, "first auditor summons mints exactly one run");
+
+    // Live seat-table switch before same-ticket re-summons (#697 axes on resume).
+    assert.equal(
+      (
+        await runAkRole(
+          ["config", "set", "auditor", "faux/live-auditor:low"],
+          { home, packageRoot, io },
+        )
+      ).exitCode,
+      0,
+    );
+
+    // Same ticket via second source-run under ticket #637 — must resume, not mint.
+    const second = await runAkRole(
+      [
+        "auditor",
+        "--subject",
+        "judge",
+        "--source-run",
+        `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+        "审：二次传召。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a067500-0000-7000-8000-00000000a002",
+      },
+    );
+    assert.notEqual(second.exitCode, 0, "second court without seal must not succeed");
+    assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume", "same-ticket auditor re-summons must resume");
+    assert.equal(
+      seen[1]!.runDirectory,
+      seen[0]!.runDirectory,
+      "second auditor summons continues the same run directory",
+    );
+    assert.equal(seen[1]!.runId, seen[0]!.runId);
+    assert.equal(
+      seen[1]!.model?.model,
+      "live-auditor",
+      "resume must take live seat-table model",
+    );
+    assert.equal(
+      seen[1]!.model?.thinking,
+      "low",
+      "resume must take live seat-table thinking",
+    );
+    assert.ok(
+      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
+      "sealed re-summons must open a courtAttemptId",
+    );
+
+    const auditorRunsAfterSecond = (await listBookRunDirs(home)).filter((d) =>
+      d.includes("@auditor"),
+    );
+    assert.equal(
+      auditorRunsAfterSecond.length,
+      1,
+      "second auditor summons must not mint a new run directory",
+    );
+
+    // Source-run paths are fixture materials; both carry ticket #637.
+    void firstSourcePath;
+    void secondSourcePath;
+  } finally {
+    await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
 });
 
@@ -725,5 +883,6 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
   } finally {
     if (heldLease !== undefined) await heldLease.release();
     await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
 });

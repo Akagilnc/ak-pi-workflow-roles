@@ -1,10 +1,9 @@
 import {
-  createComplianceDecisionTool,
   runComplianceAudit,
+  type AuditorSummon,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import { loadAuditorSoul } from "./auditor-soul.ts";
 import {
   readJudgeAuditSubjects,
   requireAuditMaterials,
@@ -18,17 +17,13 @@ export const SOUL_AUDIT_TOOL_NAME = JUDGE_AUDIT_TOOL_NAME;
 export type JudgeAuditOptions = {
   context: HostContext;
   signal?: AbortSignal;
+  /** Same seam as runComplianceAudit options — offline tracers only. */
+  summonAuditor?: AuditorSummon;
 };
 
-const auditDecisionTool = createComplianceDecisionTool(
-  JUDGE_AUDIT_TOOL_NAME,
-  "提交 typed pass/revise/escalate 决议（大理寺审刑）。",
-);
-
 /**
- * Judge auditor: zero hand-delivered materials. Subjects recovered from the
- * parent-session books. Public CLI injects AK_ROLE_RUN_DIR; bare Pi (ADR 0052)
- * proceeds without that pointer and self-locates per soul.
+ * Judge compliance via public auditor activation (#675 / ADR 0062 / owner r11).
+ * 审刑院 is an independent role; subject=judge selects souls/judge-auditor.md.
  */
 export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
@@ -38,13 +33,13 @@ export function createPiJudgeAuditor(): (options: JudgeAuditOptions) => Promise<
     requireAuditMaterials(subjects);
 
     return runComplianceAudit({
-      tool: auditDecisionTool,
-      systemPrompt: await loadAuditorSoul("judge"),
-      roleLabel: "Judge compliance audit",
-      invalidDecisionLabel: "invalid judge audit decision",
+      subject: "judge",
       context: options.context,
-      ...(auditorRunDirectory(options.context) === undefined ? {} : { runDirectory: auditorRunDirectory(options.context) }),
+      ...(auditorRunDirectory(options.context) === undefined
+        ? {}
+        : { runDirectory: auditorRunDirectory(options.context) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),
     });
   };
 }

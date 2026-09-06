@@ -41,6 +41,8 @@ export type TerminalRoleName =
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "auditor"
+  | "evidence-child"
   | "diarist";
 
 /** Merger/Collector residual only — Notary/audit residual abolished (#475). */

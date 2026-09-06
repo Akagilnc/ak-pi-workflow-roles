@@ -11,6 +11,8 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
+import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "./package-contracts/evidence-child-output.ts";
 import {
   DIARIST_OUTPUT_TOOL_NAME,
   DIARIST_SOURCES_FLAG,
@@ -31,6 +33,28 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/quality-law.md",
   "souls/gate-output-guide.md",
+] as const;
+
+/**
+ * Public 审刑院 shipping roster (#675 owner).
+ * Runtime assembly is subject-selected via AUDITOR_SESSION_MATERIALS
+ * (judge-auditor.md / doctor-auditor.md) — never a generic auditor.md.
+ * This list is the union of files that must ship; load path is loadAuditorSoul(subject).
+ */
+export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/judge-auditor.md",
+  "souls/doctor-auditor.md",
+  "souls/audit-law.md",
+  "souls/quality-law.md",
+] as const;
+
+/** Public evidence-child materials (#675). audit-law supplies lawful 取证授权; seat identity only in evidence-child.md. */
+export const EVIDENCE_CHILD_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/evidence-child.md",
+  "souls/audit-law.md",
+  "souls/quality-law.md",
 ] as const;
 
 /**
@@ -188,6 +212,25 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
+  },
+  // #675: 审刑院 / evidence-child are roles like any other — public ak-role entries.
+  {
+    role: "auditor",
+    phases: [null],
+    outputTool: AUDITOR_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
+  },
+  {
+    role: "evidence-child",
+    phases: [null],
+    outputTool: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: EVIDENCE_CHILD_SESSION_MATERIALS,
   },
   // #708 / ADR 0075 `diarist-is-role`: 起居郎 is a seat like any other. The
   // frozen source catalog rides the shared input-flag seam; it is absent for a

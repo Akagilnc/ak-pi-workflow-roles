@@ -434,8 +434,34 @@ function pairGateRounds(
     .map((round, index) => ({ ...round, roundIndex: index + 1 }));
 }
 
+/** Resolve a direct-officer-run-pointer file to the officer session 正本 path. */
+async function resolveOfficerSessionFromPointerFile(
+  pointerPath: string,
+): Promise<string | undefined> {
+  const { readFile } = await import("node:fs/promises");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(pointerPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `direct officer run pointer unreadable in ${pointerPath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!isRecord(raw) || raw.kind !== "direct-officer-run-pointer" || raw.version !== 1) {
+    throw new Error(`direct officer run pointer has unknown shape in ${pointerPath}`);
+  }
+  const sessionFile = raw.sessionFile;
+  if (typeof sessionFile !== "string" || sessionFile.trim() === "") {
+    throw new Error(`direct officer run pointer missing sessionFile in ${pointerPath}`);
+  }
+  return sessionFile;
+}
+
 /**
  * Read and pair gate-cycle rounds from one or more auditor-roles directories.
+ * Accepts historical nested JSONL volumes and #675 direct-officer-run-pointer
+ * files that name the independent officer session 正本.
  * ENOENT (directory truly absent) → []. ENOTDIR and other errors propagate
  * (failure honesty — damaged topology must not wash to zero rounds).
  *
@@ -456,7 +482,11 @@ export async function readAnalystGateCyclesFromAuditorRoles(
     try {
       const entries = await readdir(directory, { withFileTypes: true });
       names = entries
-        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .filter(
+          (e) =>
+            e.isFile()
+            && (e.name.endsWith(".jsonl") || e.name.endsWith(".pointer.json")),
+        )
         .map((e) => e.name)
         .sort();
     } catch (error) {
@@ -464,7 +494,12 @@ export async function readAnalystGateCyclesFromAuditorRoles(
       throw error;
     }
     for (const name of names) {
-      const classified = await classifyAuditorVolume(join(directory, name));
+      const path = join(directory, name);
+      const sessionPath = name.endsWith(".pointer.json")
+        ? await resolveOfficerSessionFromPointerFile(path)
+        : path;
+      if (sessionPath === undefined) continue;
+      const classified = await classifyAuditorVolume(sessionPath);
       for (const volume of classified) {
         if (
           options.parentSessionFile !== undefined &&
