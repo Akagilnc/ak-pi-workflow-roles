@@ -65,18 +65,14 @@ function reportFromSummon(summoned: PublicSummonResult): unknown {
     });
   }
   if (outcome.kind === "accepted") {
-    // Settlement already required a report field. Consumer keeps original bytes —
-    // no type/blank reshape gate here (ADR 0055 / contracts→settlement→consumer).
-    if (!Object.hasOwn(outcome.decisiveFacts, "report")) {
-      throw Object.assign(
-        new Error("Evidence-child public summon returned no report field"),
-        { evidenceChildFailure: "child" as const },
-      );
-    }
-    return outcome.decisiveFacts.report;
+    // No field-presence reject (ADR 0055 / #675). Keep original accepted bytes:
+    // report key when present, otherwise the whole decisiveFacts body.
+    const facts = outcome.decisiveFacts;
+    if (Object.hasOwn(facts, "report")) return facts.report;
+    return facts;
   }
   throw Object.assign(
-    new Error("Evidence-child public summon returned no report body"),
+    new Error("Evidence-child public summon returned no accepted report body"),
     { evidenceChildFailure: "child" as const },
   );
 }

@@ -120,28 +120,43 @@ test("worker completion directly summons Inspector via public path", async () =>
   });
 });
 
-test("parent gate receipt book failure is typed envelope failure after lawful officer pass", async () => {
+test("parent gate receipt book failure is envelope failInfrastructure after lawful officer pass", async () => {
   await withParent(async (context) => {
-    // Force pointer book mkdir to ENOTDIR: parent session under /dev/null.
-    // Officer 正本 must exist so booking is attempted (no 正本 → no-op, not failure).
-    // Role throws typed stage/reason/submission — does not return GatekeeperResult.transport_failure
-    // (envelope failInfrastructure owns abort; ADR 0018 / #675 r3).
+    // Force pointer book mkdir to ENOTDIR: parent session path whose dirname is a plain file.
+    // auditorRunDirectory still climbs to the real run dir; only the nest mkdir fails.
+    // Book lives on requireGatekeeperPass (shared envelope); runGatekeeper is projection-only
+    // (ADR 0018 / #675 r4). Envelope failInfrastructure owns the abort face once.
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-role.ts");
     const officerRun = join(context.runDirectory, "officer-run");
     await mkdir(join(officerRun, "session"), { recursive: true });
     await writeFile(join(officerRun, "session", "session.jsonl"), "{\"type\":\"session\"}\n", "utf8");
+    const blocker = join(context.runDirectory, "session-not-dir");
+    await writeFile(blocker, "not a directory\n", "utf8");
+    const poisonedSession = join(blocker, "session.jsonl");
     const poisoned = {
       ...context,
       sessionManager: {
-        getSessionFile: () => "/dev/null/session.jsonl",
+        getSessionFile: () => poisonedSession,
       },
     };
+    let infraError: unknown;
+    const never = () => {
+      throw new Error("failInfrastructure must not return");
+    };
     await assert.rejects(
-      () => runGatekeeper({
+      () => requireGatekeeperPass({
         context: poisoned,
-        runDirectory: context.runDirectory,
         subject: { kind: "judge_draft" },
+        toolCallId: "book-fail-1",
+        hostActions: {
+          failInfrastructure(error: unknown): never {
+            infraError = error;
+            throw error instanceof Error ? error : new Error(String(error));
+          },
+          bindSubmissionNonPass: never as never,
+        },
         async summonOfficer() {
           return {
             ...acceptedTerminal("notary", "pass", { findings: [] }),
@@ -150,19 +165,10 @@ test("parent gate receipt book failure is typed envelope failure after lawful of
         },
       }),
       (error: unknown) => {
+        assert.equal(error, infraError);
         assert.ok(error instanceof Error);
-        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
-        assert.equal(typed.stage, "notary");
-        assert.equal(
-          typeof typed.reason === "string" && typed.reason.startsWith("parent gate receipt book failed:"),
-          true,
-          typed.reason ?? "(missing reason)",
-        );
-        assert.deepEqual(typed.submission, {
-          status: "pass",
-          officer: "notary",
-          findings: [],
-        });
+        // Raw archivist/FS error — envelope does not re-wrap into GatekeeperResult.
+        assert.match(error.message, /ENOTDIR|not a directory|mkdir/i);
         return true;
       },
     );
@@ -273,6 +279,56 @@ test("direct officer missing arguments is typed unreadable with serializable sub
       assert.deepEqual(result.submission, MISSING_ARGUMENTS_SUBMISSION);
     }
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+  });
+});
+
+test("requireGatekeeperPass parent-stands on shape-unreadable (no NonPass reject)", async () => {
+  await withParent(async (context) => {
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-role.ts");
+    let nonPassBound = false;
+    await requireGatekeeperPass({
+      context,
+      subject: { kind: "worker_completion" },
+      toolCallId: "unreadable-stand-1",
+      hostActions: {
+        failInfrastructure(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        bindSubmissionNonPass() {
+          nonPassBound = true;
+        },
+      },
+      async summonOfficer() {
+        return failureTerminal("inspector", "decision 无显式 pass/bounce/escalate", MISSING_ARGUMENTS_SUBMISSION);
+      },
+    });
+    assert.equal(nonPassBound, false, "unreadable must not bind NonPass");
+  });
+});
+
+test("typed infrastructure fact under cause=output stays transport_failure (not shape)", async () => {
+  await withParent(async (context) => {
+    const result = await runGatekeeper({
+      context,
+      runDirectory: context.runDirectory,
+      subject: { kind: "worker_completion" },
+      async summonOfficer() {
+        return failureTerminal("inspector", "pi host could not load its runtime", {
+          cause: "output",
+          diagnostic: "pi host could not load its runtime",
+          secondaryEvidence: {
+            kind: "role_infrastructure_failure",
+            source: "shared-role-lifecycle",
+            reasonCode: "host_failure",
+          },
+        });
+      },
+    });
+    assert.equal(result.status, "transport_failure");
+    if (result.status === "transport_failure") {
+      assert.equal(result.stage, "inspector");
+      assert.equal(result.reason, "pi host could not load its runtime");
+    }
   });
 });
 
