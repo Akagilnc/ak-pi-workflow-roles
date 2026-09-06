@@ -297,7 +297,7 @@ export async function prepareGrokRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "no_receipt"
+      : record.status === "bounce" || record.status === "no_receipt" || record.status === "unreadable"
         ? record.status
         : undefined;
     if (code === undefined) return;

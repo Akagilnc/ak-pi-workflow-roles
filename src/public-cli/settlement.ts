@@ -1303,6 +1303,16 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   }
 }
 
+/** Typed unreadable audit leg beside accepted parent candidate (ADR 0055 / #675). */
+function auditUnreadableDecisiveFact(candidate: object): Record<string, unknown> {
+  const projected = safelyRead(candidate, "auditUnreadable");
+  if (!projected.readable || projected.value === undefined) return {};
+  if (typeof projected.value !== "object" || projected.value === null || Array.isArray(projected.value)) {
+    return { auditUnreadable: projected.value };
+  }
+  return { auditUnreadable: projected.value as Record<string, unknown> };
+}
+
 /** Countersign terminal projection — escalate keeps decisionGate; continue keeps fix (#572 / ADR 0074). */
 function countersignDecisiveFacts(
   verdict: object,
@@ -1345,6 +1355,7 @@ function judgeDecisiveFacts(
   const facts: Record<string, unknown> = {
     judgeStatus,
     ...auditNoReceiptDecisiveFact(verdict),
+    ...auditUnreadableDecisiveFact(verdict),
   };
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
@@ -1509,7 +1520,10 @@ function collectorDecisiveFacts(
 function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   const candidate = output as unknown as object;
   const status = safelyRead(candidate, "status");
-  const facts: Record<string, unknown> = { ...auditNoReceiptDecisiveFact(candidate) };
+  const facts: Record<string, unknown> = {
+    ...auditNoReceiptDecisiveFact(candidate),
+    ...auditUnreadableDecisiveFact(candidate),
+  };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   const statusBase =
     status.readable && typeof status.value === "string"

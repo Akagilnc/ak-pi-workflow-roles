@@ -573,11 +573,12 @@ async function workerCompletionGatekeeperHarness(options: {
       };
       // Real transport failure stays infrastructure (not GatekeeperDecisionError).
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      // Shape-unusable officer decision bounces with retained submission (ADR 0055) — not transport abort.
+      // Shape-unusable officer decision is typed unreadable with retained submission (ADR 0055) —
+      // not transport abort, not forged bounce.
       await reject(`${officer}-unusable-release`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "bounce");
-        if (error.result.status === "bounce") {
+        assert.equal(error.result.status, "unreadable");
+        if (error.result.status === "unreadable") {
           assert.equal(error.result.officer, officer);
           assert.deepEqual(error.result.submission, officerUnusableSubmission);
         }

@@ -105,6 +105,13 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
       }
     };
 
+    // Shared envelope agentDir when present — never invent a parallel credential root
+    // (ADR 0018 / #675). Fall back only when the parent activation left none.
+    const agentDir =
+      typeof process.env.PI_CODING_AGENT_DIR === "string"
+      && process.env.PI_CODING_AGENT_DIR.trim() !== ""
+        ? process.env.PI_CODING_AGENT_DIR
+        : undefined;
     // Same in-process open seam public roles use (#675): default coding tools + prepare
     // terminating tool. No noTools:"all" / prepare-only allowlist fork.
     const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
@@ -117,6 +124,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         customTools: [tool],
         sessionManager,
         label: "Navigator",
+        ...(agentDir === undefined ? {} : { agentDir }),
       });
     } catch (error) {
       const fact = navigatorProviderFailureFromError(error);

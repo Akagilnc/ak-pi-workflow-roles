@@ -51,7 +51,7 @@ function failureClassification(
   return "unknown";
 }
 
-function reportFromSummon(summoned: PublicSummonResult): string {
+function reportFromSummon(summoned: PublicSummonResult): unknown {
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) {
     throw Object.assign(
@@ -65,13 +65,15 @@ function reportFromSummon(summoned: PublicSummonResult): string {
     });
   }
   if (outcome.kind === "accepted") {
-    const report = outcome.decisiveFacts.report;
-    // Unreadable report shape is a child output failure — not a successful empty leg.
-    if (typeof report === "string" && report.trim() !== "") return report;
-    throw Object.assign(
-      new Error("Evidence-child public summon returned unreadable report body"),
-      { evidenceChildFailure: "child" as const },
-    );
+    // Settlement already required a report field. Consumer keeps original bytes —
+    // no type/blank reshape gate here (ADR 0055 / contracts→settlement→consumer).
+    if (!Object.hasOwn(outcome.decisiveFacts, "report")) {
+      throw Object.assign(
+        new Error("Evidence-child public summon returned no report field"),
+        { evidenceChildFailure: "child" as const },
+      );
+    }
+    return outcome.decisiveFacts.report;
   }
   throw Object.assign(
     new Error("Evidence-child public summon returned no report body"),
@@ -85,7 +87,7 @@ export async function executeReviewerChild(
   leg: AcceptedReviewerLeg,
   context: HostContext,
   options: ReviewerChildExecuteOptions = {},
-): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptText }> {
+): Promise<{ report: unknown; usage: Usage; prompt: ReviewerPromptText }> {
   try {
     if (options.signal?.aborted) {
       throw Object.assign(new DOMException("The operation was aborted.", "AbortError"), {
@@ -113,7 +115,6 @@ export async function executeReviewerChild(
           role: "evidence-child",
           argv: nextArgv,
           cwd: workspace,
-          nestedSummon: true,
           ...(home === undefined ? {} : { home }),
           ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
         });

@@ -8,6 +8,7 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
+  JUDGE_ACCEPTED_AUDIT_UNREADABLE_TEXT,
   JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
@@ -124,6 +125,13 @@ export function createJudgeRoleRuntime(
                 noReceipt: (auditNoReceipt, usageProjection) => ({
                   content: [{ type: "text" as const, text: JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }],
                   details: { ...acceptedDetails, auditNoReceipt },
+                  terminate: true as const,
+                  ...usageProjection,
+                }),
+                // ADR 0055: parent stands with typed unreadable audit fact — not forged pass.
+                unreadable: (auditUnreadable, usageProjection) => ({
+                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_AUDIT_UNREADABLE_TEXT }],
+                  details: { ...acceptedDetails, auditUnreadable },
                   terminate: true as const,
                   ...usageProjection,
                 }),

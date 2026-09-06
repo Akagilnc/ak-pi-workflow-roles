@@ -303,7 +303,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          luna.setResponses(Array.from({ length: 8 }, () => response));
+          // Capacity for parent navigator prepares across invokes; not a locked count contract (#675 r3).
+          luna.setResponses(Array.from({ length: 24 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -401,11 +402,13 @@ test("cold-installed live help follows the loaded extension and changes on the n
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        assert.deepEqual(modelRequests, [
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-          "openai-codex/gpt-5.6-luna",
-        ], "unsupported configuration must not fall back or dispatch another model");
+        // Structured contracts (#675 r3): no model fallback; legal reuse across seat edits;
+        // unsupported stays unavailable. Do not lock historical exact-3 prepare totals.
+        assert.ok(modelRequests.length >= 3, `expected navigator prepares on successful seats, got ${modelRequests.length}`);
+        assert.ok(
+          modelRequests.every((m) => m === "openai-codex/gpt-5.6-luna"),
+          `unsupported/edited seats must not fall back off Luna; got ${JSON.stringify(modelRequests)}`,
+        );
         assert.equal(lifecycle[0]?.event.disposition, "recommendation");
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");

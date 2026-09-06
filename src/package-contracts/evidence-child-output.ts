@@ -20,7 +20,8 @@ export const evidenceChildOutputSchema = withInfrastructureFailureDeclaration(
   ),
 );
 
-export type EvidenceChildOutput = { readonly report: string };
+/** Report body retained as delivered — no type/blank reshape (ADR 0055 / §0). */
+export type EvidenceChildOutput = { readonly report: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -29,9 +30,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function projectLawfulEvidenceChildOutput(
   value: unknown,
 ): EvidenceChildOutput | undefined {
-  // ADR 0055 / CLAUDE.md §0: no type/blank shape gate on report — retain candidate as-is.
+  // Presence of report field is the only discriminator. No String() conversion,
+  // no blank trim gate — original candidate bytes stay (ADR 0055 / CLAUDE.md §0).
   if (!isRecord(value) || !Object.hasOwn(value, "report")) return undefined;
-  return { report: typeof value.report === "string" ? value.report : String(value.report) };
+  return { report: value.report };
 }
 
 export function validateRecordedEvidenceChildOutput(value: unknown): EvidenceChildOutput {

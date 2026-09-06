@@ -45,10 +45,11 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "souls/quality-law.md",
 ] as const;
 
-/** Public evidence-child materials (#675). */
+/** Public evidence-child materials (#675). audit-law supplies lawful 取证授权; seat identity only in evidence-child.md. */
 export const EVIDENCE_CHILD_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/evidence-child.md",
+  "souls/audit-law.md",
   "souls/quality-law.md",
 ] as const;
 
