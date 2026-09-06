@@ -120,11 +120,12 @@ test("worker completion directly summons Inspector via public path", async () =>
   });
 });
 
-test("parent gate receipt book failure throws to shared envelope after lawful officer pass", async () => {
+test("parent gate receipt book failure is typed envelope failure after lawful officer pass", async () => {
   await withParent(async (context) => {
     // Force pointer book mkdir to ENOTDIR: parent session under /dev/null.
     // Officer 正本 must exist so booking is attempted (no 正本 → no-op, not failure).
-    // Role module no longer self-catches book failure (ADR 0018 / #675 r3).
+    // Role throws typed stage/reason/submission — does not return GatekeeperResult.transport_failure
+    // (envelope failInfrastructure owns abort; ADR 0018 / #675 r3).
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const officerRun = join(context.runDirectory, "officer-run");
@@ -148,7 +149,22 @@ test("parent gate receipt book failure throws to shared envelope after lawful of
           };
         },
       }),
-      (error: unknown) => error instanceof Error,
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        const typed = error as Error & { stage?: string; reason?: string; submission?: unknown };
+        assert.equal(typed.stage, "notary");
+        assert.equal(
+          typeof typed.reason === "string" && typed.reason.startsWith("parent gate receipt book failed:"),
+          true,
+          typed.reason ?? "(missing reason)",
+        );
+        assert.deepEqual(typed.submission, {
+          status: "pass",
+          officer: "notary",
+          findings: [],
+        });
+        return true;
+      },
     );
   });
 });

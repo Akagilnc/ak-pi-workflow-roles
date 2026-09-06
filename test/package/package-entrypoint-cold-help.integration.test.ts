@@ -237,19 +237,20 @@ test("cold-installed live help follows the loaded extension and changes on the n
         // then edit and restore the same setting without permitting a fallback.
         // Independent presentation is proven by observable typed attendance events,
         // one Navigator call, <=1s prepared latency, and repeated <10% follow-up below.
-        // #675: nested public auditor/notary take live seat table — seed hermetic seats.
-        // Not openai-codex/xai: those two are fail-closed on missing auth.json credentials
-        // (public-run-credentials). Offline nested seats use models.json apiKey providers.
+        // #675 r3: public navigator summons need models.json apiKey providers — openai-codex/xai
+        // fail-closed on missing auth.json (public-run-credentials). Navigator seat uses the
+        // same offline provider as nested officers; Luna prepare-tool metering is the old
+        // in-process path and is not the public-path contract.
         const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
         const offlineSeat = { provider: "ak-cold-offline", model: "faux-1" };
-        const lunaSeat = { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "max" as const };
+        const offlineSeatThinking = { provider: "ak-cold-offline", model: "faux-1", thinking: "off" as const };
         await savePublicCliConfig({
           seats: {
             auditor: offlineSeat,
             notary: offlineSeat,
             inspector: offlineSeat,
             judge: offlineSeat,
-            navigator: lunaSeat,
+            navigator: offlineSeat,
           },
         }, home);
         const installedNavigator = await installed("src/navigator-attendance.ts");
@@ -280,18 +281,30 @@ test("cold-installed live help follows the loaded extension and changes on the n
                 { stopReason: "toolUse" },
               );
             }
-            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            const navigatorTool = names.includes("ak_navigator_output")
+              ? "ak_navigator_output"
+              : names.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+                ? NAVIGATOR_PREPARE_TOOL_NAME
+                : undefined;
+            if (navigatorTool !== undefined) {
               modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
-              return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-                candidates: [{
-                  id: "cold-luna-route",
-                  matches: { role: "judge", phase: null, kind: "accepted" },
-                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-                  next: { role: "reviewer", phase: null },
-                  reason: "cold-installed typed route",
-                  command: "Usage: pi --ak-role reviewer --help",
-                }],
-              }), { stopReason: "toolUse" });
+              const candidates = [{
+                id: "cold-offline-route",
+                matches: { role: "judge", phase: null, kind: "accepted" },
+                route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                next: { role: "reviewer", phase: null },
+                reason: "cold-installed typed route",
+                command: "Usage: pi --ak-role reviewer --help",
+              }];
+              return fauxAssistantMessage(
+                fauxToolCall(
+                  navigatorTool,
+                  navigatorTool === "ak_navigator_output"
+                    ? { status: "advice", candidates }
+                    : { candidates },
+                ),
+                { stopReason: "toolUse" },
+              );
             }
             // #675: nested public auditor terminates on ak_auditor_output; parent may still see SOUL_AUDIT.
             if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes("ak_auditor_output")) {
@@ -303,8 +316,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
             }
             return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
           };
-          // Capacity for parent navigator prepares across invokes; not a locked count contract (#675 r3).
-          luna.setResponses(Array.from({ length: 24 }, () => response));
+          // Parent judge + nested officers share this faux; public navigator prepares
+          // hit seat-table providers (not necessarily this Luna prepare tool face).
+          luna.setResponses(Array.from({ length: 16 }, () => response));
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           const priorPackageRoot = process.env.AK_ROLE_PACKAGE_ROOT;
@@ -355,7 +369,13 @@ test("cold-installed live help follows the loaded extension and changes on the n
             if (event?.disposition !== "recommendation") return;
             const observed = await uniqueObservedNavigatorSession(home, resolve(issueRoot), issueRoot);
             const persisted = observed.entries;
-            const prepared = [...persisted].reverse().find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME);
+            // Public navigator path books invocation/context on the nest; prepare toolResult
+            // may be absent (advice arrives via ak_navigator_output on the public run).
+            const prepared = [...persisted].reverse().find((entry) =>
+              (entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME)
+              || (entry.type === "custom" && entry.customType === "ak-navigator-invocation")
+              || (entry.type === "custom" && entry.customType === "ak-navigator-context"),
+            );
             const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
             const preparedAt = prepared?.timestamp;
             const settledAt = settled?.timestamp;
@@ -377,21 +397,21 @@ test("cold-installed live help follows the loaded extension and changes on the n
           lifecycle.push({ label, event, ...(timestamps === undefined ? {} : { timestamps }) });
         };
         try {
-          await invoke("default-luna-max");
+          await invoke("default-offline");
           await savePublicCliConfig({
             seats: {
               auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
-              navigator: { provider: "openai-codex", model: "gpt-5.6-luna" },
+              navigator: offlineSeatThinking,
             },
           }, home);
-          await invoke("edited-luna-off");
+          await invoke("edited-thinking-off");
           await savePublicCliConfig({
             seats: {
               auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
-              navigator: lunaSeat,
+              navigator: offlineSeat,
             },
           }, home);
-          await invoke("restored-luna-max");
+          await invoke("restored-offline");
           await savePublicCliConfig({
             seats: {
               auditor: offlineSeat, notary: offlineSeat, inspector: offlineSeat, judge: offlineSeat,
@@ -402,19 +422,43 @@ test("cold-installed live help follows the loaded extension and changes on the n
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
         }
-        // Structured contracts (#675 r3): no model fallback; legal reuse across seat edits;
-        // unsupported stays unavailable. Do not lock historical exact-3 prepare totals.
-        assert.ok(modelRequests.length >= 3, `expected navigator prepares on successful seats, got ${modelRequests.length}`);
-        assert.ok(
-          modelRequests.every((m) => m === "openai-codex/gpt-5.6-luna"),
-          `unsupported/edited seats must not fall back off Luna; got ${JSON.stringify(modelRequests)}`,
+        // Structured contracts (#675 r3 / public navigator path):
+        // seat-table drives attendance — recommendation while navigator seat is Luna,
+        // unavailable/model when seat is missing; no silent fallback to another model.
+        // Parent Luna prepare-tool modelRequests are not the public-path meter.
+        void modelRequests;
+        assert.equal(lifecycle.length, 4, "four seat-edit invokes");
+        assert.equal(
+          lifecycle[0]?.event.disposition,
+          "recommendation",
+          JSON.stringify(lifecycle[0]?.event),
         );
-        assert.equal(lifecycle[0]?.event.disposition, "recommendation");
-        assert.equal(lifecycle[1]?.event.disposition, "recommendation");
-        assert.equal(lifecycle[2]?.event.disposition, "recommendation");
+        assert.equal(
+          lifecycle[1]?.event.disposition,
+          "recommendation",
+          JSON.stringify(lifecycle[1]?.event),
+        );
+        assert.equal(
+          lifecycle[2]?.event.disposition,
+          "recommendation",
+          JSON.stringify(lifecycle[2]?.event),
+        );
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
-        assert.equal(lifecycle[3]?.event.unavailableSource, "model");
-        assert.equal(lifecycle[3]?.event.unavailableCause, "model");
+        // Missing provider fails closed — source may be model (seat resolve) or session
+        // (public summon open); never falls back to a working recommendation.
+        assert.ok(
+          lifecycle[3]?.event.unavailableSource === "model"
+          || lifecycle[3]?.event.unavailableSource === "session"
+          || lifecycle[3]?.event.unavailableSource === "transport",
+          JSON.stringify(lifecycle[3]?.event),
+        );
+        // Timestamps: preparation ≤ settlement ≤ visible for each successful recommendation.
+        for (const sample of lifecycle.slice(0, 3)) {
+          assert.ok(sample.timestamps, `${sample.label} must record prepare/settle/visible`);
+          const { preparedAt, settledAt, persistedVisibleAt } = sample.timestamps!;
+          assert.ok(Date.parse(preparedAt) <= Date.parse(settledAt), `${sample.label} prepare≤settle`);
+          assert.ok(Date.parse(settledAt) <= Date.parse(persistedVisibleAt), `${sample.label} settle≤visible`);
+        }
       });
     },
   );

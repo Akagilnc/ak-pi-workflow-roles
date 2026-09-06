@@ -436,9 +436,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Response pool sized for parent + nested public officers/auditor + navigator prepares.
-        // Count is capacity, not a locked prepare/settlement contract (#675 r3).
-        faux.setResponses(Array.from({ length: 24 }, () => response));
+        // Parent judge + direct notary + public auditor + public navigator prepares.
+        faux.setResponses(Array.from({ length: 16 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;

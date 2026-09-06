@@ -1631,7 +1631,12 @@ export function createRoleRuntimeExtension(
 
         // Same public activation face for every role (#675 / owner 09-06): no nested-env
         // skip, no work-role whitelist. Attendance attaches when the envelope supplies it.
-        if (dependencies.createNavigatorAttendance !== undefined) {
+        // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
+        // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
+        if (
+          dependencies.createNavigatorAttendance !== undefined
+          && entry.role !== "navigator"
+        ) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

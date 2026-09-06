@@ -240,8 +240,13 @@ test("normal packaged Navigator presents independently in print and JSON and reu
               : { role: "reviewer", phase: null });
           })
           );
-          // Legal path: at least one prepare for the terminal attendance; do not lock historical exact-3 (#675 r3).
-          assert.ok(navigatorCalls >= 1, `nested public path must prepare at least once, got ${navigatorCalls}`);
+          // Legal attendance: terminal recommendation already asserted inside session.
+          // Prepare meter: public path uses ak_navigator_output; parent faux may still
+          // observe prepare-tool faces when present — require at least settlement prepare.
+          assert.ok(
+            navigatorCalls >= 1,
+            `parent path settlement prepare required, got ${navigatorCalls}`,
+          );
           void preparedAt;
           // #443: first presentation sample is enough to lock pack default wiring bytes.
           if (sample === 0) {
@@ -277,7 +282,10 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
           })
         );
-        assert.ok(navigatorCalls >= 1, `revised-route session must prepare at least once, got ${navigatorCalls}`);
+        assert.ok(
+          navigatorCalls >= 1,
+          `revised-route: settlement prepare required, got ${navigatorCalls}`,
+        );
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorEntries = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries as Array<{ type?: string; customType?: string; data?: unknown }>;
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
@@ -396,10 +404,11 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
               assert.equal(attendance.length, 1, `${outcome} must emit affirmative typed no-advice`);
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "no-advice");
             }
-            // #675 r3: attendance disposition is the contract; prepare totals are not locked to historical 2/3.
+            // Drain path: infrastructure settles without next.role rebind; others may rebind.
+            // Contract is disposition + ≥1 prepare, not a frozen historical 2/3 total.
             assert.ok(
               navigatorCalls >= 1,
-              `drain path must prepare at least once for outcome=${outcome}, got ${navigatorCalls}`,
+              `drain path prepare required for outcome=${outcome}, got ${navigatorCalls}`,
             );
             if (outcome === "human_decision") {
               assert.equal(
@@ -487,7 +496,10 @@ test("ongoing packaged session keeps healthy Navigator prepare across pre-output
         const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(attendance.length, 1);
         assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
-        assert.ok(navigatorCalls >= 1, `mid-turn path must prepare at least once, got ${navigatorCalls}`);
+        assert.ok(
+          navigatorCalls >= 1,
+          `mid-turn: healthy prepare after non-terminal failure, got ${navigatorCalls}`,
+        );
         const persisted = (await uniqueObservedNavigatorSession(home, issueRoot, issueRoot)).entries;
         const settlements = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
         const invocations = persisted.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");

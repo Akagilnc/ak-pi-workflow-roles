@@ -360,7 +360,18 @@ export async function runGatekeeper(options: RunGatekeeperOptions): Promise<Gate
     return { status: "transport_failure", stage: officer, reason: failureReason(error) };
   }
   const projected = projectOfficerTerminal(officer, summoned);
-  await bookDirectOfficerPointer(options.context, officer, projected, summoned);
+  try {
+    await bookDirectOfficerPointer(options.context, officer, projected, summoned);
+  } catch (error) {
+    // Do not self-map to GatekeeperResult — throw typed envelope failure (ADR 0018).
+    // requireGatekeeperPass / host failInfrastructure owns the abort face.
+    const reason = `parent gate receipt book failed: ${failureReason(error)}`;
+    throw Object.assign(new Error(reason), {
+      stage: officer,
+      reason,
+      submission: projected,
+    });
+  }
   return projected;
 }
 
