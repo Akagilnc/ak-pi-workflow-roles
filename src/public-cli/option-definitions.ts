@@ -1271,6 +1271,17 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role --engine agy resume 01abc…",
     ],
   },
+  new: {
+    command: "new",
+    summary:
+      "Explicit fresh summons: same role options as a direct call, but always mint a new run (skip same-ticket auto-resume). Caller chooses new vs resume; no overflow judgment.",
+    usage: ["ak-role new <role> [options] …"],
+    examples: [
+      'ak-role new countersign --attach ./ticket.md "裁：本票 #708 是否足以开工。"',
+      "ak-role new notary --source-run 01abc…@countersign",
+      "ak-role --host grok-build new inspector --attach ./change.patch",
+    ],
+  },
 } as const satisfies Record<string, PublicCommandHelpFacts>;
 
 /**
