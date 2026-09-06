@@ -18,10 +18,25 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 
+/** True when seat provider is absent from agentDir models.json (model axis). */
+async function seatProviderMissingFromRegistry(provider: string): Promise<boolean> {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (typeof agentDir !== "string" || agentDir.trim() === "") return false;
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const doc = JSON.parse(await readFile(join(agentDir, "models.json"), "utf8")) as {
+      providers?: Record<string, unknown>;
+    };
+    return doc.providers?.[provider] === undefined;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Classify a public-navigator failure terminal onto attendance unavailable axes.
- * Prefer structured decisiveFacts (httpStatus / diagnostics / secondaryEvidence)
- * over diagnostic prose — same authority the in-process path used (#675 / #617).
+ * Classify public-navigator failure terminal from structured decisiveFacts only
+ * (httpStatus / diagnostics / secondaryEvidence) — no diagnostic prose parse.
  */
 function providerFailureFromPublicTerminal(outcome: {
   readonly cause: string;
@@ -46,18 +61,10 @@ function providerFailureFromPublicTerminal(outcome: {
   const diagnostics = secondary?.diagnostics ?? facts.diagnostics;
   const fromDiagnostics = navigatorProviderFailureFromDiagnostics(diagnostics);
   if (fromDiagnostics !== undefined) return fromDiagnostics;
-  // Reconstruct a carrier with typed fields so status/code walks still work.
-  const carrier: Record<string, unknown> = {
-    message: outcome.diagnostic,
-    ...(httpStatus === undefined ? {} : { statusCode: httpStatus }),
-    ...(typeof secondary?.code === "string" || typeof secondary?.code === "number"
-      ? { code: secondary.code }
-      : {}),
-    ...(diagnostics === undefined ? {} : { diagnostics }),
-  };
-  const fromError = navigatorProviderFailureFromError(Object.assign(new Error(outcome.diagnostic), carrier));
-  if (fromError !== undefined) return fromError;
-  // Provider-class stop without typed auth/quota/transport evidence → transport.
+  const fromCode = navigatorProviderFailureFromError({
+    code: secondary?.code ?? facts.errorCode,
+  });
+  if (fromCode !== undefined) return fromCode;
   if (outcome.cause === "provider") return { source: "transport", cause: "transport" };
   return { source: "session", cause: "session" };
 }
@@ -126,14 +133,19 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
-            providerFailure = { source: "transport", cause: "transport" };
+            const missing = await seatProviderMissingFromRegistry(selection.provider);
+            const source = missing ? "model" : "transport";
+            providerFailure = { source, cause: source };
             throw navigatorUnavailableError(
-              "transport",
+              source,
               new Error(`Navigator public summon produced no terminal (${detail})`),
             );
           }
           if (outcome.kind === "failure") {
-            providerFailure = providerFailureFromPublicTerminal(outcome);
+            const missing = await seatProviderMissingFromRegistry(selection.provider);
+            providerFailure = missing
+              ? { source: "model", cause: "model" }
+              : providerFailureFromPublicTerminal(outcome);
             throw navigatorUnavailableError(
               providerFailure.source,
               new Error(outcome.diagnostic),

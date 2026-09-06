@@ -436,9 +436,8 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           }
           return fauxAssistantMessage([], { stopReason: "stop" });
         };
-        // Shared mock capacity for parent + nested public officers/nav (pre-existing
-        // graph size on this fixture; not a loosened floor assertion).
-        faux.setResponses(Array.from({ length: 12 }, () => response));
+        // Legal graph capacity: first fresh + nested officers + public nav (withdraw 8→12).
+        faux.setResponses(Array.from({ length: 8 }, () => response));
         await session.prompt(developerPrompt);
 
         const seenJudgeContext = judgeContext as Context | undefined;

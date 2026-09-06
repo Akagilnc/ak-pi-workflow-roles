@@ -172,8 +172,9 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
       // seats page at the run directory (dirname of the role session dir).
       await writeFile(resolve(issueRoot, "authority.md"), "owner authority for ordinary Navigator observation\n", "utf8");
       await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
-      // Public navigator path reads seat table only (#675).
+      // Public navigator: seat table + hermes true-unbound (inspector-same probe).
       const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+      const { installHermesFixture } = await import("./hermes-fixture.ts");
       const offlineSeat = { provider: "ak-audit-failure", model: "faux-1" };
       await savePublicCliConfig({
         seats: {
@@ -184,6 +185,9 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
           auditor: offlineSeat,
         },
       }, home);
+      const hermesBin = resolve(home, "bin");
+      await mkdir(hermesBin, { recursive: true });
+      await installHermesFixture(hermesBin);
       const args = [
         "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
         "--session-dir", sessionDirectory,
@@ -217,6 +221,7 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
           ...process.env,
           HOME: home,
           PI_CODING_AGENT_DIR: agentDir,
+          PATH: `${resolve(home, "bin")}:${process.env.PATH ?? ""}`,
           AK_NAVIGATOR_OBSERVATION: "1",
           PI_OFFLINE: "1",
         },

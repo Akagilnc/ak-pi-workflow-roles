@@ -851,16 +851,6 @@ function typedHttpStatusFromMessage(message: SessionMessage): number | undefined
   for (const candidate of [message.httpStatus, message.statusCode, message.status]) {
     if (typeof candidate === "number" && (candidate < 200 || candidate >= 300)) return candidate;
   }
-  // OpenAI-completions adapter may fold non-2xx into errorMessage as `NNN: …`
-  // without a separate httpStatus field. Leading three-digit status is the adapter's
-  // structured prefix, not free-text classification (#675 public navigator path).
-  if (typeof message.errorMessage === "string") {
-    const match = /^([1-5]\d{2}):\s/.exec(message.errorMessage);
-    if (match !== null) {
-      const status = Number(match[1]);
-      if (status < 200 || status >= 300) return status;
-    }
-  }
   return undefined;
 }
 

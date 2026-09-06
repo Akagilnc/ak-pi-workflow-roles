@@ -37,7 +37,7 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
-  applyTicketResolution,
+  applyInstructionTicketProbe,
   probeInstructionTicket,
   ticketNumberFromProbe,
   tryResumeSameTicketSeatRun,
@@ -296,9 +296,8 @@ export async function runPublicInstructionSeat(
       );
       return { exitCode: 2 };
     }
-  } else if (/(?<!\d)#?\d{1,7}(?!\d)/.test(parsed.instruction)) {
-    // Cheap gate: only spend hermes/gh when instruction may name a ticket.
-    // Ordinary navigator attendance prompts without a number stay unbound-mint.
+  } else {
+    // Inspector face: unconditional probe (same seam as inspector-run.ts).
     ticketProbe = await probeInstructionTicket(
       parsed.instruction,
       projectRoot,
@@ -399,14 +398,11 @@ export async function runPublicInstructionSeat(
           beforeDispatch: async (admittedSeat) => {
             // #635/#637: ticket bind inside controlled-failure boundary.
             // Auditor inherits source-run ticket (notary face).
-            // Other instruction seats (navigator/gatekeeper/evidence-child) only
-            // bind on a resolved probe — failed probe leaves unbound so attendance
-            // prepares without hermes/gh fixtures are not washed into ticket failure
-            // (inspector/countersign still force-apply via their own runners).
+            // Other seats: same applyInstructionTicketProbe as inspector-run.
             if (auditorSourceTicket !== undefined) {
               await bindAdmittedTicketNumber(admittedSeat, auditorSourceTicket);
-            } else if (ticketProbe?.kind === "resolved") {
-              await applyTicketResolution(admittedSeat, ticketProbe.resolution);
+            } else if (ticketProbe !== undefined) {
+              await applyInstructionTicketProbe(admittedSeat, ticketProbe);
             }
           },
         }),

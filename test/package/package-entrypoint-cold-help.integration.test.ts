@@ -253,6 +253,13 @@ test("cold-installed live help follows the loaded extension and changes on the n
             navigator: offlineSeat,
           },
         }, home);
+        // Instruction-seat probe is inspector-same — hermes true-unbound fixture.
+        const { installHermesFixture } = await import("../helpers/hermes-fixture.ts");
+        const hermesBin = resolve(home, "bin");
+        await mkdir(hermesBin, { recursive: true });
+        await installHermesFixture(hermesBin);
+        const priorPath = process.env.PATH;
+        process.env.PATH = `${hermesBin}:${priorPath ?? ""}`;
         const installedNavigator = await installed("src/navigator-attendance.ts");
         const issueRoot = resolve(fixture, ".ak/work/issues/28");
         await mkdir(issueRoot, { recursive: true });
@@ -418,6 +425,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
           await invoke("unsupported-no-fallback");
         } finally {
           if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+          if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
         }
         // Structured contracts (#675 / public navigator path + resume topology):
         // 3 successful seat-table navigator configs → recommendation;
@@ -427,8 +435,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(lifecycle[1]?.event.disposition, "recommendation");
         assert.equal(lifecycle[2]?.event.disposition, "recommendation");
         assert.equal(lifecycle[3]?.event.disposition, "unavailable");
-        // Public summon of missing provider fails at session open (not model-seat resolve).
-        assert.equal(lifecycle[3]?.event.unavailableSource, "session");
+        // Missing provider absent from models.json → model axis (not session wash).
+        assert.equal(lifecycle[3]?.event.unavailableSource, "model");
         // Exact model table from public-path topology (3 successful invokes):
         // each invoke runs warm+settle+rebind public navigator prepares on the shared
         // faux (mock stream model id = openai-codex/gpt-5.6-luna). Unsupported adds 0.
