@@ -12,13 +12,13 @@ status: accepted
 
 | key | 决定 | Owner 原话与定位 | 承接 |
 | --- | --- | --- | --- |
-| `case-context-purpose` | 案卷替各衙门集中本案依据，不只是验证表 | L14851：「我现在更想解决的不是验证问题。而是每一个衙门都要去汪洋大海里捞adr 裁决，设计这些东西」 | — |
-| `record-not-command` | 记录已有结果，现有提要求逻辑不变 | L14827：「这里不是提要求的地方。而是记录做了什么的地方。现有的提要求的逻辑不变。」 | — |
-| `automatic-case-material` | 公共入口直接挂案卷；Soul 解释用途，不负责派送 | L14931：「不应该在soul里要求读，应该是直接挂给衙门。soul里只需要说明这个文件是什么就足够了」 | — |
-| `court-refresh-retained` | 保留票庭刷新；起居郎补设计修订 | L14895：「票庭刷新没有问题。后续施工原则上本来也不该修改设计。」及「如果遇到需要修改的。起居郎补修订。」 | — |
-| `revision-recourt` | 设计修订重新过庭 | L14952 提问“修订后的票再过一次票庭”，L14961 答：「确实应该。可以直接写到工厂仓库的 claude.md」 | — |
-| `original-pointers` | 多数已有材料通过指针引用，避免平行真源 | L14797：「为了避免重复真源，里面很多东西是指针」 | — |
-| `cross-host-case-discovery` | 主动搜集本案材料，不限于 Claude 会话 | L15136 提案“不能只等票面把链接列好，也不能只读 Claude 会话”；L15145 Owner 答「那你倒是做啊！」并指定 grill-with-docs。授权本轮设计，不宣称实现已获施工批准。 | — |
+| `case-context-purpose` | 案卷替各衙门集中本案依据，不只是验证表 | L14851：「我现在更想解决的不是验证问题。而是每一个衙门都要去汪洋大海里捞adr 裁决，设计这些东西」 | #708 |
+| `record-not-command` | 记录已有结果，现有提要求逻辑不变 | L14827：「这里不是提要求的地方。而是记录做了什么的地方。现有的提要求的逻辑不变。」 | #713 |
+| `automatic-case-material` | 公共入口直接挂案卷；Soul 解释用途，不负责派送 | L14931：「不应该在soul里要求读，应该是直接挂给衙门。soul里只需要说明这个文件是什么就足够了」 | #709 |
+| `court-refresh-retained` | 保留票庭刷新；起居郎补设计修订 | L14895：「票庭刷新没有问题。后续施工原则上本来也不该修改设计。」及「如果遇到需要修改的。起居郎补修订。」 | #713 |
+| `revision-recourt` | 设计修订重新过庭 | L14952 提问“修订后的票再过一次票庭”，L14961 答：「确实应该。可以直接写到工厂仓库的 claude.md」 | #708 |
+| `original-pointers` | 多数已有材料通过指针引用，避免平行真源 | L14797：「为了避免重复真源，里面很多东西是指针」 | #712 |
+| `cross-host-case-discovery` | 主动搜集本案材料，不限于 Claude 会话 | L15136 提案“不能只等票面把链接列好，也不能只读 Claude 会话”；L15145 Owner 答「那你倒是做啊！」并指定 grill-with-docs。授权本轮设计，不宣称实现已获施工批准。 | #708 |
 
 上表 L 行号指向本次会话原件 `/Users/akagilnc/.codex/sessions/2026/08/02/rollout-2026-08-02T12-34-34-019fc089-a755-7d80-b8ff-de4692b4d300.jsonl`；这是设计取证指针，不是公开包运行前提。提案与答复分别注明身份，不把助手提案写成 Owner 原话。
 
@@ -32,7 +32,7 @@ status: accepted
 
 起居录指明方向，不是材料白名单。衙门仍可按本职读取原件及补充取证；无需重复从全仓和全部会话重建本案索引。真正无票对象仍沿用现有无票路径，不造假票或新开工门槛。票已绑定但案卷缺失或不可读时如实交代，按既有故障与裁量路径处理，不新增格式拒收或自动停工机制。
 
-递送时序须在本轮认票、以及适用的票庭刷新完成之后；仅在受理时冻结附件不足以满足这一点。材料定位与递送复用现有司天台读取、按票运行索引、原生会话读取核和公共请求投影，不为起居录建立平行索引或记忆机制。
+递送使用已有本票身份，并在适用的票庭刷新完成之后；仅在受理时冻结附件不足以满足这一点。材料定位与递送复用现有司天台读取、按票运行索引、原生会话读取核和公共请求投影，不为起居录建立平行索引或记忆机制。
 
 系统随案提供的起居录引用与调用者附件是两类材料：前者在本轮递送时指向已刷新案卷，后者继续遵守原有受理冻结与恢复语义，不替换其历史内容。用途说明由角色材料拥有，机器递送文本仅中立标识材料，不复述 Soul。
 
@@ -40,12 +40,12 @@ status: accepted
 
 ## 与现行制度的关系
 
-- [ADR 0075](0075-ticket-provenance-diarist-pipeline.md)：`cc-sessions-first` 由本页 `cross-host-case-discovery` 扩展；`diarist-llm-collector` 从仅选块扩为搜集与整理；`refresh-every-court` 保留票庭触发，修正“仅新块进入语义处理”为新块增量收录、旧案卷可供整理上下文。已送未选水印只用于避免重复收录劳动，不得屏蔽因新设计而重新相关的旧材料或主动发现新依据；无新增依据与修订时仍可跳过重复整理。`ticket-provenance-file`、`diarist-generates`、`ticket-keyed-history`、`sitian-scope-amendment`、`diarist-before-countersign`、`notary-inner-gate`、`no-backfill`、`names`、`github-face-local-only` 保持。`transcribe-whole-blocks`、`immutable-transcript-dry-exception` 保持完整原话档案，导航不复制设计规范。`no-global-ticket-flag` 与 `diarist-resolves-ticket-llm-layer` 沿用 ADR 0079 的既有修正。
+- [ADR 0075](0075-ticket-provenance-diarist-pipeline.md)：`cc-sessions-first` 由本页 `cross-host-case-discovery` 扩展；`diarist-llm-collector` 从仅选块扩为搜集与整理；`refresh-every-court` 保留票庭触发，修正“仅新块进入语义处理”为新块增量收录、旧案卷可供整理上下文。已送未选水印只用于避免重复收录劳动，不得屏蔽因新设计而重新相关的旧材料或主动发现新依据；无新增依据与修订时仍可跳过重复整理。`ticket-provenance-file`、`diarist-generates`、`ticket-keyed-history`、`sitian-scope-amendment`、`diarist-before-countersign`、`notary-inner-gate`、`no-backfill`、`names`、`github-face-local-only` 保持。`transcribe-whole-blocks`、`immutable-transcript-dry-exception` 保持完整原话档案，导航不复制设计规范。`no-global-ticket-flag` 沿用 ADR 0079 的既有修正；`diarist-resolves-ticket-llm-layer` 按下文追加决定修正。
 - [ADR 0077](0077-all-host-session-records-unified-direct-write.md)：保持 `record-scope-phase-two`、`live-session-in-books`，复用工厂宿主直写卷宗，不建搬运。它不等于外部 Codex、Pi 主会话已可自动发现；外部设计会话须从真实存放处读取，不能把所有运行轨迹灌入案卷。
 - [ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md)：保持 `direct-officer-summons`、两个 `ticket-seat-memory-*-principal` 及 `summons-pointer-input`，扩充随案指针材料，不增加票号旗或重设计派工与记忆。
 - [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md)：保持 `records-owner`、`record-entry`，整理结果归司天台；其余键沿现有后出修订，不在本案重定。
 - [ADR 0073](0073-machine-text-neutrality-law.md)：保持全中文、不复述 Soul、只许中立描述；递送不夹带新的审查指令。
-- [ADR 0078](0078-decision-key-ledgers-name-successor-issues.md)：遵守 `successor-column`、`successor-values`、`successor-not-status`、`reader-verifies-live`；未立施工票，承接列为 —。
+- [ADR 0078](0078-decision-key-ledgers-name-successor-issues.md)：遵守 `successor-column`、`successor-values`、`successor-not-status`、`reader-verifies-live`；承接列已按 #708 与子票实际分工回填；跨宿主搜集由 #708 下的 #710（Codex）和 #711（Pi/工厂已有宿主）承接，不在列中记实现状态。
 - [ADR 0080](0080-resume-entrypoints-share-settlement-disposition.md)：`separate-resume-entrypoints`、`single-settlement-disposition`、`class-wide-disposition-cleanup` 均不改，案卷递送不新增终局与续跑判定。
 - Soul 中的手工找录要求随实际自动递送接线一并收窄为用途说明；本设计不提前修改 Soul，也不改变任何衙门的审理权与裁决标准。
 
@@ -61,10 +61,22 @@ status: accepted
 - 首次调用、同票再传召、手动恢复均能读取系统递送的本票案卷；手工附件仍保持出生时冻结内容，两者不相互覆写。
 - 真无票对象继续既有无票审理；绑定票缺录、案卷不可读、引用原件不可核实分别如实呈现对应情况，不伪造完整案卷、通过或新停工闸。
 
-这些是行为验收场景，不是逐条新增永久测试的清单；验证采用现有质量法，真实宿主递送效果以实际调用证据核验。
+这些场景供设计理解与实际使用观察，不是逐条新增永久测试的清单。Owner 后续明确：「只需要验证是不是正常生成了。实际内容如何让大理寺和实际使用来判断」。自动化仅复用正常生成与读取的最小行为检查，不新增跨衙门测试矩阵；功能范围不因测试收窄而缩小。
 
 ## 设计状态
 
-本页取代“逐阶段回填大进度表”的本轮设计方向，不否定其未来讨论价值。实现接缝仍须依据当前源码复用现有能力，后续另立施工规格；本页不授权直接施工。
+本页取代“逐阶段回填大进度表”的本轮设计方向，不否定其未来讨论价值。实现接缝仍须依据当前源码复用现有能力，施工规格已发布为 #708 及子票 #709–#713；本页不授权直接施工。
 
 设计审查：给事中 run `01a075b4-d9cb-711d-96e6-1b6551378936` 对 `e7a042b8` 正文裁为 `converged`，符宝郎 `pass`；首审五类文书问题已核销，无需 Owner 新取舍。本次仅登记审查结果与设计状态，未改变受审决定。
+
+## 2026-09-06 追加决定：不另起模型认票
+
+| key | 决定 | Owner 原话与定位 | 承接 |
+| --- | --- | --- | --- |
+| `reuse-case-ticket-without-extra-llm` | 后续角色沿用起居录票号，删除独立 LLM 认票工序 | 「其它角色这部单独的llm调用找票号肯定要删，理论上起居录已经答了这个问题不需要自己找了」；[原话记录](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/708#issuecomment-5558114983)，同一会话原件可核。 | #709 |
+
+起居录已有本票身份，后续角色随案沿用，不再单独调用 LLM 找票号。给事中作为票庭入口，调用者可在 prompt 指明审哪张票；Owner 同一会话原话：「其实给事中你在prombt里面说也是一样的。不是非要一个单独的票号」。本次不恢复独立票号参数，也不把任务理解拆成另一个模型工序。按同类调用扫描删除既有额外认票调用及随之作废的独立解析、格式拒收和专属测试；不复制票号真源、不从人读标题取号、不换名重建。真无票审理仍保留。
+
+这修正 [ADR 0075](0075-ticket-provenance-diarist-pipeline.md) `diarist-resolves-ticket-llm-layer` 及 [ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md) 对“LLM 认票唯一路径”的承继中被实现为独立前置模型调用的部分，不取消起居郎搜集整理所需的 LLM，不改变票庭刷新职责。
+
+给事中 run `01a075d2-8c5d-7cde-9385-4ba0c0ab72cc` 退回父票路径引用及本页承接登记两类缺失，符宝郎通过该退回判词。本修订核销两项并纳入后续 Owner 决定，须随 #708 全票复审；先前通过不覆盖新增决定。
