@@ -4,15 +4,14 @@
  * self-owned sibling root under the worktree (no shared .test-tmp parent);
  * #612: process exit removes the default home so the worktree returns to pre-run state.
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, delimiter, join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 let defaultTestHome;
 let defaultTestHomeCleanupRegistered = false;
-let sharedHermesBinDir;
 
 function registerDefaultTestHomeCleanup() {
   if (defaultTestHomeCleanupRegistered) return;
@@ -55,28 +54,6 @@ function redirectHomeEnv(env, home) {
   env.XDG_CACHE_HOME = join(home, ".cache");
 }
 
-function ensureSharedHermesFixtureBin() {
-  if (sharedHermesBinDir !== undefined) return sharedHermesBinDir;
-  const home = defaultIsolatedTestHome();
-  sharedHermesBinDir = join(home, ".ak-test-path-bin");
-  mkdirSync(sharedHermesBinDir, { recursive: true });
-  const hermesPath = join(sharedHermesBinDir, "hermes");
-  writeFileSync(hermesPath, `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ assertion: "true-unbound" }));
-process.exit(0);
-`, "utf8");
-  chmodSync(hermesPath, 0o755);
-  return sharedHermesBinDir;
-}
-
-function withSharedHermesOnPath(env) {
-  if (env.PATH === undefined) return;
-  const bin = ensureSharedHermesFixtureBin();
-  const prior = env.PATH;
-  if (prior.split(delimiter).includes(bin)) return;
-  env.PATH = prior.length > 0 ? `${bin}${delimiter}${prior}` : bin;
-}
-
 export function isolatedTestProcessEnv(options = {}) {
   const env = {
     ...(options.env ?? process.env),
@@ -86,7 +63,6 @@ export function isolatedTestProcessEnv(options = {}) {
   const home = options.home !== undefined ? options.home : defaultIsolatedTestHome();
   redirectHomeEnv(env, home);
   if (options.agentDir !== undefined) env.PI_CODING_AGENT_DIR = options.agentDir;
-  withSharedHermesOnPath(env);
   return env;
 }
 

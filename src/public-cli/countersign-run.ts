@@ -1,9 +1,9 @@
 /**
  * Public Countersign Role run: admit ticket materials → shared post-admission
  * coordinator → settle Terminal result (#572 / ADR 0074). #599: manual resume
- * continues the exact session. Unbound admission resolves its ticket via the
- * shared seat LLM bind (#635). Who runs 起居郎, and when, is the caller's
- * composition (ADR 0010 / ADR 0075 `no-call-rule`) — not this seat's business.
+ * continues the exact session. Unbound admission reuses a known ticket identity
+ * (#709). Who runs 起居郎, and when, is the caller's composition
+ * (ADR 0010 / ADR 0075 `no-call-rule`) — not this seat's business.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -15,9 +15,8 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
-  ticketNumberFromProbe,
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -91,17 +90,15 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709: identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveKnownTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+    home: env.home,
+  });
+  if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -111,7 +108,7 @@ export async function runPublicCountersign(
       home: env.home,
       projectRoot,
       role: "countersign",
-      ticketNumber: probedTicketNumber,
+      ticketNumber: reusedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -178,8 +175,8 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admitted, ticketProbe);
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        await bindReusedTicketNumber(admitted, reusedTicketNumber);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admitted, turnProjection),
