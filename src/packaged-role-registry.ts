@@ -12,7 +12,6 @@ import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
-import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "./package-contracts/evidence-child-output.ts";
 import {
   DIARIST_OUTPUT_TOOL_NAME,
   DIARIST_SOURCES_FLAG,
@@ -45,14 +44,6 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/judge-auditor.md",
   "souls/doctor-auditor.md",
-  "souls/audit-law.md",
-  "souls/quality-law.md",
-] as const;
-
-/** Public evidence-child materials (#675). audit-law supplies lawful 取证授权; seat identity only in evidence-child.md. */
-export const EVIDENCE_CHILD_SESSION_MATERIALS = [
-  "CLAUDE.md",
-  "souls/evidence-child.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
 ] as const;
@@ -213,7 +204,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
-  // #675: 审刑院 / evidence-child are roles like any other — public ak-role entries.
+  // #675: 审刑院 is a role like any other — public ak-role entry. (#744: evidence-child deleted)
   {
     role: "auditor",
     phases: [null],
@@ -222,15 +213,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
-  },
-  {
-    role: "evidence-child",
-    phases: [null],
-    outputTool: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
-    inputFlag: undefined,
-    phaseFlag: undefined,
-    activationStage: "load-and-install",
-    sessionMaterials: EVIDENCE_CHILD_SESSION_MATERIALS,
   },
   // #708 / ADR 0075 `diarist-is-role`: 起居郎 is a seat like any other. The
   // frozen source catalog rides the shared input-flag seam; it is absent for a

@@ -150,10 +150,6 @@ export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "auditor";
 };
 
-export type AdmittedEvidenceChildInvocation = AdmittedRoleInvocationBase & {
-  readonly role: "evidence-child";
-};
-
 export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
   readonly role: "diarist";
 };
@@ -212,7 +208,7 @@ export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly baseRevision: string;
   /**
    * Optional durable authority references/URLs frozen at admission.
-   * Spec evidence-child material only — never Standards, never invocation prose promotion.
+   * Spec-axis material only — never Standards, never invocation prose promotion.
    */
   readonly authorityRefs: readonly string[];
 };
@@ -242,7 +238,6 @@ export type AdmittedRoleInvocation =
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
   | AdmittedAuditorInvocation
-  | AdmittedEvidenceChildInvocation
   | AdmittedDiaristInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
@@ -603,7 +598,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -866,14 +861,9 @@ export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvR
 }
 
 export type ParseAuditorArgvResult = ParseInstructionArgvResult;
-export type ParseEvidenceChildArgvResult = ParseInstructionArgvResult;
 
 export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
   return parseInstructionArgv(args, "auditor");
-}
-
-export function parseEvidenceChildArgv(args: readonly string[]): ParseEvidenceChildArgvResult {
-  return parseInstructionArgv(args, "evidence-child");
 }
 
 export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
@@ -1088,7 +1078,7 @@ export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
  * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1209,20 +1199,12 @@ export async function admitNavigatorInvocation(
 }
 
 export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
-export type AdmitEvidenceChildInvocationOptions = AdmitInspectorInvocationOptions;
 
 /** Admit a public 审刑院 run (#675). */
 export async function admitAuditorInvocation(
   options: AdmitAuditorInvocationOptions,
 ): Promise<AdmittedAuditorInvocation> {
   return admitStandardMaterialInvocation("auditor", options);
-}
-
-/** Admit a public evidence-child run (#675). */
-export async function admitEvidenceChildInvocation(
-  options: AdmitEvidenceChildInvocationOptions,
-): Promise<AdmittedEvidenceChildInvocation> {
-  return admitStandardMaterialInvocation("evidence-child", options);
 }
 
 /**

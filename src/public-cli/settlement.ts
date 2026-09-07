@@ -126,11 +126,6 @@ import {
   validateRecordedAuditorOutput,
 } from "../package-contracts/auditor-output.ts";
 import {
-  EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
-  evidenceChildDecisiveFacts,
-  validateRecordedEvidenceChildOutput,
-} from "../package-contracts/evidence-child-output.ts";
-import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -3396,7 +3391,6 @@ type SeatAcceptedSettlementSpec = {
     | "gatekeeper"
     | "navigator"
     | "auditor"
-    | "evidence-child"
     | "diarist";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
@@ -3426,7 +3420,6 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation
     | import("./invocation.ts").AdmittedAuditorInvocation
-    | import("./invocation.ts").AdmittedEvidenceChildInvocation
     | AdmittedDiaristInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
@@ -3892,45 +3885,6 @@ export async function trySettleAuditorTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulAuditorTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Evidence-Child accepted outcome (#675). */
-export type LawfulEvidenceChildRoleOutcome = {
-  kind: "accepted";
-  role: "evidence-child";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
-
-async function settleLawfulEvidenceChildTerminalResult(
-  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "evidence-child",
-    toolName: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "取证回执无报告正文",
-    tryAcceptDetails: tryAcceptWithValidator(validateRecordedEvidenceChildOutput),
-    projectAccepted: (sealed) => {
-      const output = validateRecordedEvidenceChildOutput(sealed.decisiveFacts);
-      const accepted: LawfulEvidenceChildRoleOutcome = {
-        kind: "accepted",
-        role: "evidence-child",
-        status: "report",
-        decisiveFacts: evidenceChildDecisiveFacts(output),
-      };
-      return accepted;
-    },
-  }, scope);
-}
-
-export async function trySettleEvidenceChildTerminalResult(
-  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulEvidenceChildTerminalResult(admitted, authority, scope);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

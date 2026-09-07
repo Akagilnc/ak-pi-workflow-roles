@@ -37,6 +37,5 @@ export function parentInheritedSeats(parentModel: ParentModel): Record<string, S
     inspector: selection,
     notary: selection,
     auditor: selection,
-    evidenceChild: selection,
   };
 }

@@ -8,7 +8,6 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { REVIEWER_AXIS_OUTPUT_ADAPTER } from "../../src/reviewer-construction.ts";
-import { EVIDENCE_CHILD_OUTPUT_TOOL_NAME } from "../../src/package-contracts/evidence-child-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 import { seedAgentDirModelsJsonFromFaux } from "../helpers/pi-test-harness.ts";
 
@@ -114,8 +113,7 @@ export default async function reviewerTwoAxisProvider(pi: ExtensionAPI): Promise
     void seeded.close();
   });
   const expectedAxes = expectedAxesFromEnv();
-  // #675: evidence-child is a nested public process — dispatch by tools, not a shared
-  // in-process axisSeen queue (parent and children no longer share one faux instance).
+  // #744: Standards/Spec axes are identity-less in-process sub-sessions (free-text report).
   const respond = (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     const prompt = userText(context);
@@ -130,16 +128,6 @@ export default async function reviewerTwoAxisProvider(pi: ExtensionAPI): Promise
         axis === "standards"
           ? "Standards finding count: 0."
           : "Spec: fixed target satisfies the stated behavior.";
-      if (names.includes(EVIDENCE_CHILD_OUTPUT_TOOL_NAME)) {
-        return fauxAssistantMessage(
-          fauxToolCall(
-            EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
-            { report },
-            { id: `evidence-child-${axis}` },
-          ),
-          { stopReason: "toolUse" },
-        );
-      }
       return fauxAssistantMessage(report);
     }
 

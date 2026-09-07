@@ -98,7 +98,6 @@ export type RoleRunRecord = {
     | "gatekeeper"
     | "navigator"
     | "auditor"
-    | "evidence-child"
     | "diarist";
   readonly state: RoleRunState;
   readonly bookKey: string;
@@ -402,7 +401,6 @@ async function readRoleRunStateDisk(
     record.role !== "gatekeeper" &&
     record.role !== "navigator" &&
     record.role !== "auditor" &&
-    record.role !== "evidence-child" &&
     record.role !== "diarist"
   ) {
     return undefined;
@@ -1510,7 +1508,6 @@ export type LoadedResumableInstructionSeatRun = {
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation
     | import("./invocation.ts").AdmittedAuditorInvocation
-    | import("./invocation.ts").AdmittedEvidenceChildInvocation;
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
 };
@@ -1736,7 +1733,6 @@ export async function loadResumableInstructionSeatRun(
     loaded.run.role !== "gatekeeper"
     && loaded.run.role !== "navigator"
     && loaded.run.role !== "auditor"
-    && loaded.run.role !== "evidence-child"
   ) {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not an instruction seat`,
@@ -1749,7 +1745,6 @@ export async function loadResumableInstructionSeatRun(
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation
     | import("./invocation.ts").AdmittedAuditorInvocation
-    | import("./invocation.ts").AdmittedEvidenceChildInvocation;
   return seatLoadedResult(loaded, admitted);
 }
 
@@ -2022,7 +2017,6 @@ export async function peekRoleRunRole(
   | "gatekeeper"
   | "navigator"
   | "auditor"
-  | "evidence-child"
   | "diarist"
   | undefined
 > {

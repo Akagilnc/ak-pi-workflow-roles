@@ -63,7 +63,6 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
     loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
-    loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
