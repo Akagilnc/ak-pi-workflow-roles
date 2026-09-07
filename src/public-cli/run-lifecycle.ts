@@ -10,7 +10,7 @@ import type {
  * Prose is never regex-classified as quota evidence.
  */
 import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -157,18 +157,66 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
+function resumeRereadInstruction(materialPath: string, handbook: boolean): string {
+  return handbook
+    ? `重新读 ${materialPath}，再组装外包 argv`
+    : `重新读 ${materialPath}`;
+}
+
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471 / #600).
+ * Resume-only material lines (#736 ticket exemption to ADR 0073 §3).
+ * Neutral `- <absolute path>` pointers already on the continuation
+ * (handbook from appendEngineSessionMaterial; frozen attachments from
+ * instruction-seat transport) become reread instructions.
+ * Handbook keeps the argv suffix; other materials are path-only.
+ * First-round delivery is unchanged; never pastes material body.
+ */
+export function instructResumeHandbookRead(
+  prompt: string,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const handbookPath = engineMaterial?.materialPath;
+  return prompt
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("- ")) return line;
+      const value = line.slice(2);
+      if (handbookPath !== undefined && value === handbookPath) {
+        return resumeRereadInstruction(handbookPath, true);
+      }
+      if (isAbsolute(value)) return resumeRereadInstruction(value, false);
+      return line;
+    })
+    .join("\n");
+}
+
+/** Append a live-path reread instruction when the pointer is not already on the continuation. */
+export function appendResumeMaterialReread(
+  prompt: string,
+  materialPath: string,
+): string {
+  const instruction = resumeRereadInstruction(materialPath, false);
+  const lines = prompt.split("\n");
+  if (lines.includes(instruction)) return prompt;
+  return prompt.length === 0 ? instruction : `${prompt}\n${instruction}`;
+}
+
+/**
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600 / #736).
  * Message present → base bytes unchanged; absent → package transport envelope.
- * When engine material is present, append structured engine coordinates (same
- * delivery as initial transport prompts). Zero parse, zero classify, zero narrow.
+ * When engine material is present, append structured engine coordinates then
+ * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
+ * zero classify, zero narrow. Pointer only — never material body.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+  return instructResumeHandbookRead(
+    appendEngineSessionMaterial([base], engineMaterial).join("\n"),
+    engineMaterial,
+  );
 }
 
 /**
