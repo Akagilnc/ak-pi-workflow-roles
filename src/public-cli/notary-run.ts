@@ -19,6 +19,7 @@ import {
 } from "./invocation.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -234,13 +235,27 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted, effective) =>
+    buildTurnRequest: async (admitted, effective) => {
       // #755: review continuation is plain dialogue / resume envelope — no
       //「重新读」candidate line, no engine handbook packaging.
-      buildNotaryTurnRequest(
+      // #753: non-three-state re-ask rides as summons.instruction (人话重问).
+      const summonsPrepared =
+        effective.summons === undefined
+          ? undefined
+          : await prepareSummonsResumeMaterials(
+              admitted.runDirectory,
+              effective.summons,
+            );
+      return buildNotaryTurnRequest(
         admitted,
-        resumeTurnRequestProjectionOptions(admitted, effective, env),
-      ),
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

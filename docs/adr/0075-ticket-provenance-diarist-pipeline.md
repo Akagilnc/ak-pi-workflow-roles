@@ -37,7 +37,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 - **人读面**：同分区 md 渲染视图；只有 JSONL 权威。
 - **起居郎（`diarist`）**：LLM 角色（soul、席位、公开入口 `ak-role diarist`、交卷工具 `ak_diarist_output`）。LLM 语义收集＋机械保全（来源枚举、逐字材料、去重滤通知、幂等落盘、LLM 引语逐字反验——失败留真因、该引语拒入录）。**相关性只由 LLM 裁决**；机械层不得以票号/引语/关键词散文命中排除来源（锚定宪法）。散文锚点仅作反验笔记，不构成遗漏闸。
 - **调用与顺序归调用者**（ADR 0010）：本 ADR 不规定谁调用起居郎、不规定先后；每次过庭都跑（`refresh-every-court`）是调用者的用法。**增量幂等**：水位＝卷宗 entry identity（含反验失败残条）∪ 本票 `offered-identities` 水印（凡成功送过 collector 的块，不论是否入选）；本庭只把未见块送 LLM；无新块则跳过 collector。collector 失败不推进水印（下庭可重试）。
-- **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；内闸永远出席。认得出票→有录，符宝郎读录核旨；真无票对象→无录，符宝郎按 source-run 核旨（不得因缺录把 true-unbound 打回给事中）。
+- **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；内闸永远出席。认得出票→有录，符宝郎读录核旨；真无票对象→无录，符宝郎按 source-run 核旨（不得因缺录把 true-unbound 打回给事中）。**#753 审核循环**：给事中交卷 → 符宝郎审 → 只读结论字段 `pass|bounce|escalate`；`pass` 收卷；`bounce`/`escalate` 把符宝郎回执原文当 tool result 回给事中；结论非三态 → resume 符宝郎本人人话重问；给事中 `escalate` 原样抛给调用者；给事中 status 读不出 → 回给事中本人重交；无轮数上限。handler 只记录与排队，不判内容（`notary-inner-gate` 触及；键 `review-queue-code-guarantee` / `unreadable-conclusion-resume-speaker` / `escalate-thrown-verbatim` / `no-round-cap` 见 #750）。
 - **认票（`diarist-resolves-ticket-llm-layer`）**：无票调用照旧合法。起居郎 LLM 层从受理指令产 typed 断言「本庭对象=票N」或 true-unbound；机械层验完整十进制号码出现（非子串）+ 票真实存在后下游全走 typed 键。显式 `--ticket` / 已绑定 ticket 优先，跳过再认。
 - **调用面**：`--ticket` 为给事中与符宝郎的可选显式通道；其余席位零改动。
 

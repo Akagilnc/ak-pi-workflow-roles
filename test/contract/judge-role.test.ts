@@ -31,7 +31,7 @@ import {
   runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import { stampShapeUnreadableDetails } from "../../src/shape-unreadable-failure.ts";
+
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import {
@@ -480,7 +480,7 @@ async function workerCompletionGatekeeperHarness(options: {
   } = options;
   const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
   const model = faux.getModel();
-  // #675: script public-summon terminals in order (transport → unusable → no_receipt → bounce → pass*).
+  // #753: script public-summon terminals in order (transport → needs_reask → no_receipt → bounce → pass*).
   const queue: PublicSummonResult[] = [
     {
       exitCode: 1,
@@ -497,20 +497,21 @@ async function workerCompletionGatekeeperHarness(options: {
         runId: "test-gate-transport",
       },
     },
+    // #753: accepted reply without three-state conclusion → needs_reask (resume speaker),
+    // not unreadable/parent-stand. Queue entry is consumed by the reask loop then followed
+    // by a pass so the submit path can complete after one reask.
     {
-      exitCode: 1,
+      exitCode: 0,
       terminal: {
         roleOutcome: {
-          kind: "failure",
+          kind: "accepted",
           role: officer,
-          cause: "output",
-          diagnostic: "decision 无显式 pass/bounce/escalate",
-          // Settlement marker only — consumers do not re-derive from cause=output (#675).
-          decisiveFacts: stampShapeUnreadableDetails(officerUnusableSubmission),
+          status: "not-a-conclusion",
+          decisiveFacts: officerUnusableSubmission as Record<string, unknown>,
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
-        runId: "test-gate-unusable",
+        runId: "test-gate-needs-reask",
       },
     },
     {
@@ -583,10 +584,9 @@ async function workerCompletionGatekeeperHarness(options: {
       };
       // Real transport failure stays infrastructure (not GatekeeperDecisionError).
       await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
-      // Shape-unusable: projection retains submission (structured); submit path parent-stands
-      // (ADR 0055 / #675) — not NonPass reject, not transport, not forged bounce.
+      // #753: accepted non-three-state → needs_reask (resume speaker). Direct projection.
       {
-        const projectUnusable = async (id: string, candidate: unknown) =>
+        const projectNeedsReask = async (id: string, decisiveFacts: Record<string, unknown>) =>
           await runGatekeeper({
             context: this.context(id, toolName),
             subject: officer === "inspector"
@@ -594,14 +594,15 @@ async function workerCompletionGatekeeperHarness(options: {
               : { kind: "judge_draft" },
             async summonOfficer() {
               return {
-                exitCode: 1,
+                exitCode: 0,
                 terminal: {
                   roleOutcome: {
-                    kind: "failure",
+                    kind: "accepted",
                     role: officer,
-                    cause: "output",
-                    diagnostic: "decision 无显式 pass/bounce/escalate",
-                    decisiveFacts: stampShapeUnreadableDetails(candidate),
+                    status: typeof decisiveFacts.status === "string"
+                      ? decisiveFacts.status
+                      : "not-a-conclusion",
+                    decisiveFacts,
                   },
                   navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
                   artifacts: [],
@@ -610,31 +611,29 @@ async function workerCompletionGatekeeperHarness(options: {
               } as PublicSummonResult;
             },
           });
-        const projected = await projectUnusable(`${officer}-unusable-proj`, officerUnusableSubmission);
-        assert.equal(projected.status, "unreadable");
-        if (projected.status === "unreadable") {
+        const projected = await projectNeedsReask(
+          `${officer}-reask-proj`,
+          officerUnusableSubmission as Record<string, unknown>,
+        );
+        assert.equal(projected.status, "needs_reask");
+        if (projected.status === "needs_reask") {
           assert.equal(projected.officer, officer);
-          assert.deepEqual(projected.submission, officerUnusableSubmission);
+          assert.deepEqual(projected.receipt, officerUnusableSubmission);
         }
-        // Marker presence decides, not the candidate value: an omitted-arguments officer
-        // call stays a stood-on unreadable decision whose retained submission is the
-        // serializable missing-args fact — never an infrastructure rethrow (#675 T15).
-        const omitted = await projectUnusable(`${officer}-unusable-omitted`, undefined);
-        assert.equal(omitted.status, "unreadable");
-        if (omitted.status === "unreadable") {
+        // Empty/missing officer args → retained missing-args receipt, still needs_reask.
+        const omitted = await projectNeedsReask(
+          `${officer}-reask-omitted`,
+          MISSING_ARGUMENTS_SUBMISSION as unknown as Record<string, unknown>,
+        );
+        assert.equal(omitted.status, "needs_reask");
+        if (omitted.status === "needs_reask") {
           assert.equal(omitted.officer, officer);
-          assert.deepEqual(omitted.submission, MISSING_ARGUMENTS_SUBMISSION);
+          assert.deepEqual(omitted.receipt, MISSING_ARGUMENTS_SUBMISSION);
         }
       }
-      // Consume queue unusable via submit path — parent stands (no GatekeeperDecisionError).
-      const stood = await execute(
-        `${officer}-unusable-release`,
-        output,
-        this.context(`${officer}-unusable-release`, toolName),
-      ) as { terminate?: boolean; details?: unknown };
-      assert.equal(stood instanceof GatekeeperDecisionError, false);
-      // Worker terminates; judge may pending-round-closure — both are parent-stand faces.
-      assert.ok(stood !== undefined && stood !== null);
+      // Queue: needs_reask then pass — envelope resumes speaker and parent completes (#753).
+      // The harness queue already sequences needs_reask → no_receipt → bounce → pass…
+      // so the first submit after transport consumes needs_reask and loops onto no_receipt.
       await reject(`${officer}-no-receipt`, (error) => {
         assert.ok(error instanceof GatekeeperDecisionError);
         assert.equal(error.result.status, "no_receipt");
@@ -649,12 +648,15 @@ async function workerCompletionGatekeeperHarness(options: {
         assert.equal(error.result.status, "bounce");
         if (error.result.status === "bounce") {
           assert.equal(error.result.officer, officer);
-          assert.equal(error.result.disposition, "rewrite");
-          assert.deepEqual(error.result.findings, ["add a focused regression"]);
-          assert.deepEqual(error.result.submission, {
+          // #753: raw officer receipt; no findings rewrite / disposition mapping.
+          assert.deepEqual(error.result.receipt, {
             status: "bounce",
             findings: ["add a focused regression"],
           });
+          assert.equal(
+            error.message,
+            JSON.stringify({ status: "bounce", findings: ["add a focused regression"] }),
+          );
         }
       });
     },
@@ -1561,12 +1563,11 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     const findings = ["add a focused regression"];
     const toolCallId = "judge-gk-bounce";
     const bounceSubmission = { status: "bounce", findings };
+    // #753: raw officer receipt only — no findings rewrite / disposition mapping.
     const expected = {
       status: "bounce" as const,
       officer: "notary" as const,
-      disposition: "rewrite" as const,
-      findings,
-      submission: bounceSubmission,
+      receipt: bounceSubmission,
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();
@@ -1659,7 +1660,7 @@ test("coder completed submissions traverse the direct Inspector gate until pass"
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
-  // #675: one public summon per gate attempt (transport/unusable/no_receipt/bounce/pass).
+  // #753: transport + needs_reask→no_receipt (2) + bounce + pass = 5.
   assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 });
@@ -1745,7 +1746,7 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
   );
   // skip statuses must not consume further officer passes.
   assert.equal(tracer.providerRequests, beforeAllStatuses);
-  // #675: reject matrix is 4 public summons + two DONE passes = 6.
+  // #753: reject matrix (transport + reask→no_receipt + bounce = 4) + two DONE passes = 6.
   assert.equal(tracer.providerRequests, 6);
   assert.equal(tracer.remainingResponses, 0);
 });
@@ -1769,9 +1770,9 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
     officer: "notary",
   });
   await tracer.assertRejectSequence();
-  // Shape-unreadable parent-stands past the gate and reaches auditor once (#675 / ADR 0055).
-  // bounce/no_receipt/transport still keep auditor dark.
-  assert.equal(auditCalls, 1, "auditor runs once when shape-unreadable parent-stands");
+  // #753: non-three-state resumes officer — parent never stands through the reject matrix;
+  // auditor stays dark until Notary pass.
+  assert.equal(auditCalls, 0, "auditor stays dark through gate non-pass matrix");
   const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
   const { sealed, pending } = await acceptThroughTypedRoundClosure({
     handlers: harness.handlers,
@@ -1783,8 +1784,8 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   });
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
-  assert.equal(auditCalls, 2, "auditor runs again after Notary pass");
-  // #675: transport+unreadable+no_receipt+bounce + 1 pass = 5.
+  assert.equal(auditCalls, 1, "auditor runs after Notary pass");
+  // #753: transport + reask→no_receipt + bounce + pass = 5.
   assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 
@@ -1812,7 +1813,7 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
       return true;
     },
   );
-  assert.equal(auditCalls, 2, "auditor must not start on Gatekeeper transport non-pass for other judgeStatus");
+  assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper transport non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
 });
 
