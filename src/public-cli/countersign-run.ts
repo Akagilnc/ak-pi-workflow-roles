@@ -1,16 +1,24 @@
 /**
- * Public Countersign Role run: admit ticket materials → shared post-admission
- * coordinator → settle Terminal result (#572 / ADR 0074). #599: manual resume
- * continues the exact session. Unbound admission resolves its ticket via the
- * shared seat LLM bind (#635). Who runs 起居郎, and when, is the caller's
- * composition (ADR 0010 / ADR 0075 `no-call-rule`) — not this seat's business.
+ * Public Countersign Role run: admit ticket materials → court-pipeline prior
+ * station (起居郎) → shared post-admission coordinator → settle Terminal result
+ * (#572 / ADR 0074 / ADR 0075 / #742). #599: manual resume continues the exact
+ * session. Unbound admission resolves its ticket via the shared seat LLM bind
+ * (#635) before the diary station.
+ *
+ * Court admission auto-runs 起居郎 first, then the countersign body — caller
+ * adds no diarist argv (L66672). This is the admission pipeline's prior station,
+ * not the countersign role calling 起居郎 (L66958 / L66966). Who may call 起居郎
+ * and in what order is not written into law (ADR 0075 `no-call-rule`); the
+ * present admission effect is what this seat currently does (L108315 目前是这样用的).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { deliverCaseDossierPointerToTurn } from "./case-dossier-delivery.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
   buildCountersignTransportPrompt,
+  parseDiaristArgv,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -47,6 +55,13 @@ import {
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * Test seam: replace the court-pipeline 起居郎 station.
+   * Production leaves this unset and runs the public diarist seat.
+   */
+  runCourtDiaristStation?: (
+    admitted: AdmittedCountersignInvocation,
+  ) => Promise<void>;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -67,6 +82,90 @@ export function buildCountersignTurnRequest(
     },
     options,
   );
+}
+
+/**
+ * Court-pipeline prior station: refresh this ticket's 起居录 before the
+ * countersign body turn (ADR 0075 `refresh-every-court`; #742 restore).
+ * Caller-invisible — no diarist argv on the countersign command line.
+ * Missing ticketNumber (true-unbound) skips the station — no diary is minted
+ * for a true-unbound run.
+ *
+ * Invokes the public 起居郎 seat so the book carries an `@diarist` run ahead of
+ * the countersign body. Station failure propagates (失败诚实 — no wash).
+ */
+export async function runCountersignCourtDiaristStation(
+  admitted: AdmittedCountersignInvocation,
+  env: CountersignRunEnv,
+  io: CliIo,
+): Promise<void> {
+  if (admitted.ticketNumber === undefined) return;
+  if (env.runCourtDiaristStation !== undefined) {
+    await env.runCourtDiaristStation(admitted);
+    return;
+  }
+
+  // Quiet face: the countersign caller must not see diarist CLI chatter.
+  const quietIo: CliIo = {
+    stdout() {},
+    stderr(text: string) {
+      // Surface nested failures onto the parent stderr only; no success noise.
+      if (text.trim() !== "") io.stderr(text);
+    },
+  };
+
+  const { runPublicDiarist } = await import("./diarist-run.ts");
+  const result = await runPublicDiarist(
+    [
+      "--project",
+      admitted.projectRoot,
+      `整理 #${admitted.ticketNumber} 的本案依据。`,
+    ],
+    {
+      home: env.home,
+      agentDir: env.agentDir,
+      packageRoot: env.packageRoot,
+      cwd: env.cwd,
+      principalAuthority: env.principalAuthority,
+      roleTurnHost: env.roleTurnHost,
+      sessionAppender: env.sessionAppender,
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.engine === undefined ? {} : { engine: env.engine }),
+      ...(env.host === undefined ? {} : { host: env.host }),
+      ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+      ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(env.signal === undefined ? {} : { signal: env.signal }),
+    },
+    quietIo,
+    parseDiaristArgv,
+  );
+
+  if (result.exitCode !== 0) {
+    const detail =
+      result.terminal?.roleOutcome.kind === "failure"
+        ? ` (roleOutcome=failure)`
+        : "";
+    throw new Error(
+      `court diarist station failed for ticket #${admitted.ticketNumber}: exit ${result.exitCode}${detail}`,
+    );
+  }
+}
+
+/** Diarist station → 起居录 path onto this turn's materials. */
+async function prepareCountersignCourtTurn(
+  admitted: AdmittedCountersignInvocation,
+  env: CountersignRunEnv,
+  io: CliIo,
+  turnRequest: RoleTurnRequest,
+): Promise<void> {
+  await runCountersignCourtDiaristStation(admitted, env, io);
+  await deliverCaseDossierPointerToTurn({
+    ticketNumber: admitted.ticketNumber,
+    projectRoot: admitted.projectRoot,
+    home: env.home,
+    turnRequest,
+  });
 }
 
 export async function runPublicCountersign(
@@ -168,7 +267,7 @@ export async function runPublicCountersign(
       ),
     },
   };
-  // Mutable shell: ticket bind re-projects activation before executeTurn.
+  // Mutable shell: ticket bind + dossier pointer re-project before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
@@ -177,13 +276,15 @@ export async function runPublicCountersign(
     io,
     request: turnRequest,
     adapters: countersignAdapters({
-      beforeDispatch: async (admitted) => {
+      beforeDispatch: async (admittedSeat) => {
         // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admitted, ticketProbe);
+        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
         Object.assign(
           turnRequest,
-          buildCountersignTurnRequest(admitted, turnProjection),
+          buildCountersignTurnRequest(admittedSeat, turnProjection),
         );
+        // Court station after bind so the diarist round and pointer see the ticket.
+        await prepareCountersignCourtTurn(admittedSeat, env, io, turnRequest);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
@@ -211,9 +312,10 @@ function countersignAdapters(options?: {
 
 /**
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
- * Restores role/ticket/session identity. Same-ticket summons deliver this turn's
- * instruction + frozen attachments on the resume prompt; manual resume keeps
- * package-envelope / caller-message semantics and birth attachments.
+ * Restores role/ticket/session identity. Every court re-entry runs the diarist
+ * station first (ADR 0075 `refresh-every-court`). Same-ticket summons deliver this
+ * turn's instruction + frozen attachments on the resume prompt; manual resume
+ * keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicCountersignResume(
   request: PublicResumeRequest,
@@ -224,6 +326,8 @@ export async function runPublicCountersignResume(
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
+  // Mutable shell captured so beforeDispatch can append the dossier pointer.
+  let turnRequest: RoleTurnRequest | undefined;
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -239,7 +343,7 @@ export async function runPublicCountersignResume(
         admitted.runDirectory,
         effective.summons,
       );
-      return buildCountersignTurnRequest(
+      turnRequest = buildCountersignTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
           admitted,
@@ -248,8 +352,16 @@ export async function runPublicCountersignResume(
           summonsPrepared,
         ),
       );
+      return turnRequest;
     },
-    adapters: countersignAdapters(),
+    adapters: countersignAdapters({
+      beforeDispatch: async (admitted) => {
+        if (turnRequest === undefined) {
+          throw new Error("countersign resume beforeDispatch missing turnRequest shell");
+        }
+        await prepareCountersignCourtTurn(admitted, env, io, turnRequest);
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

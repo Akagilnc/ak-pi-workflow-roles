@@ -298,10 +298,10 @@ export async function dispatchPostAdmissionTurn<
       admitted.principal === undefined
         ? undefined
         : env.principalAuthority.decode(admitted.principal);
-    let turnRequest: RoleTurnRequest;
+    let hostTransition: RoleTurnRequest["hostTransition"];
     try {
       previousHost = await readInvocationHost(admitted.runDirectory);
-      const hostTransition =
+      hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
           ? await projectHostTransitionPriorNative({
               previousHost,
@@ -309,10 +309,6 @@ export async function dispatchPostAdmissionTurn<
               piSessionFile: principalCoordinates.sessionFile,
             })
           : undefined;
-      turnRequest = env.signal === undefined ? request : { ...request, signal: env.signal };
-      if (hostTransition !== undefined) {
-        turnRequest = { ...turnRequest, hostTransition };
-      }
     } catch (error) {
       // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return (await presentControlledFailure(
@@ -350,6 +346,15 @@ export async function dispatchPostAdmissionTurn<
           io,
         )) as { exitCode: number; admitted: A; terminal: T };
       }
+    }
+
+    // Turn request is assembled after beforeDispatch so this turn sees whatever the
+    // seat settled on the request shell (ticket bind re-projection, court diarist
+    // station writes, 起居录 path delivery on the countersign admission path).
+    let turnRequest: RoleTurnRequest =
+      env.signal === undefined ? request : { ...request, signal: env.signal };
+    if (hostTransition !== undefined) {
+      turnRequest = { ...turnRequest, hostTransition };
     }
 
     let result: RoleTurnResult;
