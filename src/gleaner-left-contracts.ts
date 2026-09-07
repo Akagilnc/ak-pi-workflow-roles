@@ -42,12 +42,3 @@ export function validateRecordedGleanerLeftOutput(value: unknown): GleanerLeftOu
   throw new Error("Gleaner-left output has no execution discriminator");
 }
 
-/** Machine-facing facts from an accepted 弹章. Findings retained as submitted. */
-export function gleanerLeftDecisiveFacts(
-  output: GleanerLeftOutput,
-): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  const findings = (output as { findings?: unknown }).findings;
-  if (Array.isArray(findings)) facts.findings = findings;
-  return facts;
-}

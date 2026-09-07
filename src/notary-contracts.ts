@@ -122,21 +122,3 @@ export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   return projected;
 }
 
-export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
-  const status = String(output.status);
-  const facts: Record<string, unknown> = { status, officer: "notary" };
-  if (status === "pass" || status === "bounce") {
-    const findings = (output as { findings?: unknown }).findings;
-    facts.findingsCount = Array.isArray(findings) ? findings.length : 0;
-    // The parent role reads the findings themselves; the count alone dropped them (#750).
-    facts.findings = Array.isArray(findings) ? findings : [];
-  }
-  if (status === "bounce") {
-    facts.disposition = "rewrite";
-  }
-  if (status === "escalate") {
-    const reason = (output as { reason?: unknown }).reason;
-    if (reason !== undefined) facts.reason = reason;
-  }
-  return facts;
-}

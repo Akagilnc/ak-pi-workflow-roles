@@ -4,9 +4,6 @@
  * the shared post-admission seam; this module keeps only Notary adapters.
  * #637 / #747: same-parent (--source-run) re-summons resume the seat's previous run.
  */
-import { existsSync } from "node:fs";
-
-import { gateSubmissionCandidatePath } from "../auditor-dossier-tool.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   NotarySourceRunError,
@@ -30,7 +27,6 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  appendResumeMaterialReread,
   loadResumableNotaryRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -259,19 +255,12 @@ export async function runPublicNotaryResume(
       return loaded;
     },
     buildTurnRequest: (admitted, effective) => {
-      const projection = resumeTurnRequestProjectionOptions(
+      // #755: review continuation is plain dialogue / resume envelope — no
+      //「重新读」candidate line, no engine handbook packaging.
+      turnRequest = buildNotaryTurnRequest(
         admitted,
-        effective,
-        env,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
       );
-      const candidatePath = gateSubmissionCandidatePath(admitted.sourceRunPath);
-      const prompt = existsSync(candidatePath)
-        ? appendResumeMaterialReread(projection.continuation.prompt, candidatePath)
-        : projection.continuation.prompt;
-      turnRequest = buildNotaryTurnRequest(admitted, {
-        ...projection,
-        continuation: { kind: "resume", prompt },
-      });
       return turnRequest;
     },
     adapters: notaryAdapters({
@@ -279,6 +268,7 @@ export async function runPublicNotaryResume(
         if (turnRequest === undefined) {
           throw new Error("notary resume beforeDispatch missing turnRequest shell");
         }
+        // #742: inner-gate 符宝郎 materials carry this ticket's 起居录 path when bound.
         await deliverCaseDossierPointerToTurn({
           ticketNumber: admittedSeat.ticketNumber,
           projectRoot: admittedSeat.projectRoot,

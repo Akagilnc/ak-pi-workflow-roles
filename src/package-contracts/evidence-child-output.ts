@@ -44,8 +44,3 @@ export function validateRecordedEvidenceChildOutput(value: unknown): EvidenceChi
   return projected;
 }
 
-export function evidenceChildDecisiveFacts(
-  output: EvidenceChildOutput,
-): Record<string, unknown> {
-  return { report: output.report };
-}
