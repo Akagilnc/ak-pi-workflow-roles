@@ -361,8 +361,8 @@ export {
   createGatekeeperOutputTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
-import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -1024,15 +1024,9 @@ export function createCountersignRoleRuntime(
               ? record.countersignStatus
               : undefined;
           if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
-            // Parent status unreadable → back to countersign; do not summon notary.
-            const nonPass = {
-              status: "bounce" as const,
-              officer: "notary" as const,
-              receipt: parameters === undefined ? { missing: "arguments" as const } : parameters,
-            };
-            // Plain re-ask is the model-visible tool result; receipt stays on details.
-            hostActions.bindSubmissionNonPass(toolCallId, nonPass);
-            throw new GatekeeperDecisionError(nonPass, COUNTERSIGN_STATUS_REASK);
+            // Parent status unreadable → back to countersign itself; do not summon notary,
+            // do not forge an officer bounce face (#753).
+            throw new ParentQueueReaskError(COUNTERSIGN_STATUS_REASK);
           }
           if (status === "escalate") {
             // Parent escalate → throw to caller as-is; notary does not attend (#753).

@@ -1,5 +1,6 @@
 import {
   GatekeeperDecisionError,
+  ParentQueueReaskError,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
@@ -25,6 +26,7 @@ export function isCorrectableExecuteError(error: unknown): boolean {
   return (
     isCorrectableSubmissionError(error)
     || error instanceof GatekeeperDecisionError
+    || error instanceof ParentQueueReaskError
     || error instanceof WorkerCommitReminderError
     || error instanceof WorkerPrefixReminderError
     || error instanceof WorkerUnfinishedReasonReminderError

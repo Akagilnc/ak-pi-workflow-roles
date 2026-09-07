@@ -55,3 +55,15 @@ export class WorkerUnfinishedReasonReminderError extends Error {
     this.name = "WorkerUnfinishedReasonReminderError";
   }
 }
+
+/**
+ * Parent seat status unreadable for queueing (#753).
+ * Correctable back to the parent itself — not a gate officer bounce, no officer field.
+ */
+export class ParentQueueReaskError extends Error {
+  readonly code = "parent_queue_reask" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "ParentQueueReaskError";
+  }
+}
