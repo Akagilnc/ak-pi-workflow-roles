@@ -12,8 +12,8 @@ import { stat } from "node:fs/promises";
 import type { RoleTurnContinuation, RoleTurnRequest } from "../host-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 
-/** Section heading of the system-delivered dossier pointer. */
-export const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+/** Section heading of the system-delivered dossier pointer (presentation only). */
+const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
 
 /** Honest one-line state of one dossier file: present, absent, or unreadable. */
 async function describeDossierFile(path: string): Promise<string> {
