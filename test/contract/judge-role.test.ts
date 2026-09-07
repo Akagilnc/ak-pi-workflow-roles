@@ -1225,9 +1225,9 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(sealed.decisiveFacts, verdict);
 });
 
-test("judge role returns revise as an ordinary errored tool result without aborting", async () => {
+test("judge role returns bounce as an ordinary errored tool result without aborting", async () => {
   const { tool } = await startJudge(async () => ({
-    status: "revise",
+    status: "bounce",
     violations: ["No authority clause was applied", "Tests were not adjudicated"],
   }));
   const verdict = { judgeStatus: "converged" };
@@ -2581,11 +2581,11 @@ test(
 
 // #420 整改移档（自 package-entrypoint-packaged-workers.integration.test.ts）：
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
-// Judge/doctor：revise→errored / pass→terminate / escalate 全矩阵。
+// Judge/doctor：bounce→errored / pass→terminate / escalate 全矩阵。
 // Fixer (#242) / Reviewer (#495 S6)：无审刑院闸，typed validate 即受理。
-test("role outputs run nested audits through pass, revise, and escalation", async () => {
+test("role outputs run nested audits through pass, bounce, and escalation", async () => {
   // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
-  // this carrier owns revise→errored / pass→terminate / escalate per audited role output tool.
+  // this carrier owns bounce→errored / pass→terminate / escalate per audited role output tool.
   const root = packageRoot;
   const importSrc = (rel: string) => import(resolve(root, rel));
   const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
@@ -2620,8 +2620,8 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           options: ["Soul", "Controlling authority"],
         },
       };
-      const revise = {
-        status: "revise" as const,
+      const bounce = {
+        status: "bounce" as const,
         violations: ["one concrete procedural violation"],
         conflicts: [],
         decisionGate: null,
@@ -2692,7 +2692,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         } as any;
       };
 
-      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof revise | typeof escalation) => {
+      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof bounce | typeof escalation) => {
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
@@ -2773,7 +2773,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         return {
           harness,
           runtime,
-          setDecision(next: typeof pass | typeof revise | typeof escalation) { selectedDecision = next; },
+          setDecision(next: typeof pass | typeof bounce | typeof escalation) { selectedDecision = next; },
           get auditCalls() { return auditCalls; },
         };
       };
@@ -2809,7 +2809,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           assert.equal(plain.auditCalls, 0);
           continue;
         }
-        const retriable = createRole(role, revise);
+        const retriable = createRole(role, bounce);
         await retriable.runtime.activate();
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
@@ -2817,7 +2817,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
           const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
           return role === "judge" ? await withPassingGatekeeper(bare) : bare;
         };
-        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, await submissionContext(`${role}-revise`)), /violation|violates its|closed contract/);
+        await assert.rejects(tool.execute(`${role}-bounce`, outputs[role], undefined, undefined, await submissionContext(`${role}-bounce`)), /violation|violates its|closed contract/);
         retriable.setDecision(pass);
         const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, await submissionContext(`${role}-pass`));
         assert.equal(accepted.terminate, true);

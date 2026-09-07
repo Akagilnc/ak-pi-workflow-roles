@@ -433,6 +433,35 @@ async function mergeInvocationIdentityPage(
 }
 
 /**
+ * Persist parent --source-run path onto admitted-request for officer resume lookup (#747).
+ * Reuses the existing notary sourceRunPath key; does not invent a new field name.
+ */
+export async function persistAdmittedSourceRunPath(
+  admitted: AdmittedRoleInvocation,
+  sourceRunPath: string,
+): Promise<void> {
+  if (sourceRunPath.trim() === "") {
+    throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
+  }
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  if (typeof current.sourceRunPath === "string") {
+    if (current.sourceRunPath === sourceRunPath) return;
+    throw new Error(
+      `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
+    );
+  }
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, sourceRunPath }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
  * object and both durable pages (invocation.json + admitted-request.json).
  * Used by seat LLM ticket binding when admission was unbound

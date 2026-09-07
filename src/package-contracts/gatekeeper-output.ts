@@ -76,14 +76,3 @@ export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDire
   return projected;
 }
 
-export function gatekeeperDecisiveFacts(
-  output: GatekeeperDirectOutput,
-): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  if (output.status === "dispatch") {
-    facts.officer = output.officer;
-  } else if (Array.isArray(output.findings)) {
-    facts.findingsCount = output.findings.length;
-  }
-  return facts;
-}

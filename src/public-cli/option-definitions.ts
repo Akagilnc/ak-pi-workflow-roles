@@ -1247,7 +1247,7 @@ const ROLE_COMMAND_HELP = {
   },
   auditor: {
     command: "auditor",
-    summary: "Direct Auditor (审刑院) compliance audit: pass, revise, or escalate.",
+    summary: "Direct Auditor (审刑院) compliance audit: pass, bounce, or escalate.",
     usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
     examples: [
       'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
