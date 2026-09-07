@@ -13,6 +13,7 @@ import {
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { deliverCaseDossierPointerToTurn } from "./case-dossier-delivery.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -181,16 +182,33 @@ export async function runPublicNotary(
     env,
     io,
     request: turnRequest,
-    adapters: notaryAdapters(),
+    adapters: notaryAdapters({
+      beforeDispatch: async (admittedSeat) => {
+        // #742: inner-gate 符宝郎 materials carry this ticket's 起居录 path when bound.
+        await deliverCaseDossierPointerToTurn({
+          ticketNumber: admittedSeat.ticketNumber,
+          projectRoot: admittedSeat.projectRoot,
+          home: env.home,
+          turnRequest,
+        });
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
-function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
+function notaryAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedNotaryInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedNotaryInvocation> {
   return {
     trySettle: (admitted, authority, scope) => trySettleNotaryTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
@@ -208,6 +226,8 @@ export async function runPublicNotaryResume(
   admitted?: AdmittedNotaryInvocation;
   terminal?: TerminalResult;
 }> {
+  // Mutable shell captured so beforeDispatch can append the dossier pointer.
+  let turnRequest: RoleTurnRequest | undefined;
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -248,12 +268,25 @@ export async function runPublicNotaryResume(
       const prompt = existsSync(candidatePath)
         ? appendResumeMaterialReread(projection.continuation.prompt, candidatePath)
         : projection.continuation.prompt;
-      return buildNotaryTurnRequest(admitted, {
+      turnRequest = buildNotaryTurnRequest(admitted, {
         ...projection,
         continuation: { kind: "resume", prompt },
       });
+      return turnRequest;
     },
-    adapters: notaryAdapters(),
+    adapters: notaryAdapters({
+      beforeDispatch: async (admittedSeat) => {
+        if (turnRequest === undefined) {
+          throw new Error("notary resume beforeDispatch missing turnRequest shell");
+        }
+        await deliverCaseDossierPointerToTurn({
+          ticketNumber: admittedSeat.ticketNumber,
+          projectRoot: admittedSeat.projectRoot,
+          home: env.home,
+          turnRequest,
+        });
+      },
+    }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
