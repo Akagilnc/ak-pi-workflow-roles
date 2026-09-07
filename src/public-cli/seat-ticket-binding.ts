@@ -10,60 +10,16 @@
  * identity already handed over (起居郎 assertion / source-run / already-bound
  * resume) — they do not re-recognize from instruction. No CLI --ticket, no
  * attachment frontmatter. #747: officer same-parent resume also lives here.
+ *
+ * Mechanical verify helpers live on diarist.ts / invocation.ts (sole owners).
+ * This module owns same-ticket / same-parent resume only.
  */
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import {
-  instructionContainsTicketNumber,
-  verifyAssertedTicketNumber,
-  DiaristTicketVerificationError,
-  createGhTicketExistenceChecker,
-  type TicketExistenceChecker,
-} from "../diarist.ts";
-import {
-  bindAdmittedTicketNumber,
-  bindTicketNumberOnRunDirectory,
-  type AdmittedRoleInvocation,
-} from "./invocation.ts";
 import {
   findLatestRunIdForSeatTicket,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
-
-export type SeatTicketBindingEnv = {
-  readonly home: string;
-};
-
-export {
-  instructionContainsTicketNumber,
-  verifyAssertedTicketNumber,
-  DiaristTicketVerificationError,
-  createGhTicketExistenceChecker,
-  bindTicketNumberOnRunDirectory,
-  type TicketExistenceChecker,
-};
-
-/** Bind a typed ticket number onto an admission that is still unbound. */
-export async function bindReusedTicketNumber(
-  admitted: AdmittedRoleInvocation,
-  ticketNumber: number | undefined,
-): Promise<void> {
-  if (ticketNumber === undefined) return;
-  if (admitted.ticketNumber !== undefined) return;
-  await bindAdmittedTicketNumber(admitted, ticketNumber);
-}
-
-/**
- * Already-bound admissions keep their identity; unbound admissions stay unbound.
- * Ticket recognition is the seat LLM's job (assert on output / 起居郎 handoff) —
- * this seam never matches instruction text against book records.
- */
-export async function resolveSeatTicketBinding(
-  admitted: AdmittedRoleInvocation,
-  _env: SeatTicketBindingEnv,
-): Promise<number | undefined> {
-  return admitted.ticketNumber;
-}
 
 /**
  * Sole same-seat → resume decision (#637 / #724 / #747).
