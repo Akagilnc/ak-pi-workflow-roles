@@ -944,7 +944,12 @@ async function materializeConflictedRepo(root: string): Promise<void> {
   }
 }
 
-/** Minimal argv per callable role so the run reaches piRunner (shared fixture). */
+/**
+ * Minimal argv per callable role so the run reaches piRunner (shared fixture).
+ * #747: notary/auditor resume by parent --source-run; this table probes engine
+ * wiring twice against one fixture parent, so mint via `new` (explicit-fresh-summons)
+ * instead of resuming a prior probe that has no durable Pi principal.
+ */
 function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
   switch (role) {
     case "judge":
@@ -959,7 +964,14 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
     case "doctor":
       return [role, "--issue", "1", "--project", project, "engine axis probe"];
     case "notary":
-      return [role, "--source-run", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge", "--project", project];
+      return [
+        "new",
+        role,
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+      ];
     case "countersign":
       return [role, "--project", project, "engine axis probe"];
     case "gleaner-left":
@@ -972,6 +984,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--project", project, "engine axis probe"];
     case "auditor":
       return [
+        "new",
         role,
         "--subject",
         "judge",
