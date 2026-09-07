@@ -169,8 +169,8 @@ export async function runPublicDiarist(
   }
 
   // #637: same ticket → resume this seat's prior run with this summons' materials.
-  // #709 / ADR 0081: reuse book records, or take the caller's sole dispatch token
-  // on a first summons that has not yet minted a volume — no seat recognizer call.
+  // #709 / #771 / ADR 0081: first `#N` in the dispatch is the court target
+  // (neighbors/PRs/rN later in the prose do not unbind) — no seat recognizer call.
   const projectRoot = parsed.project ?? env.cwd;
   const reusedTicketNumber = await resolveDiaristSummonsTicketNumber({
     instruction: parsed.instruction,
