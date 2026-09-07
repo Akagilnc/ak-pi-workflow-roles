@@ -19,6 +19,7 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDiaristInvocation,
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
@@ -36,7 +37,9 @@ import {
   markRunAdmitted,
   readRoleRunIdentity,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   trySettleDiaristTerminalResult,
@@ -51,6 +54,13 @@ import {
 export type DiaristRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * Typed handoff from a caller that already holds a verified ticket key
+   * (countersign refresh / post-assert). Never derived from summons prose.
+   * When set: same-ticket resume under that key, else bind-before-freeze so
+   * issue face enters the catalog (ADR 0075 / 0081).
+   */
+  boundTicketNumber?: number;
 };
 
 /** Frozen catalog filename inside the run dossier (durable material, not argv). */
@@ -173,8 +183,39 @@ export async function runPublicDiarist(
   }
 
   // #637 / #771 / ADR 0075: ticket identity is the LLM's typed assertion on this
-  // turn (mechanical verify on accept). Code never pre-judges the summons text
-  // against book-known numbers. First summons stays unbound until assert.
+  // turn (mechanical verify on accept), OR a typed handoff key already held by
+  // the caller (countersign refresh). Code never pre-judges the summons text
+  // against book-known numbers. First summons without handoff stays unbound
+  // until assert.
+
+  const projectRoot = parsed.project ?? env.cwd;
+  const handoffTicket = env.boundTicketNumber;
+  if (
+    typeof handoffTicket === "number" &&
+    Number.isSafeInteger(handoffTicket) &&
+    handoffTicket >= 1
+  ) {
+    const summons: SameTicketSummonsMaterials = {
+      instruction: parsed.instruction,
+      instructionEmpty: parsed.instruction.trim() === "",
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role: "diarist",
+      ticketNumber: handoffTicket,
+      freshSummons: env.freshSummons,
+      summons,
+      resume: (runId, materials) =>
+        runPublicDiaristResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+  }
 
   let admitted: AdmittedDiaristInvocation;
   try {
@@ -198,6 +239,15 @@ export async function runPublicDiarist(
   }
 
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  // Typed handoff: bind before freeze so issue face enters the catalog.
+  if (
+    typeof handoffTicket === "number" &&
+    Number.isSafeInteger(handoffTicket) &&
+    handoffTicket >= 1
+  ) {
+    await bindAdmittedTicketNumber(admitted, handoffTicket);
+  }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
@@ -240,23 +290,30 @@ export async function runPublicDiarist(
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   }).then(async (result) => {
     // Accept may have bound ticket onto durable pages after LLM assertion.
-    // Mirror into the in-memory admitted object for the caller-visible return.
+    // Mirror only lawful non-escalate accepted terminals — escalate must not
+    // leak an unverified ticketNumber into the caller-visible typed key.
     if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
-      const facts = (
-        result.terminal?.roleOutcome as
-          | { decisiveFacts?: { ticketNumber?: unknown; sitian?: { ticketNumber?: unknown } } }
-          | undefined
-      )?.decisiveFacts;
-      const raw =
-        typeof facts?.ticketNumber === "number"
-          ? facts.ticketNumber
-          : typeof facts?.sitian?.ticketNumber === "number"
-            ? facts.sitian.ticketNumber
-            : undefined;
-      if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-        (admitted as { ticketNumber?: number }).ticketNumber = raw;
-        if (result.admitted.ticketNumber === undefined) {
-          (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+      const roleOutcome = result.terminal?.roleOutcome;
+      if (
+        roleOutcome !== undefined &&
+        roleOutcome.kind === "accepted" &&
+        roleOutcome.status !== "escalate"
+      ) {
+        const facts = roleOutcome.decisiveFacts as {
+          ticketNumber?: unknown;
+          sitian?: { ticketNumber?: unknown };
+        };
+        const raw =
+          typeof facts.ticketNumber === "number"
+            ? facts.ticketNumber
+            : typeof facts.sitian?.ticketNumber === "number"
+              ? facts.sitian.ticketNumber
+              : undefined;
+        if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+          (admitted as { ticketNumber?: number }).ticketNumber = raw;
+          if (result.admitted.ticketNumber === undefined) {
+            (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+          }
         }
       }
     }

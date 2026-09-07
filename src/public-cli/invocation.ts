@@ -515,12 +515,9 @@ export async function bindTicketNumberOnRunDirectory(
       `bindTicketNumberOnRunDirectory refuses to replace existing ticket #${existing} with #${ticketNumber}`,
     );
   }
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...admitted, ticketNumber }, null, 2)}\n`,
-    "utf8",
-  );
-  await mergeInvocationIdentityPage(runDirectory, { ticketNumber });
+  // Conflict guard before any write: crash window of bindAdmittedTicketNumber
+  // can leave invocation bound while admitted-request is still unbound — refuse
+  // silent rebind. Read-before-merge; never check the page just overwritten.
   if (existsSync(invocationPath)) {
     const invocation = JSON.parse(
       await readFile(invocationPath, "utf8"),
@@ -534,6 +531,12 @@ export async function bindTicketNumberOnRunDirectory(
       );
     }
   }
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...admitted, ticketNumber }, null, 2)}\n`,
+    "utf8",
+  );
+  await mergeInvocationIdentityPage(runDirectory, { ticketNumber });
 }
 
 /** Add the identity returned by the production Pi launch seam to its existing ledger page. */
