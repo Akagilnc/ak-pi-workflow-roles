@@ -1,6 +1,6 @@
 # 0075 — 司天台每票起居录（ticket-provenance）与起居郎（角色）
 
-Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e46b-7e1b-8d5d-cb618de4c1ae` countersignStatus=converged 全票全审第七轮署；decision keys 与绑定原话见 #582；**2026-09-06 原地修正**：起居郎建制为角色，删调用顺序键，见 #708 r2 修订（#582 已关）与下表 `diarist-is-role` / `no-call-rule`；陛下「直接修正老的adr。我不认为让adr越来越多有什么好处」）
+Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e46b-7e1b-8d5d-cb618de4c1ae` countersignStatus=converged 全票全审第七轮署；decision keys 与绑定原话见 #582；**2026-09-06 原地修正**：起居郎建制为角色，见 #708 r2 修订（#582 已关）与下表 `diarist-is-role`；**2026-09-07 #742**：`no-call-rule` 键值回到 L108274/L108315 射程；陛下「直接修正老的adr。我不认为让adr越来越多有什么好处」）
 
 ## 承继 / 修正关系
 
@@ -19,7 +19,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 | `notary-inner-gate` | 符宝郎挂给事中交卷闸 | 「1 肯定是a」 |
 | `no-global-ticket-flag` | 不加全局 --ticket；给事中/符宝郎可有 | 「我认为不需要改目前的调用方式也能知道做的是哪张票。只有给事中这种明确审票的衙门才需要这个参数。符宝郎也可以要」 |
 | `diarist-is-role` | 起居郎＝LLM 角色：soul、席位表一行、公开入口、交卷工具、同一调用路径同一卷宗；「非公开席」表述作废（2026-09-06） | 「起居录的生成我觉得应该是一个机械角色/llm角色。 起居郎」（08-31）＋「老子是不是说过一切都是角色！你们又给我造出一个不是角色的角色！」＋「肯定是llm」（09-06，卷 47ef0224 L107237 / L108267） |
-| `no-call-rule` | 不规定谁调用起居郎、不规定先后，组合与顺序归调用者（[ADR 0010](0010-callers-own-role-composition-and-repetition.md)）；原 `diarist-before-countersign` 键删除（2026-09-06） | 「不准规定调用，理论上任何角色都可以被调用。没有什么不能调用这种规矩」＋「不需要写这个顺序。这个顺序是调用者决定的…以后我要改到别的地方还要来改adr吗？」（09-06，L108274 / L108315） |
+| `no-call-rule` | 不规定谁调用起居郎、不把顺序写进法；组合与顺序归调用者（[ADR 0010](0010-callers-own-role-composition-and-repetition.md)） | 「不准规定调用，理论上任何角色都可以被调用。没有什么不能调用这种规矩」＋「不需要写这个顺序。这个顺序是调用者决定的…以后我要改到别的地方还要来改adr吗？」（09-06，L108274 / L108315） |
 | `refresh-every-court` | 每次过庭都跑（增量幂等） | （对「每次受理都跑」荐案）「行。先这样。派给事中审票吧」 |
 | `no-backfill` | 存量票不补档 | 「8 不补了」 |
 | `names` | 起居录 / `diarist` / `ticket-provenance` | 「9 可以」 |

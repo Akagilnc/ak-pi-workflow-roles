@@ -36,10 +36,15 @@ import {
   formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
+import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
+// #675: nested public summons (gate/auditor) resolve root via env under jiti.
+if (process.env.AK_ROLE_PACKAGE_ROOT === undefined || process.env.AK_ROLE_PACKAGE_ROOT.trim() === "") {
+  process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
+}
 
 // Cold `pi -e <extension> --help` must cover installed-package process startup under CI load.
 // This bound is process-startup budget only — not settlement-to-visible presentation latency.
@@ -127,9 +132,11 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
+    loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
+    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

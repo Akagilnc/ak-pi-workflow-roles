@@ -525,7 +525,8 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind !== "failure") return;
-    assert.equal(result.terminal!.roleOutcome.cause, "output");
+    // Host infrastructure terminating-tool failure keeps activation cause — not shape-output (#675).
+    assert.equal(result.terminal!.roleOutcome.cause, "activation");
     assert.equal(result.terminal!.roleOutcome.diagnostic, "pi host could not load its runtime");
     assert.equal(JSON.stringify(result.terminal).includes("VARIABLE DECOY"), false);
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");

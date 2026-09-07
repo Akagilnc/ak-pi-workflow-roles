@@ -1,6 +1,5 @@
 /**
- * #582 / ADR 0075 — diarist pure mechanical + collector parse (no fs/git).
- * runDiarist hermetic cases live in test/integration/diarist-run.test.ts.
+ * #582 / ADR 0075 — diarist pure mechanical band (no fs/git).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -14,10 +13,6 @@ import {
   type DiaristSourceBlock,
 } from "../../src/diarist-mechanical.ts";
 import { extractReferencedAdrPaths } from "../../src/adr-path-refs.ts";
-import {
-  DiaristLlmStdoutError,
-  parseDiaristLlmStdout,
-} from "../../src/diarist-llm-collector.ts";
 
 function block(
   partial: Partial<DiaristSourceBlock> &
@@ -118,67 +113,4 @@ test("extractReferencedAdrPaths keeps docs/adr shapes; drops traversal claims", 
     ),
     [],
   );
-});
-
-test("parseDiaristLlmStdout consumes sole selections object; ignores unknown fields", () => {
-  const stdout = JSON.stringify({
-    extraTop: true,
-    selections: [
-      {
-        candidateIndex: 0,
-        quotes: ["hello"],
-        triage: "relevant",
-        unknownRow: 1,
-      },
-      { candidateIndex: 1, quotes: [] },
-    ],
-  });
-  const parsed = parseDiaristLlmStdout(stdout, 2);
-  assert.equal(parsed.length, 2);
-  assert.equal(parsed[0]!.candidateIndex, 0);
-  assert.deepEqual(parsed[0]!.quotes, ["hello"]);
-  assert.equal(parsed[0]!.triage, "relevant");
-  assert.equal(parsed[1]!.candidateIndex, 1);
-  assert.deepEqual(parsed[1]!.quotes, []);
-});
-
-test("parseDiaristLlmStdout fails honestly on empty/malformed/missing/alias shapes", () => {
-  const cases: Array<{ stdout: string; reason: string; count?: number }> = [
-    { stdout: "", reason: "empty-stdout" },
-    { stdout: "not-json", reason: "unparseable-json" },
-    { stdout: "[]", reason: "not-object" },
-    { stdout: "{}", reason: "selections-missing" },
-    { stdout: '{"selections":"x"}', reason: "selections-wrong-type" },
-    {
-      stdout: JSON.stringify({ selections: [{ index: 0, quote: "x" }] }),
-      reason: "selection-uninterpretable",
-      count: 1,
-    },
-    {
-      stdout: JSON.stringify({
-        selections: [{ candidateIndex: 0, quotes: "not-array" }],
-      }),
-      reason: "selection-uninterpretable",
-      count: 1,
-    },
-    {
-      stdout: JSON.stringify({
-        selections: [{ candidateIndex: 99, quotes: [] }],
-      }),
-      reason: "selection-uninterpretable",
-      count: 1,
-    },
-    {
-      stdout: "```json\n{\"selections\":[]}\n```",
-      reason: "unparseable-json",
-    },
-  ];
-  for (const c of cases) {
-    assert.throws(
-      () => parseDiaristLlmStdout(c.stdout, c.count ?? 2),
-      (error: unknown) =>
-        error instanceof DiaristLlmStdoutError && error.reason === c.reason,
-      `expected ${c.reason} for ${JSON.stringify(c.stdout).slice(0, 40)}`,
-    );
-  }
 });

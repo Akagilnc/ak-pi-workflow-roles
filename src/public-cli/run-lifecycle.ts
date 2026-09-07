@@ -10,7 +10,7 @@ import type {
  * Prose is never regex-classified as quota evidence.
  */
 import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
@@ -44,6 +44,7 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
+  type AdmittedDiaristInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
@@ -95,7 +96,9 @@ export type RoleRunRecord = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "auditor"
+    | "diarist";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -153,18 +156,66 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
+function resumeRereadInstruction(materialPath: string, handbook: boolean): string {
+  return handbook
+    ? `重新读 ${materialPath}，再组装外包 argv`
+    : `重新读 ${materialPath}`;
+}
+
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471 / #600).
+ * Resume-only material lines (#736 ticket exemption to ADR 0073 §3).
+ * Neutral `- <absolute path>` pointers already on the continuation
+ * (handbook from appendEngineSessionMaterial; frozen attachments from
+ * instruction-seat transport) become reread instructions.
+ * Handbook keeps the argv suffix; other materials are path-only.
+ * First-round delivery is unchanged; never pastes material body.
+ */
+export function instructResumeHandbookRead(
+  prompt: string,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const handbookPath = engineMaterial?.materialPath;
+  return prompt
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("- ")) return line;
+      const value = line.slice(2);
+      if (handbookPath !== undefined && value === handbookPath) {
+        return resumeRereadInstruction(handbookPath, true);
+      }
+      if (isAbsolute(value)) return resumeRereadInstruction(value, false);
+      return line;
+    })
+    .join("\n");
+}
+
+/** Append a live-path reread instruction when the pointer is not already on the continuation. */
+export function appendResumeMaterialReread(
+  prompt: string,
+  materialPath: string,
+): string {
+  const instruction = resumeRereadInstruction(materialPath, false);
+  const lines = prompt.split("\n");
+  if (lines.includes(instruction)) return prompt;
+  return prompt.length === 0 ? instruction : `${prompt}\n${instruction}`;
+}
+
+/**
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600 / #736).
  * Message present → base bytes unchanged; absent → package transport envelope.
- * When engine material is present, append structured engine coordinates (same
- * delivery as initial transport prompts). Zero parse, zero classify, zero narrow.
+ * When engine material is present, append structured engine coordinates then
+ * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
+ * zero classify, zero narrow. Pointer only — never material body.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+  return instructResumeHandbookRead(
+    appendEngineSessionMaterial([base], engineMaterial).join("\n"),
+    engineMaterial,
+  );
 }
 
 /**
@@ -348,7 +399,9 @@ async function readRoleRunStateDisk(
     record.role !== "gleaner-left" &&
     record.role !== "inspector" &&
     record.role !== "gatekeeper" &&
-    record.role !== "navigator"
+    record.role !== "navigator" &&
+    record.role !== "auditor" &&
+    record.role !== "diarist"
   ) {
     return undefined;
   }
@@ -997,9 +1050,52 @@ export async function findRunDirectoryById(
   return undefined;
 }
 
+/** Code-owned gate inspector summons prefix (public-role-summons / #747). */
+export const GATE_DOSSIER_POINTER_PREFIX = "卷宗指针：" as const;
+
+/** Parent path from a code-owned inspector 卷宗指针 instruction; else undefined. */
+export function parentRunPathFromGatePointerInstruction(
+  instruction: string,
+): string | undefined {
+  if (!instruction.startsWith(GATE_DOSSIER_POINTER_PREFIX)) return undefined;
+  const path = instruction.slice(GATE_DOSSIER_POINTER_PREFIX.length).trim();
+  return path === "" ? undefined : path;
+}
+
 /**
- * Locate the latest retained run for one seat+ticket under a book (#637).
- * Same walk surface as findRunDirectoryById; ticket identity from durable pages.
+ * Parent-run binding on a retained officer run (#747).
+ * Notary/auditor: typed sourceRunPath. Inspector: exact code-owned 卷宗指针 instruction.
+ * Missing page → undefined; damage / non-ENOENT IO propagates.
+ */
+export async function readRunParentPath(
+  runDirectory: string,
+): Promise<string | undefined> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    );
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
+    return record.sourceRunPath;
+  }
+  if (typeof record.instruction === "string") {
+    return parentRunPathFromGatePointerInstruction(record.instruction);
+  }
+  return undefined;
+}
+
+/**
+ * Locate the latest retained run for one seat under a book (#637 / #747).
+ * Same walk surface as findRunDirectoryById. Match by parent run path (officer
+ * seats, #747) or by ticket number (countersign / diarist principal).
  * runId is UUIDv7 — lexicographic max is latest. No parallel index.
  * Only a truly missing runs directory means no history; damage/permission errors propagate.
  */
@@ -1007,7 +1103,8 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber: number;
+  readonly ticketNumber?: number;
+  readonly parentRunPath?: string;
 }): Promise<string | undefined> {
   const ledgerHome = resolveActivationLedgerHome(input.home);
   const runsDir = join(
@@ -1027,11 +1124,50 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (!entry.endsWith(suffix)) continue;
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
-    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
-    if (ticketNumber !== input.ticketNumber) continue;
+    const runDirectory = join(runsDir, entry);
+    if (input.parentRunPath !== undefined) {
+      const parentPath = await readRunParentPath(runDirectory);
+      if (parentPath !== input.parentRunPath) continue;
+    } else if (input.ticketNumber !== undefined) {
+      const ticketNumber = await readRunTicketNumber(runDirectory);
+      if (ticketNumber !== input.ticketNumber) continue;
+    } else {
+      continue;
+    }
     if (best === undefined || runId > best) best = runId;
   }
   return best;
+}
+
+/**
+ * Ticket identities this book's retained runs already record (#709).
+ * Read-only reuse surface for seat ticket binding — no ticket number is minted here.
+ */
+export async function collectBookRunTicketNumbers(input: {
+  readonly home: string;
+  readonly bookKey: string;
+}): Promise<ReadonlySet<number>> {
+  const ledgerHome = resolveActivationLedgerHome(input.home);
+  const runsDir = join(
+    activationBookDirectory(ledgerHome, input.bookKey),
+    "runs",
+  );
+  let entries: string[];
+  try {
+    entries = await readdir(runsDir);
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return new Set();
+    throw error;
+  }
+  const known = new Set<number>();
+  for (const entry of entries) {
+    // runs/ also holds non-run files (institutional-resolution.json, Finder
+    // .DS_Store); only `<runId>@<role>` directories are runs (#769).
+    if (!entry.includes("@")) continue;
+    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
+    if (ticketNumber !== undefined) known.add(ticketNumber);
+  }
+  return known;
 }
 
 type LoadedAdmittedRequestFields = {
@@ -1049,8 +1185,6 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
-  /** Durable seat LLM true-unbound conclusion (#635); restored on resume. */
-  readonly ticketResolution?: "true-unbound";
   /** Collector — admitted repository/PR identity restored on resume (#633). */
   readonly prNumber?: number;
   readonly repository?: string;
@@ -1074,7 +1208,6 @@ function parsePersistedTicketIdentity(
 ): {
   correlationId?: string;
   ticketNumber?: number;
-  ticketResolution?: "true-unbound";
 } {
   const correlationId =
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
@@ -1086,26 +1219,19 @@ function parsePersistedTicketIdentity(
     record.ticketNumber >= 1
       ? record.ticketNumber
       : undefined;
-  const ticketResolution =
-    record.ticketResolution === "true-unbound" ? "true-unbound" : undefined;
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
-    ...(ticketResolution === undefined ? {} : { ticketResolution }),
   };
 }
 
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
-  ticketResolution?: "true-unbound";
 } {
   return {
     ...(fields.correlationId === undefined ? {} : { correlationId: fields.correlationId }),
     ...(fields.ticketNumber === undefined ? {} : { ticketNumber: fields.ticketNumber }),
-    ...(fields.ticketResolution === undefined
-      ? {}
-      : { ticketResolution: fields.ticketResolution }),
   };
 }
 
@@ -1155,7 +1281,6 @@ async function loadResumableRunRecord(
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
-  let ticketResolution: "true-unbound" | undefined;
   let prNumber: number | undefined;
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
@@ -1315,7 +1440,6 @@ async function loadResumableRunRecord(
       const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
-      ticketResolution = fromAdmitted.ticketResolution;
     }
   } catch (error) {
     // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
@@ -1345,17 +1469,10 @@ async function loadResumableRunRecord(
             : {}),
         };
       }
-      if (
-        correlationId === undefined ||
-        ticketNumber === undefined ||
-        ticketResolution === undefined
-      ) {
+      if (correlationId === undefined || ticketNumber === undefined) {
         const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
-        if (ticketResolution === undefined) {
-          ticketResolution = fromInvocation.ticketResolution;
-        }
       }
     }
   } catch (error) {
@@ -1391,7 +1508,6 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
-      ...(ticketResolution === undefined ? {} : { ticketResolution }),
       ...(prNumber === undefined ? {} : { prNumber }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
@@ -1444,8 +1560,17 @@ export type LoadedResumableGleanerLeftRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableDiaristRun = {
+  readonly admitted: AdmittedDiaristInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 export type LoadedResumableInstructionSeatRun = {
-  readonly admitted: AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  readonly admitted:
+    | AdmittedGatekeeperInvocation
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
   readonly run: RoleRunRecord;
   readonly observation?: TypedHttp429Observation;
 };
@@ -1637,7 +1762,7 @@ export async function loadResumableReviewerRun(
 
 /**
  * Load a resumable Countersign run for resume (#599). Ticket binding and
- * attachments restore from the admitted request; diarist does not re-run.
+ * attachments restore from the admitted request.
  */
 export async function loadResumableCountersignRun(
   home: string,
@@ -1667,7 +1792,11 @@ export async function loadResumableInstructionSeatRun(
   authority: DurablePrincipalAuthority,
 ): Promise<LoadedResumableInstructionSeatRun> {
   const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "gatekeeper" && loaded.run.role !== "navigator") {
+  if (
+    loaded.run.role !== "gatekeeper"
+    && loaded.run.role !== "navigator"
+    && loaded.run.role !== "auditor"
+  ) {
     throw new CliUsageError(
       `role run ${runId} belongs to ${loaded.run.role}, not an instruction seat`,
     );
@@ -1675,7 +1804,10 @@ export async function loadResumableInstructionSeatRun(
   const admitted = {
     role: loaded.run.role,
     ...resumedBaseAdmitted(loaded),
-  } as AdmittedGatekeeperInvocation | AdmittedNavigatorInvocation;
+  } as
+    | AdmittedGatekeeperInvocation
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
   return seatLoadedResult(loaded, admitted);
 }
 
@@ -1700,6 +1832,24 @@ export async function loadResumableGleanerLeftRun(
     role: "gleaner-left",
     ...resumedBaseAdmitted(loaded),
     baseRevision,
+  };
+  return seatLoadedResult(loaded, admitted);
+}
+
+export async function loadResumableDiaristRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableDiaristRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "diarist") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not diarist`,
+    );
+  }
+  const admitted: AdmittedDiaristInvocation = {
+    role: "diarist",
+    ...resumedBaseAdmitted(loaded),
   };
   return seatLoadedResult(loaded, admitted);
 }
@@ -1929,6 +2079,8 @@ export async function peekRoleRunRole(
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "auditor"
+  | "diarist"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

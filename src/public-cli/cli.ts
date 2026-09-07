@@ -51,6 +51,7 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
+  parseDiaristArgv,
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
@@ -59,6 +60,7 @@ import {
   parseInspectorArgv,
   parseMergerArgv,
   parseNavigatorArgv,
+  parseAuditorArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -78,6 +80,7 @@ import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -126,6 +129,8 @@ const RESUME_SEAT_DISPATCH: Record<
   inspector: { seat: "inspector", run: runPublicInspectorResume },
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+  auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
+  diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -168,6 +173,8 @@ export const PUBLIC_ROLE_ARGV = {
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
+  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
+  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -1311,6 +1318,31 @@ export async function runAkRole(
       };
     }
 
+    // Diarist public run path (#708): 起居郎 is summoned like any other seat.
+    if (parsed.command === "diarist") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "diarist",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicDiarist(
+        parsed.args,
+        createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.diarist.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
     // Coder public run path with package-owned TDD method (#109).
     if (parsed.command === "coder") {
       const agentDir = resolveAgentDir(env, home);
@@ -1510,9 +1542,12 @@ export async function runAkRole(
       };
     }
 
-    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
-    // a role like any other; one parameterized branch for both.
-    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
+    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor.
+    if (
+      parsed.command === "gatekeeper"
+      || parsed.command === "navigator"
+      || parsed.command === "auditor"
+    ) {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
@@ -1529,9 +1564,7 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
         parsed.command,
-        parsed.command === "gatekeeper"
-          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
-          : PUBLIC_ROLE_ARGV.navigator.parse,
+        PUBLIC_ROLE_ARGV[parsed.command].parse,
       );
       return {
         exitCode: result.exitCode,

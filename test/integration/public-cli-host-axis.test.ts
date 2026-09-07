@@ -277,8 +277,12 @@ process.exit(0);
   assert.ok(books.length >= 1);
   const runsRoot = join(booksRoot, books[0]!, "runs");
   const runs = await readdir(runsRoot);
-  assert.equal(runs.length, 1);
-  const children = await readdir(join(runsRoot, runs[0]!));
+  // #717: this turn is sitian-only (no run-scoped grok-home). #675 nested public
+  // navigator attendance may mint sibling role runs; the grok isolation contract
+  // is on the judge run, not on book-wide run count.
+  const judgeRuns = runs.filter((name) => name.endsWith("@judge"));
+  assert.equal(judgeRuns.length, 1);
+  const children = await readdir(join(runsRoot, judgeRuns[0]!));
   assert.equal(children.some((name) => name.endsWith("-home")), false);
   const dumped = JSON.parse(await readFile(envDump, "utf8")) as NodeJS.Dict<string>;
   assert.equal(dumped.HOME, process.env.HOME);
