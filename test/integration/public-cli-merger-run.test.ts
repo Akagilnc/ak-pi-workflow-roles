@@ -38,6 +38,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
+  withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
 import { Type } from "typebox";
 
@@ -369,12 +370,14 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
     createRunId: () => runId,
     credentials: { "openai-codex": true, xai: false },
     io,
-    roleTurnHost: hostNeutralTypedTurn({
-      role: row.role,
-      runId,
-      details,
-      ...(sessionLines === undefined ? {} : { sessionLines }),
-    }),
+    roleTurnHost: withNestedTrueUnboundDiarist(
+      hostNeutralTypedTurn({
+        role: row.role,
+        runId,
+        details,
+        ...(sessionLines === undefined ? {} : { sessionLines }),
+      }),
+    ),
   });
   return { result, runId, stderr: stderr.join("") };
 }

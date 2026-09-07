@@ -24,7 +24,6 @@ import {
   buildFixerTransportPrompt,
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
   buildResumeContinuationPrompt,
   loadResumableFixerRun,
@@ -214,12 +213,7 @@ export async function runPublicFixer(
           }),
         },
       }),
-    adapters: {
-      ...fixerAdapters(env.packageRoot, methodMaterial),
-      beforeDispatch: async (admittedSeat) => {
-        await resolveSeatTicketBinding(admittedSeat, env);
-      },
-    },
+    adapters: fixerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
