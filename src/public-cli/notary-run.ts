@@ -52,6 +52,11 @@ export type NotaryRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — external callers still have zero prompt.
    */
   reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -115,14 +120,16 @@ export async function runPublicNotary(
     throw error;
   }
   // #747: officer resume key is this parent source-run path (not ticket number).
-  // #753: gate re-ask rides the same summons.instruction field (no parallel stack).
+  // #753: gate re-ask and new-submission pointers share summons.instruction
+  // (reask wins when both present; no parallel stack).
   {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
-      ...(env.reviewReask === undefined
+      ...(resumeInstruction === undefined
         ? {}
-        : { instruction: env.reviewReask, instructionEmpty: false }),
+        : { instruction: resumeInstruction, instructionEmpty: false }),
     };
     const resumed = await tryResumeSameTicketSeatRun({
       home: env.home,
@@ -141,6 +148,7 @@ export async function runPublicNotary(
     if (resumed !== undefined) return resumed;
     // Reask without a prior same-parent run cannot deliver the plain-language ask
     // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    // gateReviewInstruction alone is resume-only materials; fresh mint ignores it.
     if (env.reviewReask !== undefined) {
       presentStructuralRejection(
         new CliUsageError(

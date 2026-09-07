@@ -243,6 +243,10 @@ export type DirectOfficerRunPointer = {
  * Book a typed pointer under parent session/auditor-roles (same nest owner as
  * createRecordSession). Never fabricates user/assistant/toolResult rows (#675).
  * Directory placement stays with the archivist record entry (ADR 0018 / 0065).
+ *
+ * Stable leaf per officer under one parent (#753 gate-round accounting):
+ * same-parent re-summons upsert the same pointer instead of minting N files that
+ * each re-scan the full officer session and multiply terminal gate-round counts.
  */
 export function bookDirectOfficerRunPointer(options: {
   readonly parentSessionFile: string;
@@ -262,7 +266,7 @@ export function bookDirectOfficerRunPointer(options: {
       : {}),
   };
   writeFileSync(
-    join(nest, `${options.officer}-${Date.now().toString(36)}.pointer.json`),
+    join(nest, `${options.officer}.pointer.json`),
     `${JSON.stringify(pointer)}\n`,
     "utf8",
   );
