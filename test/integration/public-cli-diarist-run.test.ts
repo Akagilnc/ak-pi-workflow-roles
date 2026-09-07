@@ -45,7 +45,7 @@ const TICKET = 708;
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => {
     const binDir = join(home, "bin");
-    // Issue face only — ticket identity is the caller's sole dispatch token (#709).
+    // Issue face only — ticket identity is the caller's first `#N` (#709 / #771).
     await installGhFixture(binDir, {
       issues: {
         [TICKET]: {

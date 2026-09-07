@@ -1,12 +1,12 @@
 /**
- * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747).
- * One path: unbound admission → reuse a ticket number this book already records
- * (retained run pages + 起居录 volumes) → bindAdmittedTicketNumber.
- * ADR 0081 `reuse-case-ticket-without-extra-llm`: no seat-side model call, no
- * second ticket-number source of truth, no minting a number from human titles.
- * Nothing matched is not 真无票 — the run simply stays unbound, which is lawful.
- * No CLI --ticket and no attachment frontmatter binding.
- * #747: officer same-parent resume also lives here (shared seam).
+ * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747 / #771).
+ * Court target = first `#N` in the summons instruction. Other seats reuse that
+ * number only when this book already records it (retained run pages + 起居录
+ * volumes); 起居郎 takes it as the caller-supplied identity on a first summons
+ * (ADR 0081 `initial-court-ticket-supplied`). No seat-side model call, no second
+ * ticket-number source of truth, no minting from human titles. No `#N` leaves
+ * the run unbound (真无票), which is lawful. No CLI --ticket and no attachment
+ * frontmatter binding. #747: officer same-parent resume also lives here.
  */
 import { existsSync } from "node:fs";
 
@@ -31,28 +31,32 @@ export type SeatTicketBindingEnv = {
 };
 
 /**
- * Complete decimal ticket tokens in an instruction.
- * A digit run is one token: `82` inside `#582` is not 82, and a leading zero
- * makes the run a different literal than the ticket number it would parse to.
+ * Hash-marked ticket references in an instruction, in order of first appearance.
+ * `#582` is one token; a leading-zero run is not a ticket literal; bare digit
+ * runs (`r1`, `D2`, sha islands, counts) are not ticket references. Callers name
+ * the court target as the first `#N` (ADR 0081 `initial-court-ticket-supplied`).
  */
 export function instructionTicketTokens(
   instruction: string,
 ): readonly number[] {
-  const tokens = new Set<number>();
-  for (const run of instruction.match(/\d+/g) ?? []) {
-    if (run.startsWith("0")) continue;
-    const parsed = Number(run);
-    if (!Number.isSafeInteger(parsed) || parsed < 1) continue;
-    tokens.add(parsed);
+  const tokens: number[] = [];
+  const seen = new Set<number>();
+  for (const match of instruction.matchAll(/#([1-9]\d*)/g)) {
+    const parsed = Number(match[1]);
+    if (!Number.isSafeInteger(parsed)) continue;
+    if (seen.has(parsed)) continue;
+    seen.add(parsed);
+    tokens.push(parsed);
   }
-  return [...tokens];
+  return tokens;
 }
 
 /**
- * Ticket identity this summons reuses, or undefined when none is unambiguous.
- * Known identities come only from records this book already holds: 起居录 volume
- * partitions and ticket numbers on retained run pages. Zero or several known
- * tokens in the instruction leave the run unbound — never guess, never fail.
+ * Ticket identity this summons reuses, or undefined when the court target is not
+ * already on this book. The first `#N` is the court target; later `#N` are
+ * neighbors/PRs and never steal the bind. Known identities come only from
+ * records this book already holds: 起居录 volume partitions and ticket numbers
+ * on retained run pages. Nothing matched leaves the run unbound — never guess.
  */
 export async function resolveKnownTicketNumber(input: {
   readonly instruction: string;
@@ -62,31 +66,22 @@ export async function resolveKnownTicketNumber(input: {
 }): Promise<number | undefined> {
   const tokens = instructionTicketTokens(input.instruction);
   if (tokens.length === 0) return undefined;
-  const known: number[] = [];
-  let runTickets: ReadonlySet<number> | undefined;
-  for (const token of tokens) {
-    const volume = resolveTicketProvenanceVolume(
-      token,
-      input.projectRoot,
-      input.home,
-    );
-    if (existsSync(volume.volumeDir)) {
-      known.push(token);
-      continue;
-    }
-    if (runTickets === undefined) {
-      runTickets = await readBookRunTickets(input);
-    }
-    if (runTickets.has(token)) known.push(token);
-  }
-  return known.length === 1 ? known[0] : undefined;
+  const target = tokens[0]!;
+  const volume = resolveTicketProvenanceVolume(
+    target,
+    input.projectRoot,
+    input.home,
+  );
+  if (existsSync(volume.volumeDir)) return target;
+  const runTickets = await readBookRunTickets(input);
+  return runTickets.has(target) ? target : undefined;
 }
 
 /**
- * Diarist first-summons identity (ADR 0081 `initial-court-ticket-supplied`).
- * Prefer a book-known reuse; when the book has no record yet, the sole complete
- * decimal token in the caller's dispatch is the supplied ticket — the working
- * 起居郎 round establishes the volume. Several tokens or none stay unbound.
+ * Diarist summons identity (ADR 0081 `initial-court-ticket-supplied`).
+ * The first `#N` in the caller's dispatch is the supplied court target — the
+ * working 起居郎 round establishes the volume on a first summons; later `#N`
+ * (neighbors, PR numbers) do not unbind it. No `#N` stays unbound (真无票).
  * Not a second ticket-number source of truth and not an extra recognizer call.
  */
 export async function resolveDiaristSummonsTicketNumber(input: {
@@ -95,10 +90,8 @@ export async function resolveDiaristSummonsTicketNumber(input: {
   readonly home: string;
   readonly bookKey?: string;
 }): Promise<number | undefined> {
-  const known = await resolveKnownTicketNumber(input);
-  if (known !== undefined) return known;
   const tokens = instructionTicketTokens(input.instruction);
-  return tokens.length === 1 ? tokens[0] : undefined;
+  return tokens[0];
 }
 
 /**
