@@ -122,10 +122,3 @@ export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   return projected;
 }
 
-/** #757: submitted fields pass through — no whitelist drop. */
-export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
-  return {
-    ...(output as unknown as Record<string, unknown>),
-    officer: "notary",
-  };
-}

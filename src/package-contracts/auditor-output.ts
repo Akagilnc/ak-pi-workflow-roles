@@ -69,7 +69,3 @@ export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
   return projected;
 }
 
-/** #757: submitted fields pass through — no field drop. */
-export function auditorDecisiveFacts(output: AuditorOutput): Record<string, unknown> {
-  return { ...(output as unknown as Record<string, unknown>) };
-}

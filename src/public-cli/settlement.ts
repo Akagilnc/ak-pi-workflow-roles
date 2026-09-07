@@ -56,31 +56,25 @@ import {
 } from "../package-contracts/judge-output.ts";
 import {
   COLLECTOR_OUTPUT_TOOL,
-  validateAcceptedCollectorReceipt,
   type CollectorReceipt,
 } from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
-  validateAcceptedCoderDetails,
-  validateFixerOutput,
   type CoderOutput,
   type FixerOutput,
 } from "../package-contracts/worker-output.ts";
 import { validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
-  validateRecordedDoctorOutput,
   type DoctorOutput,
 } from "../doctor-contracts.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
-  validateRuntimeReviewerReceipt,
   type RuntimeReviewerReceiptV2,
 } from "../package-contracts/reviewer-output.ts";
 import {
   MERGER_OUTPUT_TOOL_NAME,
-  validateMergerOutput,
   type MergerOutput,
 } from "../merger-contracts.ts";
 import {
@@ -1483,90 +1477,14 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   }
 }
 
-/**
- * Pass-through terminal facts (#757 / #750).
- * Submitted receipt fields ride as decisiveFacts — no whitelist, no drop, no
- * shape judgment. status remains the sole execution discriminator when present.
- */
-function passthroughDecisiveFacts(
-  candidate: object,
-  statusKey?: string,
-  statusValue?: string,
+/** Keep optional auditNoReceipt parallel fact when present on sealed details. */
+function withAuditNoReceiptFacts(
+  candidate: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
-  const facts: Record<string, unknown> = {
-    ...(candidate as Record<string, unknown>),
+  return {
+    ...candidate,
     ...auditNoReceiptDecisiveFact(candidate),
   };
-  if (statusKey !== undefined && statusValue !== undefined) {
-    facts[statusKey] = statusValue;
-  }
-  return facts;
-}
-
-function countersignDecisiveFacts(
-  verdict: object,
-  countersignStatus: string,
-): Record<string, unknown> {
-  return passthroughDecisiveFacts(verdict, "countersignStatus", countersignStatus);
-}
-
-function judgeDecisiveFacts(
-  verdict: object,
-  judgeStatus: string,
-): Record<string, unknown> {
-  return passthroughDecisiveFacts(verdict, "judgeStatus", judgeStatus);
-}
-
-function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
-  const candidate = output as unknown as object;
-  const status = safelyRead(candidate, "status");
-  const statusValue = status.readable && typeof status.value === "string" ? status.value : undefined;
-  return passthroughDecisiveFacts(
-    candidate,
-    statusValue === undefined ? undefined : "coderStatus",
-    statusValue,
-  );
-}
-
-function fixerDecisiveFacts(output: FixerOutput): Record<string, unknown> {
-  const candidate = output as unknown as object;
-  const status = safelyRead(candidate, "status");
-  const statusValue = status.readable && typeof status.value === "string" ? status.value : undefined;
-  return passthroughDecisiveFacts(
-    candidate,
-    statusValue === undefined ? undefined : "fixerStatus",
-    statusValue,
-  );
-}
-
-function collectorDecisiveFacts(
-  receipt: CollectorReceipt,
-): Record<string, unknown> {
-  return passthroughDecisiveFacts(receipt as unknown as object);
-}
-
-function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
-  const candidate = output as unknown as object;
-  const status = safelyRead(candidate, "status");
-  const statusValue = status.readable && typeof status.value === "string" ? status.value : undefined;
-  return passthroughDecisiveFacts(
-    candidate,
-    statusValue === undefined ? undefined : "doctorStatus",
-    statusValue,
-  );
-}
-
-function reviewerDecisiveFacts(
-  output: RuntimeReviewerReceiptV2,
-): Record<string, unknown> {
-  const candidate = output as unknown as object;
-  const status = safelyRead(candidate, "status");
-  const statusValue = status.readable && typeof status.value === "string" ? status.value : undefined;
-  return passthroughDecisiveFacts(
-    candidate,
-    statusValue === undefined ? undefined : "reviewerStatus",
-    statusValue,
-  );
 }
 
 /**
@@ -2515,7 +2433,8 @@ export async function readLawfulJudgeRoleOutcome(
       kind: "accepted",
       role: "judge",
       status: sealed.status,
-      decisiveFacts: judgeDecisiveFacts(details, sealed.status),
+      // #757: sealed details pass through (judgeStatus already on the receipt).
+      decisiveFacts: withAuditNoReceiptFacts(details),
     };
   }
   // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
@@ -2598,17 +2517,12 @@ async function settleLawfulCoderTerminalResult(
 ): Promise<TerminalResult | undefined> {
   const ledgerOutcome = await closedLedgerOutcome(admitted, "coder");
   if (ledgerOutcome === undefined) return undefined;
-  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  let output: CoderOutput | undefined;
-  if (ledgerOutcome.kind === "accepted") {
-    output = validateAcceptedCoderDetails(ledgerOutcome.decisiveFacts);
-    roleOutcome = {
-      kind: "accepted",
-      role: "coder",
-      status: ledgerOutcome.status,
-      decisiveFacts: coderDecisiveFacts(output),
-    };
-  }
+  // #757: sealed facts pass through — no shape re-project / field drop.
+  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
+  const output: CoderOutput | undefined =
+    ledgerOutcome.kind === "accepted"
+      ? (ledgerOutcome.decisiveFacts as unknown as CoderOutput)
+      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
@@ -2786,17 +2700,12 @@ async function settleLawfulFixerTerminalResult(
 ): Promise<TerminalResult | undefined> {
   const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer");
   if (ledgerOutcome === undefined) return undefined;
-  let roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  let output: FixerOutput | undefined;
-  if (ledgerOutcome.kind === "accepted") {
-    output = validateFixerOutput(ledgerOutcome.decisiveFacts);
-    roleOutcome = {
-      kind: "accepted",
-      role: "fixer",
-      status: ledgerOutcome.status,
-      decisiveFacts: fixerDecisiveFacts(output),
-    };
-  }
+  // #757: sealed facts pass through — no shape re-project / field drop.
+  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
+  const output: FixerOutput | undefined =
+    ledgerOutcome.kind === "accepted"
+      ? (ledgerOutcome.decisiveFacts as unknown as FixerOutput)
+      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
@@ -2948,13 +2857,15 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  const receipt = validateAcceptedCollectorReceipt(roleOutcome.decisiveFacts);
+  // #757: sealed facts pass through — no groups rebuild / field drop.
+  // ADR 0037 identity binding stays (external admitted facts, not shape).
+  const receipt = roleOutcome.decisiveFacts as unknown as CollectorReceipt;
   assertCollectorReceiptMatchesAdmitted(receipt, admitted);
   const accepted: LawfulCollectorRoleOutcome = {
     kind: "accepted",
     role: "collector",
     status: roleOutcome.status,
-    decisiveFacts: collectorDecisiveFacts(receipt),
+    decisiveFacts: { ...roleOutcome.decisiveFacts },
   };
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
@@ -3090,15 +3001,16 @@ async function settleLawfulDoctorTerminalResult(
       sessionDirectory,
     );
   }
-  const output = validateRecordedDoctorOutput(sealed.decisiveFacts);
+  // #757: sealed facts pass through — no validateRecordedDoctorOutput shape gate.
+  const output = sealed.decisiveFacts as unknown as DoctorOutput;
   const roleOutcome: Extract<LawfulDoctorRoleOutcome, { kind: "accepted" }> = {
     kind: "accepted",
     role: "doctor",
     status: sealed.status,
-    decisiveFacts: doctorDecisiveFacts(output),
+    decisiveFacts: { ...sealed.decisiveFacts },
   };
-  // Bind completed receipt case identity to the admitted Issue evidence case.
-  if (String(output.status) === "completed") {
+  // Bind completed receipt case identity to the admitted Issue evidence case (external fact).
+  if (String((output as { status?: unknown }).status) === "completed") {
     const completedCase = (
       output as {
         case: { issueNumber: number; runsPath: string };
@@ -3159,8 +3071,7 @@ export async function trySettleDoctorTerminalResult(
 /**
  * Shared accepted-settlement skeleton for seats that scan residual tool
  * candidates then project sealed ledger outcome (#502 DRY).
- * #757: no shape judgment on accepted receipts — submitted fields pass through.
- * Role-specific projectAccepted may still map escalate→audit_escalation etc.
+ * #757: sealed receipts pass through full decisiveFacts — one path, no per-seat projector.
  */
 type SeatAcceptedSettlementSpec = {
   readonly role:
@@ -3174,10 +3085,6 @@ type SeatAcceptedSettlementSpec = {
     | "evidence-child"
     | "diarist";
   readonly toolName: string;
-  /** Optional projector; default keeps sealed status + full decisiveFacts. */
-  readonly projectAccepted?: (
-    sealed: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
-  ) => Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 };
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
@@ -3252,10 +3159,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     }
     return undefined;
   }
-  // Sealed ledger outcome: pass through full decisiveFacts. No tryAccept shape gate (#757).
-  const acceptedOutcome = spec.projectAccepted === undefined
-    ? roleOutcome
-    : spec.projectAccepted(roleOutcome);
+  // Sealed ledger outcome: pass through full decisiveFacts (#757).
+  const acceptedOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
   return withOptionalGateProjection(
     {
@@ -3281,19 +3186,10 @@ async function settleLawfulNotaryTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
+  // #757: default sealed pass-through — no projectAccepted identity wrapper.
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "notary",
     toolName: NOTARY_OUTPUT_TOOL_NAME,
-    // #757: sealed / accepted-once facts pass through — no shape gate, no field drop.
-    projectAccepted: (sealed) => {
-      const accepted: LawfulNotaryRoleOutcome = {
-        kind: "accepted",
-        role: "notary",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3337,18 +3233,6 @@ async function settleLawfulCountersignTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulCountersignRoleOutcome = {
-        kind: "accepted",
-        role: "countersign",
-        status: sealed.status,
-        decisiveFacts: countersignDecisiveFacts(
-          sealed.decisiveFacts as object,
-          sealed.status,
-        ),
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3392,15 +3276,6 @@ async function settleLawfulGleanerLeftTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gleaner-left",
     toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulGleanerLeftRoleOutcome = {
-        kind: "accepted",
-        role: "gleaner-left",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3444,15 +3319,6 @@ async function settleLawfulDiaristTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "diarist",
     toolName: DIARIST_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulDiaristRoleOutcome = {
-        kind: "accepted",
-        role: "diarist",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3481,15 +3347,6 @@ async function settleLawfulInspectorTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "inspector",
     toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulInspectorRoleOutcome = {
-        kind: "accepted",
-        role: "inspector",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3517,15 +3374,6 @@ async function settleLawfulGatekeeperTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "gatekeeper",
     toolName: GATEKEEPER_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulGatekeeperRoleOutcome = {
-        kind: "accepted",
-        role: "gatekeeper",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3554,15 +3402,6 @@ async function settleLawfulNavigatorTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "navigator",
     toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulNavigatorRoleOutcome = {
-        kind: "accepted",
-        role: "navigator",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3591,16 +3430,6 @@ async function settleLawfulAuditorTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "auditor",
     toolName: AUDITOR_OUTPUT_TOOL_NAME,
-    // #757: no shape fail-closed — sealed facts pass through for parent to read.
-    projectAccepted: (sealed) => {
-      const accepted: LawfulAuditorRoleOutcome = {
-        kind: "accepted",
-        role: "auditor",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3628,15 +3457,6 @@ async function settleLawfulEvidenceChildTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "evidence-child",
     toolName: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
-    projectAccepted: (sealed) => {
-      const accepted: LawfulEvidenceChildRoleOutcome = {
-        kind: "accepted",
-        role: "evidence-child",
-        status: sealed.status,
-        decisiveFacts: { ...sealed.decisiveFacts },
-      };
-      return accepted;
-    },
   }, scope);
 }
 
@@ -3794,12 +3614,13 @@ async function settleLawfulReviewerTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const receipt = validateRuntimeReviewerReceipt(sealed.decisiveFacts);
+  // #757: sealed facts pass through — no validateRuntimeReviewerReceipt shape gate.
+  const receipt = sealed.decisiveFacts as unknown as RuntimeReviewerReceiptV2;
   const roleOutcome: LawfulReviewerRoleOutcome = {
     kind: "accepted",
     role: "reviewer",
     status: sealed.status,
-    decisiveFacts: reviewerDecisiveFacts(receipt),
+    decisiveFacts: { ...sealed.decisiveFacts },
   };
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
@@ -3861,16 +3682,6 @@ export async function trySettleReviewerTerminalResult(
   return settleLawfulReviewerTerminalResult(admitted, authority, options);
 }
 
-function mergerDecisiveFacts(output: MergerOutput): Record<string, unknown> {
-  const candidate = output as unknown as object;
-  const status = safelyRead(candidate, "status");
-  const statusValue = status.readable && typeof status.value === "string" ? status.value : undefined;
-  return passthroughDecisiveFacts(
-    candidate,
-    statusValue === undefined ? undefined : "mergerStatus",
-    statusValue,
-  );
-}
 
 /**
  * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
@@ -4006,30 +3817,28 @@ async function settleLawfulMergerTerminalResult(
         ? safelyRead(residual.candidate, "attemptId")
         : { readable: true as const, value: undefined };
       // Admitted-attempt identity binding only (ADR 0037) — not sole-final cardinality.
+      // isError residual with matching attemptId is incomplete; no shape re-judge (#757).
       if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
-      try {
-        validateMergerOutput(residual.candidate, admitted.runId);
-      } catch {
-        return {
-          roleOutcome: buildResidualIncompleteTerminalOutcome({
-            role: "merger",
-            candidate: residual.candidate,
-            diagnostic: residual.diagnostic,
-          }),
-          navigator: { disposition: "no-advice" },
-          artifacts: [],
-          runId: admitted.runId,
-        };
-      }
+      return {
+        roleOutcome: buildResidualIncompleteTerminalOutcome({
+          role: "merger",
+          candidate: residual.candidate,
+          diagnostic: residual.diagnostic,
+        }),
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: admitted.runId,
+      };
     }
     return undefined;
   }
-  const output = validateMergerOutput(roleOutcome.decisiveFacts, admitted.runId);
+  // #757: sealed facts pass through — no validateMergerOutput shape gate.
+  const output = roleOutcome.decisiveFacts as unknown as MergerOutput;
   const accepted: LawfulMergerRoleOutcome = {
     kind: "accepted",
     role: "merger",
     status: roleOutcome.status,
-    decisiveFacts: mergerDecisiveFacts(output),
+    decisiveFacts: { ...roleOutcome.decisiveFacts },
   };
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [
