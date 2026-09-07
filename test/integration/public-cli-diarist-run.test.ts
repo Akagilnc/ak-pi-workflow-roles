@@ -34,7 +34,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { installGhFixture, installHermesFixture } from "../helpers/hermes-fixture.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
   withPrimaryAwareCleanup,
   withTempRoot,
@@ -45,10 +45,7 @@ const TICKET = 708;
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => {
     const binDir = join(home, "bin");
-    // Hermetic ticket identity + issue face: no live GitHub, no live LLM.
-    await installHermesFixture(binDir, {
-      resolverResponse: { assertion: "ticket", ticketNumber: TICKET },
-    });
+    // Issue face only — ticket identity is the caller's sole dispatch token (#709).
     await installGhFixture(binDir, {
       issues: {
         [TICKET]: {

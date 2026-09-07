@@ -105,17 +105,10 @@ export type AdmittedRoleInvocationBase = {
    */
   readonly correlationId?: string;
   /**
-   * Typed ticketNumber after seat LLM bind or notary source-run inheritance (#635).
-   * Admission does not bind from CLI flag or attachment frontmatter.
+   * Typed ticketNumber after known-identity reuse or notary source-run inheritance
+   * (#635 / #709). Admission does not bind from CLI flag or attachment frontmatter.
    */
   readonly ticketNumber?: number;
-  /**
-   * Seat LLM ticket resolution settled as true-unbound (#635).
-   * Distinct from unbound-not-yet-resolved (field absent). Mutually exclusive
-   * with ticketNumber; both are durable one-shot conclusions so auto-resume
-   * and manual resume never re-enter hermes resolution.
-   */
-  readonly ticketResolution?: "true-unbound";
   /** Effective model from invocation identity; restored on resume when no CLI model is given. */
   readonly model?: InvocationEffectiveModel;
 };
@@ -464,8 +457,8 @@ export async function persistAdmittedSourceRunPath(
 /**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
  * object and both durable pages (invocation.json + admitted-request.json).
- * Used by seat LLM ticket binding when admission was unbound
- * (#635 / #582 diarist-resolves-ticket-llm-layer). Never clears an existing binding.
+ * Used by known-ticket reuse when admission was unbound (#635 / #709).
+ * Never clears an existing binding.
  */
 export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
@@ -473,11 +466,6 @@ export async function bindAdmittedTicketNumber(
 ): Promise<void> {
   if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
     throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
-  }
-  if (admitted.ticketResolution === "true-unbound") {
-    throw new Error(
-      "bindAdmittedTicketNumber refuses to replace durable true-unbound ticket resolution",
-    );
   }
   if (admitted.ticketNumber !== undefined) {
     if (admitted.ticketNumber === ticketNumber) return;
@@ -495,36 +483,6 @@ export async function bindAdmittedTicketNumber(
   await writeFile(
     admittedPath,
     `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-/**
- * Persist seat LLM true-unbound conclusion onto in-memory admitted + both durable
- * pages so later auto-resume attempts and manual resume never re-enter hermes (#635).
- */
-export async function recordTrueUnboundTicketResolution(
-  admitted: AdmittedRoleInvocation,
-): Promise<void> {
-  if (admitted.ticketNumber !== undefined) {
-    throw new Error(
-      `recordTrueUnboundTicketResolution refuses to overwrite ticket #${admitted.ticketNumber}`,
-    );
-  }
-  if (admitted.ticketResolution === "true-unbound") return;
-  (admitted as { ticketResolution?: "true-unbound" }).ticketResolution =
-    "true-unbound";
-  await mergeInvocationIdentityPage(admitted.runDirectory, {
-    ticketResolution: "true-unbound",
-  });
-  const admittedPath = admitted.admittedRequestPath;
-  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...current, ticketResolution: "true-unbound" }, null, 2)}\n`,
     "utf8",
   );
 }
