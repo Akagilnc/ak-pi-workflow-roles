@@ -54,6 +54,3 @@ export function validateRecordedNavigatorOutput(value: unknown): NavigatorAdvice
   return projected;
 }
 
-export function navigatorDecisiveFacts(output: { readonly candidates: readonly unknown[] }): Record<string, unknown> {
-  return { status: "advice", candidates: output.candidates };
-}

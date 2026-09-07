@@ -734,15 +734,15 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     );
     assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
     assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
-    assert.equal(terminal.roleOutcome.decisiveFacts.fixerStatus, "refused");
-    assert.equal(
-      terminal.roleOutcome.decisiveFacts.blockerCause,
-      "prerequisite_unmet",
-    );
-    assert.equal(
-      terminal.roleOutcome.decisiveFacts.prerequisiteId,
-      "owner.choice",
-    );
+    // #757: status rides as submitted — no fixerStatus lift.
+    assert.equal(terminal.roleOutcome.decisiveFacts.status, "refused");
+    // #757: blocker fields stay nested under blocker — no lift/drop projection.
+    const blocker = terminal.roleOutcome.decisiveFacts.blocker as {
+      cause?: string;
+      prerequisiteId?: string;
+    } | undefined;
+    assert.equal(blocker?.cause, "prerequisite_unmet");
+    assert.equal(blocker?.prerequisiteId, "owner.choice");
     assert.equal(
       terminal.roleOutcome.decisiveFacts.remainingScope,
       "the entire plan assignment",
@@ -799,14 +799,12 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
         : undefined,
       "refused",
     );
-    assert.equal(
-      result.terminal!.roleOutcome.decisiveFacts.blockerCause,
-      "prerequisite_unmet",
-    );
-    assert.equal(
-      result.terminal!.roleOutcome.decisiveFacts.prerequisiteId,
-      "owner.choice",
-    );
+    const publicBlocker = result.terminal!.roleOutcome.decisiveFacts.blocker as {
+      cause?: string;
+      prerequisiteId?: string;
+    } | undefined;
+    assert.equal(publicBlocker?.cause, "prerequisite_unmet");
+    assert.equal(publicBlocker?.prerequisiteId, "owner.choice");
     assert.equal(Object.hasOwn(result.terminal!.roleOutcome, "cause"), false);
   });
 });
@@ -860,7 +858,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         details: unfinishedReceipt,
         kind: "accepted",
         status: "unfinished",
-        factKey: "fixerStatus",
+        factKey: "status",
         factValue: "unfinished",
       },
       {
@@ -869,8 +867,9 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         details: applyRefusedReceipt,
         kind: "accepted",
         status: "refused",
-        factKey: "blockerCauses",
-        factValue: ["authority_violation"],
+        // #757: classResult blockers stay nested — no lifted blockerCauses array.
+        factKey: "status",
+        factValue: "refused",
       },
       {
         runId: "run-fixer-status-partial",
@@ -878,7 +877,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         details: partialReceipt,
         kind: "accepted",
         status: "partially_completed",
-        factKey: "fixerStatus",
+        factKey: "status",
         factValue: "partially_completed",
       },
     ];
