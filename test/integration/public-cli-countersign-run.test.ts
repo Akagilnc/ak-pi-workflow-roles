@@ -5,6 +5,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * #742: court admission auto-runs the public 起居郎 station before the body turn.
  * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
  * never from mechanical matching of summons text against book records;
+ * ADR 0079: same-ticket re-summons resume prior run via that typed key;
  * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
@@ -886,6 +887,89 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
+  });
+});
+
+test("public countersign path: same-ticket re-summons resumes prior run via typed 起居郎 key", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    // ADR 0079 ticket-seat-memory-countersign-principal: same ticket → resume,
+    // not a fresh mint. Lookup key is 起居郎's typed assertion only (#771).
+    ensureTicketProvenanceVolume(582, project, home);
+
+    const seen: Array<{ runId: string; kind: string }> = [];
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(582, {
+        countersignStatus: "converged",
+        note: "署",
+      }),
+    });
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.activation.role === "countersign") {
+          const leaf = request.runDirectory.split("/").pop() ?? "";
+          const runId = leaf.endsWith("@countersign")
+            ? leaf.slice(0, -"@countersign".length)
+            : leaf;
+          seen.push({ runId, kind: request.continuation.kind });
+        }
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const envBase = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      roleTurnHost: host,
+    };
+
+    const first = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s001",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.admitted?.ticketNumber, 582);
+    assert.equal(first.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+
+    // createRunId would mint s002 if auto-resume were skipped — must not fire.
+    const second = await runPublicCountersign(
+      ["裁：#582 二轮再审。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(second.exitCode, 0);
+    assert.equal(
+      second.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s001",
+      "same-ticket re-summons must resume prior run via typed key, not mint s002",
+    );
+    assert.equal(second.admitted?.ticketNumber, 582);
+    assert.notEqual(
+      second.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s002",
+    );
+    // A dispatched body turn on re-summons must be resume on the prior run.
+    if (seen.length >= 2) {
+      assert.equal(seen[1]!.kind, "resume");
+      assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    }
   });
 });
 
