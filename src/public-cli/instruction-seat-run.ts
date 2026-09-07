@@ -1,9 +1,9 @@
 /**
  * Shared instruction-seat run (#639 / #675 / #637): gatekeeper, navigator, auditor,
  * and evidence-child share admit → turn-request → post-admission → settle.
- * Same-ticket re-summons resume the seat's previous run via the shared public
- * tryResumeSameTicketSeatRun seam (inspector/notary/countersign face) — no
- * independent run/rebind/nest path.
+ * Auditor same-parent (--source-run) re-summons resume via tryResumeSameTicketSeatRun
+ * (#747); other instruction seats keep ticket-number principal — no independent
+ * run/rebind/nest path.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -16,6 +16,7 @@ import {
   admitNavigatorInvocation,
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
+  persistAdmittedSourceRunPath,
   type AdmittedAuditorInvocation,
   type AdmittedEvidenceChildInvocation,
   type AdmittedGatekeeperInvocation,
@@ -258,10 +259,9 @@ export async function runPublicInstructionSeat(
   let auditorSourceTicket: number | undefined;
   let ticketProbe: InstructionTicketProbe | undefined;
 
-  // #637: same ticket → resume prior seat run with this summons' materials.
-  // Auditor inherits ticket from source-run (notary face); other instruction seats
-  // probe instruction (inspector face). No bare catch→fresh: lookup/resume failures
-  // surface; only true absence of a prior run mints new.
+  // #637 / #747: resume prior seat run with this summons' materials.
+  // Auditor (#747): parent --source-run path is the lookup key.
+  // Other instruction seats: ticket probe (inspector face). No bare catch→fresh.
   const projectRoot = parsed.project ?? env.cwd;
   if (role === "auditor") {
     if (parsed.subject !== "judge" && parsed.subject !== "doctor") {
@@ -305,27 +305,21 @@ export async function runPublicInstructionSeat(
     );
   }
 
-  const probedTicketNumber =
-    auditorSourceTicket
-    ?? (ticketProbe === undefined ? undefined : ticketNumberFromProbe(ticketProbe));
-
-  if (probedTicketNumber !== undefined) {
-    const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
-      attachmentPaths: parsed.attachmentPaths,
-    };
+  const summons: SameTicketSummonsMaterials = {
+    instruction: parsed.instruction,
+    instructionEmpty: parsed.instruction.trim() === "",
+    attachmentPaths: parsed.attachmentPaths,
+  };
+  if (role === "auditor" && auditorSourceRun !== undefined) {
     const resumed = await withAuditorSoulEnv({
       ...(auditorSubject === undefined ? {} : { subject: auditorSubject }),
-      ...(auditorSourceRun === undefined
-        ? {}
-        : { sourceRunDirectory: auditorSourceRun }),
+      sourceRunDirectory: auditorSourceRun,
       run: () =>
         tryResumeSameTicketSeatRun({
           home: env.home,
           projectRoot,
           role,
-          ticketNumber: probedTicketNumber,
+          parentRunPath: auditorSourceRun,
           freshSummons: env.freshSummons,
           summons,
           resume: (runId, materials) =>
@@ -337,6 +331,26 @@ export async function runPublicInstructionSeat(
         }),
     });
     if (resumed !== undefined) return resumed;
+  } else {
+    const probedTicketNumber =
+      ticketProbe === undefined ? undefined : ticketNumberFromProbe(ticketProbe);
+    if (probedTicketNumber !== undefined) {
+      const resumed = await tryResumeSameTicketSeatRun({
+        home: env.home,
+        projectRoot,
+        role,
+        ticketNumber: probedTicketNumber,
+        freshSummons: env.freshSummons,
+        summons,
+        resume: (runId, materials) =>
+          runPublicInstructionSeatResume(
+            { runId, ...(materials === undefined ? {} : { summons: materials }) },
+            env,
+            io,
+          ),
+      });
+      if (resumed !== undefined) return resumed;
+    }
   }
 
   let admitted: AdmittedInstructionSeatInvocation;
@@ -358,6 +372,10 @@ export async function runPublicInstructionSeat(
       return { exitCode: 2 };
     }
     throw error;
+  }
+
+  if (role === "auditor" && auditorSourceRun !== undefined) {
+    await persistAdmittedSourceRunPath(admitted, auditorSourceRun);
   }
 
   return await withAuditorSoulEnv({

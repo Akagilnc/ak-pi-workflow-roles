@@ -9,7 +9,7 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
  * #757 / #750: no unreadable/unusable judgment on auditor replies.
- * Known three-state (pass/revise/escalate) is read for queueing only.
+ * Known three-state (pass/bounce/escalate) is read for queueing only.
  * Unknown accepted shape rides as `received` with the raw reply — parent stands,
  * no forged pass, no shape-death label. Resume-speaker for three pairs is #753/#756.
  */
@@ -20,7 +20,7 @@ export type ComplianceReceived = {
 };
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
+  | { status: "bounce"; violations: readonly unknown[]; usage?: Usage }
   | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
   | ComplianceNoReceipt
   | ComplianceReceived;
@@ -29,7 +29,7 @@ export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
-export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | revise | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
+export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
@@ -53,7 +53,7 @@ export type AuditorParentAttemptBinding = {
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
-/** Try to project a known three-state compliance decision; undefined when not pass/revise/escalate. */
+/** Try to project a known three-state compliance decision; undefined when not pass/bounce/escalate. */
 export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
     return undefined;
@@ -61,7 +61,7 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
   if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
+  if (status === "bounce") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
     return {
       status,
@@ -116,7 +116,7 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
 
 /**
  * Project a public auditor terminal onto the parent compliance decision.
- * Known pass/revise/escalate/no-receipt flow through for queueing.
+ * Known pass/bounce/escalate/no-receipt flow through for queueing.
  * Accepted-but-not-three-state → `received` with raw reply (#757) — no unreadable label,
  * never forged pass, never parent abort. Real provider/engine/disk failures stay loud.
  * Accepted audits always carry real session usage when present (#675 metering).

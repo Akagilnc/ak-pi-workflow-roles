@@ -3414,7 +3414,7 @@ export async function trySettleNavigatorTerminalResult(
   return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
 }
 
-/** Lawful Auditor accepted outcome (pass/revise/escalate, #675). */
+/** Lawful Auditor accepted outcome (pass/bounce/escalate, #675 / #754). */
 export type LawfulAuditorRoleOutcome = {
   kind: "accepted";
   role: "auditor";
