@@ -2666,8 +2666,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
   process.env.AK_ROLE_RUN_DIR = nestedRunDir;
   try {
   {
-      const [judge, doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
-        importSrc("src/judge-auditor.ts"),
+      const [doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
         importSrc("src/doctor-auditor.ts"),
         importSrc("src/judge-role.ts"),
         importSrc("src/worker-role.ts"),
@@ -2712,10 +2711,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         ] },
         reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
         doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
-      } as const;
-      const toolNames = {
-        judge: judge.JUDGE_AUDIT_TOOL_NAME,
-        doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
       } as const;
       const acceptedNames = {
         judge: "ak_judge_output",
