@@ -142,6 +142,10 @@ function baseEnv(input: {
     sessionAppender: appendPiSessionCustomEntry,
     roleTurnHost: host,
     createRunId: () => input.runId,
+    // #742: body-path tests stub the court diarist station (no real nested seat).
+    ...(input.role === "countersign"
+      ? { runCourtDiaristStation: async () => undefined }
+      : {}),
   };
 }
 
@@ -311,6 +315,25 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
+    // #742: bound notary materials carry the ticket's 起居录 paths (feature observation).
+    const { resolveTicketProvenanceVolume } = await import(
+      "../../src/ticket-provenance.ts"
+    );
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    await mkdir(volume.volumeDir, { recursive: true });
+    await writeFile(volume.humanViewFile, "# 起居录 · #582\n", "utf8");
+    await writeFile(volume.recordFile, "{}\n", "utf8");
+
+    let turnPrompt = "";
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -320,15 +343,12 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: "notary",
-            toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
-          }),
-        }),
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            turnPrompt = request.continuation.prompt;
+            return baseHost.executeTurn(request);
+          },
+        },
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
@@ -337,5 +357,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
+    assert.ok(turnPrompt.includes(volume.humanViewFile));
+    assert.ok(turnPrompt.includes(volume.recordFile));
   });
 });

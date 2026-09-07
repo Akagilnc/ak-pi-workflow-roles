@@ -1,15 +1,18 @@
 /**
  * 系统随案递送本票起居录的中立指针段（ADR 0081 `automatic-case-material`；
+ * #709 公共入口通用递送与 #742 给事中受理链路同源；
  * 指针输入沿 ADR 0079 `summons-pointer-input`，不把卷宗正文塞进提示词）。
  * 只读已有案卷：不刷新、不生成、不校验内容、不新增拒收或停工条件。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
+ *
+ * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口追加本段。
  */
 import { stat } from "node:fs/promises";
 
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 
-/** Section heading of the system-delivered dossier pointer. */
-export const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+/** Section heading of the system-delivered dossier pointer (presentation only). */
+const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
 
 /** Honest one-line state of one dossier file: present, absent, or unreadable. */
 async function describeDossierFile(path: string): Promise<string> {

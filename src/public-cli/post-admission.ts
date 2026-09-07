@@ -362,11 +362,11 @@ export async function dispatchPostAdmissionTurn<
     }
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
-    // settled — the seat's ticket bind re-projection. Case dossier delivery
-    // (ADR 0081) rides here for every public entry: first call, same-ticket
-    // re-summons and manual resume alike. System refs append their own neutral
-    // section; caller frozen attachments and the seat's own prompt bytes are
-    // never rewritten.
+    // settled — the seat's ticket bind re-projection and any court diarist station
+    // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
+    // every public entry: first call, same-ticket re-summons and manual resume
+    // alike. System refs append their own neutral section; caller frozen
+    // attachments and the seat's own prompt bytes are never rewritten.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (hostTransition !== undefined) {
