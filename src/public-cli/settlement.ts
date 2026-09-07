@@ -3850,7 +3850,7 @@ export async function trySettleNavigatorTerminalResult(
   return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
 }
 
-/** Lawful Auditor accepted outcome (pass/revise/escalate, #675). */
+/** Lawful Auditor accepted outcome (pass/bounce/escalate, #675 / #754). */
 export type LawfulAuditorRoleOutcome = {
   kind: "accepted";
   role: "auditor";
@@ -3866,14 +3866,14 @@ async function settleLawfulAuditorTerminalResult(
   return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "auditor",
     toolName: AUDITOR_OUTPUT_TOOL_NAME,
-    nonUsableDiagnostic: "审刑院回执无显式 pass/revise/escalate",
-    // Only pass/revise/escalate are lawful releases. Unreadable mystery status
+    nonUsableDiagnostic: "审刑院回执无显式 pass/bounce/escalate",
+    // Only pass/bounce/escalate are lawful releases. Unreadable mystery status
     // fails closed with candidate retained for parent ComplianceCandidateUnreadableError.
     tryAcceptDetails: (details) => projectLawfulAuditorOutput(details) !== undefined,
     projectAccepted: (sealed) => {
       const lawful = projectLawfulAuditorOutput(sealed.decisiveFacts);
       if (lawful === undefined) {
-        throw new Error("auditor projectAccepted requires lawful pass/revise/escalate");
+        throw new Error("auditor projectAccepted requires lawful pass/bounce/escalate");
       }
       const accepted: LawfulAuditorRoleOutcome = {
         kind: "accepted",
