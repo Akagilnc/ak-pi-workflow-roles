@@ -860,8 +860,10 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
       parseCountersignArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(turnOrder, ["diarist", "countersign"]);
+    // Identity 起居郎 (unbound assert) then bound refresh (issue face handoff).
+    assert.deepEqual(turnOrder, ["diarist", "diarist", "countersign"]);
     assert.ok(result.admitted?.bookKey);
+    assert.equal(result.admitted?.ticketNumber, 582);
 
     const diaristRunId = await findLatestRunIdForSeatTicket({
       home,

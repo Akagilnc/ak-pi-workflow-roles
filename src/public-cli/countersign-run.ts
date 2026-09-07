@@ -16,11 +16,11 @@
  *
  * Wiring (#771): admit first so the countersign run exists; resolve typed identity
  * from 起居郎 after admit; same-ticket resume uses that typed key (abandon the
- * unused mint when resuming). 起居郎 escalate (认不出) settles as countersign
- * controlled failure. 起居郎 lacking a lawful typed terminal is not countersign's
- * body failure — identity stays unbound and the body proceeds (documented
- * contract; 失败诚实 keeps escalate/refresh failure honest). Bound re-entry still
- * refreshes under known identity (`refresh-every-court`).
+ * unused mint when resuming). 起居郎 escalate (认不出) and typed failure terminals
+ * (incl. verification failure) settle as countersign controlled failure — never
+ * wash into 真无票. Only a true missing lawful typed terminal stays unbound and
+ * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
+ * 起居郎 so freeze loads issue face (`refresh-every-court` / typed handoff).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -102,12 +102,17 @@ type CourtDiaristIdentity =
  * Invoke public 起居郎 under the court-pipeline quiet face.
  * Returns typed identity: ticket assertion, true-unbound, or escalate.
  * Non-zero exit without escalate status is not rethrown here — caller decides
- * whether refresh must fail or identity may stay unbound.
+ * whether refresh must fail or first-entry settles controlled failure.
+ * When `boundTicketNumber` is set (typed handoff from countersign), diarist
+ * freezes under that key so issue face enters the catalog — never mechanical
+ * recognition from prose.
  */
 async function invokeCourtDiarist(input: {
   readonly instruction: string;
   readonly projectRoot: string;
   readonly failureLabel: string;
+  /** Already-verified typed key from countersign (refresh / post-assert handoff). */
+  readonly boundTicketNumber?: number;
 }, env: CountersignRunEnv, io: CliIo): Promise<{
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
@@ -139,6 +144,10 @@ async function invokeCourtDiarist(input: {
       ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(env.signal === undefined ? {} : { signal: env.signal }),
+      // Typed handoff only — never derived from summons prose.
+      ...(input.boundTicketNumber === undefined
+        ? {}
+        : { boundTicketNumber: input.boundTicketNumber }),
     },
     quietIo,
     parseDiaristArgv,
@@ -209,6 +218,8 @@ export async function runCountersignCourtDiaristStation(
       instruction: `整理 #${admitted.ticketNumber} 的本案依据。`,
       projectRoot: admitted.projectRoot,
       failureLabel: `ticket #${admitted.ticketNumber}`,
+      // Refresh holds a typed key — hand it off so freeze loads issue face.
+      boundTicketNumber: admitted.ticketNumber,
     },
     env,
     io,
@@ -307,9 +318,27 @@ export async function runPublicCountersign(
       );
     }
 
+    // Typed failure terminal (verification / infra / non-zero without escalate)
+    // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
+    // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
+    if (outcome.failedWithoutEscalate !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
+        },
+        countersignAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
+
     // Missing lawful 起居郎 terminal is not countersign body failure: leave
-    // unbound and continue (true-unbound face). Escalate handled above; bound
-    // refresh still fails honest via runCountersignCourtDiaristStation.
+    // unbound and continue (true-unbound face). Escalate / typed failure above;
+    // bound refresh still fails honest via runCountersignCourtDiaristStation.
     if (outcome.identity.kind === "ticket") {
       typedTicket = outcome.identity.ticketNumber;
       const summons: SameTicketSummonsMaterials = {
@@ -324,22 +353,22 @@ export async function runPublicCountersign(
         ticketNumber: typedTicket,
         freshSummons: env.freshSummons,
         summons,
-        resume: (runId, materials) =>
-          runPublicCountersignResume(
+        resume: async (runId, materials) => {
+          // Resume selected: abandon mint first so a throw cannot leave it admitted.
+          await markRunTerminal(admitted.runDirectory);
+          // Identity 起居郎 asserted unbound (no issue face). Resume still runs
+          // the bound refresh station under the typed key (refresh-every-court).
+          return await runPublicCountersignResume(
             {
               runId,
               ...(materials === undefined ? {} : { summons: materials }),
             },
-            // Identity 起居郎 already refreshed 起居录 for this summons entry
-            // (refresh-every-court served once). Manual `ak-role resume` keeps
-            // the full env and still runs the station.
-            { ...env, runCourtDiaristStation: async () => undefined },
+            env,
             io,
-          ),
+          );
+        },
       });
       if (resumed !== undefined) {
-        // Abandon the unused mint — resume owns the live run.
-        await markRunTerminal(admitted.runDirectory);
         return resumed;
       }
     }
@@ -381,8 +410,10 @@ export async function runPublicCountersign(
           // Test seam (or any deferred identity): station owns assert + bind.
           await runCountersignCourtDiaristStation(admittedSeat, env, io);
         } else if (typedTicket !== undefined) {
-          // Production identity already ran; bind the typed key onto this mint.
+          // Production identity asserted unbound; bind typed key, then bound
+          // refresh so freeze loads issue face (typed handoff, not prose match).
           await bindAdmittedTicketNumber(admittedSeat, typedTicket);
+          await runCountersignCourtDiaristStation(admittedSeat, env, io);
         }
         Object.assign(
           turnRequest,

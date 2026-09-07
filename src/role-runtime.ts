@@ -985,11 +985,16 @@ export function createDiaristRoleRuntime(
             ? (parameters as Record<string, unknown>)
             : undefined;
 
-        // LLM cannot identify the court target — escalate as-is; never wash into 无录.
+        // LLM cannot identify the court target — escalate without machine facts.
+        // Strip sitian (锚定宪法) and ticketNumber (unverified — must not leak
+        // into caller-visible admitted typed key via decisiveFacts mirror).
         if (submitted?.status === "escalate") {
-          if (!("sitian" in submitted)) return submitted;
+          if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
+            return submitted;
+          }
           const stripped = { ...submitted };
           delete stripped.sitian;
+          delete stripped.ticketNumber;
           return stripped;
         }
 
