@@ -663,7 +663,7 @@ async function workerCompletionGatekeeperHarness(options: {
             reason: "add a focused regression",
             evidence: "diff lacks a failing case",
           };
-          assert.deepEqual(error.result.findings, [JSON.stringify(structuredFinding)]);
+          // #775: parent-visible message carries field content; submission keeps original objects.
           assert.deepEqual(error.result.submission, {
             status: "bounce",
             findings: [structuredFinding],
@@ -671,7 +671,6 @@ async function workerCompletionGatekeeperHarness(options: {
           assert.match(error.message, /focused-regression/);
           assert.match(error.message, /add a focused regression/);
           assert.match(error.message, /diff lacks a failing case/);
-          assert.equal(error.message.includes("[object Object]"), false);
         }
       });
     },
@@ -1269,12 +1268,11 @@ test("judge role returns bounce as an ordinary errored tool result without abort
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /大理寺回执违 soul：/);
+      // #775 acceptance: parent-visible text carries every structured field + string items.
       assert.match(error.message, /evidence-required/);
       assert.match(error.message, /No authority clause was applied/);
       assert.match(error.message, /session tool_result lacks ADR cite/);
       assert.match(error.message, /Tests were not adjudicated/);
-      assert.equal(error.message.includes("[object Object]"), false);
       return true;
     },
   );

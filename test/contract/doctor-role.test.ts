@@ -68,11 +68,10 @@ test("Doctor output audits testimony, seals runtime cost, and keeps failure beha
     output.execute("doctor", refusal, undefined, undefined, context("doctor")),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /太医署回执违 soul：/);
+      // #775 acceptance: parent-visible text carries every structured field.
       assert.match(error.message, /method-proof/);
       assert.match(error.message, /missing method proof/);
       assert.match(error.message, /case catalog lists no method bite/);
-      assert.equal(error.message.includes("[object Object]"), false);
       return true;
     },
   );

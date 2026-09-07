@@ -8,12 +8,7 @@
  * Presentation only: does not legislate carrier format for LLM-to-LLM traffic.
  */
 export function readableGateItem(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** Join gate items into one parent-visible line. */
