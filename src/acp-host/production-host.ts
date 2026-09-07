@@ -28,6 +28,7 @@ import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "..
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import { createComposedAcpRoleTurnHost } from "./role-envelope.ts";
 import { connectAcpStdio } from "./role-turn-host.ts";
+import { ensureSeatProfileSoul } from "./seat-profile-soul.ts";
 import { createAcpSessionIdentityAuthority } from "./session-identity.ts";
 
 export type ProductionAcpHostOptions = Readonly<{
@@ -125,12 +126,24 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
     sessionIdentity: createAcpSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
     boundResume: description.boundResume,
     modelPassing: description.modelPassing,
-    systemPromptDelivery: description.systemPromptDelivery,
     roleRuntimeDependencies: createAcpRoleRuntimeDependencies(packageRoot),
     async connect(request) {
+      const seatProfile = description.seatProfileSoul;
+      const profileName = seatProfile === undefined
+        ? undefined
+        : await ensureSeatProfileSoul({
+          spec: seatProfile,
+          operatorHome: request.home,
+          packageRoot,
+          role: request.activation.role,
+        });
       return connectAcpStdio({
         binary: resolveAcpBinary(description, request.home),
-        args: acpStdioArgs(description, request.model),
+        args: acpStdioArgs(
+          description,
+          request.model,
+          profileName === undefined ? undefined : { profileName },
+        ),
         cwd: request.cwd,
         env,
       });

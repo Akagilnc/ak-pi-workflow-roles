@@ -70,8 +70,6 @@ export type AcpRoleTurnHostConfig = Readonly<{
    * exists (new or loaded); "argv" leaves it to the connect argv (--model).
    */
   modelPassing: AcpHostDescription["modelPassing"];
-  /** How packed systemPrompt is placed on the host's executing channel. */
-  systemPromptDelivery: AcpHostDescription["systemPromptDelivery"];
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
   prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
 }>;
@@ -244,12 +242,16 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               ? request.hostTransition?.priorNativePaths
               : undefined;
           const loadConnection = connection;
+          // Shared session/new + session/load body (cwd/mcpServers/_meta).
+          const sessionBindParams = {
+            cwd: request.cwd,
+            mcpServers: prepared.mcpServers,
+            _meta: { systemPromptOverride, yoloMode: false },
+          };
           const loadSession = async (bindSessionId: string): Promise<string> => {
             const loaded = await loadConnection.request("session/load", {
               sessionId: bindSessionId,
-              cwd: request.cwd,
-              mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride, yoloMode: false },
+              ...sessionBindParams,
             });
             return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
               ? loaded.sessionId
@@ -265,14 +267,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           if (sessionId === undefined) {
             // Initial run, unbound resume (cross-host / lost binding), or a host
             // whose bound resume is session/new: mint the session and bind it.
-            const session = await connection.request(
-              "session/new",
-              {
-                cwd: request.cwd,
-                mcpServers: prepared.mcpServers,
-                _meta: { systemPromptOverride, yoloMode: false },
-              },
-            );
+            const session = await connection.request("session/new", sessionBindParams);
             sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
             if (sessionId === undefined || sessionId === "") {
               return failure("session", "AcpSessionFailure", "session-id-missing");
@@ -280,15 +275,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
 
-          // set_model hosts (hermes) address the seat model by `provider:model`
-          // once the session exists; argv hosts never reach this RPC. The same
-          // guard covers the re-bind below: only when a model was actually sent
-          // can hermes-agent 0.20.6 have rebuilt the session agent and dropped
-          // the ACP-injected AK mcpServers (set_session_model → _make_agent
-          // derives its toolset from hermes-config MCP servers only; 2026-09-07
-          // probe: after set_model the model reported NO_AK_TOOLS). Re-binding
-          // via session/load re-registers the relay server and restores the role
-          // tool surface — the resume path above reuses the same load verb.
+          // set_model hosts address the seat model by `provider:model` once the
+          // session exists; argv hosts never reach this RPC. set_model may rebuild
+          // the session agent and drop ACP-injected mcpServers, so re-bind via the
+          // same loadSession authority (return value is the live session id).
           if (
             config.modelPassing === "set_model"
             && request.model !== undefined
@@ -298,7 +288,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               sessionId,
               modelId: acpModelId(config.modelPassing, request.model),
             });
-            await loadSession(sessionId);
+            sessionId = await loadSession(sessionId);
           }
 
           let prompt =
@@ -354,14 +344,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           for (let attempt = 0; attempt < 8; attempt += 1) {
             let result: Readonly<Record<string, unknown>>;
             try {
-              const promptParts: Array<Record<string, unknown>> = [];
-              if (config.systemPromptDelivery === "prompt-prefix") {
-                promptParts.push({ type: "text", text: systemPromptOverride });
-              }
-              promptParts.push({ type: "text", text: prompt });
               result = await promptOrAbort({
                 sessionId,
-                prompt: promptParts,
+                prompt: [{ type: "text", text: prompt }],
               });
             } catch (error) {
               // Envelope abort (typed infra declaration): closeRound owns the failure record.

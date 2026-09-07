@@ -1,10 +1,12 @@
 /**
  * One ACP host description. Every host-specific value the generic ACP adapter
- * needs — binary location, argv shape, resume verb, systemPrompt channel,
- * binding filename, child env — is data here; the lifecycle in
- * role-turn-host.ts stays one copy (#732).
+ * needs — binary location, argv shape, resume verb, binding filename, child env,
+ * optional seat-profile soul — is data here; the lifecycle in role-turn-host.ts
+ * stays one copy (#732).
  */
 import { join } from "node:path";
+
+import type { SeatProfileSoul } from "./seat-profile-soul.ts";
 
 export type AcpHostDescription = Readonly<{
   /** Binary path segments relative to the operator home. */
@@ -24,17 +26,17 @@ export type AcpHostDescription = Readonly<{
    *   `provider:model` (hermes).
    */
   modelPassing: "argv" | "set_model";
-  /**
-   * How packed systemPrompt reaches the executing agent:
-   * - "meta-override": grok `_meta.systemPromptOverride` on session/new and session/load;
-   * - "prompt-prefix": first `session/prompt` text block (hosts that swallow `_meta`).
-   */
-  systemPromptDelivery: "meta-override" | "prompt-prefix";
   /** Which verb a bound resume uses; "session/new" hosts always mint + bind. */
   boundResume: "session/load" | "session/new";
   /** Durable ACP binding filename written beside the session principal. */
   sessionBindingFile: string;
   childEnv: Readonly<Record<string, string>>;
+  /**
+   * When set, the production factory ensures a seat profile whose SOUL.md is a
+   * symlink to the packaged role soul, and prefixes argv with `flag <name>`.
+   * Used by hosts that have no per-session systemPrompt channel (hermes).
+   */
+  seatProfileSoul?: SeatProfileSoul;
 }>;
 
 /** Absolute agent binary for one operator home. */
@@ -42,16 +44,18 @@ export function resolveAcpBinary(description: AcpHostDescription, operatorHome: 
   return join(operatorHome, ...description.binaryFromHome);
 }
 
-/** Stdio argv: optional thinking flag pair (before the subcommand), prefix,
- * optional model flag pair, suffix. */
+/** Stdio argv: optional profile flag, thinking flag (before the subcommand),
+ * prefix, optional model flag pair, suffix. */
 export function acpStdioArgs(
   description: AcpHostDescription,
   model?: { readonly model?: string; readonly thinking?: string },
+  seat?: { readonly profileName?: string },
 ): string[] {
   const { prefix, suffix, modelFlag, thinkingFlag } = description.argv;
   const pair = (flag: string | undefined, value: string | undefined): string[] =>
     flag === undefined || value === undefined ? [] : [flag, value];
   return [
+    ...pair(description.seatProfileSoul?.flag, seat?.profileName),
     ...pair(thinkingFlag, model?.thinking),
     ...prefix,
     ...pair(modelFlag, model?.model),

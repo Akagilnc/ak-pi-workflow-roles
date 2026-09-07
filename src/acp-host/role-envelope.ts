@@ -622,8 +622,8 @@ export async function prepareAcpRoleEnvelope(options: {
   };
 
   // Shared envelope activation. systemPrompt must be ready before session/new
-  // (meta-override hosts deliver it there; prompt-prefix hosts send it on
-  // session/prompt), so activation runs during prepare.
+  // (delivered via _meta.systemPromptOverride where the host honors it), so
+  // activation runs during prepare.
   try {
     await emit("session_start", { reason: request.continuation.kind });
     const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });

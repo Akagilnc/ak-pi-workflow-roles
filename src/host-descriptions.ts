@@ -25,7 +25,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       modelFlag: "--model",
     }),
     modelPassing: "argv",
-    systemPromptDelivery: "meta-override",
     boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
     childEnv: Object.freeze({
@@ -34,12 +33,13 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       GROK_SUBAGENTS: "0",
     }),
   }),
-  /** Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
+  /**
+   * Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
    * Model arrives as an ACP `session/set_model` RPC with modelId `provider:model`
-   * (seat table provider + model concatenated); reasoning level is the global
-   * `--reasoning` flag placed before the `acp` subcommand (probe 2026-09-07:
-   * `hermes acp --reasoning …` is rejected by argparse, `hermes --reasoning … acp`
-   * starts the ACP server). */
+   * (seat table provider + model concatenated). Reasoning is the global
+   * `--reasoning` flag before `acp`. Soul is the seat profile SOUL.md symlink
+   * (`hermes -p ak-<role> …`); package `souls/<role>.md` is the sole source.
+   */
   "hermes": Object.freeze({
     binaryFromHome: Object.freeze([".local", "bin", "hermes"]),
     argv: Object.freeze({
@@ -48,10 +48,15 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       thinkingFlag: "--reasoning",
     }),
     modelPassing: "set_model",
-    systemPromptDelivery: "prompt-prefix",
     boundResume: "session/load",
     sessionBindingFile: "hermes-acp-session.json",
     childEnv: Object.freeze({}),
+    seatProfileSoul: Object.freeze({
+      flag: "-p",
+      namePrefix: "ak-",
+      profilesRootFromHome: Object.freeze([".hermes", "profiles"]),
+      soulFileName: "SOUL.md",
+    }),
   }),
 });
 

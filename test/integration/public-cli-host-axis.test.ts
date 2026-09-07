@@ -172,7 +172,7 @@ const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
   ...(roleTurnHost === undefined ? {} : { roleTurnHost }),
 });
 
-test("production adapter table registers grok-build and keeps pi selectable", async () => homeTest(async (home) => {
+test("production adapter table registers grok-build and hermes and keeps pi selectable", async () => homeTest(async (home) => {
   let piTurns = 0;
   const countingPi: RoleTurnHost = {
     executeTurn: async () => {
