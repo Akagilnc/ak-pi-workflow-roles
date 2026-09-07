@@ -1,18 +1,17 @@
 /**
  * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747 / #771).
  *
- * ADR 0075 `diarist-resolves-ticket-llm-layer`: 起居郎 (LLM layer) names the court
+ * ADR 0075 `diarist-resolves-ticket-llm-layer`: the seat's LLM names the court
  * target as a typed assertion; the mechanical layer only verifies that assertion
- * (complete decimal of N appears in the summons; ticket exists). Other seats
- * reuse a ticket this book already records whose complete decimal appears in the
- * summons — they never harvest ticket tokens from prose and never pick a
- * position-based "first #N" (锚定宪法). No CLI --ticket, no attachment frontmatter.
- * #747: officer same-parent resume also lives here.
+ * (complete decimal of N appears in the summons; ticket exists). Code never
+ * judges which ticket the summons is about — no prose harvest, no first-#N
+ * position pick, no matching book-known numbers against instruction text
+ * (锚定宪法; owner 2026-09-08: 代码不准做判断). Other seats reuse a typed
+ * identity already handed over (起居郎 assertion / source-run / already-bound
+ * resume) — they do not re-recognize from instruction. No CLI --ticket, no
+ * attachment frontmatter. #747: officer same-parent resume also lives here.
  */
-import {
-  ActivationGitRepositoryRequiredError,
-  resolveBookKeyFromGit,
-} from "../activation-ledger-git.ts";
+import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   instructionContainsTicketNumber,
   verifyAssertedTicketNumber,
@@ -20,14 +19,12 @@ import {
   createGhTicketExistenceChecker,
   type TicketExistenceChecker,
 } from "../diarist.ts";
-import { listTicketProvenanceVolumeNumbers } from "../ticket-provenance.ts";
 import {
   bindAdmittedTicketNumber,
   bindTicketNumberOnRunDirectory,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 import {
-  collectBookRunTicketNumbers,
   findLatestRunIdForSeatTicket,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
@@ -46,59 +43,7 @@ export {
   type TicketExistenceChecker,
 };
 
-/**
- * Ticket identity this summons reuses, or undefined when none is unambiguous.
- * Only tickets this book already records (起居录 volume typed identity or retained
- * run page) are candidates; the summons must contain that ticket's complete
- * decimal (verification of a book-known claim — not prose harvest, not first #N).
- * Zero or several matches leave the run unbound — never guess. 真无票 stays lawful.
- */
-export async function resolveKnownTicketNumber(input: {
-  readonly instruction: string;
-  readonly projectRoot: string;
-  readonly home: string;
-  readonly bookKey?: string;
-}): Promise<number | undefined> {
-  const known = new Set<number>();
-  for (const n of listTicketProvenanceVolumeNumbers(
-    input.projectRoot,
-    input.home,
-  )) {
-    known.add(n);
-  }
-  for (const n of await readBookRunTickets(input)) {
-    known.add(n);
-  }
-  const matches: number[] = [];
-  for (const n of known) {
-    if (instructionContainsTicketNumber(input.instruction, n)) {
-      matches.push(n);
-    }
-  }
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-/**
- * Ticket numbers on this book's retained runs.
- * A directory with no book (not a git repository) simply holds no run history —
- * admission owns that rejection face, this lookup does not pre-empt it.
- */
-async function readBookRunTickets(input: {
-  readonly projectRoot: string;
-  readonly home: string;
-  readonly bookKey?: string;
-}): Promise<ReadonlySet<number>> {
-  let bookKey: string;
-  try {
-    bookKey = input.bookKey ?? resolveBookKeyFromGit(input.projectRoot);
-  } catch (error) {
-    if (error instanceof ActivationGitRepositoryRequiredError) return new Set();
-    throw error;
-  }
-  return await collectBookRunTicketNumbers({ home: input.home, bookKey });
-}
-
-/** Bind a reused ticket number onto an admission that is still unbound. */
+/** Bind a typed ticket number onto an admission that is still unbound. */
 export async function bindReusedTicketNumber(
   admitted: AdmittedRoleInvocation,
   ticketNumber: number | undefined,
@@ -109,24 +54,15 @@ export async function bindReusedTicketNumber(
 }
 
 /**
- * Sole seat disposition for an unbound admission (#635 / #709).
- * Already-bound admissions short-circuit — resume keeps the identity it has.
- * Used by seats that do not pre-resolve for same-ticket resume; the seats that
- * do (countersign / inspector / diarist) reuse the number they already resolved.
+ * Already-bound admissions keep their identity; unbound admissions stay unbound.
+ * Ticket recognition is the seat LLM's job (assert on output / 起居郎 handoff) —
+ * this seam never matches instruction text against book records.
  */
 export async function resolveSeatTicketBinding(
   admitted: AdmittedRoleInvocation,
-  env: SeatTicketBindingEnv,
+  _env: SeatTicketBindingEnv,
 ): Promise<number | undefined> {
-  if (admitted.ticketNumber !== undefined) return admitted.ticketNumber;
-  const ticketNumber = await resolveKnownTicketNumber({
-    instruction: admitted.instruction,
-    projectRoot: admitted.projectRoot,
-    home: env.home,
-    bookKey: admitted.bookKey,
-  });
-  await bindReusedTicketNumber(admitted, ticketNumber);
-  return ticketNumber;
+  return admitted.ticketNumber;
 }
 
 /**

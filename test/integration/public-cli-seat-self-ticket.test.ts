@@ -1,10 +1,13 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 / #709 / #771 — seat ticket identity from the public CLI true entry
- * (no --ticket / no frontmatter / no seat model call): the number is reused from
- * records this book already holds (起居录 volume typed identity / retained runs)
- * when that ticket's complete decimal appears in the summons. Asserts typed
- * ticketNumber on admitted-request.json + invocation.json only.
+ * (no --ticket / no frontmatter). Mechanical layer never matches summons text
+ * against book-known numbers. Typed identity arrives only from:
+ * - 起居郎 LLM assertion (countersign court station / diarist seat)
+ * - --source-run admitted form (notary / auditor)
+ * - already-bound resume
+ * Asserts typed ticketNumber on admitted-request.json + invocation.json only
+ * when a typed source provided it.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -27,6 +30,7 @@ import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { runPublicFixer } from "../../src/public-cli/fixer-run.ts";
 import {
+  bindAdmittedTicketNumber,
   parseCoderArgv,
   parseCountersignArgv,
   parseFixerArgv,
@@ -111,7 +115,7 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    // #709: #582 is a ticket this book already records — seats reuse that identity.
+    // Volume may exist; seats must not mechanically bind from it + summons text.
     ensureTicketProvenanceVolume(582, project, home);
     await run({ home, project });
   });
@@ -124,6 +128,10 @@ function baseEnv(input: {
   role: "coder" | "fixer" | "judge" | "countersign" | "notary";
   toolName: string;
   details: unknown;
+  /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
+  runCourtDiaristStation?: (
+    admitted: { ticketNumber?: number; runDirectory: string },
+  ) => Promise<void>;
 }) {
   const host = roleTurnHostFromLegacyPiRunner({
     packageRoot,
@@ -145,7 +153,10 @@ function baseEnv(input: {
     createRunId: () => input.runId,
     // #742: body-path tests stub the court diarist station (no real nested seat).
     ...(input.role === "countersign"
-      ? { runCourtDiaristStation: async () => undefined }
+      ? {
+          runCourtDiaristStation:
+            input.runCourtDiaristStation ?? (async () => undefined),
+        }
       : {}),
   };
 }
@@ -164,7 +175,18 @@ async function assertDurableTicket(
   assert.equal(invocation.ticketNumber, expected);
 }
 
-test("public coder without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
+async function assertDurableUnbound(runDirectory: string): Promise<void> {
+  const admitted = JSON.parse(
+    await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+  ) as { ticketNumber?: number };
+  const invocation = JSON.parse(
+    await readFile(join(runDirectory, "invocation.json"), "utf8"),
+  ) as { ticketNumber?: number };
+  assert.equal(admitted.ticketNumber, undefined);
+  assert.equal(invocation.ticketNumber, undefined);
+}
+
+test("public coder without --ticket: no mechanical bind from summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
@@ -180,12 +202,12 @@ test("public coder without --ticket: reused ticket writes ticketNumber on both d
       parseCoderArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, 582);
-    await assertDurableTicket(result.admitted!.runDirectory, 582);
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(result.admitted!.runDirectory);
   });
 });
 
-test("public fixer without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
+test("public fixer without --ticket: no mechanical bind from summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicFixer(
       ["apply", "Repair the regression on ticket #582."],
@@ -201,12 +223,12 @@ test("public fixer without --ticket: reused ticket writes ticketNumber on both d
       parseFixerArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, 582);
-    await assertDurableTicket(result.admitted!.runDirectory, 582);
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(result.admitted!.runDirectory);
   });
 });
 
-test("public judge without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
+test("public judge without --ticket: no mechanical bind from summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicJudge(
       ["Adjudicate whether ticket #582 may proceed."],
@@ -222,12 +244,12 @@ test("public judge without --ticket: reused ticket writes ticketNumber on both d
       parseJudgeArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, 582);
-    await assertDurableTicket(result.admitted!.runDirectory, 582);
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(result.admitted!.runDirectory);
   });
 });
 
-test("public countersign without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
+test("public countersign without --ticket: binds only via 起居郎 typed handoff", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -238,6 +260,13 @@ test("public countersign without --ticket: reused ticket writes ticketNumber on 
         role: "countersign",
         toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
         details: { countersignStatus: "converged", note: "署" },
+        // Court station face: 起居郎 asserted #582 (typed handoff, not prose match).
+        runCourtDiaristStation: async (admitted) => {
+          await bindAdmittedTicketNumber(
+            admitted as Parameters<typeof bindAdmittedTicketNumber>[0],
+            582,
+          );
+        },
       }),
       captureIo().io,
       parseCountersignArgv,
@@ -245,6 +274,29 @@ test("public countersign without --ticket: reused ticket writes ticketNumber on 
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
+  });
+});
+
+test("public countersign without 起居郎 handoff stays unbound (no mechanical match)", async () => {
+  await withSeatProject(async ({ home, project }) => {
+    const result = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      baseEnv({
+        home,
+        project,
+        runId: "01a063500-0000-7000-8000-00000000csig2",
+        role: "countersign",
+        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+        details: { countersignStatus: "converged", note: "署" },
+        // Station no-ops: no typed assertion → stay unbound (not code judgment).
+        runCourtDiaristStation: async () => undefined,
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(result.admitted!.runDirectory);
   });
 });
 

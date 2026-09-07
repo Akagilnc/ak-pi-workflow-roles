@@ -984,6 +984,15 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
+
+        // LLM cannot identify the court target — escalate as-is; never wash into 无录.
+        if (submitted?.status === "escalate") {
+          if (!("sitian" in submitted)) return submitted;
+          const stripped = { ...submitted };
+          delete stripped.sitian;
+          return stripped;
+        }
+
         const assertion = readDiaristTicketAssertion(submitted);
 
         // No frozen catalog: only true-unbound is lawful without volume work.
@@ -1001,7 +1010,7 @@ export function createDiaristRoleRuntime(
           return stripped;
         }
 
-        // Already bound before the turn (book-known reuse): skip re-recognition
+        // Already bound before the turn (typed handoff / resume): skip re-recognition
         // (ADR 0075 已绑定 ticket 优先) and commit under that identity.
         if (catalog.ticketNumber !== undefined) {
           const facts = await commitDiaristSelections({
@@ -1017,6 +1026,7 @@ export function createDiaristRoleRuntime(
 
         // First summons: LLM typed assertion → mechanical verify → bind → commit.
         // true-unbound → 无录 (no volume). Verification failure throws (失败诚实).
+        // Cannot-identify must arrive as status=escalate above — never as silent unbound.
         if (assertion.kind === "true-unbound") {
           if (submitted === undefined || !("sitian" in submitted)) {
             return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };

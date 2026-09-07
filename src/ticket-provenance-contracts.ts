@@ -10,13 +10,6 @@ export const TICKET_PROVENANCE_KIND = "ticket-provenance" as const;
 export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
 
 /**
- * Typed volume identity face (ticketNumber). Written when the volume is
- * established so later seats can reuse book-known tickets without scanning
- * summons prose (ADR 0075 / #771).
- */
-export const TICKET_PROVENANCE_IDENTITY_FILE = "ticket-identity.json" as const;
-
-/**
  * Incremental watermark: identities already offered to the collector this ticket
  * (selected or not). Process state next to the volume — not a diary dual-source.
  */
