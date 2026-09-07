@@ -66,20 +66,6 @@ function gateSeatLabel(stage: "inspector" | "notary"): string {
 
 export { GatekeeperDecisionError } from "./submission-errors.ts";
 
-/**
- * @deprecated #753: officer escalate returns the raw receipt to the parent; do not
- * throw this to select next-step for the parent. Kept only so historical imports
- * compile until callers drop it.
- */
-export class GatekeeperEscalationError extends Error {
-  readonly gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>;
-  constructor(gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>) {
-    super(`门下省${gateSeatLabel(gatekeeper.officer)}上呈`);
-    this.name = "GatekeeperEscalationError";
-    this.gatekeeper = gatekeeper;
-  }
-}
-
 export type GateOfficerSummon = (
   officer: "inspector" | "notary",
   sourceRunDirectory: string,

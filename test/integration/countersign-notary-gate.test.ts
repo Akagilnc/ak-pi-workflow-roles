@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
+import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 type GateCall = { readonly kind: string; readonly subject: unknown };
 
@@ -107,12 +107,12 @@ test("countersign status unreadable returns to countersign without Notary (#753)
       ctx,
     ),
     (error: unknown) => {
-      assert.ok(error instanceof GatekeeperDecisionError);
+      // Parent re-ask — not a forged officer bounce face (#753).
+      assert.ok(error instanceof ParentQueueReaskError);
       assert.match(error.message, /countersignStatus/);
-      assert.equal(error.result.status, "bounce");
       return true;
     },
   );
   assert.equal(gateCalls.length, 0, "bad status must not summon notary");
-  assert.equal(nonPass.length, 1);
+  assert.equal(nonPass.length, 0, "parent re-ask must not bind officer non-pass");
 });
