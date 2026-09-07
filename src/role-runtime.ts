@@ -97,11 +97,6 @@ import {
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
-import {
-  EVIDENCE_CHILD_TOOL_SPEC,
-  type EvidenceChildRuntimeDependencies,
-} from "./evidence-child-role.ts";
-import { EVIDENCE_CHILD_ACCEPTED_TEXT } from "./package-contracts/evidence-child-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
@@ -154,7 +149,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-authority-refs",
     definition: Object.freeze({
-      description: "JSON array of durable authority references for Spec evidence-child material only",
+      description: "JSON array of durable authority references for Spec-axis material only",
       type: "string" as const,
     }),
   }),
@@ -475,7 +470,6 @@ type ActivationRuntime = {
   gatekeeper: { activate(): Promise<void> };
   navigator: { activate(): Promise<void> };
   auditor: { activate(): Promise<void> };
-  evidenceChild: { activate(): Promise<void> };
   diarist: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
@@ -526,7 +520,6 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
     case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
-    case "evidence-child": return { id: "load-and-install", run: async () => runtime.evidenceChild.activate() };
     case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
@@ -636,7 +629,6 @@ export type RoleRuntimeDependencies = {
   loadGatekeeperSoul?(): Promise<string>;
   loadNavigatorSoul?(): Promise<string>;
   loadAuditorSoul?(): Promise<string>;
-  loadEvidenceChildSoul?(): Promise<string>;
   loadDiaristSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
@@ -998,23 +990,6 @@ function loadFrozenDiaristCatalog(
     throw new Error("Diarist source catalog flag must be a nonempty path");
   }
   return loadDiaristSourceCatalog(raw);
-}
-
-/** #675: public evidence-child seat on the shared filed-officer envelope. */
-export function createEvidenceChildRoleRuntime(
-  roleHost: RoleHost,
-  dependencies: EvidenceChildRuntimeDependencies,
-) {
-  return createFiledOfficerRuntime(
-    roleHost,
-    {
-      role: "evidence-child",
-      tool: EVIDENCE_CHILD_TOOL_SPEC,
-      acceptedText: EVIDENCE_CHILD_ACCEPTED_TEXT,
-      soulTag: "evidence-child",
-    },
-    dependencies,
-  );
 }
 
 export function createCountersignRoleRuntime(
@@ -1545,12 +1520,6 @@ export function createRoleRuntimeExtension(
         return dependencies.loadAuditorSoul();
       },
     });
-    const evidenceChild = createEvidenceChildRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadEvidenceChildSoul) throw new Error("Evidence-child runtime dependencies are not configured");
-        return dependencies.loadEvidenceChildSoul();
-      },
-    });
     const diarist = createDiaristRoleRuntime(
       roleHost,
       {
@@ -1767,7 +1736,6 @@ export function createRoleRuntimeExtension(
         gatekeeper,
         navigator,
         auditor,
-        evidenceChild,
         diarist,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {

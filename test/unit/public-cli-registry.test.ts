@@ -134,14 +134,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     activationStage: "load-and-install",
   },
   {
-    role: "evidence-child",
-    phases: [null],
-    outputTool: "ak_evidence_child_output",
-    inputFlag: undefined,
-    phaseFlag: undefined,
-    activationStage: "load-and-install",
-  },
-  {
     role: "diarist",
     phases: [null],
     outputTool: "ak_diarist_output",
@@ -170,7 +162,7 @@ test("public registry exposes callable roles with no automatic/classifiable dist
     [...PUBLIC_CALLABLE_ROLES],
   );
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("auditor"), true);
-  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("evidence-child"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("evidence-child"), false);
   for (const forbidden of ["soul-audit", "reviewer-cmr", "archivist", "assisted"]) {
     assert.equal(
       (PUBLIC_CONFIGURABLE_SEATS as readonly string[]).includes(forbidden),
