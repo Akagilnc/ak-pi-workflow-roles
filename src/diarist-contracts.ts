@@ -74,15 +74,3 @@ export function projectDiaristSelections(value: unknown): DiaristSelection[] {
   return out;
 }
 
-/** Machine-facing facts from an accepted receipt. Submitted rows retained as-is. */
-export function diaristDecisiveFacts(
-  output: DiaristOutput,
-): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  const selections = (output as { selections?: unknown }).selections;
-  if (Array.isArray(selections)) facts.selections = selections;
-  // Mechanical sitian facts recorded by the envelope at accept time.
-  const sitian = (output as { sitian?: unknown }).sitian;
-  if (sitian !== undefined) facts.sitian = sitian;
-  return facts;
-}

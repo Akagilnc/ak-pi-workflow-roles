@@ -25,7 +25,6 @@ import {
 } from "../../src/public-cli/config.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
-import { SHAPE_UNREADABLE_KEY } from "../../src/shape-unreadable-failure.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
@@ -56,7 +55,7 @@ function captureIo() {
   };
 }
 
-test("Inspector public runner preserves typed pass, bounce, and malformed output", async () => {
+test("Inspector public runner preserves typed pass, bounce, escalate, and non-three-state reply", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project);
@@ -73,14 +72,13 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
       { status: "escalate", exitCode: 0, findings: ["escalate-finding"] },
-      { status: "malformed", exitCode: 1, details: { status: "unknown", findings: "unaltered" } },
+      // #757: non-three-state is not shape-rejected — reply passes through as accepted.
+      { status: "unknown", exitCode: 0, findings: "unaltered" as unknown },
     ].entries()) {
       const runId = `inspector-public-${index}`;
-      const details = row.status === "malformed"
-        ? row.details
-        : row.status === "pass"
-          ? { status: row.status, findings: row.findings, freeExtra }
-          : { status: row.status, findings: row.findings };
+      const details = row.status === "pass"
+        ? { status: row.status, findings: row.findings, freeExtra }
+        : { status: row.status, findings: row.findings };
       const result = await runAkRole(
         [
           "inspector",
@@ -101,7 +99,6 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
               role: "inspector",
               toolName: INSPECTOR_OUTPUT_TOOL_NAME,
               details,
-              ...(row.status === "malformed" ? { seal: false } : {}),
             }),
           }),
         },
@@ -110,16 +107,7 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       assert.equal(result.exitCode, row.exitCode);
       assert.ok(result.terminal);
       const outcome = result.terminal.roleOutcome;
-      if (row.status === "malformed") {
-        assert.equal(outcome.kind, "failure");
-        if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
-        assert.equal(outcome.cause, "output");
-        assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
-          [SHAPE_UNREADABLE_KEY]: true,
-          candidate: row.details,
-          acceptedReceipt: false,
-        });
-      } else if (row.status === "escalate") {
+      if (row.status === "escalate") {
         assert.equal(outcome.kind, "audit_escalation");
         assert.equal(outcome.status, "audit_escalation");
         assert.deepEqual(outcome.decisiveFacts.findings, row.findings);

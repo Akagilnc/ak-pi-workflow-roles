@@ -69,14 +69,3 @@ export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
   return projected;
 }
 
-export function auditorDecisiveFacts(output: AuditorOutput): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  if (output.status === "bounce" && output.violations !== undefined) {
-    facts.violations = output.violations;
-  }
-  if (output.status === "escalate") {
-    if (output.conflicts !== undefined) facts.conflicts = output.conflicts;
-    if (output.decisionGate !== undefined) facts.decisionGate = output.decisionGate;
-  }
-  return facts;
-}
