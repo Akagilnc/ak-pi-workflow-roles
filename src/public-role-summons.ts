@@ -53,6 +53,12 @@ export type PublicSummonRequest = {
    * parent tool call is cancelled (#675).
    */
   readonly signal?: AbortSignal;
+  /**
+   * #753 plain-language re-ask when the prior officer reply was not three-state.
+   * Nested gate officers (notary + inspector) — rides same-ticket resume
+   * summons.instruction. Never folded into argv / parent-run lookup keys.
+   */
+  readonly reviewReask?: string;
 };
 
 export type PublicSummonResult = {
@@ -278,6 +284,8 @@ export async function summonPublicRole(
       : { autoResumeLimit: config.autoResumeLimit }),
     // Parent cancellation reaches the nested activation's own turn dispatch.
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    // #753: reask rides the existing notary same-ticket resume summons.instruction.
+    ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -386,6 +394,12 @@ export async function summonGateOfficer(options: {
   readonly io?: CliIo;
   /** Parent cancellation for the nested officer activation (#675). */
   readonly signal?: AbortSignal;
+  /**
+   * Plain-language re-ask when the prior officer reply was not three-state (#753).
+   * Both officers: reviewReask → same-ticket resume summons.instruction.
+   * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
+   */
+  readonly reask?: string;
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
@@ -394,6 +408,8 @@ export async function summonGateOfficer(options: {
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
   if (options.officer === "notary") {
+    // #753: reask rides summonPublicRole → runPublicNotary summons.instruction
+    // (same resume seam as ordinary same-parent re-summons — no parallel stack).
     return summonPublicRole({
       role: "notary",
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
@@ -402,8 +418,10 @@ export async function summonGateOfficer(options: {
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.io === undefined ? {} : { io: options.io }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
     });
   }
+  // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
   return summonPublicRole({
     role: "inspector",
     argv: [`卷宗指针：${options.sourceRunDirectory}`],
@@ -412,5 +430,6 @@ export async function summonGateOfficer(options: {
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
   });
 }

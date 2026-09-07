@@ -441,14 +441,13 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
       );
       assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
       assert.ok(result.terminal, `receipt ${receipt.status}`);
-      assert.equal(
-        result.terminal.roleOutcome.kind,
-        receipt.status === "escalate" ? "audit_escalation" : "accepted",
-      );
+      // #753 escalate-thrown-verbatim: officer escalate seals accepted + raw status,
+      // not rewritten into audit_escalation / fabricated reason.
+      assert.equal(result.terminal.roleOutcome.kind, "accepted");
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(
         result.terminal.roleOutcome.status,
-        receipt.status === "escalate" ? "audit_escalation" : receipt.status,
+        receipt.status,
         `receipt ${receipt.status}`,
       );
       if ("reason" in receipt) {
