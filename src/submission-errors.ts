@@ -1,17 +1,14 @@
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 
 /**
  * Tool-result text the parent model sees (#753 / #750 evidence).
  * bounce | escalate → officer receipt verbatim (JSON when structured).
  * no_receipt → honest lifecycle fact. No findings rewrite, no「（无 findings）」.
+ * #775: structured field content via readableGateItem (DRY with other gate seams).
  */
 function serializeReceipt(receipt: unknown): string {
-  if (typeof receipt === "string") return receipt;
-  try {
-    return JSON.stringify(receipt);
-  } catch {
-    return String(receipt);
-  }
+  return readableGateItem(receipt);
 }
 
 function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {

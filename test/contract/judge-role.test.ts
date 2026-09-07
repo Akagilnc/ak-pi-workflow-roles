@@ -550,7 +550,15 @@ async function workerCompletionGatekeeperHarness(options: {
           kind: "accepted",
           role: officer,
           status: "bounce",
-          decisiveFacts: { status: "bounce", findings: ["add a focused regression"] },
+          // #775: structured officer findings must relay field content into parent-visible text.
+          decisiveFacts: {
+            status: "bounce",
+            findings: [{
+              article: "focused-regression",
+              reason: "add a focused regression",
+              evidence: "diff lacks a failing case",
+            }],
+          },
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
@@ -651,14 +659,19 @@ async function workerCompletionGatekeeperHarness(options: {
         if (error.result.status === "bounce") {
           assert.equal(error.result.officer, officer);
           // #753: raw officer receipt; no findings rewrite / disposition mapping.
+          // #775: structured findings relay field content into parent-visible text.
+          const structuredFinding = {
+            article: "focused-regression",
+            reason: "add a focused regression",
+            evidence: "diff lacks a failing case",
+          };
           assert.deepEqual(error.result.receipt, {
             status: "bounce",
-            findings: ["add a focused regression"],
+            findings: [structuredFinding],
           });
-          assert.equal(
-            error.message,
-            JSON.stringify({ status: "bounce", findings: ["add a focused regression"] }),
-          );
+          assert.match(error.message, /focused-regression/);
+          assert.match(error.message, /add a focused regression/);
+          assert.match(error.message, /diff lacks a failing case/);
         }
       });
     },
@@ -1275,9 +1288,16 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
   const { tool } = await startJudge();
   const verdict = { judgeStatus: "converged" };
   let abortCalls = 0;
+  // #775: structured violations must reach the parent seat with field content intact
+  // (not `[object Object]` from Array#join coercion).
+  const structured = {
+    article: "evidence-required",
+    reason: "No authority clause was applied",
+    evidence: "session tool_result lacks ADR cite",
+  };
   const bounceReceipt = {
     status: "bounce",
-    violations: ["No authority clause was applied", "Tests were not adjudicated"],
+    violations: [structured, "Tests were not adjudicated"],
   };
   const ctx = await withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
     abortCalls += 1;
@@ -1312,7 +1332,11 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
       if (error.result.status === "bounce") {
         assert.equal(error.result.officer, "auditor");
         assert.deepEqual(error.result.receipt, bounceReceipt);
-        assert.equal(error.message, JSON.stringify(bounceReceipt));
+        // #775 acceptance: parent-visible text carries every structured field + string items.
+        assert.match(error.message, /evidence-required/);
+        assert.match(error.message, /No authority clause was applied/);
+        assert.match(error.message, /session tool_result lacks ADR cite/);
+        assert.match(error.message, /Tests were not adjudicated/);
       }
       return true;
     },

@@ -3,6 +3,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -126,17 +127,17 @@ function humanDecisionText(
     lines.push(`Reason: ${result.reason}`);
   }
   if (Array.isArray(result.conflicts)) {
-    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
+    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${readableGateItem(conflict)}`));
   }
   if (officer !== undefined && Array.isArray(result.findings) && result.findings.length > 0) {
-    lines.push("Findings:", ...result.findings.map((finding) => `- ${finding}`));
+    lines.push("Findings:", ...result.findings.map((finding) => `- ${readableGateItem(finding)}`));
   }
   const gate = result.auditDecisionGate;
   if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
     const record = gate as Record<string, unknown>;
     if (typeof record.question === "string") lines.push(`Question: ${record.question}`);
     if (Array.isArray(record.options)) {
-      lines.push("Options:", ...record.options.map((option) => `- ${option}`));
+      lines.push("Options:", ...record.options.map((option) => `- ${readableGateItem(option)}`));
     }
   }
   return lines.join("\n");
