@@ -3,7 +3,7 @@
  * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
  * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
  * with gate-province dispatch; this module is the direct command face.
- * #637: same-ticket re-summons resume the seat's previous run (no new run).
+ * #637 / #747: same-parent (卷宗指针) re-summons resume the seat's previous run.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -11,7 +11,6 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   applyInstructionTicketProbe,
   probeInstructionTicket,
-  ticketNumberFromProbe,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -31,6 +30,7 @@ import {
 import {
   loadResumableInspectorRun,
   markRunAdmitted,
+  parentRunPathFromGatePointerInstruction,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -87,7 +87,7 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #637: same ticket → resume prior inspector run with this summons' materials.
+  // #747: same parent (卷宗指针) → resume prior inspector run with this summons' materials.
   // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
   // controlled failure (bare pre-admit throw skips terminal settlement).
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
@@ -97,8 +97,8 @@ export async function runPublicInspector(
     projectRoot,
     env,
   );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+  const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
+  if (parentRunPath !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -108,7 +108,7 @@ export async function runPublicInspector(
       home: env.home,
       projectRoot,
       role: "inspector",
-      ticketNumber: probedTicketNumber,
+      parentRunPath,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
