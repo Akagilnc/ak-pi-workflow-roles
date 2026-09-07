@@ -128,6 +128,8 @@ export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknow
   if (status === "pass" || status === "bounce") {
     const findings = (output as { findings?: unknown }).findings;
     facts.findingsCount = Array.isArray(findings) ? findings.length : 0;
+    // The parent role reads the findings themselves; the count alone dropped them (#750).
+    facts.findings = Array.isArray(findings) ? findings : [];
   }
   if (status === "bounce") {
     facts.disposition = "rewrite";
