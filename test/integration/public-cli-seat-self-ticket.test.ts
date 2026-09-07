@@ -1,8 +1,8 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #635 / #709 — seat ticket identity from the public CLI true entry
- * (no --ticket / no frontmatter / no extra recognizer call): the number is the
- * typed key the working 起居郎 round hands back. Asserts typed ticketNumber on
+ * (no --ticket / no frontmatter / no seat model call): the number is reused from
+ * records this book already holds. Asserts typed ticketNumber on
  * admitted-request.json + invocation.json only.
  */
 import assert from "node:assert/strict";
