@@ -21,8 +21,19 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "completed — 形状指引，非 schema 闸",
+        description: "completed | escalate — 形状指引，非 schema 闸",
       }),
+      ticketNumber: Type.Optional(
+        Type.Unknown({
+          description:
+            "本庭对象票号（正整数）或 null/省略＝真无票；机械验真后下游走 typed 键；认不出用 status=escalate，不洗成无录",
+        }),
+      ),
+      reason: Type.Optional(
+        Type.String({
+          description: "status 为 escalate 时：认不出本庭对象的原因",
+        }),
+      ),
       selections: Type.Array(
         Type.Object(
           {
@@ -36,7 +47,7 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
           },
           { additionalProperties: true, description: "一条入录选择" },
         ),
-        { description: "入录选择；空列表合法完局" },
+        { description: "入录选择；空列表合法完局；escalate 时可不交" },
       ),
     }),
   ),
@@ -54,7 +65,7 @@ export type DiaristRuntimeDependencies = {
 export const DIARIST_TOOL_SPEC = {
   name: DIARIST_OUTPUT_TOOL_NAME,
   label: "起居郎输出",
-  description: "起居郎入录选择。",
-  promptSnippet: "起居郎入录选择",
+  description: "起居郎入录选择与本票身份断言；认不出本庭对象则 escalate。",
+  promptSnippet: "起居郎入录选择与本票身份",
   parameters: diaristOutputSchema,
 } as const;

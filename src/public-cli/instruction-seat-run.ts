@@ -35,11 +35,7 @@ import {
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
-import {
-  bindReusedTicketNumber,
-  resolveKnownTicketNumber,
-  tryResumeSameTicketSeatRun,
-} from "./seat-ticket-binding.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
@@ -252,11 +248,11 @@ export async function runPublicInstructionSeat(
   let auditorSubject: "judge" | "doctor" | undefined;
   let auditorSourceRun: string | undefined;
   let auditorSourceTicket: number | undefined;
-  let reusedTicketNumber: number | undefined;
 
-  // #637 / #747: resume prior seat run with this summons' materials.
-  // Auditor (#747): parent --source-run path is the lookup key.
-  // Other instruction seats: reuse known ticket (#709). No bare catch→fresh.
+  // #637 / #747 / #771: resume prior seat run with this summons' materials.
+  // Auditor (#747): parent --source-run path is the lookup key (typed inherit).
+  // Other instruction seats: no mechanical ticket match against instruction text.
+  // No bare catch→fresh.
   const projectRoot = parsed.project ?? env.cwd;
   if (role === "auditor") {
     if (parsed.subject !== "judge" && parsed.subject !== "doctor") {
@@ -291,12 +287,6 @@ export async function runPublicInstructionSeat(
       );
       return { exitCode: 2 };
     }
-  } else {
-    reusedTicketNumber = await resolveKnownTicketNumber({
-      instruction: parsed.instruction,
-      projectRoot,
-      home: env.home,
-    });
   }
 
   // #756: auditor reask rides summons.instruction on same-ticket resume (notary/inspector pattern).
@@ -341,22 +331,6 @@ export async function runPublicInstructionSeat(
       );
       return { exitCode: 2 };
     }
-  } else if (reusedTicketNumber !== undefined) {
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
-      projectRoot,
-      role,
-      ticketNumber: reusedTicketNumber,
-      freshSummons: env.freshSummons,
-      summons,
-      resume: (runId, materials) =>
-        runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-    });
-    if (resumed !== undefined) return resumed;
   }
 
   let admitted: AdmittedInstructionSeatInvocation;
@@ -421,13 +395,9 @@ export async function runPublicInstructionSeat(
         request: turnRequest,
         adapters: instructionSeatAdapters({
           beforeDispatch: async (admittedSeat) => {
-            // #635/#709: ticket bind inside controlled-failure boundary.
-            // Auditor inherits source-run ticket (notary face).
-            // Other seats: reuse known ticket identity.
+            // Auditor inherits source-run ticket (notary face) — typed, not prose match.
             if (auditorSourceTicket !== undefined) {
               await bindAdmittedTicketNumber(admittedSeat, auditorSourceTicket);
-            } else {
-              await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
             }
           },
         }),

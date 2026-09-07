@@ -228,7 +228,7 @@ export function validateAcceptedDetails(
     [GATEKEEPER_OUTPUT_TOOL_NAME]: ["dispatch", "pass"],
     [NAVIGATOR_OUTPUT_TOOL_NAME]: ["advice"],
     [AUDITOR_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
-    [DIARIST_OUTPUT_TOOL_NAME]: ["completed"],
+    [DIARIST_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
   };
   const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
   const baseDiscriminator = discriminator;
