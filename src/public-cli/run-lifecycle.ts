@@ -164,11 +164,10 @@ function resumeRereadInstruction(materialPath: string, handbook: boolean): strin
 }
 
 /**
- * Resume-only material lines (#736 ticket exemption to ADR 0073 §3).
- * Neutral `- <absolute path>` pointers already on the continuation
- * (handbook from appendEngineSessionMaterial; frozen attachments from
- * instruction-seat transport) become reread instructions.
- * Handbook keeps the argv suffix; other materials are path-only.
+ * Engine-axis resume-only material lines (#736 / ADR 0069·0071).
+ * #755 withdrew this rewrite from 审核循环续话; review same-ticket resume stays
+ * plain dialogue via resumeTurnRequestProjectionOptions. Outsourcing resume
+ * still rewrites neutral handbook/path pointers into 重新读 instructions.
  * First-round delivery is unchanged; never pastes material body.
  */
 export function instructResumeHandbookRead(
@@ -190,19 +189,9 @@ export function instructResumeHandbookRead(
     .join("\n");
 }
 
-/** Append a live-path reread instruction when the pointer is not already on the continuation. */
-export function appendResumeMaterialReread(
-  prompt: string,
-  materialPath: string,
-): string {
-  const instruction = resumeRereadInstruction(materialPath, false);
-  const lines = prompt.split("\n");
-  if (lines.includes(instruction)) return prompt;
-  return prompt.length === 0 ? instruction : `${prompt}\n${instruction}`;
-}
-
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471 / #600 / #736).
+ * Unique continuation-prompt selector for manual/auto engine-axis resume
+ * (#471 / #600 / #736). Not used for 审核循环 same-ticket summons (#755).
  * Message present → base bytes unchanged; absent → package transport envelope.
  * When engine material is present, append structured engine coordinates then
  * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
@@ -1052,9 +1041,52 @@ export async function findRunDirectoryById(
   return undefined;
 }
 
+/** Code-owned gate inspector summons prefix (public-role-summons / #747). */
+export const GATE_DOSSIER_POINTER_PREFIX = "卷宗指针：" as const;
+
+/** Parent path from a code-owned inspector 卷宗指针 instruction; else undefined. */
+export function parentRunPathFromGatePointerInstruction(
+  instruction: string,
+): string | undefined {
+  if (!instruction.startsWith(GATE_DOSSIER_POINTER_PREFIX)) return undefined;
+  const path = instruction.slice(GATE_DOSSIER_POINTER_PREFIX.length).trim();
+  return path === "" ? undefined : path;
+}
+
 /**
- * Locate the latest retained run for one seat+ticket under a book (#637).
- * Same walk surface as findRunDirectoryById; ticket identity from durable pages.
+ * Parent-run binding on a retained officer run (#747).
+ * Notary/auditor: typed sourceRunPath. Inspector: exact code-owned 卷宗指针 instruction.
+ * Missing page → undefined; damage / non-ENOENT IO propagates.
+ */
+export async function readRunParentPath(
+  runDirectory: string,
+): Promise<string | undefined> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    );
+  } catch (error) {
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
+    return record.sourceRunPath;
+  }
+  if (typeof record.instruction === "string") {
+    return parentRunPathFromGatePointerInstruction(record.instruction);
+  }
+  return undefined;
+}
+
+/**
+ * Locate the latest retained run for one seat under a book (#637 / #747).
+ * Same walk surface as findRunDirectoryById. Match by parent run path (officer
+ * seats, #747) or by ticket number (countersign / diarist principal).
  * runId is UUIDv7 — lexicographic max is latest. No parallel index.
  * Only a truly missing runs directory means no history; damage/permission errors propagate.
  */
@@ -1062,7 +1094,8 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber: number;
+  readonly ticketNumber?: number;
+  readonly parentRunPath?: string;
 }): Promise<string | undefined> {
   const ledgerHome = resolveActivationLedgerHome(input.home);
   const runsDir = join(
@@ -1082,8 +1115,16 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (!entry.endsWith(suffix)) continue;
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
-    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
-    if (ticketNumber !== input.ticketNumber) continue;
+    const runDirectory = join(runsDir, entry);
+    if (input.parentRunPath !== undefined) {
+      const parentPath = await readRunParentPath(runDirectory);
+      if (parentPath !== input.parentRunPath) continue;
+    } else if (input.ticketNumber !== undefined) {
+      const ticketNumber = await readRunTicketNumber(runDirectory);
+      if (ticketNumber !== input.ticketNumber) continue;
+    } else {
+      continue;
+    }
     if (best === undefined || runId > best) best = runId;
   }
   return best;

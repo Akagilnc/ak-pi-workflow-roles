@@ -422,8 +422,9 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
 
     for (const [index, receipt] of receipts.entries()) {
       const { io } = captureIo();
+      // #747: each receipt is an independent public admission, not same-parent resume.
       const result = await runAkRole(
-        ["notary", "--source-run", sourceRunPath],
+        ["new", "notary", "--source-run", sourceRunPath],
         {
           home,
           packageRoot,

@@ -134,7 +134,7 @@ export function createJudgeRoleRuntime(
                   terminate: true as const,
                   ...usageProjection,
                 }),
-                revise: (violations) => {
+                bounce: (violations) => {
                   throw new Error(
                     `大理寺回执违 soul：${violations.join("; ")}`,
                   );
