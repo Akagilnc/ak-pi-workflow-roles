@@ -264,12 +264,15 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         unknown
       >;
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
+      // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
       if (receipt.countersignStatus === "continue") {
-        assert.equal(facts.fixSummary, receipt.fix.summary);
+        const fix = facts.fix as { summary?: string } | undefined;
+        assert.equal(fix?.summary, receipt.fix.summary);
       }
       if (receipt.countersignStatus === "escalate") {
-        assert.equal(facts.decisionQuestion, receipt.decisionGate.question);
-        assert.deepEqual(facts.decisionOptions, [...receipt.decisionGate.options]);
+        const gate = facts.decisionGate as { question?: string; options?: string[] } | undefined;
+        assert.equal(gate?.question, receipt.decisionGate.question);
+        assert.deepEqual(gate?.options, [...receipt.decisionGate.options]);
       }
       if (receipt.countersignStatus === "converged") {
         assert.equal(facts.note, receipt.note);

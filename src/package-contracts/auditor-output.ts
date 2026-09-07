@@ -69,14 +69,7 @@ export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
   return projected;
 }
 
+/** #757: submitted fields pass through — no field drop. */
 export function auditorDecisiveFacts(output: AuditorOutput): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  if (output.status === "revise" && output.violations !== undefined) {
-    facts.violations = output.violations;
-  }
-  if (output.status === "escalate") {
-    if (output.conflicts !== undefined) facts.conflicts = output.conflicts;
-    if (output.decisionGate !== undefined) facts.decisionGate = output.decisionGate;
-  }
-  return facts;
+  return { ...(output as unknown as Record<string, unknown>) };
 }
