@@ -125,7 +125,14 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector" }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" };
+  | { readonly role: "navigator" }
+  | { readonly role: "auditor" }
+  | { readonly role: "evidence-child" }
+  | {
+      readonly role: "diarist";
+      /** Frozen source-catalog path; absent for a true-unbound summons (#708). */
+      readonly sourcesPath?: string;
+    };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
@@ -140,12 +147,14 @@ export type RoleTurnModelConfig = {
 
 /**
  * Typed cross-host resume handoff (#617 DK-4).
- * Present only when post-admission projects a real switch between known hosts.
- * Cross-host prior volume: previous native record paths for the live host (DK-7).
+ * Present only when post-admission projects a real host switch.
+ * priorNativeKind names the record family the paths belong to — Pi's own
+ * session file, or sitian run records (ADR 0077) — so a consuming adapter
+ * reads the handoff without knowing which host wrote it.
  * Target host reads those files itself; projector never copies bytes.
  */
 export type RoleTurnHostTransition = {
-  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativeKind: "pi-native" | "sitian";
   readonly priorNativePaths: readonly string[];
 };
 
@@ -163,6 +172,12 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /**
+   * Parent cancellation for a nested activation (role-inside-role public summons,
+   * #675). The host terminates its child when this aborts; a public CLI process
+   * has no parent to observe and leaves it absent.
+   */
+  readonly signal?: AbortSignal;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
   /**
@@ -288,7 +303,7 @@ type HostGatekeeperSubject = {
   readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
 };
 /** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
+type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" | "unreadable" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };

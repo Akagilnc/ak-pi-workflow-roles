@@ -1,8 +1,12 @@
 /**
- * 起居郎 pipeline step — ADR 0075 / #582.
- * Not a public seat: no soul, no locator, no gate attendance.
- * Runs as the court-pipeline station before countersign turn.
+ * 起居郎 mechanical halves — ADR 0075 `diarist-is-role` / `diarist-collector-is-own-turn`.
+ * Semantic collection is the diarist role's own LLM turn; this module keeps the
+ * mechanical safeguard band only: source enumeration into a frozen catalog, and
+ * the verbatim reverse-verify → idempotent sitian append → watermark commit.
+ * No lifecycle here (ADR 0018): the seat prepares, the role envelope commits.
  */
+import { readFileSync } from "node:fs";
+
 import { extractReferencedAdrPaths } from "./adr-path-refs.ts";
 import {
   createGhApiRunner,
@@ -22,13 +26,9 @@ import {
   type DiaristIssueFace,
   type DiaristSourceBlock,
 } from "./diarist-mechanical.ts";
-import {
-  createHermesDiaristCollector,
-  type DiaristLlmCollectResult,
-} from "./diarist-llm-collector.ts";
+import type { DiaristSelection } from "./diarist-contracts.ts";
 import { parseGitHubOriginRemote } from "./reviewer-pinned-git.ts";
 import {
-  appendCollectorFailureDiagnostic,
   appendIssueSourceFailureDiagnostic,
   appendQuoteVerifyFailureDiagnostic,
   appendTicketProvenanceEntry,
@@ -40,8 +40,7 @@ import {
   ticketProvenanceEntryIdentity,
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
-import type { TicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
-import { readSitianRecords, type RecordPointer } from "./sitian-facade.ts";
+import { readSitianRecords } from "./sitian-facade.ts";
 import { execFileSync } from "node:child_process";
 
 export type { DiaristIssueFace } from "./diarist-mechanical.ts";
@@ -72,72 +71,15 @@ export class DiaristIssueSourceError extends Error {
 }
 
 /**
- * Issue-face fetch for the diarist station.
- * Production never soft-returns undefined (Reviewer Spec soft-fetch is not reused).
- * Test injectors may return undefined to simulate unavailability — station converts
- * that into a typed DiaristIssueSourceError + durable diagnostic.
+ * Issue-face fetch for the diarist seat. Unavailability is a typed
+ * DiaristIssueSourceError — there is no soft-undefined face.
  */
 export type DiaristIssueFaceFetcher = (input: {
   readonly owner: string;
   readonly repo: string;
   readonly ticketNumber: number;
   readonly signal?: AbortSignal;
-}) => Promise<DiaristIssueFace | undefined>;
-
-export type DiaristRunInput = {
-  /**
-   * Ticket identity the caller already holds. Omit it and this round reads the
-   * summons and hands one back — the sole ticket-number source of truth
-   * (ADR 0081 `initial-court-ticket-supplied` / `reuse-case-ticket-without-extra-llm`).
-   */
-  readonly ticketNumber?: number;
-  /** Caller summons text this round understands when identity is not yet known. */
-  readonly instruction?: string;
-  readonly cwd: string;
-  /** Explicit package home (admitted run / tests); never process.env.HOME (#604). */
-  readonly home?: string;
-  /**
-   * Frozen GitHub issue face (body + comments). Production loads via shared gh seam.
-   * Soft-unavailable → omit (no fake face from attachments).
-   */
-  readonly issueFace?: DiaristIssueFace;
-  /** Extra cwd roots whose cc project folders are scanned. */
-  readonly sessionCwds?: readonly string[];
-  readonly signal?: AbortSignal;
-  /** Package root for hermes collector method material resolution. */
-  readonly packageRoot?: string;
-  /**
-   * After this round names a ticket, load the GitHub issue face so the same
-   * invocation can collect it. Omit when the caller already passed issueFace
-   * or when this seat does not fetch faces (coder/fixer/judge/inspector).
-   */
-  readonly loadIssueFace?: (
-    ticketNumber: number,
-  ) => Promise<DiaristIssueFace>;
-};
-
-export type DiaristRunResult = {
-  /** Identity this round worked under; undefined = the summons named no ticket. */
-  readonly ticketNumber: number | undefined;
-  /** Safeguard-cleaned source count before incremental filter. */
-  readonly candidateCount: number;
-  /** Blocks not yet on the volume — sole set sent to the collector this court. */
-  readonly freshCount: number;
-  readonly appended: number;
-  readonly rejectedQuotes: number;
-  readonly pointers: readonly RecordPointer[];
-  readonly entries: readonly TicketProvenanceEntry[];
-  /** Volume faces — absent when the round named no ticket (no volume is minted). */
-  readonly humanViewFile?: string;
-  readonly volumeRecordFile?: string;
-  readonly collectorStatus:
-    | "ok"
-    | "skipped-no-fresh"
-    | "failed"
-    | "empty-selection";
-  readonly collectorError?: string;
-  readonly llmRawStdout?: string;
-};
+}) => Promise<DiaristIssueFace>;
 
 /**
  * Production issue-face capability over shared gh execution seams.
@@ -234,9 +176,77 @@ export function resolveDiaristGithubOrigin(
 }
 
 /**
+ * Acquire the issue face for a bound ticket. Failures are typed and durable on
+ * the ticket-provenance volume, then propagated — never washed into empty face.
+ */
+export async function loadDiaristIssueFace(input: {
+  readonly ticketNumber: number;
+  readonly projectRoot: string;
+  readonly home?: string;
+  readonly fetcher?: DiaristIssueFaceFetcher;
+}): Promise<DiaristIssueFace> {
+  const persistAndThrow = (error: DiaristIssueSourceError): DiaristIssueSourceError => {
+    appendIssueSourceFailureDiagnostic({
+      ticketNumber: input.ticketNumber,
+      cwd: input.projectRoot,
+      ...(input.home === undefined ? {} : { home: input.home }),
+      cause: error.message,
+      reason: error.reason,
+    });
+    return error;
+  };
+
+  const origin = resolveDiaristGithubOrigin(input.projectRoot);
+  if (origin === undefined) {
+    throw persistAndThrow(
+      new DiaristIssueSourceError(
+        "origin-unresolved",
+        `bound ticket #${input.ticketNumber} issue face requires a resolvable github.com origin remote`,
+      ),
+    );
+  }
+
+  const fetcher = input.fetcher ?? createDiaristIssueFaceFetcher();
+  try {
+    return await fetcher({
+      owner: origin.owner,
+      repo: origin.repo,
+      ticketNumber: input.ticketNumber,
+    });
+  } catch (error) {
+    throw persistAndThrow(
+      error instanceof DiaristIssueSourceError
+        ? error
+        : new DiaristIssueSourceError(
+            "issue-unavailable",
+            `issue face fetch failed for ${origin.owner}/${origin.repo}#${input.ticketNumber}`,
+            { cause: error },
+          ),
+    );
+  }
+}
+
+/** One frozen candidate the diarist turn may select by index. */
+export type DiaristSourceCandidate = DiaristSourceBlock & {
+  readonly candidateIndex: number;
+};
+
+/**
+ * Frozen per-ticket catalog handed to the diarist turn and re-read by the
+ * envelope at accept time. Carries its own volume coordinates so neither side
+ * re-derives them from ambient state.
+ */
+export type DiaristSourceCatalog = {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  readonly home?: string;
+  readonly candidates: readonly DiaristSourceCandidate[];
+};
+
+/**
  * Identities already processed for this ticket:
  * - volume record identities (selected / verify-fail residue)
- * - offered watermark (blocks shown to collector, selected or not)
+ * - offered watermark (blocks shown to the diarist, selected or not)
  */
 async function loadSeenEntryIdentities(
   ticketNumber: number,
@@ -274,7 +284,11 @@ function blockEntryIdentity(
  * Mechanical layer does not prose-filter for relevance (锚定宪法).
  * Attachments are never merged in as fake issue-body-comment.
  */
-async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBlock[]> {
+function loadSourceBlocks(input: {
+  readonly cwd: string;
+  readonly issueFace?: DiaristIssueFace;
+  readonly sessionCwds?: readonly string[];
+}): DiaristSourceBlock[] {
   const cwds = input.sessionCwds ?? [input.cwd];
   const blocks: DiaristSourceBlock[] = [...readCcSessionBlocks({ cwds })];
   if (input.issueFace !== undefined) {
@@ -296,249 +310,205 @@ async function loadSourceBlocks(input: DiaristRunInput): Promise<DiaristSourceBl
   return blocks;
 }
 
-function faceTextForAnchors(face: DiaristIssueFace | undefined): string | undefined {
-  if (face === undefined) return undefined;
-  const parts = [face.body, ...face.comments.map((c) => c.body)].filter(
-    (t) => t.trim() !== "",
+export type PrepareDiaristSourceCatalogInput = {
+  readonly ticketNumber: number;
+  readonly cwd: string;
+  /** Explicit package home (admitted run / tests); never process.env.HOME (#604). */
+  readonly home?: string;
+  /** Frozen GitHub issue face (body + comments) from the shared gh seam. */
+  readonly issueFace?: DiaristIssueFace;
+  /** Extra cwd roots whose cc project folders are scanned. */
+  readonly sessionCwds?: readonly string[];
+};
+
+/**
+ * Mechanical half A — source enumeration into a frozen catalog.
+ * Establishes the per-ticket volume + human view for every bound run (ADR 0075
+ * `ticket-provenance-file` 每票一份起居录), then offers only blocks whose entry
+ * identity is not already on the volume or the offered watermark (增量幂等).
+ */
+export async function prepareDiaristSourceCatalog(
+  input: PrepareDiaristSourceCatalogInput,
+): Promise<DiaristSourceCatalog> {
+  ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
+  const volume = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  writeTicketProvenanceHumanView({
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
+    entries: volume.entries,
+  });
+
+  const rawBlocks = loadSourceBlocks(input);
+  // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
+  const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
+  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd, input.home);
+  const fresh = safeguarded.filter(
+    (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
   );
-  if (parts.length === 0) return undefined;
-  return parts.join("\n");
+
+  return {
+    ticketNumber: input.ticketNumber,
+    cwd: input.cwd,
+    ...(input.home === undefined ? {} : { home: input.home }),
+    candidates: fresh.map((block, candidateIndex) => ({ ...block, candidateIndex })),
+  };
+}
+
+export function serializeDiaristSourceCatalog(catalog: DiaristSourceCatalog): string {
+  return JSON.stringify(catalog);
+}
+
+/** Read a frozen catalog written by the seat. Unreadable/malformed fails loudly. */
+export function loadDiaristSourceCatalog(path: string): DiaristSourceCatalog {
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`diarist source catalog is not an object (${path})`);
+  }
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.ticketNumber !== "number" || typeof record.cwd !== "string") {
+    throw new Error(`diarist source catalog is missing ticket coordinates (${path})`);
+  }
+  if (!Array.isArray(record.candidates)) {
+    throw new Error(`diarist source catalog is missing candidates (${path})`);
+  }
+  return parsed as DiaristSourceCatalog;
 }
 
 /**
- * Run one diarist pass: mechanical candidates → LLM collect → reverse-verify →
- * idempotent sitian append → human view refresh.
- * The same round carries ticket identity: an input ticketNumber is worked under
- * directly, otherwise the collector reads the caller's summons and names one.
- * A named ticket always ends with its volume + md established, including on the
- * empty and failed paths. A round that names none stays lawfully unbound and
- * mints nothing — no fake ticket, no volume.
+ * 失败真因 — typed causes for submitted rows that never reached the volume.
+ * Names the cause only; the per-row detail stays on the volume diagnostic.
  */
-export async function runDiarist(input: DiaristRunInput): Promise<DiaristRunResult> {
-  const homeOpt = input.home === undefined ? {} : { home: input.home };
-  const known = input.ticketNumber;
+export type DiaristFailureCause =
+  /** Row pointed at no candidate in this turn's frozen catalog. */
+  | "unknown-candidate"
+  /** Row's quotes failed verbatim reverse-verify. */
+  | "quote-verify-rejected";
 
-  const rawBlocks = await loadSourceBlocks(input);
-  // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
-  const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
-  // Incremental: only blocks whose entry identity is not yet on the volume
-  // are offered to the collector (ADR 0075 refresh-every-court = 增量幂等).
-  // An unknown identity has no volume to compare against — every block is fresh.
-  const seen =
-    known === undefined
-      ? new Set<string>()
-      : await loadSeenEntryIdentities(known, input.cwd, input.home);
-  const fresh = safeguarded.filter(
-    (block) => known === undefined || !seen.has(blockEntryIdentity(known, block)),
-  );
+/** Honest machine facts about what this turn actually committed to the volume. */
+export type DiaristCommitFacts = {
+  readonly ticketNumber: number;
+  /** Candidates offered to the diarist this turn. */
+  readonly offered: number;
+  /** New entries this turn actually put on the volume (entry-count delta). */
+  readonly appended: number;
+  /** Selections rejected by verbatim reverse-verify. */
+  readonly rejectedQuotes: number;
+  /** Offered identities newly written to the watermark this turn. */
+  readonly watermarked: number;
+  readonly volumeRecordFile: string;
+  readonly humanViewFile: string;
+  /**
+   * What this turn's collection amounted to. A turn whose every row was
+   * dropped is `nothing-appended`, never `empty-selection` — the diarist
+   * selecting nothing and the safeguard band rejecting everything are
+   * different events. Why rows were dropped is `failureCauses`.
+   */
+  readonly collectorStatus:
+    | "ok"
+    | "empty-selection"
+    | "nothing-appended"
+    | "skipped-no-fresh";
+  /**
+   * 失败真因: empty when every submitted row landed. Populated whenever rows
+   * were dropped — including a partial turn whose collectorStatus is `ok`.
+   */
+  readonly failureCauses: readonly DiaristFailureCause[];
+};
 
-  let collectorStatus: DiaristRunResult["collectorStatus"];
-  let collectorError: string | undefined;
-  let llmRawStdout: string | undefined;
-  let collect: DiaristLlmCollectResult | undefined;
+/**
+ * Mechanical half B — commit the diarist turn's selections.
+ * Verbatim reverse-verify → idempotent sitian append → watermark → human view.
+ * Verify failure records a single typed diagnostic and drops that selection; it
+ * never bounces the receipt (第 0 条) and never enters the volume as an entry.
+ */
+export async function commitDiaristSelections(input: {
+  readonly catalog: DiaristSourceCatalog;
+  readonly selections: readonly DiaristSelection[];
+}): Promise<DiaristCommitFacts> {
+  const { ticketNumber, cwd } = input.catalog;
+  const homeOpt = input.catalog.home === undefined ? {} : { home: input.catalog.home };
+  const volumePaths = ensureTicketProvenanceVolume(ticketNumber, cwd, input.catalog.home);
 
-  // Production composition always runs the hermes collector (ADR 0075).
-  // No injectable skip / alternate collector on this seam.
-  const collector = createHermesDiaristCollector({
-    cwd: input.cwd,
-    ...(input.packageRoot === undefined ? {} : { packageRoot: input.packageRoot }),
-  });
-
-  // Nothing new to transcribe skips the round — but only once identity is known.
-  // An unknown identity still asks, with an empty catalog if that is all there is:
-  // the summons alone is enough for this round to name the ticket.
-  if (known !== undefined && fresh.length === 0) {
-    collectorStatus = "skipped-no-fresh";
-  } else {
-    try {
-      collect = await collector({
-        ...(known === undefined ? {} : { ticketNumber: known }),
-        ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
-        candidates: fresh,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      llmRawStdout = collect.rawStdout;
-      collectorStatus =
-        collect.selections.length === 0 ? "empty-selection" : "ok";
-      // Watermark advances only after durable volume writes below — never
-      // before selected entries / quote diagnostics are committed.
-    } catch (error) {
-      collectorStatus = "failed";
-      collectorError =
-        error instanceof Error ? error.message : String(error);
-      if (known === undefined) {
-        // Identity was this round's work. Engine/parse failure is not 真无票
-        // (失败诚实: do not wash an unidentified exception into unbound).
-        throw error;
-      }
-      // Bound ticket: durable true-cause on the volume; the station continues.
-      appendCollectorFailureDiagnostic({
-        ticketNumber: known,
-        cwd: input.cwd,
-        ...homeOpt,
-        collectorError,
-      });
-    }
-  }
-
-  const ticketNumber = known ?? collect?.ticketNumber;
-  if (ticketNumber === undefined) {
-    // 真无票: the collector named no ticket. Collector failure never reaches here.
-    return {
-      ticketNumber: undefined,
-      candidateCount: safeguarded.length,
-      freshCount: fresh.length,
-      appended: 0,
-      rejectedQuotes: 0,
-      pointers: [],
-      entries: [],
-      collectorStatus,
-      ...(collectorError === undefined ? {} : { collectorError }),
-      ...(llmRawStdout === undefined ? {} : { llmRawStdout }),
-    };
-  }
-
-  // Per-ticket volume exists for every named ticket, including empty/fail paths.
-  const volumePaths = ensureTicketProvenanceVolume(ticketNumber, input.cwd, input.home);
-
-  // Same round: once identity is known, load the issue face and collect those
-  // blocks here. Do not return to the seat for a second runDiarist.
-  let issueFace = input.issueFace;
-  if (issueFace === undefined && input.loadIssueFace !== undefined) {
-    issueFace = await input.loadIssueFace(ticketNumber);
-  }
-  const firstIdentities = new Set(
-    fresh.map((block) => blockEntryIdentity(ticketNumber, block)),
-  );
-  const extraFresh =
-    issueFace === undefined || input.issueFace !== undefined
-      ? []
-      : mechanicalSafeguardPipeline(
-          await loadSourceBlocks({ ...input, issueFace }),
-        ).filter(
-          (block) =>
-            !firstIdentities.has(blockEntryIdentity(ticketNumber, block)),
-        );
-  const batches: Array<{
-    readonly blocks: readonly DiaristSourceBlock[];
-    readonly collect: DiaristLlmCollectResult | undefined;
-    readonly status: DiaristRunResult["collectorStatus"];
-  }> = [{ blocks: fresh, collect, status: collectorStatus }];
-  if (extraFresh.length > 0) {
-    try {
-      const extraCollect = await collector({
-        ticketNumber,
-        ...(input.instruction === undefined ? {} : { instruction: input.instruction }),
-        candidates: extraFresh,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      llmRawStdout = extraCollect.rawStdout;
-      const extraStatus =
-        extraCollect.selections.length === 0 ? "empty-selection" : "ok";
-      if (extraStatus === "ok") collectorStatus = "ok";
-      else if (collectorStatus !== "ok") collectorStatus = extraStatus;
-      batches.push({
-        blocks: extraFresh,
-        collect: extraCollect,
-        status: extraStatus,
-      });
-    } catch (error) {
-      collectorStatus = "failed";
-      collectorError =
-        error instanceof Error ? error.message : String(error);
-      appendCollectorFailureDiagnostic({
-        ticketNumber,
-        cwd: input.cwd,
-        ...homeOpt,
-        collectorError,
-      });
-    }
-  }
-
-  const anchorText = faceTextForAnchors(issueFace);
-  const anchors: DiaristAnchorSet = buildDiaristAnchors({
-    ticketNumber,
-    ...(anchorText === undefined ? {} : { ticketBody: anchorText }),
-  });
-
-  const pointers: RecordPointer[] = [];
-  const accepted: TicketProvenanceEntry[] = [];
+  const anchors: DiaristAnchorSet = buildDiaristAnchors({ ticketNumber });
+  // Entry-count baseline: sitian entry identity already makes a repeat of an
+  // already-recorded block a no-op append, so the honest `appended` is what the
+  // volume gained — not how many rows survived verify.
+  const before = await readTicketProvenance(ticketNumber, cwd, input.catalog.home);
+  let acceptedRows = 0;
   let rejectedQuotes = 0;
-  const offered: string[] = [];
+  let unknownCandidate = false;
 
-  for (const batch of batches) {
-    if (batch.collect !== undefined && batch.status === "ok") {
-      for (const selection of batch.collect.selections) {
-        const block = batch.blocks[selection.candidateIndex];
-        if (block === undefined) continue;
-        const projected = blockToLlmEntry(block, {
-          anchors,
-          quotes: selection.quotes,
-          ...(selection.note === undefined ? {} : { note: selection.note }),
-        });
-        if (!projected.ok) {
-          rejectedQuotes += 1;
-          const ptr = appendQuoteVerifyFailureDiagnostic({
-            ticketNumber,
-            cwd: input.cwd,
-            ...homeOpt,
-            cause: projected.cause,
-          });
-          pointers.push(ptr);
-          continue;
-        }
-        const ptr = appendTicketProvenanceEntry({
-          ticketNumber,
-          cwd: input.cwd,
-          ...homeOpt,
-          entry: projected.entry,
-          source: "diarist",
-        });
-        pointers.push(ptr);
-        accepted.push(projected.entry);
-      }
+  for (const selection of input.selections) {
+    const block = input.catalog.candidates[selection.candidateIndex];
+    if (block === undefined) {
+      unknownCandidate = true;
+      continue;
     }
-    if (
-      batch.collect !== undefined &&
-      (batch.status === "ok" || batch.status === "empty-selection")
-    ) {
-      offered.push(
-        ...batch.blocks.map((block) => blockEntryIdentity(ticketNumber, block)),
-      );
-    }
-  }
-
-  if (offered.length > 0) {
-    recordOfferedIdentities({
-      ticketNumber,
-      cwd: input.cwd,
-      ...homeOpt,
-      identities: offered,
+    const projected = blockToLlmEntry(block, {
+      anchors,
+      quotes: selection.quotes,
+      ...(selection.note === undefined ? {} : { note: selection.note }),
     });
+    if (!projected.ok) {
+      rejectedQuotes += 1;
+      // Single diagnostic expression — never a disguised diary entry.
+      appendQuoteVerifyFailureDiagnostic({
+        ticketNumber,
+        cwd,
+        ...homeOpt,
+        cause: projected.cause,
+      });
+      continue;
+    }
+    appendTicketProvenanceEntry({
+      ticketNumber,
+      cwd,
+      ...homeOpt,
+      entry: projected.entry,
+      source: "diarist",
+    });
+    acceptedRows += 1;
   }
 
-  // Refresh human view from the full volume (includes prior court runs).
-  // Always write — empty courts still get the md face next to the JSONL.
-  const volume = await readTicketProvenance(ticketNumber, input.cwd, input.home);
+  // Watermark advances only after the durable volume writes above, so a crash
+  // mid-commit retries the batch on the next summons. Entry identity and
+  // quote-verify diagnostic identity are stable — retry duplicates neither.
+  const identities = input.catalog.candidates.map((block) =>
+    blockEntryIdentity(ticketNumber, block),
+  );
+  const alreadyWatermarked = readOfferedIdentities(ticketNumber, cwd, input.catalog.home);
+  const watermarked = identities.filter((identity) => !alreadyWatermarked.has(identity)).length;
+  recordOfferedIdentities({ ticketNumber, cwd, ...homeOpt, identities });
+
+  // Refresh the human view from the full volume (includes prior summons).
+  const volume = await readTicketProvenance(ticketNumber, cwd, input.catalog.home);
   const humanViewFile = writeTicketProvenanceHumanView({
     ticketNumber,
-    cwd: input.cwd,
+    cwd,
     ...homeOpt,
     entries: volume.entries,
   });
 
   return {
     ticketNumber,
-    candidateCount: safeguarded.length + extraFresh.length,
-    freshCount: fresh.length + extraFresh.length,
-    appended: accepted.length,
+    offered: input.catalog.candidates.length,
+    appended: volume.entries.length - before.entries.length,
     rejectedQuotes,
-    pointers,
-    entries: volume.entries,
-    humanViewFile,
+    watermarked,
     volumeRecordFile: volumePaths.recordFile,
-    collectorStatus,
-    ...(collectorError === undefined ? {} : { collectorError }),
-    ...(llmRawStdout === undefined ? {} : { llmRawStdout }),
+    humanViewFile,
+    collectorStatus:
+      input.catalog.candidates.length === 0
+        ? "skipped-no-fresh"
+        : acceptedRows > 0
+          ? "ok"
+          : input.selections.length === 0
+            ? "empty-selection"
+            : "nothing-appended",
+    failureCauses: [
+      ...(unknownCandidate ? (["unknown-candidate"] as const) : []),
+      ...(rejectedQuotes > 0 ? (["quote-verify-rejected"] as const) : []),
+    ],
   };
 }

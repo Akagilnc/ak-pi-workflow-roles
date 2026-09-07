@@ -1,21 +1,26 @@
 /**
- * Shared ticket identity seam for public court seats (#635 / #637 / #709).
- * One path: unbound summons → the working 起居郎 round reads the caller's
- * instruction and hands back a typed ticketNumber → bindAdmittedTicketNumber.
- * ADR 0081 `initial-court-ticket-supplied` / `reuse-case-ticket-without-extra-llm`:
- * identity rides the round already doing the case work — no second ticket-number
- * source of truth, no extra recognizer call, and no seat-side scan of instruction
- * prose (锚定宪法: machines consume typed keys, never free text).
- * A round that names no ticket leaves the run lawfully unbound — never a fake one.
+ * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747).
+ * One path: unbound admission → reuse a ticket number this book already records
+ * (retained run pages + 起居录 volumes) → bindAdmittedTicketNumber.
+ * ADR 0081 `reuse-case-ticket-without-extra-llm`: no seat-side model call, no
+ * second ticket-number source of truth, no minting a number from human titles.
+ * Nothing matched is not 真无票 — the run simply stays unbound, which is lawful.
  * No CLI --ticket and no attachment frontmatter binding.
+ * #747: officer same-parent resume also lives here (shared seam).
  */
-import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import { runDiarist, type DiaristIssueFace } from "../diarist.ts";
+import { existsSync } from "node:fs";
+
+import {
+  ActivationGitRepositoryRequiredError,
+  resolveBookKeyFromGit,
+} from "../activation-ledger-git.ts";
+import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 import {
   bindAdmittedTicketNumber,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 import {
+  collectBookRunTicketNumbers,
   findLatestRunIdForSeatTicket,
   type RoleRunRecord,
   type SameTicketSummonsMaterials,
@@ -23,37 +28,97 @@ import {
 
 export type SeatTicketBindingEnv = {
   readonly home: string;
-  readonly cwd: string;
-  readonly packageRoot: string;
 };
 
 /**
- * Ticket identity for this summons, from the 起居郎 round that collects the case
- * material. The round mints the ticket's 起居录 volume when it names one, so a
- * first summons with neither a volume nor a retained run still bootstraps its own
- * identity and dossier. Undefined means this summons named no ticket the round
- * could establish; the seat proceeds unbound, which is lawful.
+ * Complete decimal ticket tokens in an instruction.
+ * A digit run is one token: `82` inside `#582` is not 82, and a leading zero
+ * makes the run a different literal than the ticket number it would parse to.
  */
-export async function resolveSummonsTicketIdentity(input: {
+export function instructionTicketTokens(
+  instruction: string,
+): readonly number[] {
+  const tokens = new Set<number>();
+  for (const run of instruction.match(/\d+/g) ?? []) {
+    if (run.startsWith("0")) continue;
+    const parsed = Number(run);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) continue;
+    tokens.add(parsed);
+  }
+  return [...tokens];
+}
+
+/**
+ * Ticket identity this summons reuses, or undefined when none is unambiguous.
+ * Known identities come only from records this book already holds: 起居录 volume
+ * partitions and ticket numbers on retained run pages. Zero or several known
+ * tokens in the instruction leave the run unbound — never guess, never fail.
+ */
+export async function resolveKnownTicketNumber(input: {
   readonly instruction: string;
   readonly projectRoot: string;
-  readonly env: SeatTicketBindingEnv;
-  /** Countersign court round loads the issue face in this same invocation. */
-  readonly loadIssueFace?: (
-    ticketNumber: number,
-  ) => Promise<DiaristIssueFace>;
+  readonly home: string;
+  readonly bookKey?: string;
 }): Promise<number | undefined> {
-  const result = await runDiarist({
-    instruction: input.instruction,
-    cwd: input.projectRoot,
-    home: input.env.home,
-    sessionCwds: [input.projectRoot, input.env.cwd],
-    packageRoot: input.env.packageRoot,
-    ...(input.loadIssueFace === undefined
-      ? {}
-      : { loadIssueFace: input.loadIssueFace }),
-  });
-  return result.ticketNumber;
+  const tokens = instructionTicketTokens(input.instruction);
+  if (tokens.length === 0) return undefined;
+  const known: number[] = [];
+  let runTickets: ReadonlySet<number> | undefined;
+  for (const token of tokens) {
+    const volume = resolveTicketProvenanceVolume(
+      token,
+      input.projectRoot,
+      input.home,
+    );
+    if (existsSync(volume.volumeDir)) {
+      known.push(token);
+      continue;
+    }
+    if (runTickets === undefined) {
+      runTickets = await readBookRunTickets(input);
+    }
+    if (runTickets.has(token)) known.push(token);
+  }
+  return known.length === 1 ? known[0] : undefined;
+}
+
+/**
+ * Diarist first-summons identity (ADR 0081 `initial-court-ticket-supplied`).
+ * Prefer a book-known reuse; when the book has no record yet, the sole complete
+ * decimal token in the caller's dispatch is the supplied ticket — the working
+ * 起居郎 round establishes the volume. Several tokens or none stay unbound.
+ * Not a second ticket-number source of truth and not an extra recognizer call.
+ */
+export async function resolveDiaristSummonsTicketNumber(input: {
+  readonly instruction: string;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly bookKey?: string;
+}): Promise<number | undefined> {
+  const known = await resolveKnownTicketNumber(input);
+  if (known !== undefined) return known;
+  const tokens = instructionTicketTokens(input.instruction);
+  return tokens.length === 1 ? tokens[0] : undefined;
+}
+
+/**
+ * Ticket numbers on this book's retained runs.
+ * A directory with no book (not a git repository) simply holds no run history —
+ * admission owns that rejection face, this lookup does not pre-empt it.
+ */
+async function readBookRunTickets(input: {
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly bookKey?: string;
+}): Promise<ReadonlySet<number>> {
+  let bookKey: string;
+  try {
+    bookKey = input.bookKey ?? resolveBookKeyFromGit(input.projectRoot);
+  } catch (error) {
+    if (error instanceof ActivationGitRepositoryRequiredError) return new Set();
+    throw error;
+  }
+  return await collectBookRunTicketNumbers({ home: input.home, bookKey });
 }
 
 /** Bind a reused ticket number onto an admission that is still unbound. */
@@ -70,27 +135,29 @@ export async function bindReusedTicketNumber(
  * Sole seat disposition for an unbound admission (#635 / #709).
  * Already-bound admissions short-circuit — resume keeps the identity it has.
  * Used by seats that do not pre-resolve for same-ticket resume; the seats that
- * do (countersign / inspector) reuse the number they already resolved.
+ * do (countersign / inspector / diarist) reuse the number they already resolved.
  */
 export async function resolveSeatTicketBinding(
   admitted: AdmittedRoleInvocation,
   env: SeatTicketBindingEnv,
 ): Promise<number | undefined> {
   if (admitted.ticketNumber !== undefined) return admitted.ticketNumber;
-  const ticketNumber = await resolveSummonsTicketIdentity({
+  const ticketNumber = await resolveKnownTicketNumber({
     instruction: admitted.instruction,
     projectRoot: admitted.projectRoot,
-    env,
+    home: env.home,
+    bookKey: admitted.bookKey,
   });
   await bindReusedTicketNumber(admitted, ticketNumber);
   return ticketNumber;
 }
 
 /**
- * Sole same-ticket → resume decision (#637 / #724).
- * Looks up the latest retained run for seat+ticket; when found, runs resume with
- * this summons' materials. Lookup/resume failures propagate (失败诚实) — never
- * wash into a fresh mint. Returns undefined when the caller declared an explicit
+ * Sole same-seat → resume decision (#637 / #724 / #747).
+ * Officer seats (notary/inspector/auditor) look up by parent run path; countersign
+ * / diarist keep ticket-number principal. When found, runs resume with this
+ * summons' materials. Lookup/resume failures propagate (失败诚实) — never wash
+ * into a fresh mint. Returns undefined when the caller declared an explicit
  * fresh summons (`ak-role new`) or when no prior run exists; both mint new.
  * freshSummons is required so no seat can drift back into its own skip branch.
  */
@@ -98,7 +165,8 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber: number;
+  readonly ticketNumber?: number;
+  readonly parentRunPath?: string;
   readonly freshSummons: true | undefined;
   readonly summons?: SameTicketSummonsMaterials;
   readonly resume: (
@@ -107,11 +175,19 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   ) => Promise<T>;
 }): Promise<T | undefined> {
   if (input.freshSummons === true) return undefined;
+  if (input.parentRunPath === undefined && input.ticketNumber === undefined) {
+    return undefined;
+  }
   const previousRunId = await findLatestRunIdForSeatTicket({
     home: input.home,
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
-    ticketNumber: input.ticketNumber,
+    ...(input.parentRunPath === undefined
+      ? {}
+      : { parentRunPath: input.parentRunPath }),
+    ...(input.ticketNumber === undefined
+      ? {}
+      : { ticketNumber: input.ticketNumber }),
   });
   if (previousRunId === undefined) return undefined;
   return await input.resume(previousRunId, input.summons);

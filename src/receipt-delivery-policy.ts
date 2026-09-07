@@ -90,6 +90,16 @@ export function createReceiptDeliveryPolicy() {
     recordDeliveryRequest() {
       deliveryTurns = Math.min(RECEIPT_DELIVERY_TURN_LIMIT, deliveryTurns + 1);
     },
+    /**
+     * A nested session settled without an accepted receipt after spending its own
+     * delivery budget. Adopt its facts and close this budget: another prompt would
+     * open an independent session, not a delivery request on the settled one.
+     */
+    recordNestedNoReceipt(facts: NoReceiptLifecycleFacts) {
+      terminalToolCalled = terminalToolCalled || facts.terminalToolCalled;
+      rejectedReceipts.push(...facts.rejectedReceipts);
+      deliveryTurns = RECEIPT_DELIVERY_TURN_LIMIT;
+    },
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {
       if (accepted) return "accepted";
       return deliveryTurns < RECEIPT_DELIVERY_TURN_LIMIT ? "request-delivery" : "no-receipt";

@@ -3,14 +3,14 @@
  * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
  * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
  * with gate-province dispatch; this module is the direct command face.
- * #637: same-ticket re-summons resume the seat's previous run (no new run).
+ * #637 / #747: same-parent (卷宗指针) re-summons resume the seat's previous run.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   bindReusedTicketNumber,
-  resolveSummonsTicketIdentity,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -30,6 +30,7 @@ import {
 import {
   loadResumableInspectorRun,
   markRunAdmitted,
+  parentRunPathFromGatePointerInstruction,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -86,17 +87,17 @@ export async function runPublicInspector(
     throw error;
   }
 
-  // #637: same ticket → resume prior inspector run with this summons' materials.
-  // #709: the 起居郎 round names the ticket before any run is minted, so the same
-  // identity picks the session to resume and, on a first summons, mints the volume.
+  // #747: same parent (卷宗指针) → resume prior inspector run with this summons' materials.
+  // #709: ticket identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveSummonsTicketIdentity({
+  const reusedTicketNumber = await resolveKnownTicketNumber({
     instruction: parsed.instruction,
     projectRoot,
-    env,
+    home: env.home,
   });
-  if (reusedTicketNumber !== undefined) {
+  const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
+  if (parentRunPath !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -106,7 +107,7 @@ export async function runPublicInspector(
       home: env.home,
       projectRoot,
       role: "inspector",
-      ticketNumber: reusedTicketNumber,
+      parentRunPath,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -169,7 +170,7 @@ export async function runPublicInspector(
     request: turnRequest,
     adapters: inspectorAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#709: bind the resolved identity inside the controlled-failure boundary.
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
         await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
       },
     }),

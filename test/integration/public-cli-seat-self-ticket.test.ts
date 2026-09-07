@@ -44,6 +44,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -112,9 +113,9 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    // #709: the working 起居郎 round hands the seat a typed ticket identity;
-    // no volume is pre-seeded and no seat scans the instruction for digits.
-    await installHermesFixture(join(home, "bin"), { ticketNumber: 582 });
+    await installHermesFixture(join(home, "bin"));
+    // #709: #582 is a ticket this book already records — seats reuse that identity.
+    ensureTicketProvenanceVolume(582, project, home);
     await run({ home, project });
   });
 }

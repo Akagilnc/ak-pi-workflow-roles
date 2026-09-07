@@ -23,6 +23,7 @@ import {
   resolveActivationLedgerHome,
 } from "../../src/activation-ledger-topology.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { SHAPE_UNREADABLE_KEY } from "../../src/shape-unreadable-failure.ts";
 import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
@@ -422,8 +423,9 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
 
     for (const [index, receipt] of receipts.entries()) {
       const { io } = captureIo();
+      // #747: each receipt is an independent public admission, not same-parent resume.
       const result = await runAkRole(
-        ["notary", "--source-run", sourceRunPath],
+        ["new", "notary", "--source-run", sourceRunPath],
         {
           home,
           packageRoot,
@@ -491,6 +493,7 @@ test("layer ② no usable Notary release keeps candidate on failure channel and 
       assert.equal(result.terminal.roleOutcome.role, "notary");
       assert.equal(result.terminal.roleOutcome.cause, "output");
       assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.secondaryEvidence, {
+        [SHAPE_UNREADABLE_KEY]: true,
         candidate: bad,
         acceptedReceipt: false,
       });

@@ -14,8 +14,9 @@ const entries = [
   // Navigator package-graph dependencies used by attendance settlement.
   // navigator-session-contracts is a static import of the published attendance root
   // (#590: published non-bundle graph must stay closed under its own relative edges).
-  "evidence-child-executor",
+  "navigator-public-session",
   "navigator-session-contracts",
+  "public-role-summons",
   "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
@@ -88,16 +89,16 @@ export async function buildPublicAkRoleBin(
 }
 
 /**
- * Deferred grok-build production host artifact. Loaded only when the composition
- * root selects grok-build — keeps role-runtime / peer edges out of the public bin.
- * packages:"external" so optional peers resolve from the install tree at selection.
+ * Deferred generic ACP production host artifact. Loaded only when the composition
+ * root selects an external host row — keeps role-runtime / peer edges out of the
+ * public bin. packages:"external" so optional peers resolve at selection.
  */
-export async function buildGrokProductionHost(
-  outfile = "dist/grok/production-host.js",
+export async function buildAcpProductionHost(
+  outfile = "dist/acp-host/production-host.js",
 ) {
   await mkdir(dirname(outfile), { recursive: true });
   await build({
-    entryPoints: ["src/grok/production-host.ts"],
+    entryPoints: ["src/acp-host/production-host.ts"],
     outfile,
     format: "esm",
     platform: "node",
@@ -108,7 +109,7 @@ export async function buildGrokProductionHost(
   });
   // role-envelope resolves ./mcp-relay.mjs from import.meta.url — keep it beside the bundle.
   await copyFile(
-    resolve("src/grok/mcp-relay.mjs"),
+    resolve("src/acp-host/mcp-relay.mjs"),
     join(dirname(outfile), "mcp-relay.mjs"),
   );
 }
@@ -137,7 +138,7 @@ export async function buildPackageArtifacts() {
     );
   }
   await buildPublicAkRoleBin();
-  await buildGrokProductionHost();
+  await buildAcpProductionHost();
 }
 
 const isMain =
