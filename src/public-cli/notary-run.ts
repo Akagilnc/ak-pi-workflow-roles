@@ -2,7 +2,7 @@
  * Public Notary Role run: admit source-run locator → shared post-admission coordinator
  * → settle Terminal result (#448 / #517). Zero caller prompt/attachment. Lifecycle is
  * the shared post-admission seam; this module keeps only Notary adapters.
- * #637: same-ticket re-summons resume the seat's previous run (no new run).
+ * #637 / #747: same-parent (--source-run) re-summons resume the seat's previous run.
  */
 import { existsSync } from "node:fs";
 
@@ -13,7 +13,6 @@ import {
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -112,8 +111,8 @@ export async function runPublicNotary(
     }
     throw error;
   }
-  const ticketNumber = await readRunTicketNumber(source.runDirectory);
-  if (ticketNumber !== undefined) {
+  // #747: officer resume key is this parent source-run path (not ticket number).
+  {
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -122,7 +121,7 @@ export async function runPublicNotary(
       home: env.home,
       projectRoot,
       role: "notary",
-      ticketNumber,
+      parentRunPath: source.runDirectory,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
