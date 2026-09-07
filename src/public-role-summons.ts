@@ -53,6 +53,11 @@ export type PublicSummonRequest = {
    * parent tool call is cancelled (#675).
    */
   readonly signal?: AbortSignal;
+  /**
+   * #753 plain-language re-ask when the prior officer reply was not three-state.
+   * Nested notary only — rides existing same-ticket resume summons.instruction.
+   */
+  readonly reviewReask?: string;
 };
 
 export type PublicSummonResult = {
@@ -278,6 +283,8 @@ export async function summonPublicRole(
       : { autoResumeLimit: config.autoResumeLimit }),
     // Parent cancellation reaches the nested activation's own turn dispatch.
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    // #753: reask rides the existing notary same-ticket resume summons.instruction.
+    ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -388,7 +395,8 @@ export async function summonGateOfficer(options: {
   readonly signal?: AbortSignal;
   /**
    * Plain-language re-ask when the prior officer reply was not three-state (#753).
-   * Delivered as same-ticket resume instruction on the existing officer run.
+   * Notary: existing runPublicNotary same-ticket resume summons.instruction.
+   * Inspector: extra argv instruction on the pointer summons.
    */
   readonly reask?: string;
 }): Promise<PublicSummonResult> {
@@ -399,18 +407,8 @@ export async function summonGateOfficer(options: {
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
   if (options.officer === "notary") {
-    // #753: non-three-state re-ask resumes the same notary run with plain instruction.
-    if (options.reask !== undefined) {
-      return resumeNotaryWithReask({
-        sourceRunDirectory: options.sourceRunDirectory,
-        cwd: options.cwd,
-        reask: options.reask,
-        ...(home === undefined ? {} : { home }),
-        ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
-        ...(options.io === undefined ? {} : { io: options.io }),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
-    }
+    // #753: reask rides summonPublicRole → runPublicNotary summons.instruction
+    // (same resume seam as ordinary same-parent re-summons — no parallel stack).
     return summonPublicRole({
       role: "notary",
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
@@ -419,6 +417,7 @@ export async function summonGateOfficer(options: {
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.io === undefined ? {} : { io: options.io }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
     });
   }
   // Inspector: reask rides as extra instruction on the pointer summons (resume via #747).
@@ -435,117 +434,4 @@ export async function summonGateOfficer(options: {
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-}
-
-/**
- * Resume the same-parent notary run with a plain-language re-ask (#753).
- * Falls back to a fresh --source-run summons when no prior run exists (first reply
- * path should not hit this; defensive only).
- */
-async function resumeNotaryWithReask(options: {
-  readonly sourceRunDirectory: string;
-  readonly cwd: string;
-  readonly reask: string;
-  readonly home?: string;
-  readonly packageRoot?: string;
-  readonly io?: CliIo;
-  readonly signal?: AbortSignal;
-}): Promise<PublicSummonResult> {
-  const home = options.home;
-  if (home === undefined) {
-    // Caller always resolves home; keep loud if somehow missing.
-    return summonPublicRole({
-      role: "notary",
-      argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
-      cwd: options.cwd,
-      ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
-      ...(options.io === undefined ? {} : { io: options.io }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  }
-  const packageRoot =
-    options.packageRoot
-    ?? process.env[AK_ROLE_PACKAGE_ROOT_ENV]
-    ?? walkPackageRoot(options.cwd)
-    ?? walkPackageRoot(home);
-  if (packageRoot === undefined) {
-    throw new Error("resumeNotaryWithReask: package root unresolved");
-  }
-  const {
-    loadCredentialProviders,
-    loadPublicCliConfig,
-    resolveEffectiveSeat,
-  } = await import("./public-cli/config.ts");
-  const agentDir =
-    process.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
-  const credentials = await loadCredentialProviders(agentDir);
-  const config = await loadPublicCliConfig(home);
-  const seat = resolveEffectiveSeat(config, "notary", credentials);
-  const env = {
-    ...(await createSummonEnv({
-      role: "notary",
-      home,
-      agentDir,
-      cwd: options.cwd,
-      packageRoot,
-      credentials,
-      seat,
-    })),
-    ...(config.autoResumeLimit === undefined
-      ? {}
-      : { autoResumeLimit: config.autoResumeLimit }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  };
-  const captured = options.io === undefined ? createCapturingIo() : undefined;
-  const io = options.io ?? captured!.io;
-  const { resolveNotarySourceRunLocator } = await import("./notary-source-run.ts");
-  const source = await resolveNotarySourceRunLocator({
-    projectRoot: options.cwd,
-    sourceRun: options.sourceRunDirectory,
-    home,
-  });
-  const { tryResumeSameTicketSeatRun } = await import("./public-cli/seat-ticket-binding.ts");
-  const { runPublicNotaryResume } = await import("./public-cli/notary-run.ts");
-  const summons = {
-    sourceRunPath: source.runDirectory,
-    sourceRun: source,
-    instruction: options.reask,
-    instructionEmpty: false,
-  };
-  const resumed = await tryResumeSameTicketSeatRun({
-    home,
-    projectRoot: options.cwd,
-    role: "notary",
-    parentRunPath: source.runDirectory,
-    freshSummons: undefined,
-    summons,
-    resume: (runId, materials) =>
-      runPublicNotaryResume(
-        { runId, ...(materials === undefined ? {} : { summons: materials }) },
-        env,
-        io,
-      ),
-  });
-  if (resumed === undefined) {
-    // No prior run — fall through to ordinary summons (should be rare on reask).
-    return summonPublicRole({
-      role: "notary",
-      argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
-      cwd: options.cwd,
-      home,
-      packageRoot,
-      io,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  }
-  const stderr = captured?.stderrText();
-  const runDirectory = resumed.admitted?.runDirectory;
-  return {
-    exitCode: resumed.exitCode,
-    ...(resumed.terminal === undefined ? {} : { terminal: resumed.terminal }),
-    ...(typeof runDirectory === "string" && runDirectory.trim() !== ""
-      ? { runDirectory }
-      : {}),
-    ...(stderr === undefined || stderr === "" ? {} : { stderr }),
-  };
 }
