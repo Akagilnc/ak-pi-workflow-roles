@@ -124,29 +124,28 @@ async function invokeCourtDiarist(input: {
     parseDiaristArgv,
   );
 
+  const roleOutcome = result.terminal?.roleOutcome;
   if (result.exitCode !== 0) {
-    const detail =
-      result.terminal?.roleOutcome.kind === "failure"
-        ? ` (roleOutcome=failure)`
-        : "";
+    if (roleOutcome?.kind === "failure") {
+      throw new Error(
+        `court diarist station failed for ${input.failureLabel}: ${roleOutcome.diagnostic}`,
+      );
+    }
     throw new Error(
-      `court diarist station failed for ${input.failureLabel}: exit ${result.exitCode}${detail}`,
+      `court diarist station failed for ${input.failureLabel}: exit ${result.exitCode}`,
     );
   }
-
-  const diaristStatus = result.terminal?.roleOutcome.status;
-  if (diaristStatus === "escalate") {
-    const reason =
-      typeof (result.terminal?.roleOutcome as { decisiveFacts?: { reason?: unknown } })
-        .decisiveFacts?.reason === "string"
-        ? String(
-            (result.terminal?.roleOutcome as { decisiveFacts?: { reason?: unknown } })
-              .decisiveFacts?.reason,
-          )
-        : "diarist escalated without reason";
-    throw new Error(
-      `court diarist station escalated (cannot identify court target): ${reason}`,
-    );
+  // Discriminated union: only non-failure arms carry status (failure uses cause).
+  if (roleOutcome !== undefined && roleOutcome.kind !== "failure") {
+    if (roleOutcome.status === "escalate") {
+      const reason =
+        typeof roleOutcome.decisiveFacts.reason === "string"
+          ? roleOutcome.decisiveFacts.reason
+          : "diarist escalated without reason";
+      throw new Error(
+        `court diarist station escalated (cannot identify court target): ${reason}`,
+      );
+    }
   }
 
   const asserted = result.admitted?.ticketNumber;

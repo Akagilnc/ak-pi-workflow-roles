@@ -966,10 +966,9 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       "01a0sign00-0000-7000-8000-00000000s002",
     );
     // A dispatched body turn on re-summons must be resume on the prior run.
-    if (seen.length >= 2) {
-      assert.equal(seen[1]!.kind, "resume");
-      assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    }
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume");
+    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
   });
 });
 
