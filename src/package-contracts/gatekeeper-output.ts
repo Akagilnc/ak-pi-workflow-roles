@@ -76,14 +76,9 @@ export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDire
   return projected;
 }
 
+/** #757: submitted fields pass through — no findingsCount-only drop. */
 export function gatekeeperDecisiveFacts(
   output: GatekeeperDirectOutput,
 ): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  if (output.status === "dispatch") {
-    facts.officer = output.officer;
-  } else if (Array.isArray(output.findings)) {
-    facts.findingsCount = output.findings.length;
-  }
-  return facts;
+  return { ...(output as unknown as Record<string, unknown>) };
 }

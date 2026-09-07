@@ -2,23 +2,20 @@ import type { Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import type { DossierObservation } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { retainedShapeUnreadable } from "./shape-unreadable-failure.ts";
 
-export type ComplianceArgumentRootType = "null" | "array" | "undefined" | "string" | "number" | "boolean" | "bigint" | "symbol" | "function";
-export type ComplianceAuditObservation =
-  | { kind: "non-object-arguments"; type: ComplianceArgumentRootType }
-  | { kind: "object-status-unreadable"; status: "missing" | "unknown" }
-  | DossierObservation;
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
-/** Shape-unreadable audit leg — parent work stands with typed fact, never forged pass (ADR 0055). */
-export type ComplianceUnreadable = {
-  readonly status: "unreadable";
-  readonly observation: ComplianceAuditObservation;
-  readonly candidate: unknown;
+/**
+ * #757 / #750: no unreadable/unusable judgment on auditor replies.
+ * Known three-state (pass/revise/escalate) is read for queueing only.
+ * Unknown accepted shape rides as `received` with the raw reply — parent stands,
+ * no forged pass, no shape-death label. Resume-speaker for three pairs is #753/#756.
+ */
+export type ComplianceReceived = {
+  readonly status: "received";
+  readonly reply: unknown;
   readonly usage?: Usage;
 };
 export type ComplianceDecision =
@@ -26,33 +23,7 @@ export type ComplianceDecision =
   | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
   | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
   | ComplianceNoReceipt
-  | ComplianceUnreadable;
-
-/**
- * Unreadable compliance candidate observation carrier.
- * Shape-unreadable must not abort the parent run (CLAUDE.md §0 / ADR 0055).
- * Callers read observation+candidate; projection keeps typed unreadable — never forged pass.
- */
-export class ComplianceCandidateUnreadableError extends Error {
-  readonly observation: ComplianceAuditObservation;
-  readonly candidate: unknown;
-  readonly usage?: Usage;
-  constructor(observation: ComplianceAuditObservation, candidate: unknown, usage?: Usage) {
-    const detail =
-      observation.kind === "non-object-arguments"
-        ? `${observation.kind}:${observation.type}`
-        : observation.kind === "object-status-unreadable"
-          ? `${observation.kind}:${observation.status}`
-          : observation.kind === "missing-subject"
-            ? `${observation.kind}:${observation.subject}`
-            : observation.kind;
-    super(`Compliance candidate unreadable: ${detail}`);
-    this.name = "ComplianceCandidateUnreadableError";
-    this.observation = observation;
-    this.candidate = candidate;
-    if (usage !== undefined) this.usage = usage;
-  }
-}
+  | ComplianceReceived;
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
 
@@ -82,7 +53,7 @@ export type AuditorParentAttemptBinding = {
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
-/** Try to project a lawful compliance decision; undefined when shape is not a known release. */
+/** Try to project a known three-state compliance decision; undefined when not pass/revise/escalate. */
 export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
     return undefined;
@@ -103,26 +74,17 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
 }
 
 /**
- * Read a compliance candidate. Unreadable shape throws ComplianceCandidateUnreadableError
- * with observation+candidate retained — callers must not map that throw onto parent abort
- * (CLAUDE.md §0 / ADR 0055). Prefer tryReadComplianceCandidate at parent projection seams.
+ * Read a compliance candidate. Known three-state projects; anything else is
+ * `received` with the raw reply — no unreadable/unusable judgment (#757).
  */
 export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
   const projected = tryReadComplianceCandidate(arguments_, usage);
   if (projected !== undefined) return projected;
-  if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
-    throw new ComplianceCandidateUnreadableError(
-      { kind: "non-object-arguments", type: arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_ as ComplianceArgumentRootType },
-      arguments_,
-      usage,
-    );
-  }
-  const status = (arguments_ as Record<string, unknown>).status;
-  throw new ComplianceCandidateUnreadableError(
-    { kind: "object-status-unreadable", status: status === undefined ? "missing" : "unknown" },
-    arguments_,
-    usage,
-  );
+  return {
+    status: "received",
+    reply: arguments_,
+    ...(usage === undefined ? {} : { usage }),
+  };
 }
 
 /**
@@ -152,36 +114,10 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
   return usageFromPublicSummon(summoned);
 }
 
-function observationFromUnreadableCandidate(candidate: unknown): ComplianceAuditObservation {
-  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-    return {
-      kind: "non-object-arguments",
-      type: candidate === null ? "null" : Array.isArray(candidate) ? "array" : typeof candidate as ComplianceArgumentRootType,
-    };
-  }
-  const status = (candidate as Record<string, unknown>).status;
-  return {
-    kind: "object-status-unreadable",
-    status: status === undefined ? "missing" : "unknown",
-  };
-}
-
-function unreadableDecision(
-  candidate: unknown,
-  usage: Usage | undefined,
-): ComplianceUnreadable {
-  return {
-    status: "unreadable",
-    observation: observationFromUnreadableCandidate(candidate),
-    candidate,
-    ...(usage === undefined ? {} : { usage }),
-  };
-}
-
 /**
  * Project a public auditor terminal onto the parent compliance decision.
- * Lawful pass/revise/escalate/no-receipt flow through.
- * Shape-unreadable keeps original candidate + typed observation (ADR 0055 / §0) —
+ * Known pass/revise/escalate/no-receipt flow through for queueing.
+ * Accepted-but-not-three-state → `received` with raw reply (#757) — no unreadable label,
  * never forged pass, never parent abort. Real provider/engine/disk failures stay loud.
  * Accepted audits always carry real session usage when present (#675 metering).
  */
@@ -200,11 +136,7 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
-    const shape = retainedShapeUnreadable(outcome.decisiveFacts);
-    if (shape !== undefined) {
-      return unreadableDecision(shape.candidate, usage);
-    }
+    // Real failure (process/provider/disk) — keep loud. No shape-unreadable diversion.
     throw new Error(outcome.diagnostic);
   }
   if (outcome.kind === "accepted") {
@@ -212,12 +144,14 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
       status: outcome.status,
       ...outcome.decisiveFacts,
     };
-    const projected = tryReadComplianceCandidate(candidate, usage);
-    if (projected !== undefined) return projected;
-    // Accepted-once but not a lawful release: retain candidate as typed unreadable.
-    return unreadableDecision(candidate, usage);
+    return readComplianceCandidate(candidate, usage);
   }
-  throw new Error("Auditor public summon returned unusable terminal kind");
+  // Unknown terminal kind: still not a shape judgment — surface as received reply.
+  return {
+    status: "received",
+    reply: outcome,
+    ...(usage === undefined ? {} : { usage }),
+  };
 }
 
 export async function runComplianceAudit(options: RunComplianceAuditOptions): Promise<ComplianceDecision> {

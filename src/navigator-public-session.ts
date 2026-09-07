@@ -142,14 +142,13 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             return;
           }
           if (outcome.kind !== "accepted") {
-            providerFailure = { source: "session", cause: "session" };
-            throw navigatorUnavailableError(
-              "session",
-              new Error("Navigator public summon returned unusable terminal"),
-            );
+            // Non-accepted kinds (e.g. audit_escalation): no route advice this turn.
+            // Not a shape-unusable judgment on the navigator reply (#757).
+            return;
           }
           const candidates = outcome.decisiveFacts.candidates;
           if (!Array.isArray(candidates)) {
+            // Accepted reply without candidates array — no advice, no judgment.
             return;
           }
           // Rejoin attendance prepare tool sink (same candidate shape as public advice).
