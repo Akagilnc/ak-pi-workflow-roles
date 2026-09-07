@@ -10,7 +10,6 @@ import {
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { deliverCaseDossierPointerToTurn } from "./case-dossier-delivery.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -178,33 +177,16 @@ export async function runPublicNotary(
     env,
     io,
     request: turnRequest,
-    adapters: notaryAdapters({
-      beforeDispatch: async (admittedSeat) => {
-        // #742: inner-gate 符宝郎 materials carry this ticket's 起居录 path when bound.
-        await deliverCaseDossierPointerToTurn({
-          ticketNumber: admittedSeat.ticketNumber,
-          projectRoot: admittedSeat.projectRoot,
-          home: env.home,
-          turnRequest,
-        });
-      },
-    }),
+    adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 
-function notaryAdapters(options?: {
-  beforeDispatch?: (
-    admitted: AdmittedNotaryInvocation,
-  ) => void | Promise<void>;
-}): PostAdmissionAdapters<AdmittedNotaryInvocation> {
+function notaryAdapters(): PostAdmissionAdapters<AdmittedNotaryInvocation> {
   return {
     trySettle: (admitted, authority, scope) => trySettleNotaryTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
-    ...(options?.beforeDispatch === undefined
-      ? {}
-      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
@@ -222,8 +204,6 @@ export async function runPublicNotaryResume(
   admitted?: AdmittedNotaryInvocation;
   terminal?: TerminalResult;
 }> {
-  // Mutable shell captured so beforeDispatch can append the dossier pointer.
-  let turnRequest: RoleTurnRequest | undefined;
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -254,29 +234,14 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted, effective) => {
+    buildTurnRequest: (admitted, effective) =>
       // #755: review continuation is plain dialogue / resume envelope — no
       //「重新读」candidate line, no engine handbook packaging.
-      turnRequest = buildNotaryTurnRequest(
+      buildNotaryTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
-      );
-      return turnRequest;
-    },
-    adapters: notaryAdapters({
-      beforeDispatch: async (admittedSeat) => {
-        if (turnRequest === undefined) {
-          throw new Error("notary resume beforeDispatch missing turnRequest shell");
-        }
-        // #742: inner-gate 符宝郎 materials carry this ticket's 起居录 path when bound.
-        await deliverCaseDossierPointerToTurn({
-          ticketNumber: admittedSeat.ticketNumber,
-          projectRoot: admittedSeat.projectRoot,
-          home: env.home,
-          turnRequest,
-        });
-      },
-    }),
+      ),
+    adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

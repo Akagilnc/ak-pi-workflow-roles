@@ -3,6 +3,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
  * #742: court admission auto-runs the public 起居郎 station before the body turn.
+ * #709: known ticket identity is reused from book records (no seat model call);
+ * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -17,7 +19,7 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
   DIARIST_SOURCES_FLAG,
 } from "../../src/diarist-contracts.ts";
-import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
+import type { HostContext, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -34,9 +36,7 @@ import {
   findLatestRunIdForSeatTicket,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
@@ -46,16 +46,17 @@ import {
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import {
+  ensureTicketProvenanceVolume,
+  readTicketProvenance,
+  resolveTicketProvenanceVolume,
+} from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-countersign-", async (home) => {
     const binDir = join(home, "bin");
-    await installHermesFixture(binDir);
     const priorPath = process.env.PATH;
     process.env.PATH = `${binDir}:${priorPath ?? ""}`;
     return withPrimaryAwareCleanup(
@@ -550,8 +551,8 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
 });
 
 /**
- * #582 four-path ticket binding from real public countersign entry.
- * Shared project fixture; four independent path tests; typed fields only.
+ * #709 ticket identity reuse from the real public countersign entry.
+ * Shared project fixture; typed fields only (no prompt-wording assertions).
  */
 
 async function withCountersignProject(
@@ -637,11 +638,10 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
   });
 });
 
-test("public countersign path: unbound resolve+verify binds the ticket", async () => {
+test("public countersign path: known ticket is reused, bound, and dossier volume stays readable", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
+    // #709: the identity already exists in this book's records — no seat model call.
+    ensureTicketProvenanceVolume(582, project, home);
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -664,51 +664,14 @@ test("public countersign path: unbound resolve+verify binds the ticket", async (
       await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, 582);
+    const volume = await readTicketProvenance(582, project, home);
+    assert.ok(volume.recordFile);
+    await readFile(volume.recordFile, "utf8");
   });
 });
 
-test("public countersign path: asserted N fails verify → controlled failure, no wash", async () => {
+test("public countersign path: no known ticket stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 999999 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p03";
-    const result = await runPublicCountersign(
-      ["裁：票 #999999 并不存在。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId,
-        blockTurn: true,
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId,
-      role: "countersign",
-      home,
-    });
-    assert.equal(
-      (await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority))?.state,
-      "terminal",
-    );
-    const inv = JSON.parse(
-      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(inv.ticketNumber, undefined);
-  });
-});
-
-test("public countersign path: true-unbound run page stays unbound", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "true-unbound" },
-    });
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
@@ -736,86 +699,45 @@ test("public countersign path: true-unbound run page stays unbound", async () =>
   });
 });
 
-test("public countersign path: asserted N absent from instruction → controlled failure", async () => {
+test("public countersign path: an unrecorded number in the instruction is not minted", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p05";
+    let turnTicket: number | undefined;
     const result = await runPublicCountersign(
-      ["裁：本庭 instruction 不含该号。"],
+      ["裁：票 #999999 从未在本书留过记录。"],
       countersignPathEnv({
         home,
         project,
-        runId,
-        blockTurn: true,
+        runId: "01a0sign00-0000-7000-8000-000000000p03",
+        onTurn: (req) => {
+          turnTicket =
+            req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
+        },
       }),
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
+    assert.equal(turnTicket, undefined);
   });
 });
 
-test("public countersign path: substring of longer ticket number is not N → controlled failure", async () => {
+test("public countersign path: a known number's digit substring is not that ticket", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 82 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p06";
+    // Only #82 is recorded; the instruction carries #582, which is a different token.
+    ensureTicketProvenanceVolume(82, project, home);
     const result = await runPublicCountersign(
       ["裁：审票 #582 是否足以开工。"],
       countersignPathEnv({
         home,
         project,
-        runId,
-        blockTurn: true,
+        runId: "01a0sign00-0000-7000-8000-000000000p06",
       }),
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
-  });
-});
-
-test("public countersign path: resolver engine non-zero → controlled failure, no wash to unbound", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    // PATH hermes exits non-zero: product must settle failure, not wash to true-unbound.
-    await installHermesFixture(join(home, "bin"), { defaultExitCode: 2 });
-    const runId = "01a0sign00-0000-7000-8000-000000000p07";
-    const result = await runPublicCountersign(
-      ["裁：本庭问询。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId,
-        blockTurn: true,
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId,
-      role: "countersign",
-      home,
-    });
-    assert.equal(
-      (await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority))
-        ?.state,
-      "terminal",
-    );
-    const inv = JSON.parse(
-      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(inv.ticketNumber, undefined);
   });
 });
 
@@ -873,9 +795,8 @@ function courtPipelinePiRunner(): LegacyFauxPiRunner {
 
 test("public countersign path: bound ticket runs @diarist then countersign with 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
+    // #709 identity reuse + #742 court diarist station; volume already on the book.
+    ensureTicketProvenanceVolume(582, project, home);
 
     const turnOrder: string[] = [];
     let turnPrompt = "";
@@ -945,10 +866,6 @@ test("public countersign path: bound ticket runs @diarist then countersign with 
 
 test("public countersign path: true-unbound leaves no @diarist run and no 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "true-unbound" },
-    });
-
     let turnPrompt = "";
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,

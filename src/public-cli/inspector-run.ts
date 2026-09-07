@@ -9,8 +9,8 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -88,15 +88,14 @@ export async function runPublicInspector(
   }
 
   // #747: same parent (卷宗指针) → resume prior inspector run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709: ticket identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveKnownTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
+    home: env.home,
+  });
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
     const summons: SameTicketSummonsMaterials = {
@@ -171,8 +170,8 @@ export async function runPublicInspector(
     request: turnRequest,
     adapters: inspectorAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

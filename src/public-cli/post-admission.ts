@@ -27,12 +27,25 @@ import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
+  RoleTurnContinuation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+
+/** Append one system section to a continuation prompt, keeping its kind. */
+function appendContinuationSection(
+  continuation: RoleTurnContinuation,
+  section: string,
+): RoleTurnContinuation {
+  const prompt = `${continuation.prompt}\n\n${section}`;
+  return continuation.kind === "initial"
+    ? { kind: "initial", prompt }
+    : { kind: "resume", prompt };
+}
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -347,13 +360,30 @@ export async function dispatchPostAdmissionTurn<
       }
     }
 
-    // Turn request is assembled after beforeDispatch so this turn sees whatever the
-    // seat settled on the request shell (ticket bind re-projection, court diarist
-    // station writes, 起居录 path delivery on the countersign admission path).
+    // Turn request is assembled after beforeDispatch so this turn sees whatever it
+    // settled — the seat's ticket bind re-projection and any court diarist station
+    // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
+    // every public entry: first call, same-ticket re-summons and manual resume
+    // alike. System refs append their own neutral section; caller frozen
+    // attachments and the seat's own prompt bytes are never rewritten.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
+    }
+    const dossierSection = await projectCaseDossierPointerSection({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+    });
+    if (dossierSection !== undefined) {
+      turnRequest = {
+        ...turnRequest,
+        continuation: appendContinuationSection(
+          turnRequest.continuation,
+          dossierSection,
+        ),
+      };
     }
 
     let result: RoleTurnResult;

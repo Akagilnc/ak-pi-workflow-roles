@@ -1,70 +1,11 @@
 /**
- * Shared Hermes / gh PATH executable fixtures (#582 / ADR 0075).
- * Real subprocess fixtures for the shared seat ticket resolver and the GitHub
- * issue face — NOT production APIs. Install-time options only; no env/control
- * dual channels.
+ * Shared gh PATH executable fixture (#582 / ADR 0075 issue-face).
+ * Install-time options only; no env/control dual channels.
+ * Hermes collector fixture retired with the deleted seat-ticket-resolver /
+ * per-summons diarist paths (#709 r4).
  */
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
-export type HermesFixtureOptions = {
-  /** Resolver stdout. Default: `{"assertion":"true-unbound"}`. */
-  resolverResponse?: unknown;
-  /** Force non-zero exit. */
-  defaultExitCode?: number;
-};
-
-function embedJson(value: unknown): string {
-  return JSON.stringify(
-    typeof value === "string" ? value : JSON.stringify(value),
-  );
-}
-
-export async function installHermesFixture(
-  binDir: string,
-  options: HermesFixtureOptions = {},
-): Promise<string> {
-  await mkdir(binDir, { recursive: true });
-  const hermesPath = join(binDir, "hermes");
-  const resolverDefault =
-    options.resolverResponse === undefined
-      ? { assertion: "true-unbound" }
-      : options.resolverResponse;
-  const exitCode =
-    options.defaultExitCode === undefined
-      ? undefined
-      : Number(options.defaultExitCode);
-
-  // Explicit CommonJS (.cjs): package root is "type":"module"; bare `hermes`
-  // without extension inherits ESM and rejects require(). Fixture must reach
-  // the staged-query face, not die on module boundary.
-  const script = `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-const qIdx = args.indexOf("--query-file");
-const queryFile = qIdx >= 0 ? args[qIdx + 1] : undefined;
-
-// Production always stages --query-file; missing/bad JSON throws → non-zero (no wash).
-if (typeof queryFile === "string" && queryFile.length > 0) {
-  JSON.parse(fs.readFileSync(queryFile, "utf8"));
-}
-
-${exitCode !== undefined ? `process.exit(${exitCode});` : ""}
-
-process.stdout.write(${embedJson(resolverDefault)});
-process.exit(0);
-`;
-  // Write as hermes.cjs then symlink `hermes` so PATH resolution stays bare-name
-  // while Node reads the file as CommonJS regardless of package "type".
-  const hermesCjsPath = join(binDir, "hermes.cjs");
-  await writeFile(hermesCjsPath, script, "utf8");
-  await chmod(hermesCjsPath, 0o755);
-  // Wrapper keeps the production-facing bare name on PATH.
-  const wrapper = `#!/usr/bin/env bash\nexec "$(dirname "$0")/hermes.cjs" "$@"\n`;
-  await writeFile(hermesPath, wrapper, "utf8");
-  await chmod(hermesPath, 0o755);
-  return binDir;
-}
 
 export type GhFixtureOptions = {
   issues?: Record<
@@ -93,7 +34,7 @@ export async function installGhFixture(
 ): Promise<string> {
   await mkdir(binDir, { recursive: true });
   const ghPath = join(binDir, "gh");
-  // Same ESM package-boundary fix as hermes: bare name on PATH, .cjs body.
+  // Bare name on PATH, .cjs body so package "type":"module" does not reject require().
   const script = `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const path =

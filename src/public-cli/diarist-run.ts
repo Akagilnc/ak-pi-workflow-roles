@@ -24,9 +24,8 @@ import {
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
-  ticketNumberFromProbe,
+  bindReusedTicketNumber,
+  resolveDiaristSummonsTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -170,16 +169,15 @@ export async function runPublicDiarist(
   }
 
   // #637: same ticket → resume this seat's prior run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709 / ADR 0081: reuse book records, or take the caller's sole dispatch token
+  // on a first summons that has not yet minted a volume — no seat recognizer call.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveDiaristSummonsTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+    home: env.home,
+  });
+  if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -189,7 +187,7 @@ export async function runPublicDiarist(
       home: env.home,
       projectRoot,
       role: "diarist",
-      ticketNumber: probedTicketNumber,
+      ticketNumber: reusedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -256,7 +254,7 @@ export async function runPublicDiarist(
     request: turnRequest,
     adapters: diaristAdapters({
       beforeDispatch: async (admittedSeat) => {
-        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
         const sourcesPath = await freezeDiaristSourceCatalog(admittedSeat, env);
         Object.assign(
           turnRequest,
