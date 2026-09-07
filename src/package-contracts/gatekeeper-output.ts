@@ -76,9 +76,3 @@ export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDire
   return projected;
 }
 
-/** #757: submitted fields pass through — no findingsCount-only drop. */
-export function gatekeeperDecisiveFacts(
-  output: GatekeeperDirectOutput,
-): Record<string, unknown> {
-  return { ...(output as unknown as Record<string, unknown>) };
-}

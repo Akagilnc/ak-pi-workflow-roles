@@ -734,7 +734,8 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     );
     assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
     assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
-    assert.equal(terminal.roleOutcome.decisiveFacts.fixerStatus, "refused");
+    // #757: status rides as submitted — no fixerStatus lift.
+    assert.equal(terminal.roleOutcome.decisiveFacts.status, "refused");
     // #757: blocker fields stay nested under blocker — no lift/drop projection.
     const blocker = terminal.roleOutcome.decisiveFacts.blocker as {
       cause?: string;
@@ -857,7 +858,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         details: unfinishedReceipt,
         kind: "accepted",
         status: "unfinished",
-        factKey: "fixerStatus",
+        factKey: "status",
         factValue: "unfinished",
       },
       {
@@ -876,7 +877,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         details: partialReceipt,
         kind: "accepted",
         status: "partially_completed",
-        factKey: "fixerStatus",
+        factKey: "status",
         factValue: "partially_completed",
       },
     ];
