@@ -1,6 +1,6 @@
 /**
- * Public Auditor (审刑院) terminating receipt contracts (#675).
- * Lawful explicit releases: pass | revise | escalate.
+ * Public Auditor (审刑院) terminating receipt contracts (#675 / #754).
+ * Lawful explicit releases: pass | bounce | escalate.
  */
 import { Type } from "typebox";
 
@@ -14,10 +14,10 @@ export const auditorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "pass | revise | escalate — 形状指引，非 schema 闸",
+        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
       }),
       violations: Type.Optional(Type.Unknown({
-        description: "status 为 revise 时的违规条目",
+        description: "status 为 bounce 时的违规条目",
       })),
       conflicts: Type.Optional(Type.Unknown({
         description: "status 为 escalate 时的冲突",
@@ -31,7 +31,7 @@ export const auditorOutputSchema = withInfrastructureFailureDeclaration(
 
 export type AuditorOutput =
   | { readonly status: "pass" }
-  | { readonly status: "revise"; readonly violations?: unknown }
+  | { readonly status: "bounce"; readonly violations?: unknown }
   | {
       readonly status: "escalate";
       readonly conflicts?: unknown;
@@ -45,9 +45,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function projectLawfulAuditorOutput(value: unknown): AuditorOutput | undefined {
   if (!isRecord(value)) return undefined;
   if (value.status === "pass") return { status: "pass" };
-  if (value.status === "revise") {
+  if (value.status === "bounce") {
     return {
-      status: "revise",
+      status: "bounce",
       ...(Object.hasOwn(value, "violations") ? { violations: value.violations } : {}),
     };
   }
@@ -71,7 +71,7 @@ export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
 
 export function auditorDecisiveFacts(output: AuditorOutput): Record<string, unknown> {
   const facts: Record<string, unknown> = { status: output.status };
-  if (output.status === "revise" && output.violations !== undefined) {
+  if (output.status === "bounce" && output.violations !== undefined) {
     facts.violations = output.violations;
   }
   if (output.status === "escalate") {
