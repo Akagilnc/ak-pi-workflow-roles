@@ -58,7 +58,6 @@ import { resolveInternalRoleEntrypoint } from "../../src/pi/role-turn-host.ts";
 
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 
 function sessionToolResultLine(toolName: string, details: unknown): string {
   return `${JSON.stringify({
@@ -73,9 +72,7 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-judge-", (home) =>
-    withHermesFixtureOnPath(home, () => scenario(home)),
-  );
+  return withTempRoot("ak-public-cli-judge-", scenario);
 }
 
 /** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */

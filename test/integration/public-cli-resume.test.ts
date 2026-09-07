@@ -41,7 +41,6 @@ import { resolveActivationLedgerHome } from "../../src/activation-ledger-topolog
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
@@ -71,9 +70,7 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-resume-", (home) =>
-    withHermesFixtureOnPath(home, () => scenario(home)),
-  );
+  return withTempRoot("ak-public-cli-resume-", scenario);
 }
 
 function captureIo() {
