@@ -1128,37 +1128,6 @@ export async function findLatestRunIdForSeatTicket(input: {
   return best;
 }
 
-/**
- * Ticket identities this book's retained runs already record (#709).
- * Read-only reuse surface for seat ticket binding — no ticket number is minted here.
- */
-export async function collectBookRunTicketNumbers(input: {
-  readonly home: string;
-  readonly bookKey: string;
-}): Promise<ReadonlySet<number>> {
-  const ledgerHome = resolveActivationLedgerHome(input.home);
-  const runsDir = join(
-    activationBookDirectory(ledgerHome, input.bookKey),
-    "runs",
-  );
-  let entries: string[];
-  try {
-    entries = await readdir(runsDir);
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return new Set();
-    throw error;
-  }
-  const known = new Set<number>();
-  for (const entry of entries) {
-    // runs/ also holds non-run files (institutional-resolution.json, Finder
-    // .DS_Store); only `<runId>@<role>` directories are runs (#769).
-    if (!entry.includes("@")) continue;
-    const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
-    if (ticketNumber !== undefined) known.add(ticketNumber);
-  }
-  return known;
-}
-
 type LoadedAdmittedRequestFields = {
   readonly instruction: string;
   readonly instructionEmpty: boolean;

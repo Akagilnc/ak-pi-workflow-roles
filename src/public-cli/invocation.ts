@@ -3,6 +3,7 @@
  * Attachments, project default/override (ADR 0052 / #106).
  */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -485,6 +486,57 @@ export async function bindAdmittedTicketNumber(
     `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
     "utf8",
   );
+}
+
+/**
+ * Bind ticket identity onto a run directory's durable pages when the admitted
+ * object is not in hand (起居郎 accept hook after LLM assertion, #771).
+ * Idempotent when the same number is already on the pages.
+ */
+export async function bindTicketNumberOnRunDirectory(
+  runDirectory: string,
+  ticketNumber: number,
+): Promise<void> {
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+    throw new Error(
+      `bindTicketNumberOnRunDirectory requires a safe positive integer, got ${String(ticketNumber)}`,
+    );
+  }
+  const admittedPath = join(runDirectory, "admitted-request.json");
+  const invocationPath = join(runDirectory, "invocation.json");
+  const admitted = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const existing = admitted.ticketNumber;
+  if (typeof existing === "number") {
+    if (existing === ticketNumber) return;
+    throw new Error(
+      `bindTicketNumberOnRunDirectory refuses to replace existing ticket #${existing} with #${ticketNumber}`,
+    );
+  }
+  // Conflict guard before any write: crash window of bindAdmittedTicketNumber
+  // can leave invocation bound while admitted-request is still unbound — refuse
+  // silent rebind. Read-before-merge; never check the page just overwritten.
+  if (existsSync(invocationPath)) {
+    const invocation = JSON.parse(
+      await readFile(invocationPath, "utf8"),
+    ) as Record<string, unknown>;
+    if (
+      typeof invocation.ticketNumber === "number" &&
+      invocation.ticketNumber !== ticketNumber
+    ) {
+      throw new Error(
+        `bindTicketNumberOnRunDirectory refuses to replace invocation ticket #${invocation.ticketNumber} with #${ticketNumber}`,
+      );
+    }
+  }
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...admitted, ticketNumber }, null, 2)}\n`,
+    "utf8",
+  );
+  await mergeInvocationIdentityPage(runDirectory, { ticketNumber });
 }
 
 /** Add the identity returned by the production Pi launch seam to its existing ledger page. */

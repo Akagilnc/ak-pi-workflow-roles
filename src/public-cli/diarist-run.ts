@@ -19,15 +19,11 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDiaristInvocation,
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
-import {
-  bindReusedTicketNumber,
-  resolveDiaristSummonsTicketNumber,
-  tryResumeSameTicketSeatRun,
-} from "./seat-ticket-binding.ts";
 import {
   prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
@@ -43,6 +39,7 @@ import {
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   trySettleDiaristTerminalResult,
@@ -57,6 +54,13 @@ import {
 export type DiaristRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * Typed handoff from a caller that already holds a verified ticket key
+   * (countersign refresh / post-assert). Never derived from summons prose.
+   * When set: same-ticket resume under that key, else bind-before-freeze so
+   * issue face enters the catalog (ADR 0075 / 0081).
+   */
+  boundTicketNumber?: number;
 };
 
 /** Frozen catalog filename inside the run dossier (durable material, not argv). */
@@ -97,9 +101,12 @@ export function buildDiaristTurnRequest(
 }
 
 /**
- * Mechanical source enumeration for a bound summons: establish the per-ticket
- * volume, freeze this turn's candidate catalog into the run dossier.
- * A true-unbound summons has no ticket, so no diary is minted — undefined.
+ * Mechanical source enumeration into a frozen catalog for this turn.
+ * Bound summons: establish the per-ticket volume and load the issue face.
+ * First-summons (unbound): freeze session candidates + summons text so the LLM
+ * turn can assert ticketNumber; accept verifies and mints the volume (ADR 0075).
+ * True-unbound is decided by the LLM assertion (null/absent ticketNumber), not
+ * by skipping the freeze here.
  *
  * A run that has not settled yet (crash-resume, open-court continuation) keeps
  * the catalog its candidateIndexes were minted against — re-enumerating there
@@ -109,23 +116,30 @@ export function buildDiaristTurnRequest(
 async function freezeDiaristSourceCatalog(
   admitted: AdmittedDiaristInvocation,
   env: Pick<DiaristRunEnv, "cwd" | "home">,
-): Promise<string | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
+): Promise<string> {
   const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
   if (existsSync(path)) {
     const identity = await readRoleRunIdentity(admitted.runDirectory);
     if (identity !== undefined && identity.state !== "terminal") return path;
   }
-  const issueFace = await loadDiaristIssueFace({
-    ticketNumber: admitted.ticketNumber,
-    projectRoot: admitted.projectRoot,
-    home: env.home,
-  });
+  const issueFace =
+    admitted.ticketNumber === undefined
+      ? undefined
+      : await loadDiaristIssueFace({
+          ticketNumber: admitted.ticketNumber,
+          projectRoot: admitted.projectRoot,
+          home: env.home,
+        });
   const catalog = await prepareDiaristSourceCatalog({
-    ticketNumber: admitted.ticketNumber,
+    ...(admitted.ticketNumber === undefined
+      ? {}
+      : { ticketNumber: admitted.ticketNumber }),
+    instruction: admitted.instruction,
+    runDirectory: admitted.runDirectory,
+    projectRoot: admitted.projectRoot,
     cwd: admitted.projectRoot,
     home: env.home,
-    issueFace,
+    ...(issueFace === undefined ? {} : { issueFace }),
     sessionCwds: [admitted.projectRoot, env.cwd],
   });
   await writeFile(path, serializeDiaristSourceCatalog(catalog), "utf8");
@@ -168,16 +182,19 @@ export async function runPublicDiarist(
     throw error;
   }
 
-  // #637: same ticket → resume this seat's prior run with this summons' materials.
-  // #709 / #771 / ADR 0081: first `#N` in the dispatch is the court target
-  // (neighbors/PRs/rN later in the prose do not unbind) — no seat recognizer call.
+  // #637 / #771 / ADR 0075: ticket identity is the LLM's typed assertion on this
+  // turn (mechanical verify on accept), OR a typed handoff key already held by
+  // the caller (countersign refresh). Code never pre-judges the summons text
+  // against book-known numbers. First summons without handoff stays unbound
+  // until assert.
+
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveDiaristSummonsTicketNumber({
-    instruction: parsed.instruction,
-    projectRoot,
-    home: env.home,
-  });
-  if (reusedTicketNumber !== undefined) {
+  const handoffTicket = env.boundTicketNumber;
+  if (
+    typeof handoffTicket === "number" &&
+    Number.isSafeInteger(handoffTicket) &&
+    handoffTicket >= 1
+  ) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -187,7 +204,7 @@ export async function runPublicDiarist(
       home: env.home,
       projectRoot,
       role: "diarist",
-      ticketNumber: reusedTicketNumber,
+      ticketNumber: handoffTicket,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -223,6 +240,15 @@ export async function runPublicDiarist(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
+  // Typed handoff: bind before freeze so issue face enters the catalog.
+  if (
+    typeof handoffTicket === "number" &&
+    Number.isSafeInteger(handoffTicket) &&
+    handoffTicket >= 1
+  ) {
+    await bindAdmittedTicketNumber(admitted, handoffTicket);
+  }
+
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -254,7 +280,6 @@ export async function runPublicDiarist(
     request: turnRequest,
     adapters: diaristAdapters({
       beforeDispatch: async (admittedSeat) => {
-        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
         const sourcesPath = await freezeDiaristSourceCatalog(admittedSeat, env);
         Object.assign(
           turnRequest,
@@ -263,6 +288,36 @@ export async function runPublicDiarist(
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  }).then(async (result) => {
+    // Accept may have bound ticket onto durable pages after LLM assertion.
+    // Mirror only lawful non-escalate accepted terminals — escalate must not
+    // leak an unverified ticketNumber into the caller-visible typed key.
+    if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
+      const roleOutcome = result.terminal?.roleOutcome;
+      if (
+        roleOutcome !== undefined &&
+        roleOutcome.kind === "accepted" &&
+        roleOutcome.status !== "escalate"
+      ) {
+        const facts = roleOutcome.decisiveFacts as {
+          ticketNumber?: unknown;
+          sitian?: { ticketNumber?: unknown };
+        };
+        const raw =
+          typeof facts.ticketNumber === "number"
+            ? facts.ticketNumber
+            : typeof facts.sitian?.ticketNumber === "number"
+              ? facts.sitian.ticketNumber
+              : undefined;
+        if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+          (admitted as { ticketNumber?: number }).ticketNumber = raw;
+          if (result.admitted.ticketNumber === undefined) {
+            (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+          }
+        }
+      }
+    }
+    return result;
   });
 }
 

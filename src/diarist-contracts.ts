@@ -1,6 +1,6 @@
 /**
  * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075 `diarist-is-role`.
- * Lawful explicit release: completed, with empty or nonempty selections.
+ * Lawful explicit releases: completed (入录选择) | escalate (认不出本庭对象上抛).
  * Machine facts about the volume come from the mechanical sitian seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
  */
@@ -8,11 +8,12 @@
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
 
-/** Internal transport: frozen candidate-catalog path for this turn's ticket. */
+/** Internal transport: frozen candidate-catalog path for this turn. */
 export const DIARIST_SOURCES_FLAG = {
   name: "ak-diarist-sources",
   definition: {
-    description: "Frozen per-ticket source catalog the diarist selects from",
+    description:
+      "Frozen source catalog the diarist selects from (may be unbound until LLM asserts ticketNumber)",
     type: "string" as const,
   },
 } as const;
@@ -27,10 +28,22 @@ export type DiaristSelection = {
   readonly note?: string;
 };
 
-export type DiaristOutput = {
-  readonly status: "completed";
-  readonly selections: readonly DiaristSelection[];
-};
+export type DiaristOutput =
+  | {
+      readonly status: "completed";
+      readonly selections: readonly DiaristSelection[];
+      /**
+       * Typed court-target assertion (ADR 0075 `diarist-resolves-ticket-llm-layer`).
+       * Positive integer = 本庭对象=票N; null/absent = true-unbound (真无票→无录).
+       * Mechanical layer verifies N; verification failure is failure, never 无录.
+       */
+      readonly ticketNumber?: number | null;
+    }
+  | {
+      /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
+      readonly status: "escalate";
+      readonly reason: string;
+    };
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -42,7 +55,7 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   } catch {
     throw new Error("Diarist output has no execution discriminator");
   }
-  if (status === "completed") {
+  if (status === "completed" || status === "escalate") {
     return value as DiaristOutput;
   }
   throw new Error("Diarist output has no execution discriminator");
@@ -73,4 +86,3 @@ export function projectDiaristSelections(value: unknown): DiaristSelection[] {
   }
   return out;
 }
-

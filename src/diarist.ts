@@ -45,6 +45,130 @@ import { execFileSync } from "node:child_process";
 
 export type { DiaristIssueFace } from "./diarist-mechanical.ts";
 
+/** Live existence check for an asserted ticket number. */
+export type TicketExistenceChecker = (input: {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ticketNumber: number;
+  readonly signal?: AbortSignal;
+}) => Promise<boolean>;
+
+export type DiaristTicketVerificationReason =
+  | "number-not-in-instruction"
+  | "ticket-missing"
+  | "origin-unresolved"
+  | "assertion-uninterpretable";
+
+/**
+ * Honest failure of mechanical ticket verification (ADR 0075).
+ * Must settle as failure — never wash into true-unbound / 无录.
+ */
+export class DiaristTicketVerificationError extends Error {
+  readonly code = "diarist-ticket-verification" as const;
+  readonly reason: DiaristTicketVerificationReason;
+  constructor(
+    reason: DiaristTicketVerificationReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "DiaristTicketVerificationError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Decision-key exact identity: complete decimal number N appears in instruction.
+ * A longer number's digit substring (e.g. 82 inside 582) is not N.
+ * Verifies a typed claim — does not harvest candidates from prose.
+ */
+export function instructionContainsTicketNumber(
+  instruction: string,
+  ticketNumber: number,
+): boolean {
+  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return false;
+  // Complete decimal token: not preceded or followed by another digit.
+  // Plain string (not template) so the digit-class backslash survives emit.
+  return new RegExp("(?<!\\d)" + String(ticketNumber) + "(?!\\d)").test(
+    instruction,
+  );
+}
+
+/**
+ * Production live-ticket check over shared gh issue-body projection.
+ * Available issue face → exists; unavailable/invalid → missing.
+ */
+export function createGhTicketExistenceChecker(options?: {
+  readonly runner?: GhApiRunner;
+}): TicketExistenceChecker {
+  const runner = options?.runner ?? createGhApiRunner();
+  return async (input) => {
+    const projected = await projectGhIssueBody(runner, {
+      owner: input.owner,
+      repo: input.repo,
+      ticketNumber: input.ticketNumber,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    return projected.status === "available";
+  };
+}
+
+/**
+ * Mechanical verify of an LLM typed ticket assertion (ADR 0075).
+ * Complete decimal of N must appear in the summons; ticket must exist live.
+ * Throws DiaristTicketVerificationError — caller must not wash into 无录.
+ */
+export async function verifyAssertedTicketNumber(input: {
+  readonly ticketNumber: number;
+  readonly instruction: string;
+  readonly projectRoot: string;
+  readonly checkExistence?: TicketExistenceChecker;
+  readonly signal?: AbortSignal;
+}): Promise<void> {
+  const n = input.ticketNumber;
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new DiaristTicketVerificationError(
+      "assertion-uninterpretable",
+      `diarist ticket assertion must be a safe integer >= 1, got ${String(n)}`,
+    );
+  }
+  if (!instructionContainsTicketNumber(input.instruction, n)) {
+    throw new DiaristTicketVerificationError(
+      "number-not-in-instruction",
+      `diarist ticket assertion #${n} complete decimal number does not appear in accepted instruction`,
+    );
+  }
+  const origin = resolveDiaristGithubOrigin(input.projectRoot);
+  if (origin === undefined) {
+    throw new DiaristTicketVerificationError(
+      "origin-unresolved",
+      `diarist ticket assertion #${n} requires a resolvable github.com origin remote for live verification`,
+    );
+  }
+  const checkExistence = input.checkExistence ?? createGhTicketExistenceChecker();
+  let exists: boolean;
+  try {
+    exists = await checkExistence({
+      owner: origin.owner,
+      repo: origin.repo,
+      ticketNumber: n,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+  } catch (error) {
+    throw new DiaristTicketVerificationError(
+      "ticket-missing",
+      `diarist ticket assertion #${n} live verification failed`,
+      { cause: error },
+    );
+  }
+  if (!exists) {
+    throw new DiaristTicketVerificationError(
+      "ticket-missing",
+      `diarist ticket assertion #${n} does not exist as a live issue on ${origin.owner}/${origin.repo}`,
+    );
+  }
+}
+
 /** Typed reasons when bound-ticket issue face cannot be acquired honestly. */
 export type DiaristIssueSourceReason =
   | "origin-unresolved"
@@ -232,12 +356,19 @@ export type DiaristSourceCandidate = DiaristSourceBlock & {
 };
 
 /**
- * Frozen per-ticket catalog handed to the diarist turn and re-read by the
- * envelope at accept time. Carries its own volume coordinates so neither side
- * re-derives them from ambient state.
+ * Frozen catalog handed to the diarist turn and re-read by the envelope at
+ * accept time. Carries summons text + run coordinates so accept can verify an
+ * LLM ticket assertion (ADR 0075) without re-deriving ambient state.
+ * ticketNumber absent = first summons still open for LLM assertion.
  */
 export type DiaristSourceCatalog = {
-  readonly ticketNumber: number;
+  /** Bound before turn when book already records the ticket; else LLM asserts. */
+  readonly ticketNumber?: number;
+  /** Caller summons — sole text mechanical verify reads for complete-decimal check. */
+  readonly instruction: string;
+  /** Run dossier pages accept binds after a verified first-summons assertion. */
+  readonly runDirectory: string;
+  readonly projectRoot: string;
   readonly cwd: string;
   readonly home?: string;
   readonly candidates: readonly DiaristSourceCandidate[];
@@ -311,7 +442,11 @@ function loadSourceBlocks(input: {
 }
 
 export type PrepareDiaristSourceCatalogInput = {
-  readonly ticketNumber: number;
+  /** Bound ticket when known before the turn; omit on first-summons identity round. */
+  readonly ticketNumber?: number;
+  readonly instruction: string;
+  readonly runDirectory: string;
+  readonly projectRoot: string;
   readonly cwd: string;
   /** Explicit package home (admitted run / tests); never process.env.HOME (#604). */
   readonly home?: string;
@@ -323,32 +458,44 @@ export type PrepareDiaristSourceCatalogInput = {
 
 /**
  * Mechanical half A — source enumeration into a frozen catalog.
- * Establishes the per-ticket volume + human view for every bound run (ADR 0075
- * `ticket-provenance-file` 每票一份起居录), then offers only blocks whose entry
- * identity is not already on the volume or the offered watermark (增量幂等).
+ * When ticketNumber is known: establishes the per-ticket volume + human view
+ * (ADR 0075 `ticket-provenance-file` 每票一份起居录) and offers only blocks not
+ * yet on the volume / offered watermark (增量幂等).
+ * When ticketNumber is absent (first summons): offers session candidates without
+ * minting a volume — the LLM turn asserts identity; accept verifies and mints.
  */
 export async function prepareDiaristSourceCatalog(
   input: PrepareDiaristSourceCatalogInput,
 ): Promise<DiaristSourceCatalog> {
-  ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
-  const volume = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
-  writeTicketProvenanceHumanView({
-    ticketNumber: input.ticketNumber,
-    cwd: input.cwd,
-    ...(input.home === undefined ? {} : { home: input.home }),
-    entries: volume.entries,
-  });
+  const known = input.ticketNumber;
+  if (known !== undefined) {
+    ensureTicketProvenanceVolume(known, input.cwd, input.home);
+    const volume = await readTicketProvenance(known, input.cwd, input.home);
+    writeTicketProvenanceHumanView({
+      ticketNumber: known,
+      cwd: input.cwd,
+      ...(input.home === undefined ? {} : { home: input.home }),
+      entries: volume.entries,
+    });
+  }
 
   const rawBlocks = loadSourceBlocks(input);
   // Safeguard only (notify filter + dedupe) — never prose-based exclusion.
   const safeguarded = mechanicalSafeguardPipeline(rawBlocks);
-  const seen = await loadSeenEntryIdentities(input.ticketNumber, input.cwd, input.home);
+  const seen =
+    known === undefined
+      ? new Set<string>()
+      : await loadSeenEntryIdentities(known, input.cwd, input.home);
   const fresh = safeguarded.filter(
-    (block) => !seen.has(blockEntryIdentity(input.ticketNumber, block)),
+    (block) =>
+      known === undefined || !seen.has(blockEntryIdentity(known, block)),
   );
 
   return {
-    ticketNumber: input.ticketNumber,
+    ...(known === undefined ? {} : { ticketNumber: known }),
+    instruction: input.instruction,
+    runDirectory: input.runDirectory,
+    projectRoot: input.projectRoot,
     cwd: input.cwd,
     ...(input.home === undefined ? {} : { home: input.home }),
     candidates: fresh.map((block, candidateIndex) => ({ ...block, candidateIndex })),
@@ -366,8 +513,25 @@ export function loadDiaristSourceCatalog(path: string): DiaristSourceCatalog {
     throw new Error(`diarist source catalog is not an object (${path})`);
   }
   const record = parsed as Record<string, unknown>;
-  if (typeof record.ticketNumber !== "number" || typeof record.cwd !== "string") {
-    throw new Error(`diarist source catalog is missing ticket coordinates (${path})`);
+  if (typeof record.cwd !== "string") {
+    throw new Error(`diarist source catalog is missing cwd (${path})`);
+  }
+  if (typeof record.instruction !== "string") {
+    throw new Error(`diarist source catalog is missing instruction (${path})`);
+  }
+  if (typeof record.runDirectory !== "string") {
+    throw new Error(`diarist source catalog is missing runDirectory (${path})`);
+  }
+  if (typeof record.projectRoot !== "string") {
+    throw new Error(`diarist source catalog is missing projectRoot (${path})`);
+  }
+  if (
+    record.ticketNumber !== undefined &&
+    (typeof record.ticketNumber !== "number" ||
+      !Number.isSafeInteger(record.ticketNumber) ||
+      record.ticketNumber < 1)
+  ) {
+    throw new Error(`diarist source catalog ticketNumber is not a safe ticket (${path})`);
   }
   if (!Array.isArray(record.candidates)) {
     throw new Error(`diarist source catalog is missing candidates (${path})`);
@@ -426,7 +590,13 @@ export async function commitDiaristSelections(input: {
   readonly catalog: DiaristSourceCatalog;
   readonly selections: readonly DiaristSelection[];
 }): Promise<DiaristCommitFacts> {
-  const { ticketNumber, cwd } = input.catalog;
+  const ticketNumber = input.catalog.ticketNumber;
+  if (ticketNumber === undefined) {
+    throw new Error(
+      "commitDiaristSelections requires a bound ticketNumber on the catalog",
+    );
+  }
+  const { cwd } = input.catalog;
   const homeOpt = input.catalog.home === undefined ? {} : { home: input.catalog.home };
   const volumePaths = ensureTicketProvenanceVolume(ticketNumber, cwd, input.catalog.home);
 

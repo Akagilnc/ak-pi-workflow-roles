@@ -333,6 +333,9 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
             role: "coder",
             details: receipt,
             toolCallId: "alt-1",
+            ...(request.courtAttemptId === undefined
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
