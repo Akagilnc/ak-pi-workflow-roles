@@ -549,7 +549,15 @@ async function workerCompletionGatekeeperHarness(options: {
           kind: "accepted",
           role: officer,
           status: "bounce",
-          decisiveFacts: { status: "bounce", findings: ["add a focused regression"] },
+          // #775: structured officer findings must relay field content into parent-visible text.
+          decisiveFacts: {
+            status: "bounce",
+            findings: [{
+              article: "focused-regression",
+              reason: "add a focused regression",
+              evidence: "diff lacks a failing case",
+            }],
+          },
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
@@ -650,11 +658,19 @@ async function workerCompletionGatekeeperHarness(options: {
         if (error.result.status === "bounce") {
           assert.equal(error.result.officer, officer);
           assert.equal(error.result.disposition, "rewrite");
-          assert.deepEqual(error.result.findings, ["add a focused regression"]);
+          const structuredFinding = {
+            article: "focused-regression",
+            reason: "add a focused regression",
+            evidence: "diff lacks a failing case",
+          };
+          // #775: parent-visible message carries field content; submission keeps original objects.
           assert.deepEqual(error.result.submission, {
             status: "bounce",
-            findings: ["add a focused regression"],
+            findings: [structuredFinding],
           });
+          assert.match(error.message, /focused-regression/);
+          assert.match(error.message, /add a focused regression/);
+          assert.match(error.message, /diff lacks a failing case/);
         }
       });
     },
@@ -1226,9 +1242,16 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
 });
 
 test("judge role returns bounce as an ordinary errored tool result without aborting", async () => {
+  // #775: structured violations must reach the parent seat with field content intact
+  // (not `[object Object]` from Array#join coercion).
+  const structured = {
+    article: "evidence-required",
+    reason: "No authority clause was applied",
+    evidence: "session tool_result lacks ADR cite",
+  };
   const { tool } = await startJudge(async () => ({
     status: "bounce",
-    violations: ["No authority clause was applied", "Tests were not adjudicated"],
+    violations: [structured, "Tests were not adjudicated"],
   }));
   const verdict = { judgeStatus: "converged" };
   let abortCalls = 0;
@@ -1243,7 +1266,15 @@ test("judge role returns bounce as an ordinary errored tool result without abort
         abortCalls += 1;
       })),
     ),
-    /No authority clause was applied; Tests were not adjudicated/,
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      // #775 acceptance: parent-visible text carries every structured field + string items.
+      assert.match(error.message, /evidence-required/);
+      assert.match(error.message, /No authority clause was applied/);
+      assert.match(error.message, /session tool_result lacks ADR cite/);
+      assert.match(error.message, /Tests were not adjudicated/);
+      return true;
+    },
   );
   assert.equal(abortCalls, 0);
 });

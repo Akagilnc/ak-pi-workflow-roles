@@ -4,6 +4,7 @@ import { Type, type Static } from "typebox";
 
 import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { joinReadableGateItems } from "./readable-gate-item.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 import {
@@ -136,7 +137,7 @@ export function createJudgeRoleRuntime(
                 }),
                 bounce: (violations) => {
                   throw new Error(
-                    `大理寺回执违 soul：${violations.join("; ")}`,
+                    `大理寺回执违 soul：${joinReadableGateItems(violations)}`,
                   );
                 },
                 escalate: (result) => result,
