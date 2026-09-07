@@ -163,10 +163,11 @@ function resumeRereadInstruction(materialPath: string, handbook: boolean): strin
 }
 
 /**
- * Engine-axis resume-only material lines (#736 / ADR 0069·0071).
- * #755 withdrew this rewrite from 审核循环续话; review same-ticket resume stays
- * plain dialogue via resumeTurnRequestProjectionOptions. Outsourcing resume
- * still rewrites neutral handbook/path pointers into 重新读 instructions.
+ * Resume-only material lines (#736 ticket exemption to ADR 0073 §3).
+ * Neutral `- <absolute path>` pointers already on the continuation
+ * (handbook from appendEngineSessionMaterial; frozen attachments from
+ * instruction-seat transport) become reread instructions.
+ * Handbook keeps the argv suffix; other materials are path-only.
  * First-round delivery is unchanged; never pastes material body.
  */
 export function instructResumeHandbookRead(
@@ -188,9 +189,19 @@ export function instructResumeHandbookRead(
     .join("\n");
 }
 
+/** Append a live-path reread instruction when the pointer is not already on the continuation. */
+export function appendResumeMaterialReread(
+  prompt: string,
+  materialPath: string,
+): string {
+  const instruction = resumeRereadInstruction(materialPath, false);
+  const lines = prompt.split("\n");
+  if (lines.includes(instruction)) return prompt;
+  return prompt.length === 0 ? instruction : `${prompt}\n${instruction}`;
+}
+
 /**
- * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Not used for 审核循环 same-ticket summons (#755).
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600 / #736).
  * Message present → base bytes unchanged; absent → package transport envelope.
  * When engine material is present, append structured engine coordinates then
  * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
