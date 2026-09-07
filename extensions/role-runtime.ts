@@ -41,7 +41,7 @@ import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "..
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
-// #675: nested public summons (gate/auditor/evidence-child) resolve root via env under jiti.
+// #675: nested public summons (gate/auditor) resolve root via env under jiti.
 if (process.env.AK_ROLE_PACKAGE_ROOT === undefined || process.env.AK_ROLE_PACKAGE_ROOT.trim() === "") {
   process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
 }
@@ -137,7 +137,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
     loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
-    loadEvidenceChildSoul: () => loadMainRoleSessionMaterials("evidence-child"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {

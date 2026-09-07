@@ -347,7 +347,6 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
         { role: "navigator", outputTool: "ak_navigator_output" },
         { role: "auditor", outputTool: "ak_auditor_output" },
-        { role: "evidence-child", outputTool: "ak_evidence_child_output" },
         { role: "diarist", outputTool: "ak_diarist_output" },
       ],
     );
@@ -355,7 +354,7 @@ test("advice command derives phase token from registry metadata for every packag
     // Command ownership is registry phases on normalized next — route seats only.
     // Unmatched next is rebound once then passed through as-is (no next.role legality table).
     for (const entry of PACKAGED_ROLE_REGISTRY.filter(
-      (e) => e.role !== "auditor" && e.role !== "evidence-child",
+      (e) => e.role !== "auditor",
     )) {
       for (const phase of entry.phases) {
         const harness = sessionHarness();

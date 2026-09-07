@@ -61,7 +61,6 @@ import {
   parseMergerArgv,
   parseNavigatorArgv,
   parseAuditorArgv,
-  parseEvidenceChildArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -131,7 +130,6 @@ const RESUME_SEAT_DISPATCH: Record<
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
   auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
-  "evidence-child": { seat: "evidence-child", run: runPublicInstructionSeatResume },
   diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
@@ -176,7 +174,6 @@ export const PUBLIC_ROLE_ARGV = {
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
   auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
-  "evidence-child": { parse: parseEvidenceChildArgv, options: optionsForOwner("evidence-child") },
   diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
@@ -1545,12 +1542,11 @@ export async function runAkRole(
       };
     }
 
-    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor / evidence-child.
+    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor.
     if (
       parsed.command === "gatekeeper"
       || parsed.command === "navigator"
       || parsed.command === "auditor"
-      || parsed.command === "evidence-child"
     ) {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
