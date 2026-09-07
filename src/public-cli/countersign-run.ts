@@ -174,7 +174,8 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // #709: identity is reused from records this book already holds — no seat model call.
+  // #709 / #771: reuse a book-known ticket whose complete decimal appears in the
+  // summons (起居录 already answered); no seat model call, no prose harvest.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
   const reusedTicketNumber = await resolveKnownTicketNumber({

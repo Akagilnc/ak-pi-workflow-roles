@@ -23,6 +23,12 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
       status: Type.Unknown({
         description: "completed — 形状指引，非 schema 闸",
       }),
+      ticketNumber: Type.Optional(
+        Type.Unknown({
+          description:
+            "本庭对象票号（正整数）或 null/省略＝真无票；机械验真后下游走 typed 键",
+        }),
+      ),
       selections: Type.Array(
         Type.Object(
           {
@@ -54,7 +60,7 @@ export type DiaristRuntimeDependencies = {
 export const DIARIST_TOOL_SPEC = {
   name: DIARIST_OUTPUT_TOOL_NAME,
   label: "起居郎输出",
-  description: "起居郎入录选择。",
-  promptSnippet: "起居郎入录选择",
+  description: "起居郎入录选择与本票身份断言。",
+  promptSnippet: "起居郎入录选择与本票身份",
   parameters: diaristOutputSchema,
 } as const;
