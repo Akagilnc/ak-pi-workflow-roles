@@ -316,10 +316,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
-    // #742: bound notary materials carry the ticket's 起居录 path.
-    const { CASE_DOSSIER_SECTION_HEADING } = await import(
-      "../../src/public-cli/case-dossier-delivery.ts"
-    );
+    // #742: bound notary materials carry the ticket's 起居录 paths (feature observation).
     const { resolveTicketProvenanceVolume } = await import(
       "../../src/ticket-provenance.ts"
     );
@@ -361,7 +358,6 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    assert.ok(turnPrompt.includes(CASE_DOSSIER_SECTION_HEADING));
     assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
   });

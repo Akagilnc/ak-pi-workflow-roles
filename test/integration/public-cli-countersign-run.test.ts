@@ -25,11 +25,7 @@ import {
   parseCountersignArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
-  CASE_DOSSIER_SECTION_HEADING,
-} from "../../src/public-cli/case-dossier-delivery.ts";
-import {
   buildCountersignTurnRequest,
-  runCountersignCourtDiaristStation,
   runPublicCountersign,
   type CountersignRunEnv,
 } from "../../src/public-cli/countersign-run.ts";
@@ -586,10 +582,6 @@ function countersignPathEnv(input: {
   runId: string;
   onTurn?: (request: RoleTurnRequest) => void;
   blockTurn?: boolean;
-  /** Observe court diarist station calls; default no-op so body-path tests stay focused. */
-  runCourtDiaristStation?: CountersignRunEnv["runCourtDiaristStation"];
-  /** When true, leave production station unset (real public diarist path). */
-  useProductionDiaristStation?: boolean;
 }): CountersignRunEnv {
   const host = input.blockTurn
     ? {
@@ -622,13 +614,8 @@ function countersignPathEnv(input: {
     sessionAppender: appendPiSessionCustomEntry,
     roleTurnHost: host,
     createRunId: () => input.runId,
-    // Body-path tests stub the station; #742 station proofs opt into production/observing seams.
-    ...(input.useProductionDiaristStation === true
-      ? {}
-      : {
-          runCourtDiaristStation:
-            input.runCourtDiaristStation ?? (async () => undefined),
-        }),
+    // Body-path tests isolate the nested 起居郎 seat; #742 station proofs use production env.
+    runCourtDiaristStation: async () => undefined,
   };
 }
 
@@ -832,109 +819,6 @@ test("public countersign path: resolver engine non-zero → controlled failure, 
   });
 });
 
-test("public countersign path: bound ticket runs court diarist station then delivers 起居录 path", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    await mkdir(volume.volumeDir, { recursive: true });
-    await writeFile(volume.humanViewFile, "# 起居录 · #582\n", "utf8");
-    await writeFile(volume.recordFile, "{}\n", "utf8");
-
-    const stationTickets: number[] = [];
-    let turnPrompt = "";
-    const result = await runPublicCountersign(
-      ["裁：继续审票 #582 是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000d42",
-        runCourtDiaristStation: async (admitted) => {
-          if (admitted.ticketNumber !== undefined) {
-            stationTickets.push(admitted.ticketNumber);
-          }
-        },
-        onTurn: (req) => {
-          turnPrompt = req.continuation.prompt;
-        },
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.deepEqual(stationTickets, [582]);
-    assert.ok(turnPrompt.includes(CASE_DOSSIER_SECTION_HEADING));
-    assert.ok(turnPrompt.includes(volume.humanViewFile));
-    assert.ok(turnPrompt.includes(volume.recordFile));
-  });
-});
-
-test("public countersign path: true-unbound skips court diarist station and path delivery", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "true-unbound" },
-    });
-    let stationCalls = 0;
-    let turnPrompt = "";
-    const result = await runPublicCountersign(
-      ["一般性程序问询，本庭无具体票号。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000d43",
-        runCourtDiaristStation: async () => {
-          stationCalls += 1;
-        },
-        onTurn: (req) => {
-          turnPrompt = req.continuation.prompt;
-        },
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.equal(stationCalls, 0);
-    assert.equal(turnPrompt.includes(CASE_DOSSIER_SECTION_HEADING), false);
-  });
-});
-
-test("runCountersignCourtDiaristStation: unbound admitted is a no-op", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    const admitted = await admitCountersignInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "裁",
-      attachmentPaths: [],
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000d44",
-    });
-    assert.equal(admitted.ticketNumber, undefined);
-    let called = false;
-    await runCountersignCourtDiaristStation(
-      admitted,
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn() {
-            throw new Error("turn must not start");
-          },
-        },
-        runCourtDiaristStation: async () => {
-          called = true;
-        },
-      },
-      captureIo().io,
-    );
-    assert.equal(called, false);
-  });
-});
-
 /** Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign script. */
 function courtPipelinePiRunner(): LegacyFauxPiRunner {
   return async (args, options) => {
@@ -987,7 +871,7 @@ function courtPipelinePiRunner(): LegacyFauxPiRunner {
   };
 }
 
-test("public countersign path: production station leaves @diarist run then delivers path", async () => {
+test("public countersign path: bound ticket runs @diarist then countersign with 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
     await installHermesFixture(join(home, "bin"), {
       resolverResponse: { assertion: "ticket", ticketNumber: 582 },
@@ -1024,14 +908,13 @@ test("public countersign path: production station leaves @diarist run then deliv
         sessionAppender: appendPiSessionCustomEntry,
         roleTurnHost: wrappedHost,
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d45",
-        // Production station — no stub.
       },
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.equal(result.exitCode, 0, "countersign with production diarist station");
+    assert.equal(result.exitCode, 0);
     assert.deepEqual(turnOrder, ["diarist", "countersign"]);
-    assert.ok(result.admitted?.bookKey, "countersign admitted must carry bookKey");
+    assert.ok(result.admitted?.bookKey);
 
     const diaristRunId = await findLatestRunIdForSeatTicket({
       home,
@@ -1039,7 +922,7 @@ test("public countersign path: production station leaves @diarist run then deliv
       role: "diarist",
       ticketNumber: 582,
     });
-    assert.ok(diaristRunId, "book must carry a @diarist run for the ticket");
+    assert.ok(diaristRunId);
     const diaristCoords = issuePiDurablePrincipalCoordinates({
       cwd: project,
       runId: diaristRunId!,
@@ -1053,20 +936,60 @@ test("public countersign path: production station leaves @diarist run then deliv
     assert.equal(diaristState?.role, "diarist");
     assert.equal(diaristState?.state, "terminal");
 
+    // Feature observation: materials carry the typed volume paths (not heading/wording).
     const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(
-      turnPrompt.includes(CASE_DOSSIER_SECTION_HEADING),
-      `prompt missing dossier section: ${turnPrompt.slice(0, 400)}`,
+    assert.ok(turnPrompt.includes(volume.humanViewFile));
+    assert.ok(turnPrompt.includes(volume.recordFile));
+  });
+});
+
+test("public countersign path: true-unbound leaves no @diarist run and no 起居录 paths", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    await installHermesFixture(join(home, "bin"), {
+      resolverResponse: { assertion: "true-unbound" },
+    });
+
+    let turnPrompt = "";
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(),
+    });
+    const result = await runPublicCountersign(
+      ["一般性程序问询，本庭无具体票号。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            turnPrompt = request.continuation.prompt;
+            return host.executeTurn(request);
+          },
+        },
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
+      },
+      captureIo().io,
+      parseCountersignArgv,
     );
-    assert.ok(
-      turnPrompt.includes(volume.humanViewFile) ||
-        turnPrompt.includes(`尚未生成：${volume.humanViewFile}`),
-      `prompt missing human view path\npath=${volume.humanViewFile}\nprompt=${turnPrompt}`,
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.admitted?.runDirectory);
+
+    // Production station is a no-op when unbound — book has no @diarist leaf.
+    const runsDir = join(result.admitted!.runDirectory, "..");
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(runsDir).catch(() => [] as string[]);
+    assert.equal(
+      entries.some((entry) => entry.endsWith("@diarist")),
+      false,
     );
-    assert.ok(
-      turnPrompt.includes(volume.recordFile) ||
-        turnPrompt.includes(`尚未生成：${volume.recordFile}`),
-      `prompt missing record path\npath=${volume.recordFile}\nprompt=${turnPrompt}`,
-    );
+
+    // Unbound delivers no volume path; a known partition path must not appear.
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    assert.equal(turnPrompt.includes(volume.humanViewFile), false);
+    assert.equal(turnPrompt.includes(volume.recordFile), false);
   });
 });
