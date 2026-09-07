@@ -8,11 +8,7 @@
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import {
-  bindReusedTicketNumber,
-  resolveKnownTicketNumber,
-  tryResumeSameTicketSeatRun,
-} from "./seat-ticket-binding.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
@@ -88,14 +84,9 @@ export async function runPublicInspector(
   }
 
   // #747: same parent (卷宗指针) → resume prior inspector run with this summons' materials.
-  // #709: ticket identity is reused from records this book already holds — no seat model call.
+  // #771: no mechanical ticket match against instruction text; parent-run path only.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveKnownTicketNumber({
-    instruction: parsed.instruction,
-    projectRoot,
-    home: env.home,
-  });
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
     const summons: SameTicketSummonsMaterials = {
@@ -168,12 +159,7 @@ export async function runPublicInspector(
     env,
     io,
     request: turnRequest,
-    adapters: inspectorAdapters({
-      beforeDispatch: async (admittedSeat) => {
-        // #635/#709: bind the reused identity inside the controlled-failure boundary.
-        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
-      },
-    }),
+    adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
