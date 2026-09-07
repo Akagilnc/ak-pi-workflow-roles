@@ -8,7 +8,6 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 
 import {
   JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
-  JUDGE_ACCEPTED_AUDIT_UNREADABLE_TEXT,
   JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
@@ -128,14 +127,14 @@ export function createJudgeRoleRuntime(
                   terminate: true as const,
                   ...usageProjection,
                 }),
-                // ADR 0055: parent stands with typed unreadable audit fact — not forged pass.
-                unreadable: (auditUnreadable, usageProjection) => ({
-                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_AUDIT_UNREADABLE_TEXT }],
-                  details: { ...acceptedDetails, auditUnreadable },
+                // #757: parent stands with auditor raw reply — no unreadable judgment.
+                received: (auditReceived, usageProjection) => ({
+                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+                  details: { ...acceptedDetails, audit: auditReceived.reply },
                   terminate: true as const,
                   ...usageProjection,
                 }),
-                revise: (violations) => {
+                bounce: (violations) => {
                   throw new Error(
                     `大理寺回执违 soul：${violations.join("; ")}`,
                   );

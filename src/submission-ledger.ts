@@ -439,8 +439,11 @@ export function createSubmissionLedgerHost(
               },
             });
             rounds.set(attemptId, candidates);
+            // The role's own acceptance text must reach the model: an empty
+            // result reads as "nothing happened" on hosts without terminate
+            // semantics (grok build kept resubmitting, #750 evidence).
             return {
-              content: [],
+              content: result.content,
               details: { submissionDisposition: "pending-round-closure" },
             };
           }
@@ -456,7 +459,7 @@ export function createSubmissionLedgerHost(
           candidates.push({ toolCallId, toolName: tool.name, role, result, context });
           rounds.set(attemptId, candidates);
           return {
-            content: [],
+            content: result.content,
             details: { submissionDisposition: "pending-round-closure" },
           };
         },

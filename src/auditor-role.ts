@@ -16,7 +16,7 @@ export type AuditorRuntimeDependencies = {
 export const AUDITOR_TOOL_SPEC = {
   name: AUDITOR_OUTPUT_TOOL_NAME,
   label: "审刑院输出",
-  description: "审刑院终局回执，状态为 pass、revise 或 escalate。",
+  description: "审刑院终局回执，状态为 pass、bounce 或 escalate。",
   promptSnippet: "审刑院终局回执",
   parameters: auditorOutputSchema,
 } as const;

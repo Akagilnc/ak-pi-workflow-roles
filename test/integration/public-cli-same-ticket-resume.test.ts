@@ -190,7 +190,15 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
           })(extraArgs, options);
         }
         if (turn === 2) {
-          // Second court: runner exits cleanly without sealing — prior pass must not wash.
+          // Cross-parent mint under the same ticket (#747): seal pass on a new run.
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          })(extraArgs, options);
+        }
+        if (turn === 3) {
+          // Same-parent court: exit without sealing — prior pass must not wash.
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -243,13 +251,43 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       undefined,
       "first mint has no court-attempt id (session-stable sole-final)",
     );
+    const firstRunId = seen[0]!.runId;
+    const firstRunDirectory = seen[0]!.runDirectory;
 
     const notaryRunsAfterFirst = (await listBookRunDirs(home)).filter((d) =>
       d.includes("@notary"),
     );
     assert.equal(notaryRunsAfterFirst.length, 1, "first summons creates exactly one notary run");
 
-    // 2) Live seat-table switch before same-ticket re-summons.
+    // 2) Same-ticket distinct parent ordinary summons must mint (#747) — old ticket key would resume.
+    const crossParent = await runAkRole(
+      ["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000n0cp",
+      },
+    );
+    assert.equal(crossParent.exitCode, 0, "distinct-parent ordinary summons must mint and seal");
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "initial", "distinct parent must not resume the first run");
+    assert.notEqual(seen[1]!.runId, firstRunId);
+    assert.notEqual(seen[1]!.runDirectory, firstRunDirectory);
+    assert.equal(seen[1]!.sourceRun, secondSourcePath);
+    const notaryRunsAfterCross = (await listBookRunDirs(home)).filter((d) =>
+      d.includes("@notary"),
+    );
+    assert.equal(
+      notaryRunsAfterCross.length,
+      2,
+      "same-ticket distinct parent must leave two notary run directories",
+    );
+
+    // 3) Live seat-table switch before same-parent re-summons (#747).
     assert.equal(
       (
         await runAkRole(
@@ -260,9 +298,9 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       0,
     );
 
-    // 3) Second court: resume same run, distinct source-run, no seal → not pass.
+    // 4) Same parent (--source-run) court on the first leg: resume, no seal → not pass.
     const second = await runAkRole(
-      ["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -273,64 +311,59 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
         createRunId: () => "01a063700-0000-7000-8000-00000000n002",
       },
     );
-    assert.notEqual(second.exitCode, 0, "second court without seal must not exit as success");
+    assert.notEqual(second.exitCode, 0, "same-parent court without seal must not exit as success");
     assert.notEqual(
       second.terminal?.roleOutcome.kind,
       "accepted",
-      "second court must not present the first sealed pass",
+      "same-parent court must not present the first sealed pass",
     );
-    assert.equal(turn, 2, "second summons must dispatch a real turn");
-    assert.equal(seen.length, 2, "second public notary must dispatch one turn after seal");
-    assert.equal(seen[1]!.kind, "resume", "same-ticket re-summons must resume");
+    assert.equal(turn, 3, "same-parent court must dispatch a real turn");
+    assert.equal(seen.length, 3, "same-parent court must dispatch one turn after cross-parent mint");
+    assert.equal(seen[2]!.kind, "resume", "same-parent re-summons must resume");
     assert.equal(
-      seen[1]!.runDirectory,
-      seen[0]!.runDirectory,
-      "second summons must continue the same run directory",
+      seen[2]!.runDirectory,
+      firstRunDirectory,
+      "same-parent summons continues the first parent run, not the cross-parent mint",
     );
-    assert.equal(seen[1]!.runId, seen[0]!.runId, "second summons must keep the same run id");
+    assert.equal(seen[2]!.runId, firstRunId, "same-parent summons must keep the first run id");
     assert.equal(
-      seen[1]!.model?.model,
+      seen[2]!.model?.model,
       "live-seat-model",
       "resume must take the live seat-table model (cli.ts resolveEffectiveSeat)",
     );
     assert.equal(
-      seen[1]!.model?.thinking,
+      seen[2]!.model?.thinking,
       "low",
       "resume must take the live seat-table thinking",
     );
     assert.equal(
-      seen[1]!.sourceRun,
-      secondSourcePath,
-      "second summons activation.sourceRun is the second retained path",
-    );
-    assert.notEqual(
-      seen[1]!.sourceRun,
-      seen[0]!.sourceRun,
-      "second source-run pointer must differ from the first",
+      seen[2]!.sourceRun,
+      firstSourcePath,
+      "same-parent resume keeps the parent source-run path",
     );
     assert.ok(
-      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
+      typeof seen[2]!.courtAttemptId === "string" && seen[2]!.courtAttemptId.length > 0,
       "sealed re-summons must carry a courtAttemptId on the request",
     );
     assert.notEqual(
-      seen[1]!.courtAttemptId,
-      seen[0]!.runId,
+      seen[2]!.courtAttemptId,
+      firstRunId,
       "court-attempt id is not the run id",
     );
 
-    const notaryRunsAfterSecond = (await listBookRunDirs(home)).filter((d) =>
+    const notaryRunsAfterSameParent = (await listBookRunDirs(home)).filter((d) =>
       d.includes("@notary"),
     );
     assert.equal(
-      notaryRunsAfterSecond.length,
-      1,
-      "second summons must not mint a new notary run directory",
+      notaryRunsAfterSameParent.length,
+      2,
+      "same-parent court must not mint a third notary run directory",
     );
 
-    const openCourtAttemptId = seen[1]!.courtAttemptId!;
-    const runId = seen[0]!.runId;
+    const openCourtAttemptId = seen[2]!.courtAttemptId!;
+    const runId = firstRunId;
 
-    // 4) Bare manual resume continues the open second court — not prior seal.
+    // 5) Bare manual resume continues the open court — not prior seal.
     const resumed = await runAkRole(["resume", runId], {
       home,
       packageRoot,
@@ -339,23 +372,23 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       io,
       roleTurnHost: host,
     });
-    assert.equal(turn, 3, "bare resume must dispatch a real continuation turn");
-    assert.equal(seen.length, 3, "bare resume must observe one more turn request");
-    assert.equal(seen[2]!.kind, "resume", "bare resume continuation kind is resume");
+    assert.equal(turn, 4, "bare resume must dispatch a real continuation turn");
+    assert.equal(seen.length, 4, "bare resume must observe one more turn request");
+    assert.equal(seen[3]!.kind, "resume", "bare resume continuation kind is resume");
     assert.equal(
-      seen[2]!.runDirectory,
-      seen[0]!.runDirectory,
+      seen[3]!.runDirectory,
+      firstRunDirectory,
       "bare resume stays on the same run directory",
     );
     assert.equal(
-      seen[2]!.courtAttemptId,
+      seen[3]!.courtAttemptId,
       openCourtAttemptId,
       "bare resume must continue the open courtAttemptId, not mint a new court",
     );
     assert.equal(
-      seen[2]!.sourceRun,
-      secondSourcePath,
-      "bare resume must keep open-court source-run, not birth source-run",
+      seen[3]!.sourceRun,
+      firstSourcePath,
+      "bare resume must keep the same-parent source-run",
     );
     assert.equal(resumed.exitCode, 0, "open-court resume that seals must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
@@ -367,7 +400,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "open-court seal status must be the lawful non-pass, not first-court pass",
     );
 
-    // 5) After open court seals non-pass, further bare resume is run-scoped
+    // 6) After open court seals non-pass, further bare resume is run-scoped
     // sealed-idempotent on that same status (not the first-court pass).
     const turnsBeforeIdempotent = turn;
     const idempotent = await runAkRole(["resume", runId], {
@@ -406,12 +439,21 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const parentRunPath = await seedCanonicalSourceRun(home, project, {
+      ticketNumber: 637,
+    });
+    const otherParentRunPath = await seedCanonicalSourceRun(home, project, {
+      runId: SECOND_SOURCE_RUN_ID,
+      ticketNumber: 637,
+      sessionContent: "other parent",
+    });
     const binDir = join(home, "bin");
     await mkdir(binDir, { recursive: true });
     // Worktree-owned home walks up to package.json type:module; force CJS for fixture bins.
     await writeFile(join(binDir, "package.json"), '{"type":"commonjs"}\n', "utf8");
+    // Gate inspector instruction is 卷宗指针 only (#747); ticket probe is true-unbound.
     await installHermesFixture(binDir, {
-      resolverResponse: { assertion: "ticket", ticketNumber: 637 },
+      resolverResponse: { assertion: "true-unbound" },
     });
     await installGhFixture(binDir, {
       issues: { 637: { body: "#637 materials court", comments: [] } },
@@ -421,7 +463,8 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
 
     const external = join(home, "external-attachment.md");
     await writeFile(external, "court-material-v1\n", "utf8");
-    const instruction = "inspect ticket #637 materials";
+    const instruction = `卷宗指针：${parentRunPath}`;
+    const otherInstruction = `卷宗指针：${otherParentRunPath}`;
     const io = { stdout: (_t: string) => {}, stderr: (_t: string) => {} };
     const credentials = { "openai-codex": true, xai: true } as const;
 
@@ -440,6 +483,14 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
           })(extraArgs, options);
         }
         if (turn === 2) {
+          // Cross-parent mint under the same ticket (#747).
+          return scriptedTerminatingToolSession({
+            role: "inspector",
+            toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          })(extraArgs, options);
+        }
+        if (turn === 3) {
           return scriptedTerminatingToolSession({
             role: "inspector",
             toolName: INSPECTOR_OUTPUT_TOOL_NAME,
@@ -475,7 +526,32 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
 
-    // 2) Same-ticket re-summons opens a new court with attachment materials (no seal).
+    // 2) Same-ticket distinct parent 卷宗指针 must mint (#747).
+    const crossParent = await runAkRole(
+      ["inspector", otherInstruction, "--attach", external],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a063700-0000-7000-8000-00000000i0cp",
+      },
+    );
+    assert.equal(crossParent.exitCode, 0, "distinct-parent inspector must mint and seal");
+    assert.equal(seen[1]!.kind, "initial", "distinct parent must not resume");
+    assert.notEqual(seen[1]!.runId, runId);
+    const inspectorRunsAfterCross = (await listBookRunDirs(home)).filter((d) =>
+      d.includes("@inspector"),
+    );
+    assert.equal(
+      inspectorRunsAfterCross.length,
+      2,
+      "same-ticket distinct parent must leave two inspector run directories",
+    );
+
+    // 3) Same-parent (卷宗指针) re-summons opens a new court with attachment materials (no seal).
     const second = await runAkRole(
       ["inspector", instruction, "--attach", external],
       {
@@ -488,17 +564,17 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
         createRunId: () => "01a063700-0000-7000-8000-00000000i002",
       },
     );
-    assert.notEqual(second.exitCode, 0, "second court without seal must not succeed");
-    assert.equal(seen.length, 2);
-    assert.equal(seen[1]!.kind, "resume");
-    assert.equal(seen[1]!.runDirectory, runDirectory);
+    assert.notEqual(second.exitCode, 0, "same-parent court without seal must not succeed");
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(seen[2]!.runDirectory, runDirectory);
     assert.ok(
-      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
+      typeof seen[2]!.courtAttemptId === "string" && seen[2]!.courtAttemptId.length > 0,
     );
-    const openCourtAttemptId = seen[1]!.courtAttemptId!;
+    const openCourtAttemptId = seen[2]!.courtAttemptId!;
 
     const openCourt = await readCurrentCourt(runDirectory);
-    assert.ok(openCourt !== undefined, "unsealed second court must persist currentCourt");
+    assert.ok(openCourt !== undefined, "unsealed same-parent court must persist currentCourt");
     assert.equal(openCourt!.courtAttemptId, openCourtAttemptId);
     const frozenPaths = openCourt!.summons?.attachmentPaths ?? [];
     assert.equal(frozenPaths.length, 1, "currentCourt must carry this court\'s attachment identity");
@@ -521,7 +597,7 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     await writeFile(external, "external-changed-after-freeze\n", "utf8");
     await rm(external, { force: true });
 
-    // 3) Bare resume with caller message continues open court on frozen materials.
+    // 4) Bare resume with caller message continues open court on frozen materials.
     const resumed = await runAkRole(["resume", runId, "caller-resume-message"], {
       home,
       packageRoot,
@@ -530,15 +606,15 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
       io,
       roleTurnHost: host,
     });
-    assert.equal(turn, 3, "bare resume with message must dispatch a real turn");
-    assert.equal(seen.length, 3);
-    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(turn, 4, "bare resume with message must dispatch a real turn");
+    assert.equal(seen.length, 4);
+    assert.equal(seen[3]!.kind, "resume");
     assert.equal(
-      seen[2]!.courtAttemptId,
+      seen[3]!.courtAttemptId,
       openCourtAttemptId,
       "caller message resume must continue the open courtAttemptId",
     );
-    assert.equal(seen[2]!.runDirectory, runDirectory);
+    assert.equal(seen[3]!.runDirectory, runDirectory);
     assert.equal(resumed.exitCode, 0, "open-court resume on frozen materials must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
@@ -567,11 +643,11 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
   }
 });
 
-test("#675/#637 public auditor: same-ticket re-summons resume prior run under live seat axes", async () => {
+test("#675/#637 public auditor: same-parent re-summons resume prior run under live seat axes", async () => {
   const scratch = await openNotaryScratch("home-auditor-");
   try {
     const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
-    // Source-runs already carry ticket #637; auditor inherits that ticket (notary face).
+    // Auditor resume key is --source-run parent path (#747), not ticket number.
     assert.equal(
       (
         await runAkRole(
@@ -601,7 +677,21 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
             },
           })(extraArgs, options);
         }
-        // Second court: exit without seal so prior pass does not wash.
+        if (turn === 2) {
+          // Same-parent court: exit without seal so prior pass does not wash.
+          return scriptedTerminatingToolSession({
+            role: "auditor",
+            toolName: AUDITOR_OUTPUT_TOOL_NAME,
+            details: {
+              status: "pass",
+              violations: [],
+              conflicts: [],
+              decisionGate: null,
+            },
+            seal: false,
+          })(extraArgs, options);
+        }
+        // Distinct-parent mint under the same ticket (#747).
         return scriptedTerminatingToolSession({
           role: "auditor",
           toolName: AUDITOR_OUTPUT_TOOL_NAME,
@@ -611,7 +701,6 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
             conflicts: [],
             decisionGate: null,
           },
-          seal: false,
         })(extraArgs, options);
       },
     });
@@ -648,7 +737,7 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
     );
     assert.equal(auditorRunsAfterFirst.length, 1, "first auditor summons mints exactly one run");
 
-    // Live seat-table switch before same-ticket re-summons (#697 axes on resume).
+    // Live seat-table switch before same-parent re-summons (#697 axes on resume).
     assert.equal(
       (
         await runAkRole(
@@ -659,14 +748,17 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
       0,
     );
 
-    // Same ticket via second source-run under ticket #637 — must resume, not mint.
+    const firstRunId = seen[0]!.runId;
+    const firstRunDirectory = seen[0]!.runDirectory;
+
+    // Same parent --source-run → resume.
     const second = await runAkRole(
       [
         "auditor",
         "--subject",
         "judge",
         "--source-run",
-        `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+        `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
         "审：二次传召。",
       ],
       {
@@ -682,13 +774,13 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
     assert.notEqual(second.exitCode, 0, "second court without seal must not succeed");
     assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
     assert.equal(seen.length, 2);
-    assert.equal(seen[1]!.kind, "resume", "same-ticket auditor re-summons must resume");
+    assert.equal(seen[1]!.kind, "resume", "same-parent auditor re-summons must resume");
     assert.equal(
       seen[1]!.runDirectory,
-      seen[0]!.runDirectory,
+      firstRunDirectory,
       "second auditor summons continues the same run directory",
     );
-    assert.equal(seen[1]!.runId, seen[0]!.runId);
+    assert.equal(seen[1]!.runId, firstRunId);
     assert.equal(
       seen[1]!.model?.model,
       "live-auditor",
@@ -710,10 +802,40 @@ test("#675/#637 public auditor: same-ticket re-summons resume prior run under li
     assert.equal(
       auditorRunsAfterSecond.length,
       1,
-      "second auditor summons must not mint a new run directory",
+      "same-parent second auditor summons must not mint a new run directory",
     );
 
-    // Source-run paths are fixture materials; both carry ticket #637.
+    // Same-ticket distinct parent ordinary summons must mint (#747) — old ticket key would resume.
+    const crossParent = await runAkRole(
+      [
+        "auditor",
+        "--subject",
+        "judge",
+        "--source-run",
+        `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+        "审：换父腿。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a067500-0000-7000-8000-00000000a003",
+      },
+    );
+    assert.equal(crossParent.exitCode, 0, "distinct-parent auditor must mint and seal");
+    assert.equal(seen[seen.length - 1]!.kind, "initial", "distinct parent must not resume");
+    assert.notEqual(seen[seen.length - 1]!.runId, firstRunId);
+    const auditorRunsAfterCross = (await listBookRunDirs(home)).filter((d) =>
+      d.includes("@auditor"),
+    );
+    assert.equal(
+      auditorRunsAfterCross.length,
+      2,
+      "same-ticket distinct parent must leave two auditor run directories",
+    );
     void firstSourcePath;
     void secondSourcePath;
   } finally {
@@ -758,13 +880,13 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     const firstRunId = seen[0]!.runId;
     const firstRunDirectory = seen[0]!.runDirectory;
 
-    // 2) Explicit fresh summons: same ticket, new verb → distinct run, not resume.
+    // 2) Explicit fresh summons: same parent, new verb → distinct run (explicit-fresh-summons).
     const fresh = await runAkRole(
       [
         "new",
         "notary",
         "--source-run",
-        `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+        `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
       ],
       {
         home,
@@ -785,14 +907,15 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
       firstRunDirectory,
       "new must own an independent run directory",
     );
-    assert.equal(seen[1]!.sourceRun, secondSourcePath);
+    assert.equal(seen[1]!.sourceRun, firstSourcePath);
     const freshRunId = seen[1]!.runId;
     const freshRunDirectory = seen[1]!.runDirectory;
 
     const notaryRuns = (await listBookRunDirs(home)).filter((d) => d.includes("@notary"));
     assert.equal(notaryRuns.length, 2, "ordinary + new must leave two notary run directories");
 
-    // 3) Later ordinary same-ticket summons auto-resumes the latest (the new leg).
+    // 3) Ordinary same-parent summons auto-resumes the latest leg under that parent
+    // (explicit-fresh-summons + #747 parent key — not the birth leg).
     const third = await runAkRole(
       ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
@@ -805,12 +928,13 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
         createRunId: () => "01a072400-0000-7000-8000-00000000n003",
       },
     );
-    assert.equal(third.exitCode, 0, "auto-resume of latest leg must accept");
+    assert.equal(third.exitCode, 0, "auto-resume of latest same-parent leg must accept");
     assert.equal(seen.length, 3, "third summons must dispatch one resume turn");
-    assert.equal(seen[2]!.kind, "resume", "ordinary re-summons still auto-resumes");
-    assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest run, not the first");
+    assert.equal(seen[2]!.kind, "resume", "ordinary same-parent re-summons still auto-resumes");
+    assert.equal(seen[2]!.runId, freshRunId, "auto-resume must track the latest same-parent leg");
     assert.equal(seen[2]!.runDirectory, freshRunDirectory);
     assert.notEqual(seen[2]!.runId, firstRunId);
+    void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
   }
@@ -857,8 +981,9 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
 
     heldLease = await acquireRunWriterLease(runDirectory);
 
+    // Same parent path so lookup resumes into the leased run (#747).
     const blocked = await runAkRole(
-      ["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
