@@ -1,5 +1,8 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  withNestedTrueUnboundDiaristPiRunner,
+} from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
@@ -1070,7 +1073,8 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                 roleTurnHost: roleTurnHostFromLegacyPiRunner({
               packageRoot: packageRoot,
               principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (_args, options) => {
+              piRunner: withNestedTrueUnboundDiaristPiRunner(
+                async (_args, options) => {
                   capturedEnv = options.env;
                   return {
                     code: 1,
@@ -1079,6 +1083,8 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                     args: [..._args],
                   };
                 },
+                { primaryRole: role },
+              ),
             }),
               },
             );
@@ -1135,15 +1141,18 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               roleTurnHost: roleTurnHostFromLegacyPiRunner({
               packageRoot: packageRoot,
               principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (_args, options) => {
-                capturedEnv = options.env;
-                return {
-                  code: 1,
-                  stderr: "stop after capture",
-                  timedOut: false,
-                  args: [..._args],
-                };
-              },
+              piRunner: withNestedTrueUnboundDiaristPiRunner(
+                async (_args, options) => {
+                  capturedEnv = options.env;
+                  return {
+                    code: 1,
+                    stderr: "stop after capture",
+                    timedOut: false,
+                    args: [..._args],
+                  };
+                },
+                { primaryRole: role },
+              ),
             }),
             });
             assert.notEqual(

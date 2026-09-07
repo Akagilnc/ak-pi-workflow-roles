@@ -81,9 +81,12 @@ import {
 } from "./diarist-contracts.ts";
 import {
   commitDiaristSelections,
+  DiaristTicketVerificationError,
   loadDiaristSourceCatalog,
+  verifyAssertedTicketNumber,
   type DiaristSourceCatalog,
 } from "./diarist.ts";
+import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
   type GatekeeperRuntimeDependencies,
@@ -926,11 +929,39 @@ export function createAuditorRoleRuntime(
 }
 
 /**
+ * LLM typed court-target assertion from diarist output (ADR 0075).
+ * null/absent = true-unbound; positive safe integer = ticket N.
+ * Any other shape fails honestly — never washes into unbound.
+ */
+function readDiaristTicketAssertion(
+  submitted: Record<string, unknown> | undefined,
+): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } {
+  if (submitted === undefined || !("ticketNumber" in submitted)) {
+    return { kind: "true-unbound" };
+  }
+  const raw = submitted.ticketNumber;
+  if (raw === null) return { kind: "true-unbound" };
+  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+    return { kind: "ticket", ticketNumber: raw };
+  }
+  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isSafeInteger(n) && n >= 1) {
+      return { kind: "ticket", ticketNumber: n };
+    }
+  }
+  throw new DiaristTicketVerificationError(
+    "assertion-uninterpretable",
+    "diarist ticketNumber must be a safe integer >= 1, null, or absent",
+  );
+}
+
+/**
  * #708: 起居郎 public seat on the shared filed-officer envelope.
  * Semantic collection happened in this role's own turn; the accept hook runs the
- * mechanical band (verbatim reverse-verify → idempotent sitian append →
- * watermark) and records the resulting sitian facts next to the receipt.
- * Machine facts never come from model self-report (锚定宪法).
+ * mechanical band (ticket verify when first-summons + verbatim reverse-verify →
+ * idempotent sitian append → watermark) and records the resulting sitian facts
+ * next to the receipt. Machine facts never come from model self-report (锚定宪法).
  */
 export function createDiaristRoleRuntime(
   roleHost: RoleHost,
@@ -953,21 +984,88 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
-        // True-unbound summons: no ticket, no catalog, no diary committed — so
-        // this turn produced no sitian facts. A self-reported `sitian` is not
-        // one (锚定宪法); drop it rather than let it ride into decisiveFacts.
-        // Carrying the field is not a reason to bounce the receipt (第 0 条).
+
+        // LLM cannot identify the court target — escalate without machine facts.
+        // Strip sitian (锚定宪法) and ticketNumber (unverified — must not leak
+        // into caller-visible admitted typed key via decisiveFacts mirror).
+        if (submitted?.status === "escalate") {
+          if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
+            return submitted;
+          }
+          const stripped = { ...submitted };
+          delete stripped.sitian;
+          delete stripped.ticketNumber;
+          return stripped;
+        }
+
+        const assertion = readDiaristTicketAssertion(submitted);
+
+        // No frozen catalog: only true-unbound is lawful without volume work.
+        // A self-reported `sitian` is not machine fact (锚定宪法).
         if (catalog === undefined) {
+          if (assertion.kind === "ticket") {
+            throw new DiaristTicketVerificationError(
+              "assertion-uninterpretable",
+              `diarist asserted ticket #${assertion.ticketNumber} but no source catalog was frozen for this turn`,
+            );
+          }
           if (submitted === undefined || !("sitian" in submitted)) return undefined;
           const stripped = { ...submitted };
           delete stripped.sitian;
           return stripped;
         }
+
+        // Already bound before the turn (typed handoff / resume): skip re-recognition
+        // (ADR 0075 已绑定 ticket 优先) and commit under that identity.
+        if (catalog.ticketNumber !== undefined) {
+          const facts = await commitDiaristSelections({
+            catalog,
+            selections: projectDiaristSelections(parameters),
+          });
+          return {
+            ...(submitted ?? { receipt: parameters }),
+            ticketNumber: catalog.ticketNumber,
+            sitian: facts,
+          };
+        }
+
+        // First summons: LLM typed assertion → mechanical verify → bind → commit.
+        // true-unbound → 无录 (no volume). Verification failure throws (失败诚实).
+        // Cannot-identify must arrive as status=escalate above — never as silent unbound.
+        if (assertion.kind === "true-unbound") {
+          if (submitted === undefined || !("sitian" in submitted)) {
+            return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };
+          }
+          const stripped: Record<string, unknown> = {
+            ...submitted,
+            ticketNumber: null,
+          };
+          delete stripped.sitian;
+          return stripped;
+        }
+
+        await verifyAssertedTicketNumber({
+          ticketNumber: assertion.ticketNumber,
+          instruction: catalog.instruction,
+          projectRoot: catalog.projectRoot,
+        });
+        await bindTicketNumberOnRunDirectory(
+          catalog.runDirectory,
+          assertion.ticketNumber,
+        );
+        const boundCatalog: DiaristSourceCatalog = {
+          ...catalog,
+          ticketNumber: assertion.ticketNumber,
+        };
         const facts = await commitDiaristSelections({
-          catalog,
+          catalog: boundCatalog,
           selections: projectDiaristSelections(parameters),
         });
-        return { ...(submitted ?? { receipt: parameters }), sitian: facts };
+        return {
+          ...(submitted ?? { receipt: parameters }),
+          ticketNumber: assertion.ticketNumber,
+          sitian: facts,
+        };
       },
     },
     dependencies,
