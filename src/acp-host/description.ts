@@ -1,7 +1,8 @@
 /**
  * One ACP host description. Every host-specific value the generic ACP adapter
- * needs — binary location, argv shape, resume verb, binding filename, child env
- * — is data here; the lifecycle in role-turn-host.ts stays one copy (#732).
+ * needs — binary location, argv shape, resume verb, systemPrompt channel,
+ * binding filename, child env — is data here; the lifecycle in
+ * role-turn-host.ts stays one copy (#732).
  */
 import { join } from "node:path";
 
@@ -23,6 +24,12 @@ export type AcpHostDescription = Readonly<{
    *   `provider:model` (hermes).
    */
   modelPassing: "argv" | "set_model";
+  /**
+   * How packed systemPrompt reaches the executing agent:
+   * - "meta-override": grok `_meta.systemPromptOverride` on session/new and session/load;
+   * - "prompt-prefix": first `session/prompt` text block (hosts that swallow `_meta`).
+   */
+  systemPromptDelivery: "meta-override" | "prompt-prefix";
   /** Which verb a bound resume uses; "session/new" hosts always mint + bind. */
   boundResume: "session/load" | "session/new";
   /** Durable ACP binding filename written beside the session principal. */

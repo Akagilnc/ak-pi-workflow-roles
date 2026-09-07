@@ -122,6 +122,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
     sessionIdentity: createAcpSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
     boundResume: description.boundResume,
     modelPassing: description.modelPassing,
+    systemPromptDelivery: description.systemPromptDelivery,
     roleRuntimeDependencies: createAcpRoleRuntimeDependencies(packageRoot),
     async connect(request) {
       return connectAcpStdio({

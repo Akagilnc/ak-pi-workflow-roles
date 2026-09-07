@@ -70,6 +70,8 @@ export type AcpRoleTurnHostConfig = Readonly<{
    * exists (new or loaded); "argv" leaves it to the connect argv (--model).
    */
   modelPassing: AcpHostDescription["modelPassing"];
+  /** How packed systemPrompt is placed on the host's executing channel. */
+  systemPromptDelivery: AcpHostDescription["systemPromptDelivery"];
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
   prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
 }>;
@@ -207,6 +209,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       const execution = serial.then(async (): Promise<RoleTurnResult> => {
         const continuation = request.continuation;
         const prepared = await config.prepare(request);
+        const systemPromptOverride = renderAcpSystemPromptOverride(prepared.systemPrompt);
         let connection: AcpConnection | undefined;
         let sessionId: string | undefined;
         let accepted = false;
@@ -246,7 +249,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               sessionId: bindSessionId,
               cwd: request.cwd,
               mcpServers: prepared.mcpServers,
-              _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+              _meta: { systemPromptOverride, yoloMode: false },
             });
             return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
               ? loaded.sessionId
@@ -267,7 +270,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               {
                 cwd: request.cwd,
                 mcpServers: prepared.mcpServers,
-                _meta: { systemPromptOverride: renderAcpSystemPromptOverride(prepared.systemPrompt), yoloMode: false },
+                _meta: { systemPromptOverride, yoloMode: false },
               },
             );
             sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
@@ -343,9 +346,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           for (let attempt = 0; attempt < 8; attempt += 1) {
             let result: Readonly<Record<string, unknown>>;
             try {
-              const promptParts: Array<Record<string, unknown>> = [
-                { type: "text", text: prompt },
-              ];
+              const promptParts: Array<Record<string, unknown>> = [];
+              if (config.systemPromptDelivery === "prompt-prefix") {
+                promptParts.push({ type: "text", text: systemPromptOverride });
+              }
+              promptParts.push({ type: "text", text: prompt });
               result = await promptOrAbort({
                 sessionId,
                 prompt: promptParts,
