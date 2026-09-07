@@ -227,8 +227,8 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "audit_escalation") {
-    // Nested officer escalate is booked as audit_escalation on its own seat;
-    // queue signal is escalate, receipt is the decisive facts as written.
+    // Residual/compliance escalate face: queue as escalate, receipt as written.
+    // Nested officer escalate itself seals accepted+status escalate (no rewrite).
     return {
       status: "escalate",
       officer,

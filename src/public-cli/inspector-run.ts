@@ -48,6 +48,12 @@ import {
 export type InspectorRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #753 nested gate re-ask: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
+   */
+  reviewReask?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -97,11 +103,17 @@ export async function runPublicInspector(
     projectRoot,
     env,
   );
+  // #747: parentRunPath is the pure 卷宗指针 path only — never reask text.
+  // #753: gate re-ask rides summons.instruction on resume (same notary pattern).
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
     const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
+      ...(env.reviewReask === undefined
+        ? {
+            instruction: parsed.instruction,
+            instructionEmpty: parsed.instruction.trim() === "",
+          }
+        : { instruction: env.reviewReask, instructionEmpty: false }),
       attachmentPaths: parsed.attachmentPaths,
     };
     const resumed = await tryResumeSameTicketSeatRun({
@@ -119,6 +131,17 @@ export async function runPublicInspector(
         ),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "inspector review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   }
 
   let admitted: AdmittedInspectorInvocation;
