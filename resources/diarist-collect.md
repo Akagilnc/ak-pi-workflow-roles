@@ -26,9 +26,10 @@
 
 ## 本票身份
 
-派单（instruction）里若已指明要办哪张票——票号、issue 链接或等价指称——在交卷对象上以 `ticketNumber` 交出该票的整数票号。这是本票身份的唯一出处（ADR 0075 `diarist-resolves-ticket-llm-layer`）：机械层只验该号逐字出现于指令且票真实存在，后续衙门沿用，不再另找。
+由你（本席 LLM）判断当前要办的是哪张票，在交卷对象上以 typed 字段交出——代码不做认票裁定（ADR 0075 `diarist-resolves-ticket-llm-layer`；owner：代码不准做判断）。机械层只验你断言的号逐字出现于指令且票真实存在；后续衙门沿用 typed 键，不再另找。
 
-- 派单已给明确票号时，以 `ticketNumber: N` 断言本庭对象。
-- 派单未指明具体票（方案/派单/处置案等真无票对象）：输出 `ticketNumber: null` 或省略该键。真无票是合法结果，不入录。
+- 派单已给明确票号（含 issue 链接或等价指称）时：`status: completed` 且 `ticketNumber: N`。
+- 派单是真无票对象（方案/派单/处置案等）：`status: completed` 且 `ticketNumber: null`（或省略）。真无票是合法结果，不入录。
+- 派单看起来有票、但你认不出本庭对象是哪一张：`status: escalate` 并写明 `reason`。识别不了就上抛，不得省略票号假装无录，也不得猜一个号。
 - 不得从候选材料、旁及的他票或任何猜测里挑一个号顶替派单未给出的身份。
 - 传召文自然会提轮次、决定编号、commit sha、邻票号；你认的是本庭对象，不是文中出现的每一个数字。

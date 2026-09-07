@@ -3,14 +3,9 @@
  * Write/read via sitian facade only; no parallel destination logic.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  activationBookDirectory,
-  resolveActivationLedgerHome,
-} from "./activation-ledger-topology.ts";
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   resolveSitianRecordPath,
   sitianReport,
@@ -20,7 +15,6 @@ import {
 } from "./sitian-facade.ts";
 import {
   TICKET_PROVENANCE_HUMAN_VIEW,
-  TICKET_PROVENANCE_IDENTITY_FILE,
   TICKET_PROVENANCE_KIND,
   TICKET_PROVENANCE_OFFERED_WATERMARK,
   TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
@@ -362,99 +356,7 @@ export function ensureTicketProvenanceVolume(
   // Append-open creates an absent volume without ever truncating rows committed
   // by a concurrent first writer.
   appendFileSync(volume.recordFile, "", "utf8");
-  // Typed identity face for book-known reuse (no summons prose harvest).
-  const identityPath = join(volume.volumeDir, TICKET_PROVENANCE_IDENTITY_FILE);
-  if (!existsSync(identityPath)) {
-    writeFileSync(
-      identityPath,
-      `${JSON.stringify({ ticketNumber })}\n`,
-      "utf8",
-    );
-  }
   return volume;
-}
-
-/**
- * Ticket numbers whose 起居录 volume already exists on this book.
- * Reads the typed identity face only — never summons prose (ADR 0075 / #771).
- */
-export function listTicketProvenanceVolumeNumbers(
-  cwd: string,
-  home?: string,
-): ReadonlySet<number> {
-  const found = new Set<number>();
-  let bookKey: string;
-  try {
-    bookKey = resolveBookKeyFromGit(cwd);
-  } catch {
-    return found;
-  }
-  const ledgerHome =
-    home !== undefined && home.length > 0
-      ? resolveActivationLedgerHome(home)
-      : resolveActivationLedgerHome();
-  const root = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    TICKET_PROVENANCE_KIND,
-  );
-  if (!existsSync(root)) return found;
-  let entries: string[];
-  try {
-    entries = readdirSync(root);
-  } catch {
-    return found;
-  }
-  for (const name of entries) {
-    const dir = join(root, name);
-    const identityPath = join(dir, TICKET_PROVENANCE_IDENTITY_FILE);
-    const fromIdentity = readVolumeTicketNumber(identityPath);
-    if (fromIdentity !== undefined) {
-      found.add(fromIdentity);
-      continue;
-    }
-    // Pre-#771 volumes: recover typed subject from the first sitian row.
-    const fromRecords = readVolumeTicketNumberFromRecords(
-      join(dir, "records.jsonl"),
-    );
-    if (fromRecords !== undefined) found.add(fromRecords);
-  }
-  return found;
-}
-
-function readVolumeTicketNumber(identityPath: string): number | undefined {
-  if (!existsSync(identityPath)) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(identityPath, "utf8"));
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const n = (parsed as { ticketNumber?: unknown }).ticketNumber;
-    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 1) return undefined;
-    return n;
-  } catch {
-    return undefined;
-  }
-}
-
-function readVolumeTicketNumberFromRecords(recordFile: string): number | undefined {
-  if (!existsSync(recordFile)) return undefined;
-  try {
-    const text = readFileSync(recordFile, "utf8");
-    for (const line of text.split("\n")) {
-      if (line.trim() === "") continue;
-      const parsed: unknown = JSON.parse(line);
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        continue;
-      }
-      const subject = (parsed as { subject?: unknown }).subject;
-      if (typeof subject !== "string" || !/^[1-9]\d*$/.test(subject)) continue;
-      const n = Number(subject);
-      if (Number.isSafeInteger(n) && n >= 1) return n;
-    }
-  } catch {
-    // Unreadable volume is not a known ticket.
-  }
-  return undefined;
 }
 
 /**

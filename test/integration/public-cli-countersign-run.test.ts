@@ -3,7 +3,8 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
  * #742: court admission auto-runs the public 起居郎 station before the body turn.
- * #709: known ticket identity is reused from book records (no seat model call);
+ * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
+ * never from mechanical matching of summons text against book records;
  * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
@@ -24,7 +25,9 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitCountersignInvocation,
+  bindAdmittedTicketNumber,
   parseCountersignArgv,
+  type AdmittedCountersignInvocation,
 } from "../../src/public-cli/invocation.ts";
 import {
   buildCountersignTurnRequest,
@@ -93,6 +96,16 @@ function seedGitProject(root: string): void {
   });
   execFileSync("git", ["config", "user.name", "Countersign Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+/** Court station always runs 起居郎 first (#771); body tests use true-unbound. */
+function withTrueUnboundDiarist(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
+  return async (args, options) => {
+    if (argvFlagValue(args, "--ak-role") === "diarist") {
+      return courtPipelinePiRunner(null)(args, options);
+    }
+    return inner(args, options);
+  };
 }
 
 function scriptedCountersignSession(details: unknown) {
@@ -236,7 +249,12 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
+            // Court station runs 起居郎 first (#771); true-unbound for no-ticket body.
             piRunner: async (args, options) => {
+              const role = argvFlagValue(args, "--ak-role");
+              if (role === "diarist") {
+                return courtPipelinePiRunner(null, receipt)(args, options);
+              }
               const outcome = await scriptedCountersignSession(receipt)(args, options);
               // #634: scriptedTerminatingToolSession writes only the countersign
               // terminating receipt — it never opens a real pi role activation that
@@ -329,7 +347,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
+          piRunner: withTrueUnboundDiarist(async (args) => {
             const sessionFile = args[args.indexOf("--session") + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
             await writeFile(sessionFile, "\n", "utf8");
@@ -339,7 +357,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
               timedOut: true,
               args: [...args],
             };
-          },
+          }),
         }),
       },
     );
@@ -368,13 +386,14 @@ test("ak-role resume continues countersign on the exact session", async () => {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args, options) => {
+        // Resume still refreshes 起居郎 (refresh-every-court); true-unbound face.
+        piRunner: withTrueUnboundDiarist(async (args, options) => {
           resumeArgs = [...args];
           return scriptedCountersignSession({
             countersignStatus: "converged",
             note: "RESUMED-续署",
           })(args, options);
-        },
+        }),
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
@@ -415,10 +434,12 @@ test("ak-role resume after sealed countersign presents the sealed verdict withou
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedCountersignSession({
-            countersignStatus: "converged",
-            note: "FIRST-署",
-          }),
+          piRunner: withTrueUnboundDiarist(
+            scriptedCountersignSession({
+              countersignStatus: "converged",
+              note: "FIRST-署",
+            }),
+          ),
         }),
       },
     );
@@ -484,13 +505,15 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: "countersign",
-            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-            details: { countersignStatus: "converged", note: "PRIOR-residual" },
-            isError: true,
-            acceptedText: "PRIOR-attempt-residual-error",
-          }),
+          piRunner: withTrueUnboundDiarist(
+            scriptedTerminatingToolSession({
+              role: "countersign",
+              toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+              details: { countersignStatus: "converged", note: "PRIOR-residual" },
+              isError: true,
+              acceptedText: "PRIOR-attempt-residual-error",
+            }),
+          ),
         }),
       },
     );
@@ -512,7 +535,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
+        piRunner: withTrueUnboundDiarist(async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           // Append a resumed user turn; keep the prior residual so the scan
           // boundary is exercised (production resume appends, does not wipe).
@@ -535,7 +558,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
             timedOut: true,
             args: [...args],
           };
-        },
+        }),
       }),
     });
     assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
@@ -583,6 +606,10 @@ function countersignPathEnv(input: {
   runId: string;
   onTurn?: (request: RoleTurnRequest) => void;
   blockTurn?: boolean;
+  /** Typed 起居郎 handoff (or no-op). Body-path tests isolate nested seat. */
+  runCourtDiaristStation?: (
+    admitted: AdmittedCountersignInvocation,
+  ) => Promise<void>;
 }): CountersignRunEnv {
   const host = input.blockTurn
     ? {
@@ -616,7 +643,8 @@ function countersignPathEnv(input: {
     roleTurnHost: host,
     createRunId: () => input.runId,
     // Body-path tests isolate the nested 起居郎 seat; #742 station proofs use production env.
-    runCourtDiaristStation: async () => undefined,
+    runCourtDiaristStation:
+      input.runCourtDiaristStation ?? (async () => undefined),
   };
 }
 
@@ -638,9 +666,9 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
   });
 });
 
-test("public countersign path: known ticket is reused, bound, and dossier volume stays readable", async () => {
+test("public countersign path: 起居郎 typed handoff binds ticket; dossier volume stays readable", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // #709: the identity already exists in this book's records — no seat model call.
+    // Volume may pre-exist; binding still requires 起居郎 typed assertion (#771).
     ensureTicketProvenanceVolume(582, project, home);
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
@@ -652,6 +680,9 @@ test("public countersign path: known ticket is reused, bound, and dossier volume
         onTurn: (req) => {
           turnTicket =
             req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
+        },
+        runCourtDiaristStation: async (admitted) => {
+          await bindAdmittedTicketNumber(admitted, 582);
         },
       }),
       captureIo().io,
@@ -670,7 +701,7 @@ test("public countersign path: known ticket is reused, bound, and dossier volume
   });
 });
 
-test("public countersign path: no known ticket stays unbound", async () => {
+test("public countersign path: no 起居郎 handoff stays unbound (真无票 face)", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
@@ -699,11 +730,13 @@ test("public countersign path: no known ticket stays unbound", async () => {
   });
 });
 
-test("public countersign path: an unrecorded number in the instruction is not minted", async () => {
+test("public countersign path: summons text alone never mints a ticket without 起居郎 assertion", async () => {
   await withCountersignProject(async ({ home, project }) => {
+    // Book has #82; summons mentions #582 — code must not match either.
+    ensureTicketProvenanceVolume(82, project, home);
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
-      ["裁：票 #999999 从未在本书留过记录。"],
+      ["裁：票 #582 / 邻 #82 是否足以开工。"],
       countersignPathEnv({
         home,
         project,
@@ -722,27 +755,17 @@ test("public countersign path: an unrecorded number in the instruction is not mi
   });
 });
 
-test("public countersign path: a known number's digit substring is not that ticket", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    // Only #82 is recorded; the instruction carries #582, which is a different token.
-    ensureTicketProvenanceVolume(82, project, home);
-    const result = await runPublicCountersign(
-      ["裁：审票 #582 是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId: "01a0sign00-0000-7000-8000-000000000p06",
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-  });
-});
-
-/** Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign script. */
-function courtPipelinePiRunner(): LegacyFauxPiRunner {
+/**
+ * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound (真无票→无录).
+ */
+function courtPipelinePiRunner(
+  ticketAssertion: number | null = 582,
+  countersignDetails: unknown = {
+    countersignStatus: "converged",
+    note: "署",
+  },
+): LegacyFauxPiRunner {
   return async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "diarist") {
@@ -773,9 +796,14 @@ function courtPipelinePiRunner(): LegacyFauxPiRunner {
       );
       await runtime.activate();
       assert.ok(registered, "diarist envelope registered no output tool");
+      // 起居郎 LLM asserts the court target; mechanical verify binds (#771).
       const accepted = await registered.execute(
         "call_diarist_1",
-        { status: "completed", selections: [] },
+        {
+          status: "completed",
+          ticketNumber: ticketAssertion,
+          selections: [],
+        },
         undefined,
         undefined,
         {} as HostContext,
@@ -786,16 +814,13 @@ function courtPipelinePiRunner(): LegacyFauxPiRunner {
         details: accepted.details,
       })(args, options);
     }
-    return scriptedCountersignSession({
-      countersignStatus: "converged",
-      note: "署",
-    })(args, options);
+    return scriptedCountersignSession(countersignDetails)(args, options);
   };
 }
 
-test("public countersign path: bound ticket runs @diarist then countersign with 起居录 paths", async () => {
+test("public countersign path: 起居郎 asserts then countersign runs with 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // #709 identity reuse + #742 court diarist station; volume already on the book.
+    // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
     ensureTicketProvenanceVolume(582, project, home);
 
     const turnOrder: string[] = [];
@@ -864,13 +889,14 @@ test("public countersign path: bound ticket runs @diarist then countersign with 
   });
 });
 
-test("public countersign path: true-unbound leaves no @diarist run and no 起居录 paths", async () => {
+test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind, no 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let turnPrompt = "";
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner(),
+      // 起居郎 LLM: true-unbound (null) — not a mechanical skip.
+      piRunner: courtPipelinePiRunner(null),
     });
     const result = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
@@ -883,7 +909,9 @@ test("public countersign path: true-unbound leaves no @diarist run and no 起居
         sessionAppender: appendPiSessionCustomEntry,
         roleTurnHost: {
           async executeTurn(request: RoleTurnRequest) {
-            turnPrompt = request.continuation.prompt;
+            if (request.activation.role === "countersign") {
+              turnPrompt = request.continuation.prompt;
+            }
             return host.executeTurn(request);
           },
         },
@@ -893,15 +921,16 @@ test("public countersign path: true-unbound leaves no @diarist run and no 起居
       parseCountersignArgv,
     );
     assert.equal(result.exitCode, 0);
+    assert.equal(result.admitted?.ticketNumber, undefined);
     assert.ok(result.admitted?.runDirectory);
 
-    // Production station is a no-op when unbound — book has no @diarist leaf.
+    // 起居郎 still ran to assert true-unbound; countersign stays unbound.
     const runsDir = join(result.admitted!.runDirectory, "..");
     const { readdir } = await import("node:fs/promises");
     const entries = await readdir(runsDir).catch(() => [] as string[]);
     assert.equal(
       entries.some((entry) => entry.endsWith("@diarist")),
-      false,
+      true,
     );
 
     // Unbound delivers no volume path; a known partition path must not appear.

@@ -1,32 +1,28 @@
 /**
  * Public Countersign Role run: admit ticket materials → court-pipeline prior
  * station (起居郎) → shared post-admission coordinator → settle Terminal result
- * (#572 / ADR 0074 / ADR 0075 / #742). #599: manual resume continues the exact
- * session. Unbound admission reuses a known ticket identity (#709) before the
- * diary station.
+ * (#572 / ADR 0074 / ADR 0075 / #742 / #771). #599: manual resume continues the
+ * exact session.
  *
- * Court admission auto-runs 起居郎 first, then the countersign body — caller
- * adds no diarist argv (L66672). This is the admission pipeline's prior station,
- * not the countersign role calling 起居郎 (L66958 / L66966). Who may call 起居郎
- * and in what order is not written into law (ADR 0075 `no-call-rule`); the
- * present admission effect is what this seat currently does (L108315 目前是这样用的).
- * 起居录 path delivery is owned once by post-admission (#709 / ADR 0081).
+ * Court admission auto-runs 起居郎 first on the caller's summons so the 起居郎
+ * LLM asserts the court target; mechanical layer only verifies; countersign
+ * reuses that typed identity (ADR 0075 / 0081). Code never matches instruction
+ * text against book-known numbers. Who may call 起居郎 and in what order is not
+ * written into law (ADR 0075 `no-call-rule`); the present admission effect is
+ * what this seat currently does. 起居录 path delivery is owned once by
+ * post-admission (#709 / ADR 0081).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
+  bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
   parseDiaristArgv,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
-import {
-  bindReusedTicketNumber,
-  resolveKnownTicketNumber,
-  tryResumeSameTicketSeatRun,
-} from "./seat-ticket-binding.ts";
 import {
   prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
@@ -38,7 +34,6 @@ import {
   loadResumableCountersignRun,
   markRunAdmitted,
   type PublicResumeRequest,
-  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -84,14 +79,16 @@ export function buildCountersignTurnRequest(
 }
 
 /**
- * Court-pipeline prior station: refresh this ticket's 起居录 before the
- * countersign body turn (ADR 0075 `refresh-every-court`; #742 restore).
+ * Court-pipeline prior station: 起居郎 LLM asserts (or refreshes) this ticket's
+ * 起居录 before the countersign body turn (ADR 0075 `refresh-every-court` /
+ * `diarist-resolves-ticket-llm-layer`; #742 / #771).
  * Caller-invisible — no diarist argv on the countersign command line.
- * Missing ticketNumber (true-unbound) skips the station — no diary is minted
- * for a true-unbound run.
  *
- * Invokes the public 起居郎 seat so the book carries an `@diarist` run ahead of
- * the countersign body. Station failure propagates (失败诚实 — no wash).
+ * Unbound summons: pass the caller's original instruction so 起居郎 names the
+ * court target; bind the typed assertion onto this admission. Already-bound
+ * (resume): refresh under that identity. 起居郎 escalate (认不出) or failure
+ * propagates (失败诚实 — never wash into silent unbound). True-unbound from
+ * 起居郎 leaves countersign unbound (无录).
  * Path delivery onto materials is not this station's job — post-admission owns it.
  */
 export async function runCountersignCourtDiaristStation(
@@ -99,7 +96,6 @@ export async function runCountersignCourtDiaristStation(
   env: CountersignRunEnv,
   io: CliIo,
 ): Promise<void> {
-  if (admitted.ticketNumber === undefined) return;
   if (env.runCourtDiaristStation !== undefined) {
     await env.runCourtDiaristStation(admitted);
     return;
@@ -114,13 +110,16 @@ export async function runCountersignCourtDiaristStation(
     },
   };
 
+  // Bound resume: refresh under known identity. Unbound: original summons so
+  // the 起居郎 LLM judges the court target (code does not).
+  const diaristInstruction =
+    admitted.ticketNumber === undefined
+      ? admitted.instruction
+      : `整理 #${admitted.ticketNumber} 的本案依据。`;
+
   const { runPublicDiarist } = await import("./diarist-run.ts");
   const result = await runPublicDiarist(
-    [
-      "--project",
-      admitted.projectRoot,
-      `整理 #${admitted.ticketNumber} 的本案依据。`,
-    ],
+    ["--project", admitted.projectRoot, diaristInstruction],
     {
       home: env.home,
       agentDir: env.agentDir,
@@ -146,9 +145,39 @@ export async function runCountersignCourtDiaristStation(
       result.terminal?.roleOutcome.kind === "failure"
         ? ` (roleOutcome=failure)`
         : "";
+    const label =
+      admitted.ticketNumber === undefined
+        ? "unbound summons"
+        : `ticket #${admitted.ticketNumber}`;
     throw new Error(
-      `court diarist station failed for ticket #${admitted.ticketNumber}: exit ${result.exitCode}${detail}`,
+      `court diarist station failed for ${label}: exit ${result.exitCode}${detail}`,
     );
+  }
+
+  const diaristStatus = result.terminal?.roleOutcome.status;
+  if (diaristStatus === "escalate") {
+    const reason =
+      typeof (result.terminal?.roleOutcome as { decisiveFacts?: { reason?: unknown } })
+        .decisiveFacts?.reason === "string"
+        ? String(
+            (result.terminal?.roleOutcome as { decisiveFacts?: { reason?: unknown } })
+              .decisiveFacts?.reason,
+          )
+        : "diarist escalated without reason";
+    throw new Error(
+      `court diarist station escalated (cannot identify court target): ${reason}`,
+    );
+  }
+
+  // Reuse 起居郎's typed assertion — the only recognition path (0081).
+  const asserted = result.admitted?.ticketNumber;
+  if (
+    admitted.ticketNumber === undefined &&
+    typeof asserted === "number" &&
+    Number.isSafeInteger(asserted) &&
+    asserted >= 1
+  ) {
+    await bindAdmittedTicketNumber(admitted, asserted);
   }
 }
 
@@ -173,38 +202,10 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  // #637: same ticket → resume prior countersign run with this summons' materials.
-  // #709 / #771: reuse a book-known ticket whose complete decimal appears in the
-  // summons (起居录 already answered); no seat model call, no prose harvest.
-  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
-  const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveKnownTicketNumber({
-    instruction: parsed.instruction,
-    projectRoot,
-    home: env.home,
-  });
-  if (reusedTicketNumber !== undefined) {
-    const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
-      attachmentPaths: parsed.attachmentPaths,
-    };
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
-      projectRoot,
-      role: "countersign",
-      ticketNumber: reusedTicketNumber,
-      freshSummons: env.freshSummons,
-      summons,
-      resume: (runId, materials) =>
-        runPublicCountersignResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-    });
-    if (resumed !== undefined) return resumed;
-  }
+  // #637 / #771: ticket identity comes from 起居郎 LLM assertion in the court
+  // station (below), not from mechanical matching of summons text. Same-ticket
+  // resume needs a typed ticket already in hand; first summons stays unbound
+  // until the station asserts.
 
   let admitted: AdmittedCountersignInvocation;
   try {
@@ -260,15 +261,13 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#709: bind the reused identity inside the controlled-failure boundary.
-        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
+        // Court station: 起居郎 LLM asserts ticket (or refreshes); bind typed result.
+        // Dossier pointer delivery rides post-admission after this hook (#709).
+        await runCountersignCourtDiaristStation(admittedSeat, env, io);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admittedSeat, turnProjection),
         );
-        // Court station after bind so the diarist round sees the ticket.
-        // Dossier pointer delivery rides post-admission after this hook (#709).
-        await runCountersignCourtDiaristStation(admittedSeat, env, io);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

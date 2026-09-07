@@ -24,11 +24,6 @@ import {
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
 import {
-  bindReusedTicketNumber,
-  resolveKnownTicketNumber,
-  tryResumeSameTicketSeatRun,
-} from "./seat-ticket-binding.ts";
-import {
   prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   runPostAdmissionSeatResume,
@@ -41,7 +36,6 @@ import {
   markRunAdmitted,
   readRoleRunIdentity,
   type PublicResumeRequest,
-  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -178,39 +172,9 @@ export async function runPublicDiarist(
     throw error;
   }
 
-  // #637: same ticket → resume this seat's prior run with this summons' materials.
-  // #709 / #771 / ADR 0075: only reuse a book-known ticket whose complete decimal
-  // appears in the summons. First summons stays unbound here — the LLM turn
-  // asserts ticketNumber; mechanical verify binds on accept. No prose harvest,
-  // no first-#N position ruling.
-  const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveKnownTicketNumber({
-    instruction: parsed.instruction,
-    projectRoot,
-    home: env.home,
-  });
-  if (reusedTicketNumber !== undefined) {
-    const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
-      attachmentPaths: parsed.attachmentPaths,
-    };
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
-      projectRoot,
-      role: "diarist",
-      ticketNumber: reusedTicketNumber,
-      freshSummons: env.freshSummons,
-      summons,
-      resume: (runId, materials) =>
-        runPublicDiaristResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-    });
-    if (resumed !== undefined) return resumed;
-  }
+  // #637 / #771 / ADR 0075: ticket identity is the LLM's typed assertion on this
+  // turn (mechanical verify on accept). Code never pre-judges the summons text
+  // against book-known numbers. First summons stays unbound until assert.
 
   let admitted: AdmittedDiaristInvocation;
   try {
@@ -266,7 +230,6 @@ export async function runPublicDiarist(
     request: turnRequest,
     adapters: diaristAdapters({
       beforeDispatch: async (admittedSeat) => {
-        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
         const sourcesPath = await freezeDiaristSourceCatalog(admittedSeat, env);
         Object.assign(
           turnRequest,
