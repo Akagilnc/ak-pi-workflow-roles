@@ -11,7 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
-  RESUME_TRANSPORT_ENVELOPE,
+  instructResumeHandbookRead,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -22,6 +22,7 @@ import {
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
+import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 
 import type {
   ControlledFailureCause,
@@ -493,18 +494,15 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
- * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755):
- * seat-table model/engine/timeout axes, restored correlation, and either
- * - manual resume (no same-ticket summons): package envelope / optional caller
- *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
- * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
- *   attachment paths only — no「重新读」、no engine handbook packaging
- *   (#750/#755), whether or not attachments are present.
- * Caller message wins as prompt base when supplied (bytes unchanged, including
- * blank/whitespace); else summons instruction. Attachment projection must not
- * re-interpret the caller message as instructionEmpty.
+ * Shared resume continuation projection (#471 / #600 / #633 / #637): seat-table
+ * model/engine/timeout axes, restored correlation, and either
+ * - manual resume: package envelope / optional caller message (unchanged), or
+ * - same-ticket summons: this turn's instruction + frozen attachment paths.
+ * Caller message and summons materials each keep their place: a resume message
+ * keeps manual-resume prompt semantics while open-court frozen attachments still
+ * ride; summons instruction is only the prompt base when no caller message.
  * Seats add only their activation projection. Call prepareSummonsResumeMaterials
- * first when request.summons carries instruction or attachment paths.
+ * first when request.summons carries attachment paths.
  */
 export function resumeTurnRequestProjectionOptions(
   admitted: AdmittedRoleInvocation,
@@ -516,21 +514,32 @@ export function resumeTurnRequestProjectionOptions(
     readonly attachments: readonly { frozenPath: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
   let prompt: string;
   if (request.message !== undefined) {
-    if (summonsPrepared !== undefined) {
-      // #755: same-ticket review / open-court — caller words + optional paths.
-      // Attachments are not a gate: message-only summons must stay plain too.
-      prompt = buildInstructionTransportPrompt({
-        instruction: request.message,
-        instructionEmpty: false,
-        attachments: summonsPrepared.attachments,
-      });
-    } else if (request.summons !== undefined) {
-      // #755: same-ticket summons without prepared materials — caller words only.
-      prompt = request.message;
+    // Manual resume caller-message semantics stay authoritative for the prompt:
+    // message present → base bytes unchanged (including blank/whitespace).
+    // Open-court frozen attachments still continue when present; attachment
+    // projection must not re-interpret the caller message as instructionEmpty.
+    if (
+      summonsPrepared !== undefined &&
+      summonsPrepared.attachments.length > 0
+    ) {
+      prompt = instructResumeHandbookRead(
+        buildInstructionTransportPrompt(
+          {
+            instruction: request.message,
+            instructionEmpty: false,
+            attachments: summonsPrepared.attachments,
+          },
+          engineMaterial,
+        ),
+        engineMaterial,
+      );
     } else {
-      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
         packageRoot: env.packageRoot,
         ...(env.engine === undefined ? {} : { engine: env.engine }),
@@ -538,14 +547,11 @@ export function resumeTurnRequestProjectionOptions(
       });
     }
   } else if (summonsPrepared !== undefined) {
-    // #755: same-ticket review summons — instruction/attachments only.
-    prompt = buildInstructionTransportPrompt(summonsPrepared);
-  } else if (request.summons !== undefined) {
-    // #755: same-ticket summons with no instruction/attachments (e.g. notary
-    // source-run pointer) — plain resume envelope, no handbook / 重新读.
-    prompt = RESUME_TRANSPORT_ENVELOPE;
+    prompt = instructResumeHandbookRead(
+      buildInstructionTransportPrompt(summonsPrepared, engineMaterial),
+      engineMaterial,
+    );
   } else {
-    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
       ...(env.engine === undefined ? {} : { engine: env.engine }),
