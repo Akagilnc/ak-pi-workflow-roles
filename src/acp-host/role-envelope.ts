@@ -474,14 +474,12 @@ export async function prepareAcpRoleEnvelope(options: {
                 });
                 reply(socket, rpc.id, {
                   content: projected.content,
-                  structuredContent: projected.details,
                   isError: true,
                 });
               } catch {
                 // Slot already filled; durable projection may have partially failed.
                 reply(socket, rpc.id, {
                   content: declared.content,
-                  structuredContent: declared.details,
                   isError: true,
                 });
               }
@@ -497,7 +495,7 @@ export async function prepareAcpRoleEnvelope(options: {
               // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
               // round boundary (closeRound after session/prompt), so delayed siblings stay
               // in the same round instead of becoming silent post-seal anomalies.
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
+              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               let content: ContentPart[];
               let details: Record<string, unknown>;
@@ -529,7 +527,7 @@ export async function prepareAcpRoleEnvelope(options: {
                 details,
                 isError: true,
               });
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
+              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
             }
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();
