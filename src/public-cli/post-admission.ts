@@ -462,13 +462,14 @@ export async function dispatchPostAdmissionTurn<
  * seat-table model/engine/timeout axes, restored correlation, and either
  * - manual resume (no same-ticket summons): package envelope / optional caller
  *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
- * - same-ticket summons (审核循环续话): caller/peer words + frozen attachment
- *   paths only — no「重新读」、no engine handbook packaging (#750/#755).
- * Caller message and summons materials each keep their place: a resume message
- * keeps manual-resume prompt semantics while open-court frozen attachments still
- * ride; summons instruction is only the prompt base when no caller message.
+ * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
+ *   attachment paths only — no「重新读」、no engine handbook packaging
+ *   (#750/#755), whether or not attachments are present.
+ * Caller message wins as prompt base when supplied (bytes unchanged, including
+ * blank/whitespace); else summons instruction. Attachment projection must not
+ * re-interpret the caller message as instructionEmpty.
  * Seats add only their activation projection. Call prepareSummonsResumeMaterials
- * first when request.summons carries attachment paths.
+ * first when request.summons carries instruction or attachment paths.
  */
 export function resumeTurnRequestProjectionOptions(
   admitted: AdmittedRoleInvocation,
@@ -482,20 +483,17 @@ export function resumeTurnRequestProjectionOptions(
 ): RoleTurnRequestProjectionOptions {
   let prompt: string;
   if (request.message !== undefined) {
-    // Manual resume caller-message semantics stay authoritative for the prompt:
-    // message present → base bytes unchanged (including blank/whitespace).
-    // Open-court frozen attachments still continue when present; attachment
-    // projection must not re-interpret the caller message as instructionEmpty.
-    if (
-      summonsPrepared !== undefined &&
-      summonsPrepared.attachments.length > 0
-    ) {
-      // #755: review / open-court continuation — plain dialogue + paths only.
+    if (summonsPrepared !== undefined) {
+      // #755: same-ticket review / open-court — caller words + optional paths.
+      // Attachments are not a gate: message-only summons must stay plain too.
       prompt = buildInstructionTransportPrompt({
         instruction: request.message,
         instructionEmpty: false,
         attachments: summonsPrepared.attachments,
       });
+    } else if (request.summons !== undefined) {
+      // #755: same-ticket summons without prepared materials — caller words only.
+      prompt = request.message;
     } else {
       // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
