@@ -26,7 +26,6 @@ export type PublicSummonRole =
   | "inspector"
   | "notary"
   | "auditor"
-  | "evidence-child"
   | "navigator"
   | "gatekeeper"
   | "judge"
@@ -316,20 +315,6 @@ export async function summonPublicRole(
         io,
         "auditor",
         parseAuditorArgv,
-      );
-      break;
-    }
-    case "evidence-child": {
-      const [{ runPublicInstructionSeat }, { parseEvidenceChildArgv }] = await Promise.all([
-        import("./public-cli/instruction-seat-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      result = await runPublicInstructionSeat(
-        options.argv,
-        env,
-        io,
-        "evidence-child",
-        parseEvidenceChildArgv,
       );
       break;
     }

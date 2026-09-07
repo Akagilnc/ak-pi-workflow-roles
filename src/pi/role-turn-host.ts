@@ -148,8 +148,6 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
       return ["--ak-role", "navigator"];
     case "auditor":
       return ["--ak-role", "auditor"];
-    case "evidence-child":
-      return ["--ak-role", "evidence-child"];
     case "diarist":
       return [
         "--ak-role",

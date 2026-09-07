@@ -35,7 +35,6 @@ export type OptionOwner =
   | "gatekeeper"
   | "navigator"
   | "auditor"
-  | "evidence-child"
   | "diarist"
   | "analyst";
 
@@ -458,11 +457,6 @@ const AUDITOR_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
-const EVIDENCE_CHILD_OPTIONS = [
-  bindOwner("evidence-child", SHARED_PROJECT_SEMANTICS),
-  bindOwner("evidence-child", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
 const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
@@ -831,7 +825,6 @@ export const PUBLIC_OPTION_TABLE = {
   gatekeeper: GATEKEEPER_OPTIONS,
   navigator: NAVIGATOR_OPTIONS,
   auditor: AUDITOR_OPTIONS,
-  "evidence-child": EVIDENCE_CHILD_OPTIONS,
   diarist: DIARIST_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
@@ -854,7 +847,6 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "gatekeeper",
   "navigator",
   "auditor",
-  "evidence-child",
   "diarist",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
@@ -1260,14 +1252,6 @@ const ROLE_COMMAND_HELP = {
     examples: [
       'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
       'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
-    ],
-  },
-  "evidence-child": {
-    command: "evidence-child",
-    summary: "Direct evidence-child fact gathering; submit one report.",
-    usage: ["ak-role evidence-child [options] [instruction]"],
-    examples: [
-      'ak-role evidence-child "查：本工作树 diff 与票面是否一致。"',
     ],
   },
   diarist: {

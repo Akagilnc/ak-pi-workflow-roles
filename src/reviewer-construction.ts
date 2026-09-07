@@ -81,7 +81,7 @@ export type ConstructedReviewerDispatch = Readonly<{
   }>;
   targetSnapshot: ReviewerPinnedTarget;
   range: ReviewerRange;
-  /** Frozen durable authority references carried into Spec evidence-child material only. */
+  /** Frozen durable authority references carried into Spec-axis material only. */
   authorityRefs: readonly string[];
   /** Honest Spec-child disposition: launched, or skipped after confirmed missing Spec. */
   specDisposition: ReviewerSpecDisposition;
@@ -91,7 +91,7 @@ export type ConstructedReviewerDispatch = Readonly<{
 }>;
 
 /**
- * Spec-only evidence-child material carrier for durable authority references.
+ * Spec-only axis material carrier for durable authority references.
  * Exact values preserved; no prose extraction and no Standards/parent injection.
  */
 export function reviewerAuthorityRefsMaterial(authorityRefs: readonly string[]): string {
@@ -164,7 +164,7 @@ export function constructReviewerDispatch(input: {
     : [{ axis: "standards" }];
   const legs = axes.map((x) => {
     const parts = [common, reviewerAxisMethodAdapter(x.axis)];
-    // Spec evidence-child only — never Standards or a parent replacement Spec leg.
+    // Spec axis only — never Standards or a parent replacement Spec leg.
     if (x.axis === "spec") {
       if (specFetchedMaterial !== undefined) {
         parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));
