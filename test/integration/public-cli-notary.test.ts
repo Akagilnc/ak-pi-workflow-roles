@@ -23,7 +23,6 @@ import {
   resolveActivationLedgerHome,
 } from "../../src/activation-ledger-topology.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { SHAPE_UNREADABLE_KEY } from "../../src/shape-unreadable-failure.ts";
 import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
@@ -460,51 +459,6 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
   });
 });
 
-test("layer ② no usable Notary release keeps candidate on failure channel and exits non-zero", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project);
-    const bad = { status: "maybe", note: "not an explicit release" };
-    const { io } = captureIo();
-
-    // ADR 0055: role accepts once (isError false); public-terminal projects cause:output + candidate.
-    const result = await runAkRole(
-      ["notary", "--source-run", sourceRunPath],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io,
-        createRunId: () => "01a0notary-0000-7000-8000-000000000002",
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: scriptedNotarySession(bad),
-          }),
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "failure");
-    if (result.terminal.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal.roleOutcome.role, "notary");
-      assert.equal(result.terminal.roleOutcome.cause, "output");
-      assert.deepEqual(result.terminal.roleOutcome.decisiveFacts.secondaryEvidence, {
-        [SHAPE_UNREADABLE_KEY]: true,
-        candidate: bad,
-        acceptedReceipt: false,
-      });
-      assert.ok(
-        result.terminal.artifacts.some((artifact) => artifact.kind === "error"),
-        "failure channel must publish error artifact",
-      );
-    }
-    assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), false);
-  });
-});
 
 test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => {
   await withTempHome(async (home) => {

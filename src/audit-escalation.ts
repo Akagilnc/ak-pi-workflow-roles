@@ -176,11 +176,11 @@ export type ComplianceDecisionHandlers<T> = {
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
   /**
-   * Parent work stands with typed unreadable audit fact (ADR 0055 / §0).
-   * Must not collapse into ordinary pass (forged role decision).
+   * Parent work stands with the auditor's raw reply (#757).
+   * Not a shape-unreadable judgment — the reply is what the auditor said.
    */
-  unreadable?: (
-    facts: Extract<ComplianceDecision, { status: "unreadable" }>,
+  received?: (
+    facts: Extract<ComplianceDecision, { status: "received" }>,
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
   bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
@@ -209,12 +209,12 @@ export async function disposeComplianceDecision<T>(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
-    case "unreadable":
-      // Parent candidate stands; audit shape failure is a typed parallel fact — not pass.
-      if (handlers.unreadable === undefined) {
-        throw new Error("Compliance unreadable projection handler is unavailable");
+    case "received":
+      // Parent candidate stands; raw auditor reply rides beside — not judged unreadable (#757).
+      if (handlers.received === undefined) {
+        throw new Error("Compliance received projection handler is unavailable");
       }
-      return await handlers.unreadable(
+      return await handlers.received(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
