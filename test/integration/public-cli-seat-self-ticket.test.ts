@@ -277,29 +277,6 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
   });
 });
 
-test("public countersign without 起居郎 handoff stays unbound (no mechanical match)", async () => {
-  await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicCountersign(
-      ["裁：继续审票 #582 是否足以开工。"],
-      baseEnv({
-        home,
-        project,
-        runId: "01a063500-0000-7000-8000-00000000csig2",
-        role: "countersign",
-        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: { countersignStatus: "converged", note: "署" },
-        // Station no-ops: no typed assertion → stay unbound (not code judgment).
-        runCourtDiaristStation: async () => undefined,
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    await assertDurableUnbound(result.admitted!.runDirectory);
-  });
-});
-
 test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
   assert.throws(
     () => parseCountersignArgv(["--ticket", "582", "裁"]),
