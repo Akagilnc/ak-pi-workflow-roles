@@ -59,6 +59,13 @@ export type PublicSummonRequest = {
    * summons.instruction. Never folded into argv / parent-run lookup keys.
    */
   readonly reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable pointer materials for the
+   * new parent submission (source run + optional gate-submission-candidate).
+   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
+   * Never folded into argv / parent-run lookup keys.
+   */
+  readonly gateReviewInstruction?: string;
 };
 
 export type PublicSummonResult = {
@@ -286,6 +293,10 @@ export async function summonPublicRole(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     // #753: reask rides the existing notary same-ticket resume summons.instruction.
     ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
+    // #753/#750: new-submission pointers on same-parent resume (not conclusion re-ask).
+    ...(options.gateReviewInstruction === undefined
+      ? {}
+      : { gateReviewInstruction: options.gateReviewInstruction }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -400,12 +411,29 @@ export async function summonGateOfficer(options: {
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
+  /**
+   * Path of this turn's gate-submission-candidate when written (#632 / #753).
+   * Becomes human-readable resume materials when reask is absent.
+   */
+  readonly submissionCandidatePath?: string;
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
     const { homeFromRunDirectory } = await import("./activation-ledger-topology.ts");
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
+  }
+  // Conclusion re-ask keeps sole ownership of reviewReask. New-submission materials
+  // ride a separate field so first mint never fails the "reask requires prior" gate.
+  let gateReviewInstruction: string | undefined;
+  if (options.reask === undefined) {
+    const { buildGateOfficerReviewInstruction } = await import("./auditor-dossier-tool.ts");
+    gateReviewInstruction = buildGateOfficerReviewInstruction({
+      sourceRunDirectory: options.sourceRunDirectory,
+      ...(options.submissionCandidatePath === undefined
+        ? {}
+        : { submissionCandidatePath: options.submissionCandidatePath }),
+    });
   }
   const common = {
     cwd: options.cwd,
@@ -414,6 +442,9 @@ export async function summonGateOfficer(options: {
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
+    ...(gateReviewInstruction === undefined
+      ? {}
+      : { gateReviewInstruction }),
   } as const;
   if (options.officer === "notary") {
     // #753: reask rides summonPublicRole → runPublicNotary summons.instruction

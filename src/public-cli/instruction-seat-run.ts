@@ -69,6 +69,11 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
    */
   reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv instruction.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -289,14 +294,15 @@ export async function runPublicInstructionSeat(
     }
   }
 
-  // #756: auditor reask rides summons.instruction on same-ticket resume (notary/inspector pattern).
+  // #756: auditor reask / new-submission pointers ride summons.instruction on resume.
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
   const summons: SameTicketSummonsMaterials = {
-    ...(env.reviewReask === undefined
+    ...(resumeInstruction === undefined
       ? {
           instruction: parsed.instruction,
           instructionEmpty: parsed.instruction.trim() === "",
         }
-      : { instruction: env.reviewReask, instructionEmpty: false }),
+      : { instruction: resumeInstruction, instructionEmpty: false }),
     attachmentPaths: parsed.attachmentPaths,
   };
   if (role === "auditor" && auditorSourceRun !== undefined) {

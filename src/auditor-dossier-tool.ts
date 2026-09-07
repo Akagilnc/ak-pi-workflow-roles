@@ -63,6 +63,27 @@ export function gateSubmissionCandidatePath(runDirectory: string): string {
 }
 
 /**
+ * Human-readable materials for gate-officer same-parent resume (#753 / #750).
+ * Pointers only — no body embed (ADR 0079/0081); no duty/handbook lines (#755).
+ * Three pairs share this face: countersign↔notary, judge↔auditor, worker↔inspector.
+ * Code delivers the pointers; it does not judge whether the officer read them.
+ */
+export function buildGateOfficerReviewInstruction(input: {
+  readonly sourceRunDirectory: string;
+  readonly submissionCandidatePath?: string;
+}): string {
+  const lines = [
+    "本轮父席交卷待审。",
+    `来源 run：${input.sourceRunDirectory}`,
+  ];
+  const candidate = input.submissionCandidatePath?.trim();
+  if (candidate !== undefined && candidate.length > 0) {
+    lines.push(`交卷候选（冻结快照）：${candidate}`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Persist the in-flight tool-call leaf as a run-directory artifact so pointer-only
  * officer summons resolve on hosts whose session.jsonl is header-only (#632 / DK-4).
  * Returns the written path, or undefined when no toolCall leaf is on the books.

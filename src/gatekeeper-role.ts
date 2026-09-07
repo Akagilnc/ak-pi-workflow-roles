@@ -301,7 +301,11 @@ export async function projectGatekeeperRun(
   }
   // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
   // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  persistGateSubmissionCandidate(runDirectory, options.context);
+  // Candidate path also rides same-parent officer resume as 人读材料 (#753 / #750).
+  const submissionCandidatePath = persistGateSubmissionCandidate(
+    runDirectory,
+    options.context,
+  );
   let summoned: PublicSummonResult;
   try {
     const summon =
@@ -314,6 +318,9 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
+          ...(submissionCandidatePath === undefined
+            ? {}
+            : { submissionCandidatePath }),
         });
       });
     summoned = await summon(officer, runDirectory, options.signal, options.reask);
