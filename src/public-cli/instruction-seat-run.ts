@@ -1,9 +1,9 @@
 /**
- * Shared instruction-seat run (#639 / #675 / #637): gatekeeper, navigator, auditor,
- * and evidence-child share admit → turn-request → post-admission → settle.
+ * Shared instruction-seat run (#639 / #675 / #637): gatekeeper, navigator, auditor
+ * share admit → turn-request → post-admission → settle.
  * Auditor same-parent (--source-run) re-summons resume via tryResumeSameTicketSeatRun
  * (#747); other instruction seats keep ticket-number principal — no independent
- * run/rebind/nest path.
+ * run/rebind/nest path. (#744: evidence-child public seat deleted.)
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
@@ -11,14 +11,12 @@ import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitAuditorInvocation,
-  admitEvidenceChildInvocation,
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   persistAdmittedSourceRunPath,
   type AdmittedAuditorInvocation,
-  type AdmittedEvidenceChildInvocation,
   type AdmittedGatekeeperInvocation,
   type AdmittedNavigatorInvocation,
   type ParseInstructionArgvResult,
@@ -48,7 +46,6 @@ import {
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
   trySettleAuditorTerminalResult,
-  trySettleEvidenceChildTerminalResult,
   trySettleGatekeeperTerminalResult,
   trySettleNavigatorTerminalResult,
 } from "./settlement.ts";
@@ -62,14 +59,12 @@ import {
 export type InstructionSeatRole =
   | "gatekeeper"
   | "navigator"
-  | "auditor"
-  | "evidence-child";
+  | "auditor";
 
 export type AdmittedInstructionSeatInvocation =
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
-  | AdmittedAuditorInvocation
-  | AdmittedEvidenceChildInvocation;
+  | AdmittedAuditorInvocation;
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -110,8 +105,6 @@ function instructionSeatAdapters(options?: {
           return trySettleNavigatorTerminalResult(admitted, authority, scope);
         case "auditor":
           return trySettleAuditorTerminalResult(admitted, authority, scope);
-        case "evidence-child":
-          return trySettleEvidenceChildTerminalResult(admitted, authority, scope);
       }
     },
     // Accepted receipts and failure terminals both present via shared path.
@@ -153,8 +146,6 @@ async function admitInstructionSeat(
       return admitNavigatorInvocation(options);
     case "auditor":
       return admitAuditorInvocation(options);
-    case "evidence-child":
-      return admitEvidenceChildInvocation(options);
   }
 }
 

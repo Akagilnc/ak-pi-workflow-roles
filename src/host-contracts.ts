@@ -127,7 +127,6 @@ export type RoleTurnActivation =
   | { readonly role: "gatekeeper" }
   | { readonly role: "navigator" }
   | { readonly role: "auditor" }
-  | { readonly role: "evidence-child" }
   | {
       readonly role: "diarist";
       /** Frozen source-catalog path; absent for a true-unbound summons (#708). */
@@ -368,7 +367,6 @@ export type InstitutionalSeat =
   | "inspector"
   | "notary"
   | "auditor"
-  | "evidenceChild"
   | (string & {});
 
 /** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */
