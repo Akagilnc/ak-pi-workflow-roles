@@ -12,8 +12,6 @@ import {
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
   notaryOutputSchema,
-  projectLawfulNotaryOutput,
-  retainNotarySubmission,
   type NotarySourceRunLocator,
 } from "./notary-contracts.ts";
 
@@ -170,14 +168,11 @@ export function createNotaryRoleRuntime(
             if (activation === undefined) {
               throw new Error("符宝郎未激活");
             }
-            // Unique submission + terminate only. Shape is not an admission gate
-            // (第 0 条 / ADR 0055): lawful pass/bounce/escalate projected; else params as-is.
+            // #753: handler only records — params as submitted, no findings/disposition rewrite.
             // #541 infra declaration + sole-final barrier are ledger-owned (#575).
-            const lawful = projectLawfulNotaryOutput(parameters);
-            const details = lawful ?? retainNotarySubmission(parameters);
             return {
               content: [{ type: "text" as const, text: NOTARY_ACCEPTED_TEXT }],
-              details,
+              details: parameters,
               terminate: true as const,
             };
           },

@@ -19,6 +19,7 @@ import {
 } from "./invocation.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -45,6 +46,12 @@ import {
 export type NotaryRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #753 nested gate re-ask: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — external callers still have zero prompt.
+   */
+  reviewReask?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -108,10 +115,14 @@ export async function runPublicNotary(
     throw error;
   }
   // #747: officer resume key is this parent source-run path (not ticket number).
+  // #753: gate re-ask rides the same summons.instruction field (no parallel stack).
   {
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
+      ...(env.reviewReask === undefined
+        ? {}
+        : { instruction: env.reviewReask, instructionEmpty: false }),
     };
     const resumed = await tryResumeSameTicketSeatRun({
       home: env.home,
@@ -128,6 +139,17 @@ export async function runPublicNotary(
         ),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "notary review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   }
 
   let admitted: AdmittedNotaryInvocation;
@@ -234,13 +256,27 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted, effective) =>
+    buildTurnRequest: async (admitted, effective) => {
       // #755: review continuation is plain dialogue / resume envelope — no
       //「重新读」candidate line, no engine handbook packaging.
-      buildNotaryTurnRequest(
+      // #753: non-three-state re-ask rides as summons.instruction (人话重问).
+      const summonsPrepared =
+        effective.summons === undefined
+          ? undefined
+          : await prepareSummonsResumeMaterials(
+              admitted.runDirectory,
+              effective.summons,
+            );
+      return buildNotaryTurnRequest(
         admitted,
-        resumeTurnRequestProjectionOptions(admitted, effective, env),
-      ),
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
