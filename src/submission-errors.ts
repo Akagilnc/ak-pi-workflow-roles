@@ -1,8 +1,11 @@
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
+import { joinReadableGateItems } from "./readable-gate-item.ts";
 
 function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
   if (result.status === "bounce") {
-    const findings = result.findings.length === 0 ? "（无 findings）" : result.findings.join("; ");
+    const findings = result.findings.length === 0
+      ? "（无 findings）"
+      : joinReadableGateItems(result.findings);
     return `门下省打回重写，findings：${findings}`;
   }
   if (result.status === "unreadable") {
