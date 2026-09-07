@@ -55,7 +55,8 @@ export type PublicSummonRequest = {
   readonly signal?: AbortSignal;
   /**
    * #753 plain-language re-ask when the prior officer reply was not three-state.
-   * Nested notary only — rides existing same-ticket resume summons.instruction.
+   * Nested gate officers (notary + inspector) — rides same-ticket resume
+   * summons.instruction. Never folded into argv / parent-run lookup keys.
    */
   readonly reviewReask?: string;
 };
@@ -395,8 +396,8 @@ export async function summonGateOfficer(options: {
   readonly signal?: AbortSignal;
   /**
    * Plain-language re-ask when the prior officer reply was not three-state (#753).
-   * Notary: existing runPublicNotary same-ticket resume summons.instruction.
-   * Inspector: extra argv instruction on the pointer summons.
+   * Both officers: reviewReask → same-ticket resume summons.instruction.
+   * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
 }): Promise<PublicSummonResult> {
@@ -420,18 +421,15 @@ export async function summonGateOfficer(options: {
       ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
     });
   }
-  // Inspector: reask rides as extra instruction on the pointer summons (resume via #747).
-  const inspectorArgv =
-    options.reask === undefined
-      ? [`卷宗指针：${options.sourceRunDirectory}`]
-      : [`卷宗指针：${options.sourceRunDirectory}`, options.reask];
+  // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
   return summonPublicRole({
     role: "inspector",
-    argv: inspectorArgv,
+    argv: [`卷宗指针：${options.sourceRunDirectory}`],
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
   });
 }
