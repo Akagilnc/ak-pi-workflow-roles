@@ -9,7 +9,6 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { existsSync } from "node:fs";
 import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -154,29 +153,41 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
-/** Owner-domain note on which handbook bytes are a resumed turn's basis (#736). */
-const RESUME_BASIS_MATERIAL_RELATIVE_PATH = "resources/engine-resume-basis.md" as const;
+/**
+ * Resume-only handbook line (#736 ticket exemption to ADR 0073 §3).
+ * Neutral `- <path>` from appendEngineSessionMaterial becomes a read instruction.
+ * First-round delivery is unchanged; never pastes material body.
+ */
+export function instructResumeHandbookRead(
+  prompt: string,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  const materialPath = engineMaterial?.materialPath;
+  if (materialPath === undefined) return prompt;
+  const pointer = `- ${materialPath}`;
+  const instruction = `先读 ${materialPath}，再组装外包 argv`;
+  return prompt
+    .split("\n")
+    .map((line) => (line === pointer ? instruction : line))
+    .join("\n");
+}
 
 /**
- * Unique continuation-prompt selector for manual/auto resume (#471 / #600).
+ * Unique continuation-prompt selector for manual/auto resume (#471 / #600 / #736).
  * Message present → base bytes unchanged; absent → package transport envelope.
- * When engine material is present, append structured engine coordinates (same
- * delivery as initial transport prompts). Zero parse, zero classify, zero narrow.
- * With a handbook path and a packaged resume-basis note, one further pointer
- * line — pointer only, never body, never machine instruction (#736 / ADR 0073).
+ * When engine material is present, append structured engine coordinates then
+ * rewrite the handbook path line into a read instruction. Zero parse, zero
+ * classify, zero narrow. Pointer only — never material body.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
-  packageRoot?: string,
 ): string {
   const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  const lines = appendEngineSessionMaterial([base], engineMaterial);
-  if (engineMaterial?.materialPath !== undefined && packageRoot !== undefined) {
-    const basisPath = join(packageRoot, RESUME_BASIS_MATERIAL_RELATIVE_PATH);
-    if (existsSync(basisPath)) lines.push(`- ${basisPath}`);
-  }
-  return lines.join("\n");
+  return instructResumeHandbookRead(
+    appendEngineSessionMaterial([base], engineMaterial).join("\n"),
+    engineMaterial,
+  );
 }
 
 /**
@@ -194,7 +205,6 @@ export function buildResumeContinuationPrompt(options: {
       ...(options.engine === undefined ? {} : { engine: options.engine }),
       packageRoot: options.packageRoot,
     }),
-    options.packageRoot,
   );
 }
 
