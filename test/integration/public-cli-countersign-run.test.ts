@@ -35,10 +35,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
   ensureTicketProvenanceVolume,
@@ -48,7 +45,6 @@ import {
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-countersign-", async (home) => {
     const binDir = join(home, "bin");
-    await installHermesFixture(binDir);
     const priorPath = process.env.PATH;
     process.env.PATH = `${binDir}:${priorPath ?? ""}`;
     return withPrimaryAwareCleanup(

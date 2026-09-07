@@ -34,10 +34,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
-import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
   CANONICAL_SOURCE_ROLE,
@@ -113,7 +110,6 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    await installHermesFixture(join(home, "bin"));
     // #709: #582 is a ticket this book already records — seats reuse that identity.
     ensureTicketProvenanceVolume(582, project, home);
     await run({ home, project });

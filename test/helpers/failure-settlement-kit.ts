@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { withTempRoot } from "./primary-aware-cleanup.ts";
-import { withHermesFixtureOnPath } from "./hermes-fixture.ts";
 import { join } from "node:path";
 
 import {
@@ -24,9 +23,7 @@ export async function withTempHome<T>(
   scenario: (home: string) => Promise<T>,
   options: { prefix?: string } = {},
 ): Promise<T> {
-  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", (home) =>
-    withHermesFixtureOnPath(home, () => scenario(home)),
-  );
+  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", scenario);
 }
 
 export function captureIo() {

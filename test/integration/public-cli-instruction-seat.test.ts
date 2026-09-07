@@ -29,7 +29,6 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 
 type InstructionSeatCase = {
   readonly role: "gatekeeper" | "navigator";
@@ -119,9 +118,7 @@ const CASES: readonly InstructionSeatCase[] = [
 ];
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-instruction-seat-", (home) =>
-    withHermesFixtureOnPath(home, () => scenario(home)),
-  );
+  return withTempRoot("ak-public-cli-instruction-seat-", scenario);
 }
 
 function captureIo() {

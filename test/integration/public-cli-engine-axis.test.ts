@@ -1,6 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { installHermesFixture, withHermesFixtureOnPath } from "../helpers/hermes-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
@@ -76,9 +75,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", (home) =>
-    withHermesFixtureOnPath(home, () => scenario(home)),
-  );
+  return withTempRoot("ak-engine-axis-", scenario);
 }
 
 function captureIo() {
@@ -1010,12 +1007,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
   async () => {
     assert.equal(PUBLIC_CALLABLE_ROLES.length, 16);
     await withTempHome(async (home) => {
-      const binDir = join(home, "bin");
-      await installHermesFixture(binDir);
-      const priorPath = process.env.PATH;
-      process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-      try {
-        const baseProject = join(home, "project");
+      const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
         seedGitProject(baseProject);
         {
@@ -1185,10 +1177,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             });
           }
         }
-      } finally {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      }
     });
   },
 );

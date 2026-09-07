@@ -32,7 +32,6 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   installGhFixture,
-  installHermesFixture,
 } from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_ROLE,
@@ -452,7 +451,6 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     // Worktree-owned home walks up to package.json type:module; force CJS for fixture bins.
     await writeFile(join(binDir, "package.json"), '{"type":"commonjs"}\n', "utf8");
     // Gate inspector instruction is 卷宗指针 only (#747); no seat ticket recognizer.
-    await installHermesFixture(binDir);
     await installGhFixture(binDir, {
       issues: { 637: { body: "#637 materials court", comments: [] } },
     });
