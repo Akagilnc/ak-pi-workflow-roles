@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  instructResumeHandbookRead,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -486,12 +487,15 @@ export function resumeTurnRequestProjectionOptions(
       summonsPrepared !== undefined &&
       summonsPrepared.attachments.length > 0
     ) {
-      prompt = buildInstructionTransportPrompt(
-        {
-          instruction: request.message,
-          instructionEmpty: false,
-          attachments: summonsPrepared.attachments,
-        },
+      prompt = instructResumeHandbookRead(
+        buildInstructionTransportPrompt(
+          {
+            instruction: request.message,
+            instructionEmpty: false,
+            attachments: summonsPrepared.attachments,
+          },
+          engineMaterial,
+        ),
         engineMaterial,
       );
     } else {
@@ -502,7 +506,10 @@ export function resumeTurnRequestProjectionOptions(
       });
     }
   } else if (summonsPrepared !== undefined) {
-    prompt = buildInstructionTransportPrompt(summonsPrepared, engineMaterial);
+    prompt = instructResumeHandbookRead(
+      buildInstructionTransportPrompt(summonsPrepared, engineMaterial),
+      engineMaterial,
+    );
   } else {
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
