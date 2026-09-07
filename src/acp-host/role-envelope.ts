@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requireGatekeeperPass } from "../gatekeeper-role.ts";
+import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -78,7 +78,8 @@ export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string,
       : "packetPath" in activation ? activation.packetPath
         : "casePath" in activation ? activation.casePath
           : "inputPath" in activation ? activation.inputPath
-            : "sourceRun" in activation ? activation.sourceRun : undefined;
+            : "sourceRun" in activation ? activation.sourceRun
+              : "sourcesPath" in activation ? activation.sourcesPath : undefined;
     if (path !== undefined) flags.set(inputFlag, path);
   }
   if (activation.role === "fixer" && activation.prerequisitesPath !== undefined) flags.set("ak-fixer-prerequisites", activation.prerequisitesPath);
@@ -297,7 +298,7 @@ export async function prepareAcpRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "no_receipt"
+      : record.status === "bounce" || record.status === "no_receipt" || record.status === "unreadable"
         ? record.status
         : undefined;
     if (code === undefined) return;
@@ -473,14 +474,12 @@ export async function prepareAcpRoleEnvelope(options: {
                 });
                 reply(socket, rpc.id, {
                   content: projected.content,
-                  structuredContent: projected.details,
                   isError: true,
                 });
               } catch {
                 // Slot already filled; durable projection may have partially failed.
                 reply(socket, rpc.id, {
                   content: declared.content,
-                  structuredContent: declared.details,
                   isError: true,
                 });
               }
@@ -496,7 +495,7 @@ export async function prepareAcpRoleEnvelope(options: {
               // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
               // round boundary (closeRound after session/prompt), so delayed siblings stay
               // in the same round instead of becoming silent post-seal anomalies.
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
+              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
             } catch (error) {
               let content: ContentPart[];
               let details: Record<string, unknown>;
@@ -528,7 +527,7 @@ export async function prepareAcpRoleEnvelope(options: {
                 details,
                 isError: true,
               });
-              reply(socket, rpc.id, { content: projected.content, structuredContent: projected.details, ...(projected.isError ? { isError: true } : {}) });
+              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
             }
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();

@@ -66,6 +66,7 @@ export type TicketProvenanceEntry = {
  * Separated by recordClass discriminator — never disguised as a source entry.
  */
 export type TicketProvenanceDiagnosticKind =
+  /** Historical rows only — the diarist turn's own failure settles the run (#708). */
   | "collector-failed"
   | "issue-source-failed"
   | "quote-verify-failed";

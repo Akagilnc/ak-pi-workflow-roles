@@ -1,6 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { installHermesFixture } from "../helpers/hermes-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
@@ -944,7 +943,12 @@ async function materializeConflictedRepo(root: string): Promise<void> {
   }
 }
 
-/** Minimal argv per callable role so the run reaches piRunner (shared fixture). */
+/**
+ * Minimal argv per callable role so the run reaches piRunner (shared fixture).
+ * #747: notary/auditor resume by parent --source-run; this table probes engine
+ * wiring twice against one fixture parent, so mint via `new` (explicit-fresh-summons)
+ * instead of resuming a prior probe that has no durable Pi principal.
+ */
 function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
   switch (role) {
     case "judge":
@@ -959,7 +963,14 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
     case "doctor":
       return [role, "--issue", "1", "--project", project, "engine axis probe"];
     case "notary":
-      return [role, "--source-run", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge", "--project", project];
+      return [
+        "new",
+        role,
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+      ];
     case "countersign":
       return [role, "--project", project, "engine axis probe"];
     case "gleaner-left":
@@ -970,6 +981,20 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--project", project, "engine axis probe"];
     case "navigator":
       return [role, "--project", project, "engine axis probe"];
+    case "auditor":
+      return [
+        "new",
+        role,
+        "--subject",
+        "judge",
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+        "engine axis probe",
+      ];
+    case "diarist":
+      return [role, "--project", project, "engine axis probe"];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -979,14 +1004,9 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 13);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 15);
     await withTempHome(async (home) => {
-      const binDir = join(home, "bin");
-      await installHermesFixture(binDir);
-      const priorPath = process.env.PATH;
-      process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-      try {
-        const baseProject = join(home, "project");
+      const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
         seedGitProject(baseProject);
         {
@@ -1156,10 +1176,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             });
           }
         }
-      } finally {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      }
     });
   },
 );

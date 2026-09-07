@@ -11,6 +11,11 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
+import {
+  DIARIST_OUTPUT_TOOL_NAME,
+  DIARIST_SOURCES_FLAG,
+} from "./diarist-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
@@ -27,6 +32,20 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/quality-law.md",
   "souls/gate-output-guide.md",
+] as const;
+
+/**
+ * Public 审刑院 shipping roster (#675 owner).
+ * Runtime assembly is subject-selected via AUDITOR_SESSION_MATERIALS
+ * (judge-auditor.md / doctor-auditor.md) — never a generic auditor.md.
+ * This list is the union of files that must ship; load path is loadAuditorSoul(subject).
+ */
+export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
+  "CLAUDE.md",
+  "souls/judge-auditor.md",
+  "souls/doctor-auditor.md",
+  "souls/audit-law.md",
+  "souls/quality-law.md",
 ] as const;
 
 /**
@@ -184,6 +203,32 @@ export const PUBLIC_ROLE_RECORDS = [
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
+  },
+  // #675: 审刑院 is a role like any other — public ak-role entry. (#744: evidence-child deleted)
+  {
+    role: "auditor",
+    phases: [null],
+    outputTool: AUDITOR_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
+  },
+  // #708 / ADR 0075 `diarist-is-role`: 起居郎 is a seat like any other. The
+  // frozen source catalog rides the shared input-flag seam; it is absent for a
+  // true-unbound summons (no ticket → no diary).
+  {
+    role: "diarist",
+    phases: [null],
+    outputTool: DIARIST_OUTPUT_TOOL_NAME,
+    inputFlag: DIARIST_SOURCES_FLAG.name,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/diarist.md",
+      "resources/diarist-collect.md",
+    ],
   },
 ] as const;
 

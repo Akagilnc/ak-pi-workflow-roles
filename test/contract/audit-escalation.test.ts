@@ -33,14 +33,14 @@ test("escalation projects one terminating human decision and is not an accepted 
     decisionGate: escalationArguments.decisionGate,
   };
   let passCalls = 0;
-  let reviseCalls = 0;
+  let bounceCalls = 0;
   const result = await disposeComplianceDecision(decision, {
     pass: () => { passCalls += 1; throw new Error("pass branch used"); },
-    revise: () => { reviseCalls += 1; throw new Error("revise branch used"); },
+    bounce: () => { bounceCalls += 1; throw new Error("bounce branch used"); },
     escalate: (value) => value,
   });
   assert.equal(passCalls, 0);
-  assert.equal(reviseCalls, 0);
+  assert.equal(bounceCalls, 0);
   assert.equal(result.terminate, true);
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
   assert.deepEqual(result.details.conflicts, decision.conflicts);
@@ -125,8 +125,8 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
       pass: () => {
         throw new Error("pass");
       },
-      revise: () => {
-        throw new Error("revise");
+      bounce: () => {
+        throw new Error("bounce");
       },
       escalate: (value) => value,
     },
@@ -183,8 +183,8 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
       pass: () => {
         throw new Error("pass");
       },
-      revise: () => {
-        throw new Error("revise");
+      bounce: () => {
+        throw new Error("bounce");
       },
       escalate: (value) => value,
     },
@@ -229,8 +229,8 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
       pass: () => {
         throw new Error("pass");
       },
-      revise: () => {
-        throw new Error("revise");
+      bounce: () => {
+        throw new Error("bounce");
       },
       escalate: (value) => value,
     },
@@ -257,7 +257,7 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
   }>(decision, {
     pass: () => { passCalls += 1; throw new Error("ordinary pass used"); },
     noReceipt: (facts) => ({ parent: "accepted", auditNoReceipt: facts }),
-    revise: () => { throw new Error("revise used"); },
+    bounce: () => { throw new Error("bounce used"); },
     escalate: () => { throw new Error("escalate used"); },
   });
   assert.equal(passCalls, 0);

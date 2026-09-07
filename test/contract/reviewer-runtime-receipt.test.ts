@@ -176,7 +176,7 @@ function assembleFromSubmission(parameters: unknown) {
 
 test("parent axis amendment survives assembly without rewriting child reports", () => {
   // Unit seam only: intent → assembler → decisive-facts projection.
-  // Real A→auditor revise→B→pass lives on the package lifecycle tracer.
+  // Real A→auditor bounce→B→pass lives on the package lifecycle tracer.
   const delta = Object.freeze({ standards: "axis-delta-A" });
   const { assembled, standardsText, specText } = assembleFromSubmission({
     status: "completed",

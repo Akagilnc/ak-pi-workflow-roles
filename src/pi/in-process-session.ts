@@ -207,7 +207,7 @@ export type OpenPiInstitutionalSessionResult = {
   readonly streamFailure: unknown;
 };
 
-export async function openPiInstitutionalSession(
+export async function openPiInProcessSession(
   options: OpenPiInstitutionalSessionOptions,
 ): Promise<OpenPiInstitutionalSessionResult> {
   const label = options.label ?? "Institutional sub-session";
@@ -237,7 +237,7 @@ export async function openPiInstitutionalSession(
       ? childRegistry.find(selection.provider, selection.model)
       : undefined;
 
-    const withTypedReason = (error: Error, reason: "auth" | "model"): Error =>
+    const withTypedReason = (error: Error, reason: "auth" | "model" | "thinking"): Error =>
       Object.assign(error, { reason });
 
     // Existing Navigator/model contract (pre-#590): unknown provider or model is
@@ -633,15 +633,26 @@ export async function openPiInstitutionalSession(
       }
     }
 
-    // 7. Create AgentSession — thinking is opaque pass-through. Absent selection
-    // omits thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
-    // we do not re-check or invent package defaults.
+    // 7. Create AgentSession
+    // Thinking is opaque pass-through (#683 / #675 ⑥). Absent selection omits
+    // thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent package defaults. When reusing a session file,
+    // re-apply seat model after open so Pi cannot restore a stale model over
+    // selection (#675 ⑤ / #697).
+    const requestedThinking = selection.thinking;
+    const priorEntries =
+      typeof (sessionManager as { getEntries?: () => readonly unknown[] }).getEntries === "function"
+        ? (sessionManager as { getEntries: () => readonly unknown[] }).getEntries()
+        : [];
+    const reusedSession = priorEntries.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const type = (entry as { type?: unknown }).type;
+      return type === "message" || type === "model_change" || type === "thinking_level_change";
+    });
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      ...(options.selection.thinking === undefined
-        ? {}
-        : { thinkingLevel: options.selection.thinking as any }),
+      ...(requestedThinking === undefined ? {} : { thinkingLevel: requestedThinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -651,9 +662,23 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    await session.setModel(effectiveModel);
-    if (options.selection.thinking !== undefined) {
-      session.setThinkingLevel(options.selection.thinking as any);
+    if (reusedSession) {
+      try {
+        await session.setModel(effectiveModel);
+        if (requestedThinking !== undefined) {
+          session.setThinkingLevel(requestedThinking as any);
+        }
+      } catch (error) {
+        session.dispose();
+        throw withTypedReason(
+          error instanceof Error
+            ? error
+            : new Error(
+              `${label} failed to apply seat model/thinking for ${selection.provider}/${selection.model}`,
+            ),
+          requestedThinking !== undefined ? "thinking" : "model",
+        );
+      }
     }
 
     // 8. Event subscriptions
@@ -833,3 +858,4 @@ export async function openPiInstitutionalSession(
     throw openError;
   }
 }
+

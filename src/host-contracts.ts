@@ -125,7 +125,13 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector" }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" };
+  | { readonly role: "navigator" }
+  | { readonly role: "auditor" }
+  | {
+      readonly role: "diarist";
+      /** Frozen source-catalog path; absent for a true-unbound summons (#708). */
+      readonly sourcesPath?: string;
+    };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
@@ -165,6 +171,12 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /**
+   * Parent cancellation for a nested activation (role-inside-role public summons,
+   * #675). The host terminates its child when this aborts; a public CLI process
+   * has no parent to observe and leaves it absent.
+   */
+  readonly signal?: AbortSignal;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
   /**
@@ -290,7 +302,7 @@ type HostGatekeeperSubject = {
   readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
 };
 /** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
+type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" | "unreadable" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };
@@ -355,7 +367,6 @@ export type InstitutionalSeat =
   | "inspector"
   | "notary"
   | "auditor"
-  | "evidenceChild"
   | (string & {});
 
 /** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */

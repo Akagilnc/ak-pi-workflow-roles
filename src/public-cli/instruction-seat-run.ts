@@ -1,33 +1,49 @@
 /**
- * Shared instruction-seat run (#639 repair seam): gatekeeper and navigator are
- * the same admit → turn-request → post-admission → settle shape, parameterized
- * by seat. Same direction as the settlement one-shot shared skeleton. cli.ts
- * calls this parameterized module directly; no per-seat wrappers.
+ * Shared instruction-seat run (#639 / #675 / #637): gatekeeper, navigator, auditor
+ * share admit → turn-request → post-admission → settle.
+ * Auditor same-parent (--source-run) re-summons resume via tryResumeSameTicketSeatRun
+ * (#747); other instruction seats keep ticket-number principal — no independent
+ * run/rebind/nest path. (#744: evidence-child public seat deleted.)
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  admitAuditorInvocation,
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
+  persistAdmittedSourceRunPath,
+  type AdmittedAuditorInvocation,
   type AdmittedGatekeeperInvocation,
   type AdmittedNavigatorInvocation,
   type ParseInstructionArgvResult,
 } from "./invocation.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   runPostAdmissionSeatResume,
   resumeTurnRequestProjectionOptions,
+  type PostAdmissionAdapters,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
 import {
   loadResumableInstructionSeatRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
+  tryResumeSameTicketSeatRun,
+} from "./seat-ticket-binding.ts";
+import {
   presentStructuralRejection,
+  readEngineDetourInfrastructureFailure,
+  trySettleAuditorTerminalResult,
   trySettleGatekeeperTerminalResult,
   trySettleNavigatorTerminalResult,
 } from "./settlement.ts";
@@ -38,11 +54,15 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 
-export type InstructionSeatRole = "gatekeeper" | "navigator";
+export type InstructionSeatRole =
+  | "gatekeeper"
+  | "navigator"
+  | "auditor";
 
 export type AdmittedInstructionSeatInvocation =
   | AdmittedGatekeeperInvocation
-  | AdmittedNavigatorInvocation;
+  | AdmittedNavigatorInvocation
+  | AdmittedAuditorInvocation;
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -65,26 +85,77 @@ export function buildInstructionSeatTurnRequest(
   );
 }
 
-function instructionSeatAdapters() {
+function instructionSeatAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedInstructionSeatInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedInstructionSeatInvocation> {
   return {
     trySettle: (
       admitted: AdmittedInstructionSeatInvocation,
       authority: DurablePrincipalAuthority,
       scope?: { readonly courtAttemptId?: string },
-    ) =>
-      admitted.role === "gatekeeper"
-        ? trySettleGatekeeperTerminalResult(admitted, authority, scope)
-        : trySettleNavigatorTerminalResult(admitted, authority, scope),
+    ) => {
+      switch (admitted.role) {
+        case "gatekeeper":
+          return trySettleGatekeeperTerminalResult(admitted, authority, scope);
+        case "navigator":
+          return trySettleNavigatorTerminalResult(admitted, authority, scope);
+        case "auditor":
+          return trySettleAuditorTerminalResult(admitted, authority, scope);
+      }
+    },
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
+    // #675 / #357 T2: failInfrastructure abort after engine-detour tool failure must not
+    // wash the durable toolResult diagnostic (same seam as reviewer-run / judge-run).
+    resolveRunnerKnownFailure: async ({
+      result,
+      sessionFile,
+    }: {
+      result: { knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure };
+      sessionFile: string;
+    }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return infrastructureFailure === undefined
+        ? result.knownFailure
+        : {
+            cause: infrastructureFailure.cause,
+            diagnostic: infrastructureFailure.diagnostic,
+            ...(infrastructureFailure.identity === undefined
+              ? {}
+              : { identity: infrastructureFailure.identity }),
+          };
+    },
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
   };
+}
+
+async function admitInstructionSeat(
+  role: InstructionSeatRole,
+  options: Parameters<typeof admitGatekeeperInvocation>[0],
+): Promise<AdmittedInstructionSeatInvocation> {
+  switch (role) {
+    case "gatekeeper":
+      return admitGatekeeperInvocation(options);
+    case "navigator":
+      return admitNavigatorInvocation(options);
+    case "auditor":
+      return admitAuditorInvocation(options);
+  }
 }
 
 export async function runPublicInstructionSeatResume(
   request: PublicResumeRequest,
   env: InstructionSeatRunEnv,
   io: CliIo,
-): Promise<{ exitCode: number; terminal?: TerminalResult }> {
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedInstructionSeatInvocation;
+  terminal?: TerminalResult;
+}> {
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -94,13 +165,60 @@ export async function runPublicInstructionSeatResume(
       effective.runId,
       env.principalAuthority,
     ),
-    buildTurnRequest: (admitted, effective) => buildInstructionSeatTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, effective, env),
-    ),
+    buildTurnRequest: async (admitted, effective) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        effective.summons,
+      );
+      return buildInstructionSeatTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: instructionSeatAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
+}
+
+/** Scope auditor subject/source-run env for the duration of one seat turn. */
+async function withAuditorSoulEnv<
+  T,
+>(options: {
+  readonly subject?: "judge" | "doctor";
+  readonly sourceRunDirectory?: string;
+  readonly run: () => Promise<T>;
+}): Promise<T> {
+  if (options.subject === undefined && options.sourceRunDirectory === undefined) {
+    return options.run();
+  }
+  const { AK_ROLE_AUDITOR_SUBJECT_ENV, AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import(
+    "../auditor-soul.ts"
+  );
+  const priorSubject = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+  const priorSource = process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV];
+  if (options.subject !== undefined) {
+    process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = options.subject;
+  }
+  if (options.sourceRunDirectory !== undefined) {
+    process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] = options.sourceRunDirectory;
+  }
+  try {
+    return await options.run();
+  } finally {
+    if (options.subject !== undefined) {
+      if (priorSubject === undefined) delete process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+      else process.env[AK_ROLE_AUDITOR_SUBJECT_ENV] = priorSubject;
+    }
+    if (options.sourceRunDirectory !== undefined) {
+      if (priorSource === undefined) delete process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV];
+      else process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] = priorSource;
+    }
+  }
 }
 
 export async function runPublicInstructionSeat(
@@ -114,10 +232,114 @@ export async function runPublicInstructionSeat(
   admitted?: AdmittedInstructionSeatInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseInstructionArgvResult;
+  try {
+    parsed = parseArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  let auditorSubject: "judge" | "doctor" | undefined;
+  let auditorSourceRun: string | undefined;
+  let auditorSourceTicket: number | undefined;
+  let reusedTicketNumber: number | undefined;
+
+  // #637 / #747: resume prior seat run with this summons' materials.
+  // Auditor (#747): parent --source-run path is the lookup key.
+  // Other instruction seats: reuse known ticket (#709). No bare catch→fresh.
+  const projectRoot = parsed.project ?? env.cwd;
+  if (role === "auditor") {
+    if (parsed.subject !== "judge" && parsed.subject !== "doctor") {
+      presentStructuralRejection(
+        new CliUsageError("auditor --subject requires judge|doctor"),
+        io,
+      );
+      return { exitCode: 2 };
+    }
+    auditorSubject = parsed.subject;
+    const source = typeof parsed.sourceRun === "string" ? parsed.sourceRun.trim() : "";
+    if (source === "") {
+      presentStructuralRejection(
+        new CliUsageError("auditor --source-run requires a run locator"),
+        io,
+      );
+      return { exitCode: 2 };
+    }
+    try {
+      const { resolveNotarySourceRunLocator } = await import("../notary-source-run.ts");
+      const resolved = await resolveNotarySourceRunLocator({
+        projectRoot,
+        sourceRun: source,
+        home: env.home,
+      });
+      auditorSourceRun = resolved.runDirectory;
+      auditorSourceTicket = await readRunTicketNumber(resolved.runDirectory);
+    } catch (error) {
+      presentStructuralRejection(
+        new CliUsageError(error instanceof Error ? error.message : String(error)),
+        io,
+      );
+      return { exitCode: 2 };
+    }
+  } else {
+    reusedTicketNumber = await resolveKnownTicketNumber({
+      instruction: parsed.instruction,
+      projectRoot,
+      home: env.home,
+    });
+  }
+
+  const summons: SameTicketSummonsMaterials = {
+    instruction: parsed.instruction,
+    instructionEmpty: parsed.instruction.trim() === "",
+    attachmentPaths: parsed.attachmentPaths,
+  };
+  if (role === "auditor" && auditorSourceRun !== undefined) {
+    const resumed = await withAuditorSoulEnv({
+      ...(auditorSubject === undefined ? {} : { subject: auditorSubject }),
+      sourceRunDirectory: auditorSourceRun,
+      run: () =>
+        tryResumeSameTicketSeatRun({
+          home: env.home,
+          projectRoot,
+          role,
+          parentRunPath: auditorSourceRun,
+          freshSummons: env.freshSummons,
+          summons,
+          resume: (runId, materials) =>
+            runPublicInstructionSeatResume(
+              { runId, ...(materials === undefined ? {} : { summons: materials }) },
+              env,
+              io,
+            ),
+        }),
+    });
+    if (resumed !== undefined) return resumed;
+  } else if (reusedTicketNumber !== undefined) {
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role,
+      ticketNumber: reusedTicketNumber,
+      freshSummons: env.freshSummons,
+      summons,
+      resume: (runId, materials) =>
+        runPublicInstructionSeatResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+  }
+
   let admitted: AdmittedInstructionSeatInvocation;
   try {
-    const parsed = parseArgv(argv);
-    const options = {
+    admitted = await admitInstructionSeat(role, {
       home: env.home,
       principalAuthority: env.principalAuthority,
       cwd: env.cwd,
@@ -127,11 +349,7 @@ export async function runPublicInstructionSeat(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    };
-    admitted =
-      role === "gatekeeper"
-        ? await admitGatekeeperInvocation(options)
-        : await admitNavigatorInvocation(options);
+    });
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -140,36 +358,59 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  await markRunAdmitted(admitted, env.principalAuthority);
+  if (role === "auditor" && auditorSourceRun !== undefined) {
+    await persistAdmittedSourceRunPath(admitted, auditorSourceRun);
+  }
 
-  const turnRequest = buildInstructionSeatTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+  return await withAuditorSoulEnv({
+    ...(auditorSubject === undefined ? {} : { subject: auditorSubject }),
+    ...(auditorSourceRun === undefined
       ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildInstructionTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
-    },
-  });
+      : { sourceRunDirectory: auditorSourceRun }),
+    run: async () => {
+      await markRunAdmitted(admitted, env.principalAuthority);
 
-  return await runPostAdmissionOneShot({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
-    adapters: instructionSeatAdapters(),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+      const turnRequest = buildInstructionSeatTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(env.correlationId === undefined || env.correlationId.trim() === ""
+          ? {}
+          : { correlationId: env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: buildInstructionTransportPrompt(
+            admitted,
+            engineSessionMaterialFromOptions({
+              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              packageRoot: env.packageRoot,
+            }),
+          ),
+        },
+      });
+
+      return await runPostAdmissionOneShot({
+        admitted,
+        env,
+        io,
+        request: turnRequest,
+        adapters: instructionSeatAdapters({
+          beforeDispatch: async (admittedSeat) => {
+            // #635/#709: ticket bind inside controlled-failure boundary.
+            // Auditor inherits source-run ticket (notary face).
+            // Other seats: reuse known ticket identity.
+            if (auditorSourceTicket !== undefined) {
+              await bindAdmittedTicketNumber(admittedSeat, auditorSourceTicket);
+            } else {
+              await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
+            }
+          },
+        }),
+        ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+      });
+    },
   });
 }

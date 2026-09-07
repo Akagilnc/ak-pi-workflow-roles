@@ -23,6 +23,7 @@ import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-s
 import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
+import { loadAuditorSoulFromSubjectInput } from "../auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import { createComposedAcpRoleTurnHost } from "./role-envelope.ts";
@@ -61,9 +62,11 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
+    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
     loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
+    loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),

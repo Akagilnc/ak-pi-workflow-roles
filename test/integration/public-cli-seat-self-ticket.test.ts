@@ -1,7 +1,9 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #635 — seat self-ticket from public CLI true entry (no --ticket / no frontmatter).
- * Asserts typed ticketNumber on admitted-request.json + invocation.json only.
+ * #635 / #709 — seat ticket identity from the public CLI true entry
+ * (no --ticket / no frontmatter / no seat model call): the number is reused from
+ * records this book already holds. Asserts typed ticketNumber on
+ * admitted-request.json + invocation.json only.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -32,16 +34,14 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
-import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
   CANONICAL_SOURCE_ROLE,
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -110,9 +110,8 @@ async function withSeatProject(
         582: { body: "issue 582 body", comments: [] },
       },
     });
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
+    // #709: #582 is a ticket this book already records — seats reuse that identity.
+    ensureTicketProvenanceVolume(582, project, home);
     await run({ home, project });
   });
 }
@@ -143,6 +142,10 @@ function baseEnv(input: {
     sessionAppender: appendPiSessionCustomEntry,
     roleTurnHost: host,
     createRunId: () => input.runId,
+    // #742: body-path tests stub the court diarist station (no real nested seat).
+    ...(input.role === "countersign"
+      ? { runCourtDiaristStation: async () => undefined }
+      : {}),
   };
 }
 
@@ -160,7 +163,7 @@ async function assertDurableTicket(
   assert.equal(invocation.ticketNumber, expected);
 }
 
-test("public coder without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public coder without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
@@ -181,7 +184,7 @@ test("public coder without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public fixer without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public fixer without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicFixer(
       ["apply", "Repair the regression on ticket #582."],
@@ -202,7 +205,7 @@ test("public fixer without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public judge without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public judge without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicJudge(
       ["Adjudicate whether ticket #582 may proceed."],
@@ -223,7 +226,7 @@ test("public judge without --ticket: LLM bind writes ticketNumber on both durabl
   });
 });
 
-test("public countersign without --ticket: LLM bind writes ticketNumber on both durable pages", async () => {
+test("public countersign without --ticket: reused ticket writes ticketNumber on both durable pages", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -312,6 +315,25 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
+    // #742: bound notary materials carry the ticket's 起居录 paths (feature observation).
+    const { resolveTicketProvenanceVolume } = await import(
+      "../../src/ticket-provenance.ts"
+    );
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    await mkdir(volume.volumeDir, { recursive: true });
+    await writeFile(volume.humanViewFile, "# 起居录 · #582\n", "utf8");
+    await writeFile(volume.recordFile, "{}\n", "utf8");
+
+    let turnPrompt = "";
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -321,15 +343,12 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: "notary",
-            toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
-          }),
-        }),
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            turnPrompt = request.continuation.prompt;
+            return baseHost.executeTurn(request);
+          },
+        },
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
@@ -338,5 +357,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
+    assert.ok(turnPrompt.includes(volume.humanViewFile));
+    assert.ok(turnPrompt.includes(volume.recordFile));
   });
 });

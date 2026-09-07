@@ -175,7 +175,15 @@ export type ComplianceDecisionHandlers<T> = {
     facts: Extract<ComplianceDecision, { status: "no-receipt" }>,
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
-  revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
+  /**
+   * Parent work stands with the auditor's raw reply (#757).
+   * Not a shape-unreadable judgment — the reply is what the auditor said.
+   */
+  received?: (
+    facts: Extract<ComplianceDecision, { status: "received" }>,
+    usageProjection: { usage?: Usage },
+  ) => T | PromiseLike<T>;
+  bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
 };
 
@@ -201,8 +209,17 @@ export async function disposeComplianceDecision<T>(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
-    case "revise":
-      return await handlers.revise(decision.violations);
+    case "received":
+      // Parent candidate stands; raw auditor reply rides beside — not judged unreadable (#757).
+      if (handlers.received === undefined) {
+        throw new Error("Compliance received projection handler is unavailable");
+      }
+      return await handlers.received(
+        decision,
+        decision.usage === undefined ? {} : { usage: decision.usage },
+      );
+    case "bounce":
+      return await handlers.bounce(decision.violations);
     case "escalate":
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),

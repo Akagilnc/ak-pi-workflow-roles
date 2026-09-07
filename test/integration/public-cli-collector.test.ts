@@ -71,9 +71,8 @@ test("typed groups travel from real output settlement into the report artifact",
           }),
     });
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, [{
-      identity: { userType: "Bot", userId: 199175422 }, attendance: true, materialCount: 1, findingCount: 1,
-    }]);
+    // #757: groups pass through in full — no materialCount/findingCount-only projection.
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, receipt().groups);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
     const artifact = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: { groups: unknown[] } };

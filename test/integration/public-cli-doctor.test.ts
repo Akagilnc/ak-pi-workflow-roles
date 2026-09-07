@@ -370,8 +370,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(completed.terminal!.roleOutcome.status, "completed");
-    assert.equal(completed.terminal!.roleOutcome.decisiveFacts.issueNumber, 40);
-    assert.equal(completed.terminal!.roleOutcome.decisiveFacts.findingsCount, 1);
+    // #757: full receipt passes through — issueNumber stays under case, not lifted.
+    const completedCase = completed.terminal!.roleOutcome.decisiveFacts.case as { issueNumber?: number } | undefined;
+    assert.equal(completedCase?.issueNumber, 40);
+    assert.ok(Array.isArray(completed.terminal!.roleOutcome.decisiveFacts.findings));
+    assert.equal((completed.terminal!.roleOutcome.decisiveFacts.findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")

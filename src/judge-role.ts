@@ -127,7 +127,14 @@ export function createJudgeRoleRuntime(
                   terminate: true as const,
                   ...usageProjection,
                 }),
-                revise: (violations) => {
+                // #757: parent stands with auditor raw reply — no unreadable judgment.
+                received: (auditReceived, usageProjection) => ({
+                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+                  details: { ...acceptedDetails, audit: auditReceived.reply },
+                  terminate: true as const,
+                  ...usageProjection,
+                }),
+                bounce: (violations) => {
                   throw new Error(
                     `大理寺回执违 soul：${violations.join("; ")}`,
                   );
