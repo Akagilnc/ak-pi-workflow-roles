@@ -7,6 +7,7 @@ import {
 } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
@@ -147,8 +148,8 @@ function failureReason(error: unknown): string {
 function asStringArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   // Officer findings may be structured objects (category/law/evidence); the
-  // parent role must see them verbatim, not an empty list (#750 evidence).
-  return value.map((item) => (typeof item === "string" ? item : JSON.stringify(item)));
+  // parent role must see them verbatim, not an empty list (#750 / #775).
+  return value.map(readableGateItem);
 }
 
 /** Serializable stand-in when the child tool call had no arguments object. */
