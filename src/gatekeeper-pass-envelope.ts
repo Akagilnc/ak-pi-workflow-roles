@@ -3,12 +3,13 @@
  * Owns officer-pointer book + host abort/non-pass faces + review queue loop.
  * Role modules only project via projectGatekeeperRun / runGatekeeper — no book, no catch.
  *
- * Queue guarantee only (#753 / #750):
+ * Queue guarantee only (#753 / #756 / #750):
  *   parent submit → summon officer → read conclusion field
  *   pass → accept end
  *   bounce | escalate → raw officer receipt as tool result back to parent
  *   not three-state → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
+ * Three pairs: countersign↔notary, judge↔auditor, worker↔inspector.
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -21,6 +22,7 @@ import {
   type GatekeeperPassHostActions,
   type GatekeeperResult,
   type GatekeeperSubject,
+  type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
@@ -32,7 +34,7 @@ import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
  */
 function bookDirectOfficerPointer(
   context: ExtensionContext | HostContext,
-  officer: "inspector" | "notary",
+  officer: GateOfficer,
   result: GatekeeperResult,
   summoned: PublicSummonResult,
 ): void {

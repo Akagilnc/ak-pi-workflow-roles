@@ -92,7 +92,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
   const oid = (ch: string) => ch.repeat(40);
   const base = {
     loadJudgeSoul: law,
-    auditSoulCompliance: async () => ({ status: "pass" as const }),
     activationClock: () => "2025-06-01T12:00:00.000Z",
     activationTraceWriter: () => {},
   };

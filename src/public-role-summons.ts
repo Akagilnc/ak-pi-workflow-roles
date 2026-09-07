@@ -384,9 +384,9 @@ export async function summonPublicRole(
   };
 }
 
-/** Gate officer summons: notary via --source-run; inspector via pointer instruction. */
+/** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
 export async function summonGateOfficer(options: {
-  readonly officer: "inspector" | "notary";
+  readonly officer: "inspector" | "notary" | "auditor";
   readonly sourceRunDirectory: string;
   readonly cwd: string;
   readonly home?: string;
@@ -395,8 +395,8 @@ export async function summonGateOfficer(options: {
   /** Parent cancellation for the nested officer activation (#675). */
   readonly signal?: AbortSignal;
   /**
-   * Plain-language re-ask when the prior officer reply was not three-state (#753).
-   * Both officers: reviewReask → same-ticket resume summons.instruction.
+   * Plain-language re-ask when the prior officer reply was not three-state (#753 / #756).
+   * All three officers: reviewReask → same-ticket resume summons.instruction.
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
@@ -407,29 +407,43 @@ export async function summonGateOfficer(options: {
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
-  if (options.officer === "notary") {
-    // #753: reask rides summonPublicRole → runPublicNotary summons.instruction
-    // (same resume seam as ordinary same-parent re-summons — no parallel stack).
-    return summonPublicRole({
-      role: "notary",
-      argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
-      cwd: options.cwd,
-      ...(home === undefined ? {} : { home }),
-      ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
-      ...(options.io === undefined ? {} : { io: options.io }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
-    });
-  }
-  // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
-  return summonPublicRole({
-    role: "inspector",
-    argv: [`卷宗指针：${options.sourceRunDirectory}`],
+  const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
     ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
+  } as const;
+  if (options.officer === "notary") {
+    // #753: reask rides summonPublicRole → runPublicNotary summons.instruction
+    // (same resume seam as ordinary same-parent re-summons — no parallel stack).
+    return summonPublicRole({
+      role: "notary",
+      argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
+      ...common,
+    });
+  }
+  if (options.officer === "auditor") {
+    // #756: judge compliance path — same queue law as notary/inspector.
+    // Subject is judge (doctor compliance stays on the disposeCompliance path).
+    const { AUDITOR_DOSSIER_PROMPT } = await import("./compliance-transport.ts");
+    return summonPublicRole({
+      role: "auditor",
+      argv: [
+        "--subject",
+        "judge",
+        "--source-run",
+        options.sourceRunDirectory,
+        AUDITOR_DOSSIER_PROMPT,
+      ],
+      ...common,
+    });
+  }
+  // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
+  return summonPublicRole({
+    role: "inspector",
+    argv: [`卷宗指针：${options.sourceRunDirectory}`],
+    ...common,
   });
 }

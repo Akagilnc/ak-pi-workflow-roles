@@ -232,7 +232,7 @@ export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as c
 export type DirectOfficerRunPointer = {
   readonly version: 1;
   readonly kind: typeof DIRECT_OFFICER_RUN_POINTER_KIND;
-  readonly officer: "inspector" | "notary";
+  readonly officer: "inspector" | "notary" | "auditor";
   /** Absolute path to the officer session.jsonl 正本. */
   readonly sessionFile: string;
   /** Officer run directory when known. */
@@ -246,7 +246,7 @@ export type DirectOfficerRunPointer = {
  */
 export function bookDirectOfficerRunPointer(options: {
   readonly parentSessionFile: string;
-  readonly officer: "inspector" | "notary";
+  readonly officer: "inspector" | "notary" | "auditor";
   readonly sessionFile: string;
   readonly runDirectory?: string;
 }): DirectOfficerRunPointer {

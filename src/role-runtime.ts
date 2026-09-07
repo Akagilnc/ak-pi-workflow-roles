@@ -113,7 +113,6 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, p
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
-  type SoulAuditResult,
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
@@ -361,7 +360,8 @@ export {
   createGatekeeperOutputTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
-export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export { gateOfficerForSubject } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
@@ -374,7 +374,6 @@ export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
-  type SoulAuditResult,
 } from "./judge-role.ts";
 export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
@@ -649,9 +648,6 @@ export type RoleRuntimeDependencies = {
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  auditSoulCompliance(
-    options: { context: HostContext; signal?: AbortSignal },
-  ): Promise<SoulAuditResult>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -1415,7 +1411,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: dependencies.loadJudgeSoul,
-        auditSoulCompliance: dependencies.auditSoulCompliance,
       },
       hostActions,
     );
