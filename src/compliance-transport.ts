@@ -23,7 +23,7 @@ export type ComplianceUnreadable = {
 };
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
+  | { status: "bounce"; violations: readonly unknown[]; usage?: Usage }
   | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
   | ComplianceNoReceipt
   | ComplianceUnreadable;
@@ -58,7 +58,7 @@ export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
-export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | revise | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
+export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
@@ -90,7 +90,7 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
   if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "revise") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
+  if (status === "bounce") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
     return {
       status,
@@ -180,7 +180,7 @@ function unreadableDecision(
 
 /**
  * Project a public auditor terminal onto the parent compliance decision.
- * Lawful pass/revise/escalate/no-receipt flow through.
+ * Lawful pass/bounce/escalate/no-receipt flow through.
  * Shape-unreadable keeps original candidate + typed observation (ADR 0055 / §0) —
  * never forged pass, never parent abort. Real provider/engine/disk failures stay loud.
  * Accepted audits always carry real session usage when present (#675 metering).

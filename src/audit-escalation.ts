@@ -183,7 +183,7 @@ export type ComplianceDecisionHandlers<T> = {
     facts: Extract<ComplianceDecision, { status: "unreadable" }>,
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
-  revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
+  bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
 };
 
@@ -218,8 +218,8 @@ export async function disposeComplianceDecision<T>(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
-    case "revise":
-      return await handlers.revise(decision.violations);
+    case "bounce":
+      return await handlers.bounce(decision.violations);
     case "escalate":
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),
