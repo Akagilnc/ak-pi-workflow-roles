@@ -4,7 +4,7 @@ import {
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
 import { isAuditEscalationProjection, projectAuditEscalation } from "./audit-escalation.ts";
-import { GatekeeperEscalationError } from "./gatekeeper-role.ts";
+
 
 import {
   acceptedFacts,
@@ -385,14 +385,9 @@ export function createSubmissionLedgerHost(
             );
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (error instanceof GatekeeperEscalationError) {
-              const decision = error.gatekeeper as unknown as Record<string, unknown>;
-              result = projectOfficerEscalation(
-                error.gatekeeper.officer,
-                decision,
-                params as Record<string, unknown>,
-              );
-            } else if (isCorrectableExecuteError(error)) {
+            // #753: gate no longer throws GatekeeperEscalationError to select parent
+            // next-step. Officer bounce|escalate returns as correctable with raw receipt.
+            if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
                 attemptId,

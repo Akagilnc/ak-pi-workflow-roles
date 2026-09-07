@@ -361,6 +361,7 @@ export {
   createGatekeeperOutputTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
+import { GatekeeperDecisionError } from "./gatekeeper-role.ts";
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 
 export {
@@ -992,6 +993,16 @@ function loadFrozenDiaristCatalog(
   return loadDiaristSourceCatalog(raw);
 }
 
+/** Countersign status words the queue reads (#753). */
+const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
+
+/**
+ * Plain-language re-ask when countersignStatus is not a known queue word.
+ * Back to countersign itself — notary is not summoned (#753).
+ */
+const COUNTERSIGN_STATUS_REASK =
+  "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
+
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
@@ -999,9 +1010,34 @@ export function createCountersignRoleRuntime(
 ) {
   // Notary inner gate difference only — lifecycle stays on the shared envelope.
   // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
+  // #753 queue: read countersignStatus only — escalate skips gate (thrown to caller);
+  // unreadable status returns to countersign; else notary inner gate.
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
-      ? async ({ toolCallId, signal, ctx }) => {
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const record =
+            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+              ? (parameters as Record<string, unknown>)
+              : undefined;
+          const status =
+            record !== undefined && typeof record.countersignStatus === "string"
+              ? record.countersignStatus
+              : undefined;
+          if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
+            // Parent status unreadable → back to countersign; do not summon notary.
+            const nonPass = {
+              status: "bounce" as const,
+              officer: "notary" as const,
+              receipt: parameters === undefined ? { missing: "arguments" as const } : parameters,
+            };
+            // Plain re-ask is the model-visible tool result; receipt stays on details.
+            hostActions.bindSubmissionNonPass(toolCallId, nonPass);
+            throw new GatekeeperDecisionError(nonPass, COUNTERSIGN_STATUS_REASK);
+          }
+          if (status === "escalate") {
+            // Parent escalate → throw to caller as-is; notary does not attend (#753).
+            return undefined;
+          }
           await roleHost.requireGatekeeperPass!({
             context: ctx,
             subject: { kind: "countersign_verdict" },
