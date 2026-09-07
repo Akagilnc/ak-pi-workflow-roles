@@ -1,15 +1,14 @@
 /**
- * 给事中受理链路随案递送本票起居录的中立指针段（#742；
+ * 系统随案递送本票起居录的中立指针段（ADR 0081 `automatic-case-material`；
+ * #709 公共入口通用递送与 #742 给事中受理链路同源；
  * 指针输入沿 ADR 0079 `summons-pointer-input`，不把卷宗正文塞进提示词）。
  * 只读已有案卷：不刷新、不生成、不校验内容、不新增拒收或停工条件。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
- * 本模块只服务给事中受理链路（票庭本体、内闸符宝郎）。
- * 所有衙门随案挂载归 #709，不在此扩展为公共入口通用递送。
+ * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口追加本段。
  */
 import { stat } from "node:fs/promises";
 
-import type { RoleTurnContinuation, RoleTurnRequest } from "../host-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only). */
@@ -52,39 +51,4 @@ export async function projectCaseDossierPointerSection(input: {
     `人读视图：${await describeDossierFile(volume.humanViewFile)}`,
     `记录卷宗：${await describeDossierFile(volume.recordFile)}`,
   ].join("\n");
-}
-
-/** Append one system section to a continuation prompt, keeping its kind. */
-export function appendContinuationSection(
-  continuation: RoleTurnContinuation,
-  section: string,
-): RoleTurnContinuation {
-  const prompt = `${continuation.prompt}\n\n${section}`;
-  return continuation.kind === "initial"
-    ? { kind: "initial", prompt }
-    : { kind: "resume", prompt };
-}
-
-/**
- * Mutate a turn request shell so this turn's materials carry the bound ticket's
- * 起居录 pointer (Object.assign shell — same pattern as ticket re-projection).
- */
-export async function deliverCaseDossierPointerToTurn(input: {
-  readonly ticketNumber: number | undefined;
-  readonly projectRoot: string;
-  readonly home: string;
-  readonly turnRequest: RoleTurnRequest;
-}): Promise<void> {
-  const section = await projectCaseDossierPointerSection({
-    ticketNumber: input.ticketNumber,
-    projectRoot: input.projectRoot,
-    home: input.home,
-  });
-  if (section === undefined) return;
-  Object.assign(input.turnRequest, {
-    continuation: appendContinuationSection(
-      input.turnRequest.continuation,
-      section,
-    ),
-  });
 }

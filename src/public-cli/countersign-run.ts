@@ -2,18 +2,18 @@
  * Public Countersign Role run: admit ticket materials → court-pipeline prior
  * station (起居郎) → shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075 / #742). #599: manual resume continues the exact
- * session. Unbound admission resolves its ticket via the shared seat LLM bind
- * (#635) before the diary station.
+ * session. Unbound admission reuses a known ticket identity (#709) before the
+ * diary station.
  *
  * Court admission auto-runs 起居郎 first, then the countersign body — caller
  * adds no diarist argv (L66672). This is the admission pipeline's prior station,
  * not the countersign role calling 起居郎 (L66958 / L66966). Who may call 起居郎
  * and in what order is not written into law (ADR 0075 `no-call-rule`); the
  * present admission effect is what this seat currently does (L108315 目前是这样用的).
+ * 起居录 path delivery is owned once by post-admission (#709 / ADR 0081).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
-import { deliverCaseDossierPointerToTurn } from "./case-dossier-delivery.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
@@ -23,9 +23,8 @@ import {
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
 import {
-  applyInstructionTicketProbe,
-  probeInstructionTicket,
-  ticketNumberFromProbe,
+  bindReusedTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -93,6 +92,7 @@ export function buildCountersignTurnRequest(
  *
  * Invokes the public 起居郎 seat so the book carries an `@diarist` run ahead of
  * the countersign body. Station failure propagates (失败诚实 — no wash).
+ * Path delivery onto materials is not this station's job — post-admission owns it.
  */
 export async function runCountersignCourtDiaristStation(
   admitted: AdmittedCountersignInvocation,
@@ -152,22 +152,6 @@ export async function runCountersignCourtDiaristStation(
   }
 }
 
-/** Diarist station → 起居录 path onto this turn's materials. */
-async function prepareCountersignCourtTurn(
-  admitted: AdmittedCountersignInvocation,
-  env: CountersignRunEnv,
-  io: CliIo,
-  turnRequest: RoleTurnRequest,
-): Promise<void> {
-  await runCountersignCourtDiaristStation(admitted, env, io);
-  await deliverCaseDossierPointerToTurn({
-    ticketNumber: admitted.ticketNumber,
-    projectRoot: admitted.projectRoot,
-    home: env.home,
-    turnRequest,
-  });
-}
-
 export async function runPublicCountersign(
   argv: readonly string[],
   env: CountersignRunEnv,
@@ -190,17 +174,15 @@ export async function runPublicCountersign(
   }
 
   // #637: same ticket → resume prior countersign run with this summons' materials.
-  // Probe captures DiaristTicketResolutionError so admit+beforeDispatch can settle
-  // controlled failure (bare pre-admit throw skips terminal settlement).
+  // #709: identity is reused from records this book already holds — no seat model call.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
-  const ticketProbe = await probeInstructionTicket(
-    parsed.instruction,
+  const reusedTicketNumber = await resolveKnownTicketNumber({
+    instruction: parsed.instruction,
     projectRoot,
-    env,
-  );
-  const probedTicketNumber = ticketNumberFromProbe(ticketProbe);
-  if (probedTicketNumber !== undefined) {
+    home: env.home,
+  });
+  if (reusedTicketNumber !== undefined) {
     const summons: SameTicketSummonsMaterials = {
       instruction: parsed.instruction,
       instructionEmpty: parsed.instruction.trim() === "",
@@ -210,7 +192,7 @@ export async function runPublicCountersign(
       home: env.home,
       projectRoot,
       role: "countersign",
-      ticketNumber: probedTicketNumber,
+      ticketNumber: reusedTicketNumber,
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) =>
@@ -267,7 +249,7 @@ export async function runPublicCountersign(
       ),
     },
   };
-  // Mutable shell: ticket bind + dossier pointer re-project before executeTurn.
+  // Mutable shell: ticket bind re-projects activation before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
@@ -277,14 +259,15 @@ export async function runPublicCountersign(
     request: turnRequest,
     adapters: countersignAdapters({
       beforeDispatch: async (admittedSeat) => {
-        // #635/#637: apply pre-admit probe inside controlled-failure boundary.
-        await applyInstructionTicketProbe(admittedSeat, ticketProbe);
+        // #635/#709: bind the reused identity inside the controlled-failure boundary.
+        await bindReusedTicketNumber(admittedSeat, reusedTicketNumber);
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admittedSeat, turnProjection),
         );
-        // Court station after bind so the diarist round and pointer see the ticket.
-        await prepareCountersignCourtTurn(admittedSeat, env, io, turnRequest);
+        // Court station after bind so the diarist round sees the ticket.
+        // Dossier pointer delivery rides post-admission after this hook (#709).
+        await runCountersignCourtDiaristStation(admittedSeat, env, io);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
@@ -316,6 +299,7 @@ function countersignAdapters(options?: {
  * station first (ADR 0075 `refresh-every-court`). Same-ticket summons deliver this
  * turn's instruction + frozen attachments on the resume prompt; manual resume
  * keeps package-envelope / caller-message semantics and birth attachments.
+ * 起居录 path delivery remains post-admission's single mount (#709).
  */
 export async function runPublicCountersignResume(
   request: PublicResumeRequest,
@@ -326,8 +310,6 @@ export async function runPublicCountersignResume(
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
-  // Mutable shell captured so beforeDispatch can append the dossier pointer.
-  let turnRequest: RoleTurnRequest | undefined;
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -343,7 +325,7 @@ export async function runPublicCountersignResume(
         admitted.runDirectory,
         effective.summons,
       );
-      turnRequest = buildCountersignTurnRequest(
+      return buildCountersignTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
           admitted,
@@ -352,14 +334,10 @@ export async function runPublicCountersignResume(
           summonsPrepared,
         ),
       );
-      return turnRequest;
     },
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
-        if (turnRequest === undefined) {
-          throw new Error("countersign resume beforeDispatch missing turnRequest shell");
-        }
-        await prepareCountersignCourtTurn(admitted, env, io, turnRequest);
+        await runCountersignCourtDiaristStation(admitted, env, io);
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
