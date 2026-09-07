@@ -1150,6 +1150,9 @@ export async function collectBookRunTicketNumbers(input: {
   }
   const known = new Set<number>();
   for (const entry of entries) {
+    // runs/ also holds non-run files (institutional-resolution.json, Finder
+    // .DS_Store); only `<runId>@<role>` directories are runs (#769).
+    if (!entry.includes("@")) continue;
     const ticketNumber = await readRunTicketNumber(join(runsDir, entry));
     if (ticketNumber !== undefined) known.add(ticketNumber);
   }
