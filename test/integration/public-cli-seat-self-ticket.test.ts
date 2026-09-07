@@ -1,9 +1,10 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #635 / #709 — seat ticket identity from the public CLI true entry
+ * #635 / #709 / #771 — seat ticket identity from the public CLI true entry
  * (no --ticket / no frontmatter / no seat model call): the number is reused from
- * records this book already holds. Asserts typed ticketNumber on
- * admitted-request.json + invocation.json only.
+ * records this book already holds (起居录 volume typed identity / retained runs)
+ * when that ticket's complete decimal appears in the summons. Asserts typed
+ * ticketNumber on admitted-request.json + invocation.json only.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

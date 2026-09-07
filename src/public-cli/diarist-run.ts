@@ -25,7 +25,7 @@ import {
 } from "./invocation.ts";
 import {
   bindReusedTicketNumber,
-  resolveDiaristSummonsTicketNumber,
+  resolveKnownTicketNumber,
   tryResumeSameTicketSeatRun,
 } from "./seat-ticket-binding.ts";
 import {
@@ -97,9 +97,12 @@ export function buildDiaristTurnRequest(
 }
 
 /**
- * Mechanical source enumeration for a bound summons: establish the per-ticket
- * volume, freeze this turn's candidate catalog into the run dossier.
- * A true-unbound summons has no ticket, so no diary is minted — undefined.
+ * Mechanical source enumeration into a frozen catalog for this turn.
+ * Bound summons: establish the per-ticket volume and load the issue face.
+ * First-summons (unbound): freeze session candidates + summons text so the LLM
+ * turn can assert ticketNumber; accept verifies and mints the volume (ADR 0075).
+ * True-unbound is decided by the LLM assertion (null/absent ticketNumber), not
+ * by skipping the freeze here.
  *
  * A run that has not settled yet (crash-resume, open-court continuation) keeps
  * the catalog its candidateIndexes were minted against — re-enumerating there
@@ -109,23 +112,30 @@ export function buildDiaristTurnRequest(
 async function freezeDiaristSourceCatalog(
   admitted: AdmittedDiaristInvocation,
   env: Pick<DiaristRunEnv, "cwd" | "home">,
-): Promise<string | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
+): Promise<string> {
   const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
   if (existsSync(path)) {
     const identity = await readRoleRunIdentity(admitted.runDirectory);
     if (identity !== undefined && identity.state !== "terminal") return path;
   }
-  const issueFace = await loadDiaristIssueFace({
-    ticketNumber: admitted.ticketNumber,
-    projectRoot: admitted.projectRoot,
-    home: env.home,
-  });
+  const issueFace =
+    admitted.ticketNumber === undefined
+      ? undefined
+      : await loadDiaristIssueFace({
+          ticketNumber: admitted.ticketNumber,
+          projectRoot: admitted.projectRoot,
+          home: env.home,
+        });
   const catalog = await prepareDiaristSourceCatalog({
-    ticketNumber: admitted.ticketNumber,
+    ...(admitted.ticketNumber === undefined
+      ? {}
+      : { ticketNumber: admitted.ticketNumber }),
+    instruction: admitted.instruction,
+    runDirectory: admitted.runDirectory,
+    projectRoot: admitted.projectRoot,
     cwd: admitted.projectRoot,
     home: env.home,
-    issueFace,
+    ...(issueFace === undefined ? {} : { issueFace }),
     sessionCwds: [admitted.projectRoot, env.cwd],
   });
   await writeFile(path, serializeDiaristSourceCatalog(catalog), "utf8");
@@ -169,10 +179,12 @@ export async function runPublicDiarist(
   }
 
   // #637: same ticket → resume this seat's prior run with this summons' materials.
-  // #709 / #771 / ADR 0081: first `#N` in the dispatch is the court target
-  // (neighbors/PRs/rN later in the prose do not unbind) — no seat recognizer call.
+  // #709 / #771 / ADR 0075: only reuse a book-known ticket whose complete decimal
+  // appears in the summons. First summons stays unbound here — the LLM turn
+  // asserts ticketNumber; mechanical verify binds on accept. No prose harvest,
+  // no first-#N position ruling.
   const projectRoot = parsed.project ?? env.cwd;
-  const reusedTicketNumber = await resolveDiaristSummonsTicketNumber({
+  const reusedTicketNumber = await resolveKnownTicketNumber({
     instruction: parsed.instruction,
     projectRoot,
     home: env.home,
@@ -263,6 +275,29 @@ export async function runPublicDiarist(
       },
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  }).then(async (result) => {
+    // Accept may have bound ticket onto durable pages after LLM assertion.
+    // Mirror into the in-memory admitted object for the caller-visible return.
+    if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
+      const facts = (
+        result.terminal?.roleOutcome as
+          | { decisiveFacts?: { ticketNumber?: unknown; sitian?: { ticketNumber?: unknown } } }
+          | undefined
+      )?.decisiveFacts;
+      const raw =
+        typeof facts?.ticketNumber === "number"
+          ? facts.ticketNumber
+          : typeof facts?.sitian?.ticketNumber === "number"
+            ? facts.sitian.ticketNumber
+            : undefined;
+      if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+        (admitted as { ticketNumber?: number }).ticketNumber = raw;
+        if (result.admitted.ticketNumber === undefined) {
+          (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+        }
+      }
+    }
+    return result;
   });
 }
 
