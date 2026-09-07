@@ -19,7 +19,6 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
@@ -31,6 +30,7 @@ import {
   runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
+import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -417,7 +417,7 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
-function passingOfficerSummon(officer: "inspector" | "notary"): PublicSummonResult {
+function passingOfficerSummon(officer: "inspector" | "notary" | "auditor"): PublicSummonResult {
   return {
     exitCode: 0,
     terminal: {
@@ -466,7 +466,7 @@ async function workerCompletionGatekeeperHarness(options: {
   execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
   toolName: string;
   output: unknown;
-  officer?: "inspector" | "notary";
+  officer?: "inspector" | "notary" | "auditor";
   officerUnusableSubmission?: Record<string, unknown>;
   passingRuns?: number;
 }) {
@@ -591,7 +591,9 @@ async function workerCompletionGatekeeperHarness(options: {
             context: this.context(id, toolName),
             subject: officer === "inspector"
               ? { kind: "worker_completion" }
-              : { kind: "judge_draft" },
+              : officer === "auditor"
+                ? { kind: "judge_compliance" }
+                : { kind: "judge_draft" },
             async summonOfficer() {
               return {
                 exitCode: 0,
@@ -772,9 +774,6 @@ function activationCtx(home: string, extras: Record<string, unknown> = {}): Exte
 }
 
 async function startJudge(
-  auditSoulCompliance: Parameters<
-    typeof createRoleRuntimeExtension
-  >[0]["auditSoulCompliance"],
   transcriptFromContext: (ctx: ExtensionContext) => string = () =>
     "review evidence and adjudication",
 ) {
@@ -782,7 +781,6 @@ async function startJudge(
     const harness = extensionHarness("judge");
     installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-      auditSoulCompliance,
     }, { transcriptFromContext });
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -799,7 +797,6 @@ test("stable factory registers the complete typed role flag set and stays inert 
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
   assert.deepEqual(new Set(harness.flags.keys()), new Set([
@@ -862,7 +859,6 @@ test("after_provider_response production handler writes typed 429 into resumable
     const harness = extensionHarness(undefined);
     installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
       loadJudgeSoul: async () => "judge",
-      auditSoulCompliance: async () => ({ status: "pass" }),
     });
 
     const handler = harness.handlers.get("after_provider_response");
@@ -970,7 +966,6 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
     loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
   await assert.rejects(
@@ -996,7 +991,6 @@ test("focused Judge controller registers output without narrowing host tools", a
     ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host),
     {
       loadSoul: async () => "  JUDGE LAW  ",
-      auditSoulCompliance: async () => ({ status: "pass" }),
     },
     testHostActions(),
   );
@@ -1097,7 +1091,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           piHostAdapter.host,
           {
             loadSoul: async () => "judge",
-            auditSoulCompliance: async () => ({ status: "pass", usage }),
           },
           testHostActions(),
         );
@@ -1174,10 +1167,9 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     );
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
-    assert.deepEqual(
-      result.usage,
-      fixture.role === "judge" ? usage : undefined,
-    );
+    // #756: judge no longer projects auditor usage onto the parent receipt —
+    // nested officer meters live on the officer session; parent accepts as-is.
+    assert.equal(result.usage, undefined);
   }
 });
 
@@ -1197,11 +1189,7 @@ test("production audit transcript preserves the assignment received by the judge
 });
 
 test("judge role injects its soul and accepts a soul-compliant verdict", async () => {
-  let auditCalls = 0;
-  const { harness, tool } = await startJudge(async () => {
-    auditCalls += 1;
-    return { status: "pass" };
-  });
+  const { harness, tool } = await startJudge();
 
   assert.ok(harness.flags.has("ak-role"));
   const promptResult = await harness.handlers.get("before_agent_start")?.(
@@ -1211,6 +1199,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.match((promptResult as { systemPrompt: string }).systemPrompt, /JUDGE LAW/);
 
   const verdict: JudgeVerdict = { judgeStatus: "converged" };
+  // withPassingGatekeeper: notary (judge_draft) + auditor (judge_compliance) both pass.
   const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }]));
   const { sealed, pending } = await acceptThroughTypedRoundClosure({
     handlers: harness.handlers,
@@ -1221,55 +1210,135 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     context,
   });
 
-  // Zero hand-delivery: auditor is invoked with context only (no projected materials).
-  assert.equal(auditCalls, 1);
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, verdict);
 });
 
-test("judge role returns bounce as an ordinary errored tool result without aborting", async () => {
-  const { tool } = await startJudge(async () => ({
-    status: "bounce",
-    violations: ["No authority clause was applied", "Tests were not adjudicated"],
-  }));
-  const verdict = { judgeStatus: "converged" };
-  let abortCalls = 0;
+test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", async () => {
+  // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
+  const harness = extensionHarness("judge");
+  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+  armGateSummonOnHost(piHostAdapter.host);
+  let summonCount = 0;
+  defaultGateSummon = async (officer) => {
+    summonCount += 1;
+    return passingOfficerSummon(officer);
+  };
+  await createJudgeRoleRuntime(
+    piHostAdapter.host,
+    { loadSoul: async () => "JUDGE LAW" },
+    testHostActions(),
+  ).activate();
+  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
+  const escalate = {
+    judgeStatus: "escalate" as const,
+    decisionGate: { question: "which authority?", options: ["A", "B"] },
+    note: "need owner",
+  };
+  const result = await tool.execute(
+    "call-esc",
+    escalate,
+    undefined,
+    undefined,
+    toolCallContext([{ id: "call-esc", arguments: escalate }]),
+  );
+  assert.equal(summonCount, 0, "escalate must not summon notary or auditor");
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, escalate);
+});
 
+test("judge status unreadable returns to judge without officers (#756)", async () => {
+  const { tool } = await startJudge();
+  let summonCount = 0;
+  defaultGateSummon = async (officer) => {
+    summonCount += 1;
+    return passingOfficerSummon(officer);
+  };
   await assert.rejects(
     tool.execute(
-      "call-2",
-      verdict,
+      "call-bad",
+      { judgeStatus: "not-a-status", note: "typo" },
       undefined,
       undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
-        abortCalls += 1;
-      })),
+      await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: { judgeStatus: "not-a-status" } }])),
     ),
-    /No authority clause was applied; Tests were not adjudicated/,
+    (error: unknown) => {
+      assert.ok(error instanceof ParentQueueReaskError);
+      assert.match(error.message, /judgeStatus/);
+      return true;
+    },
+  );
+  assert.equal(summonCount, 0, "bad status must not summon officers");
+});
+
+test("judge role returns auditor bounce as raw receipt without aborting (#756)", async () => {
+  const { tool } = await startJudge();
+  const verdict = { judgeStatus: "converged" };
+  let abortCalls = 0;
+  const bounceReceipt = {
+    status: "bounce",
+    violations: ["No authority clause was applied", "Tests were not adjudicated"],
+  };
+  const ctx = await withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
+    abortCalls += 1;
+  }));
+  // Notary passes; auditor bounces with raw receipt — no violations rewrite (#756).
+  // Set after withPassingGatekeeper so it is not overwritten by the pass-all default.
+  defaultGateSummon = async (officer) => {
+    if (officer === "auditor") {
+      return {
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "auditor",
+            status: "bounce",
+            decisiveFacts: bounceReceipt,
+          },
+          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+          artifacts: [],
+          runId: "test-auditor-bounce",
+        },
+      };
+    }
+    return passingOfficerSummon(officer);
+  };
+
+  await assert.rejects(
+    tool.execute("call-2", verdict, undefined, undefined, ctx),
+    (error: unknown) => {
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "bounce");
+      if (error.result.status === "bounce") {
+        assert.equal(error.result.officer, "auditor");
+        assert.deepEqual(error.result.receipt, bounceReceipt);
+        assert.equal(error.message, JSON.stringify(bounceReceipt));
+      }
+      return true;
+    },
   );
   assert.equal(abortCalls, 0);
 });
 
-test("judge aborts the active operation before rethrowing audit infrastructure failures", async () => {
-  const { tool } = await startJudge(async () => {
-    throw new Error("provider unavailable");
-  });
+test("judge aborts the active operation before rethrowing auditor transport failures (#756)", async () => {
+  const { tool } = await startJudge();
   const verdict = { judgeStatus: "converged" };
   let abortCalls = 0;
+  const ctx = await withPassingGatekeeper(toolCallContext(
+    [{ id: "audit-failure", arguments: verdict }],
+    () => {
+      abortCalls += 1;
+    },
+  ));
+  defaultGateSummon = async (officer) => {
+    if (officer === "auditor") {
+      throw new Error("provider unavailable");
+    }
+    return passingOfficerSummon(officer);
+  };
 
   await assert.rejects(
-    tool.execute(
-      "audit-failure",
-      verdict,
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext(
-        [{ id: "audit-failure", arguments: verdict }],
-        () => {
-          abortCalls += 1;
-        },
-      )),
-    ),
+    tool.execute("audit-failure", verdict, undefined, undefined, ctx),
     /provider unavailable/,
   );
   assert.equal(abortCalls, 1);
@@ -1305,7 +1374,6 @@ test("packaged infrastructure failure silence correlates the exact output call i
     armGateSummonOnHost(piHostAdapter.host);
     const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
       loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority", subjectProvenance: "role_input" as const }),
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
@@ -1336,8 +1404,14 @@ test("packaged infrastructure failure silence correlates the exact output call i
       const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
       assert.ok(tool);
       const verdict = { judgeStatus: "converged" };
+      const failCtx = await withPassingGatekeeper(toolCallContext([{ id: "failed-output", arguments: verdict }]));
+      // Auditor transport failure after notary pass — infrastructure face (#756).
+      defaultGateSummon = async (officer) => {
+        if (officer === "auditor") throw new Error("provider quota exhausted");
+        return passingOfficerSummon(officer);
+      };
       await assert.rejects(
-        tool.execute("failed-output", verdict, undefined, undefined, await withPassingGatekeeper(toolCallContext([{ id: "failed-output", arguments: verdict }]))),
+        tool.execute("failed-output", verdict, undefined, undefined, failCtx),
         /provider quota exhausted/,
       );
       const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
@@ -1386,7 +1460,6 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadJudgeSoul: async () => "   \n",
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await assert.rejects(
@@ -1414,7 +1487,6 @@ test("coder plan loads its task without construction skill and returns planned",
       bindingLoads += 1;
       return tddBinding();
     },
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -1466,7 +1538,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1519,7 +1590,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness2.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1555,7 +1625,6 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadJudgeSoul: async () => "JUDGE LAW",
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
   await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
     const ctx = activationCtx(home);
@@ -1751,13 +1820,11 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
   assert.equal(tracer.remainingResponses, 0);
 });
 
-test("judge submissions traverse the direct Notary gate before auditor", async () => {
-  let auditCalls = 0;
-  const { harness, tool } = await startJudge(async () => {
-    auditCalls += 1;
-    return { status: "pass" };
-  });
+test("judge submissions traverse Notary then Auditor gates (#756)", async () => {
+  const auditorCalls: string[] = [];
+  const { harness, tool } = await startJudge();
   // Full direct-Notary reject+pass matrix once; production does not branch on judgeStatus.
+  // After Notary pass, Auditor gate also runs (second pass in queue).
   const continueVerdict = {
     judgeStatus: "continue" as const,
     fix: { summary: "tighten the gate" },
@@ -1768,11 +1835,19 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     output: continueVerdict,
     officer: "notary",
+    // notary pass + auditor pass
+    passingRuns: 2,
   });
+  // Wrap summon to observe auditor stays dark through notary non-pass matrix.
+  const baseSummon = defaultGateSummon!;
+  defaultGateSummon = async (officer, source, signal, reask) => {
+    if (officer === "auditor") auditorCalls.push("auditor");
+    return baseSummon(officer, source, signal, reask);
+  };
   await tracer.assertRejectSequence();
-  // #753: non-three-state resumes officer — parent never stands through the reject matrix;
+  // #753/#756: non-three-state resumes officer — parent never stands through the reject matrix;
   // auditor stays dark until Notary pass.
-  assert.equal(auditCalls, 0, "auditor stays dark through gate non-pass matrix");
+  assert.equal(auditorCalls.length, 0, "auditor stays dark through notary non-pass matrix");
   const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
   const { sealed, pending } = await acceptThroughTypedRoundClosure({
     handlers: harness.handlers,
@@ -1784,9 +1859,9 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
   });
   assert.equal(pending.terminate, undefined);
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
-  assert.equal(auditCalls, 1, "auditor runs after Notary pass");
-  // #753: transport + reask→no_receipt + bounce + pass = 5.
-  assert.equal(tracer.providerRequests, 5);
+  assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
+  // #756: transport + reask→no_receipt + bounce + notary pass + auditor pass = 6.
+  assert.equal(tracer.providerRequests, 6);
   assert.equal(tracer.remainingResponses, 0);
 
   // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
@@ -1813,7 +1888,7 @@ test("judge submissions traverse the direct Notary gate before auditor", async (
       return true;
     },
   );
-  assert.equal(auditCalls, 1, "auditor must not start on Gatekeeper transport non-pass for other judgeStatus");
+  assert.equal(auditorCalls.length, 1, "auditor must not start again on Gatekeeper transport non-pass for other judgeStatus");
   assert.equal(secondGate.providerRequests, 1);
 });
 
@@ -2194,7 +2269,6 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       loadJudgeSoul: async () => "judge",
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
-      auditSoulCompliance: async () => ({ status: "pass" }),
     });
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
       await assert.rejects(
@@ -2210,7 +2284,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
 test("undeclared prerequisite submissions are rejected; declared references pass structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2284,7 +2358,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
-    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n", auditSoulCompliance: async () => ({ status: "pass" }),
+    loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2317,7 +2391,6 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
       loadedPaths.push(path);
       return instructionBytes;
     },
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2370,7 +2443,6 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
-    auditSoulCompliance: async () => ({ status: "pass" }),
   });
 
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -2419,7 +2491,6 @@ test(
 
       const extension = createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
-        auditSoulCompliance: async () => ({ status: "pass" }),
         loadNavigatorWorkContext: async () => ({
           subjectKey: "/repo/.ak/work/issues/106",
           subject: "issue 106",
@@ -2702,11 +2773,10 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               ? makeHarness({ "ak-doctor-case": "/case" })
               : makeHarness();
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-                let auditCalls = 0;
+        armGateSummonOnHost(piHostAdapter.host);
+        let auditCalls = 0;
         let selectedDecision = decision;
-        // Judge/doctor: zero-arg materials (#233). Fixer (#242) / Reviewer (#495 S6) no LLM auditor.
-        // #675: compliance summons public auditor; offline injects the decision terminal.
+        // Doctor keeps disposeCompliance path; judge auditor is gate queue (#756).
         const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
           auditCalls += 1;
           const summonAuditor: AuditorSummon = async (_subject) => ({
@@ -2728,13 +2798,35 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             context: toPiContext(options.context),
             summonAuditor,
           };
-          return (role === "judge" ? judge.createPiJudgeAuditor() : doctor.createPiDoctorAuditor())(piOptions);
+          return doctor.createPiDoctorAuditor()(piOptions);
+        };
+        /** Judge #756: notary pass + auditor returns selectedDecision as raw terminal. */
+        const armJudgeGateDecision = () => {
+          defaultGateSummon = async (officer) => {
+            if (officer === "auditor") {
+              auditCalls += 1;
+              return {
+                exitCode: 0,
+                terminal: {
+                  roleOutcome: {
+                    kind: "accepted",
+                    role: "auditor",
+                    status: selectedDecision.status,
+                    decisiveFacts: selectedDecision as Record<string, unknown>,
+                  },
+                  navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
+                  artifacts: [],
+                  runId: "test-judge-compliance",
+                },
+              };
+            }
+            return passingOfficerSummon(officer);
+          };
         };
         let runtime: any;
         if (role === "judge") {
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "judge law",
-            auditSoulCompliance: auditCompliance,
           }, testHostActions());
         } else if (role === "fixer") {
           runtime = workerRole.createFixerRoleRuntime(piHostAdapter.host, {
@@ -2774,6 +2866,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         return {
           harness,
           runtime,
+          armJudgeGateDecision,
           setDecision(next: typeof pass | typeof bounce | typeof escalation) { selectedDecision = next; },
           get auditCalls() { return auditCalls; },
         };
@@ -2816,9 +2909,31 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         assert.ok(tool);
         const submissionContext = async (id: string) => {
           const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
-          return role === "judge" ? await withPassingGatekeeper(bare) : bare;
+          if (role !== "judge") return bare;
+          const ctx = await withPassingGatekeeper(bare);
+          retriable.armJudgeGateDecision();
+          return ctx;
         };
-        await assert.rejects(tool.execute(`${role}-bounce`, outputs[role], undefined, undefined, await submissionContext(`${role}-bounce`)), /violation|violates its|closed contract/);
+        if (role === "judge") {
+          // #756: auditor bounce → raw receipt as GatekeeperDecisionError (no violations rewrite).
+          await assert.rejects(
+            tool.execute(`${role}-bounce`, outputs[role], undefined, undefined, await submissionContext(`${role}-bounce`)),
+            (error: unknown) => {
+              assert.ok(error instanceof GatekeeperDecisionError);
+              assert.equal(error.result.status, "bounce");
+              if (error.result.status === "bounce") {
+                assert.equal(error.result.officer, "auditor");
+                assert.deepEqual(error.result.receipt, bounce);
+              }
+              return true;
+            },
+          );
+        } else {
+          await assert.rejects(
+            tool.execute(`${role}-bounce`, outputs[role], undefined, undefined, await submissionContext(`${role}-bounce`)),
+            /violation|violates its|closed contract/,
+          );
+        }
         retriable.setDecision(pass);
         const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, await submissionContext(`${role}-pass`));
         assert.equal(accepted.terminate, true);
@@ -2830,11 +2945,30 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         const escalated = createRole(role, escalation);
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
+        if (role === "judge") {
+          // #756: auditor escalate → raw receipt back to judge (not audit_escalation rewrite).
+          const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>);
+          const escCtx = await withPassingGatekeeper(escBare);
+          escalated.armJudgeGateDecision();
+          await assert.rejects(
+            escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx),
+            (error: unknown) => {
+              assert.ok(error instanceof GatekeeperDecisionError);
+              assert.equal(error.result.status, "escalate");
+              if (error.result.status === "escalate") {
+                assert.equal(error.result.officer, "auditor");
+                assert.deepEqual(error.result.receipt, escalation);
+                assert.equal(error.message, JSON.stringify(escalation));
+              }
+              return true;
+            },
+          );
+          assert.equal(escalated.auditCalls, 1);
+          continue;
+        }
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, await submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);
-        // Escalation face carries audit kind/conflicts/gate AND the seat's
-        // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual
-        // encoded the destruction this ticket forbids.
+        // Doctor escalate face carries audit kind/conflicts/gate AND seat fields (ADR 0055).
         assert.equal(result.details.kind, "audit_escalation");
         assert.deepEqual(result.details.conflicts, escalation.conflicts);
         assert.deepEqual(result.details.auditDecisionGate, escalation.decisionGate);

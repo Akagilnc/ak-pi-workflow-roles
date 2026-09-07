@@ -67,6 +67,12 @@ export type AdmittedInstructionSeatInvocation =
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #756 nested gate re-ask for auditor: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
+   */
+  reviewReask?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -293,9 +299,14 @@ export async function runPublicInstructionSeat(
     });
   }
 
+  // #756: auditor reask rides summons.instruction on same-ticket resume (notary/inspector pattern).
   const summons: SameTicketSummonsMaterials = {
-    instruction: parsed.instruction,
-    instructionEmpty: parsed.instruction.trim() === "",
+    ...(env.reviewReask === undefined
+      ? {
+          instruction: parsed.instruction,
+          instructionEmpty: parsed.instruction.trim() === "",
+        }
+      : { instruction: env.reviewReask, instructionEmpty: false }),
     attachmentPaths: parsed.attachmentPaths,
   };
   if (role === "auditor" && auditorSourceRun !== undefined) {
@@ -319,6 +330,17 @@ export async function runPublicInstructionSeat(
         }),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753 / #756).
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "auditor review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   } else if (reusedTicketNumber !== undefined) {
     const resumed = await tryResumeSameTicketSeatRun({
       home: env.home,
