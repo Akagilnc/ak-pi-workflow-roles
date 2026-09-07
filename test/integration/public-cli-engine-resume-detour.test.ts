@@ -21,7 +21,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import {
+  createMinimalHost,
+  withNestedTrueUnboundDiarist,
+} from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -326,14 +329,16 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           io,
-          roleTurnHost: createMinimalHost(async (request) => {
-            await seedPrincipalSession(request);
-            await observeTyped429ViaProductionHandler({
-              runDirectory: request.runDirectory,
-              provider: "xai",
-            });
-            return { code: 1, stderr: "quota", timedOut: false };
-          }),
+          roleTurnHost: withNestedTrueUnboundDiarist(
+            createMinimalHost(async (request) => {
+              await seedPrincipalSession(request);
+              await observeTyped429ViaProductionHandler({
+                runDirectory: request.runDirectory,
+                provider: "xai",
+              });
+              return { code: 1, stderr: "quota", timedOut: false };
+            }),
+          ),
         });
       }
 

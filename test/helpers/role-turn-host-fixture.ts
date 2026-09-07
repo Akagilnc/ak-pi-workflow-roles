@@ -7,6 +7,9 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  DIARIST_OUTPUT_TOOL_NAME,
+} from "../../src/diarist-contracts.ts";
 import type {
   DurablePrincipalAuthority,
   RoleTurnHost,
@@ -14,12 +17,23 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   createPiRoleTurnHost,
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { sealAcceptedSubmissionForSpawn } from "./submission-ledger-fixture.ts";
+import {
+  sealAcceptedSubmission,
+  sealAcceptedSubmissionForSpawn,
+} from "./submission-ledger-fixture.ts";
+
+/** Lawful 起居郎 true-unbound face (null ticket → 无录). Nested court fixtures use this. */
+export const TRUE_UNBOUND_DIARIST_DETAILS = {
+  status: "completed" as const,
+  ticketNumber: null,
+  selections: [] as const,
+};
 
 /** Read a dashed flag value from argv (shared by public-CLI tracers). */
 export function argvFlagValue(
@@ -124,6 +138,85 @@ export function createMinimalHost(
   executeTurn: (request: RoleTurnRequest) => Promise<RoleTurnResult>,
 ): RoleTurnHost {
   return { executeTurn };
+}
+
+/**
+ * Nested court 起居郎 under another seat must return a lawful true-unbound
+ * terminal (exit 0, null ticket). Typed diarist failure is countersign controlled
+ * failure (#771) — fixtures may not wash that into body-continue by omission.
+ * When the seat under test is diarist itself, pass primaryRole: "diarist" so the
+ * primary turn is not short-circuited.
+ */
+export function withNestedTrueUnboundDiarist(
+  inner: RoleTurnHost,
+  options?: { readonly primaryRole?: string },
+): RoleTurnHost {
+  return {
+    async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
+      if (
+        request.activation.role !== "diarist" ||
+        options?.primaryRole === "diarist"
+      ) {
+        return inner.executeTurn(request);
+      }
+      const coords = piDurablePrincipalAuthority.decode(request.principal);
+      const toolCallId = "call_diarist_true_unbound";
+      await mkdir(coords.sessionDirectory, { recursive: true });
+      await writeFile(
+        coords.sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolCallId,
+            toolName: DIARIST_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: TRUE_UNBOUND_DIARIST_DETAILS,
+          },
+        })}\n`,
+        "utf8",
+      );
+      const leaf = request.runDirectory.split("/").pop() ?? "";
+      const runId = leaf.endsWith("@diarist")
+        ? leaf.slice(0, -"@diarist".length)
+        : leaf;
+      await sealAcceptedSubmission({
+        cwd: request.cwd,
+        home: request.home,
+        runId,
+        runDirectory: request.runDirectory,
+        role: "diarist",
+        details: TRUE_UNBOUND_DIARIST_DETAILS,
+        toolCallId,
+        // Align with real settlement input surface (#637): when courtAttemptId is
+        // present, seal that attempt so a prior seal cannot skip this turn.
+        ...(request.courtAttemptId === undefined
+          ? {}
+          : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    },
+  };
+}
+
+/** Legacy piRunner twin of withNestedTrueUnboundDiarist. */
+export function withNestedTrueUnboundDiaristPiRunner(
+  inner: LegacyFauxPiRunner,
+  options?: { readonly primaryRole?: string },
+): LegacyFauxPiRunner {
+  return async (args, optionsSpawn) => {
+    if (
+      argvFlagValue(args, "--ak-role") === "diarist" &&
+      options?.primaryRole !== "diarist"
+    ) {
+      return scriptedTerminatingToolSession({
+        role: "diarist",
+        toolName: DIARIST_OUTPUT_TOOL_NAME,
+        details: TRUE_UNBOUND_DIARIST_DETAILS,
+      })(args, optionsSpawn);
+    }
+    return inner(args, optionsSpawn);
+  };
 }
 
 /** Optional durable sealed fact the faux runner already owns as typed details. */

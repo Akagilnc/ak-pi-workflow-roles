@@ -45,7 +45,7 @@ const TICKET = 708;
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => {
     const binDir = join(home, "bin");
-    // Issue face only — ticket identity is the caller's first `#N` (#709 / #771).
+    // Issue face for live existence verify after LLM ticket assertion (#771 / ADR 0075).
     await installGhFixture(binDir, {
       issues: {
         [TICKET]: {
@@ -139,7 +139,11 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: diaristEnvelopeRunner({ status: "completed", selections: [] }),
+          piRunner: diaristEnvelopeRunner({
+            status: "completed",
+            ticketNumber: TICKET,
+            selections: [],
+          }),
         }),
       },
     );
