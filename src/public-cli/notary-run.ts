@@ -4,9 +4,6 @@
  * the shared post-admission seam; this module keeps only Notary adapters.
  * #637: same-ticket re-summons resume the seat's previous run (no new run).
  */
-import { existsSync } from "node:fs";
-
-import { gateSubmissionCandidatePath } from "../auditor-dossier-tool.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   NotarySourceRunError,
@@ -30,7 +27,6 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  appendResumeMaterialReread,
   loadResumableNotaryRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -239,21 +235,13 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted, effective) => {
-      const projection = resumeTurnRequestProjectionOptions(
+    buildTurnRequest: (admitted, effective) =>
+      // #755: review continuation is plain dialogue / resume envelope — no
+      //「重新读」candidate line, no engine handbook packaging.
+      buildNotaryTurnRequest(
         admitted,
-        effective,
-        env,
-      );
-      const candidatePath = gateSubmissionCandidatePath(admitted.sourceRunPath);
-      const prompt = existsSync(candidatePath)
-        ? appendResumeMaterialReread(projection.continuation.prompt, candidatePath)
-        : projection.continuation.prompt;
-      return buildNotaryTurnRequest(admitted, {
-        ...projection,
-        continuation: { kind: "resume", prompt },
-      });
-    },
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
