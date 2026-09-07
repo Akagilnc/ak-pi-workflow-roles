@@ -167,7 +167,7 @@ function baseArgs(seat: Seat, project: string): string[] {
     case "merger":
       return ["merger", "--project", project, "engine detour proof"];
     case "countersign":
-      // Unbound ticket: diarist does not re-resolve; resume still carries engine.
+      // Unbound ticket: resume does not re-resolve; it still carries engine.
       return ["countersign", "--project", project, "engine detour proof"];
     case "gleaner-left":
       return ["gleaner-left", "--project", project, "--base", "HEAD", "engine detour proof"];
@@ -302,7 +302,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Countersign pre-court diarist needs hermes on PATH.
+    // Shared seat ticket resolver needs hermes on PATH.
     const binDir = join(home, "bin");
     await installHermesFixture(binDir);
     const priorPath = process.env.PATH;

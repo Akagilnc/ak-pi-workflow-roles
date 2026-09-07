@@ -34,6 +34,9 @@ export type OptionOwner =
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "auditor"
+  | "evidence-child"
+  | "diarist"
   | "analyst";
 
 /**
@@ -422,9 +425,52 @@ const NAVIGATOR_OPTIONS = [
   bindOwner("navigator", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const AUDITOR_OPTIONS = [
+  bindOwner("auditor", SHARED_PROJECT_SEMANTICS),
+  bindOwner("auditor", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "subject",
+    owner: "auditor",
+    canonical: "--subject",
+    aliases: [],
+    valueMetavar: "judge|doctor",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required audited subject: judge or doctor (selects judge-auditor.md / doctor-auditor.md).",
+      zh: "必填受审对象：judge 或 doctor（装 judge-auditor.md / doctor-auditor.md）。",
+    },
+  },
+  {
+    id: "source-run",
+    owner: "auditor",
+    canonical: "--source-run",
+    aliases: [],
+    valueMetavar: "runId@role|path",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required source run locator of the audited subject volume (same input for direct and nested summons).",
+      zh: "必填受审卷宗 locator（直调与传召同一输入面）。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
+const EVIDENCE_CHILD_OPTIONS = [
+  bindOwner("evidence-child", SHARED_PROJECT_SEMANTICS),
+  bindOwner("evidence-child", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const DIARIST_OPTIONS = [
+  bindOwner("diarist", SHARED_PROJECT_SEMANTICS),
+  bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -784,6 +830,9 @@ export const PUBLIC_OPTION_TABLE = {
   inspector: INSPECTOR_OPTIONS,
   gatekeeper: GATEKEEPER_OPTIONS,
   navigator: NAVIGATOR_OPTIONS,
+  auditor: AUDITOR_OPTIONS,
+  "evidence-child": EVIDENCE_CHILD_OPTIONS,
+  diarist: DIARIST_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -804,6 +853,9 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "inspector",
   "gatekeeper",
   "navigator",
+  "auditor",
+  "evidence-child",
+  "diarist",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1199,6 +1251,33 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role navigator [options] [instruction]"],
     examples: [
       'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
+    ],
+  },
+  auditor: {
+    command: "auditor",
+    summary: "Direct Auditor (审刑院) compliance audit: pass, revise, or escalate.",
+    usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
+    examples: [
+      'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
+    ],
+  },
+  "evidence-child": {
+    command: "evidence-child",
+    summary: "Direct evidence-child fact gathering; submit one report.",
+    usage: ["ak-role evidence-child [options] [instruction]"],
+    examples: [
+      'ak-role evidence-child "查：本工作树 diff 与票面是否一致。"',
+    ],
+  },
+  diarist: {
+    command: "diarist",
+    summary:
+      "Direct Diarist (起居郎) pass: gather and organize this case's decision basis into its 起居录.",
+    usage: ["ak-role diarist [options] [instruction]"],
+    examples: [
+      'ak-role diarist "整理 #708 的本案依据。"',
+      'ak-role diarist --attach ./design.md "补录本轮设计修订。"',
     ],
   },
   notary: {

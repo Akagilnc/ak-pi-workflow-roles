@@ -16,7 +16,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { HostContext } from "./host-contracts.ts";
-import { createNativeNavigatorSessionFactory } from "./evidence-child-executor.ts";
+import { createNativeNavigatorSessionFactory } from "./navigator-public-session.ts";
 import {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -78,7 +78,9 @@ export function resolveNavigatorAuthorityMaterial(
   return undefined;
 }
 
-export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
+/** Every public role is a lawful navigator route target (#675 — no nested-only seats). */
+export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY
+  .map(({ role, phases }) => ({ role, phases }));
 
 export type NavigatorTargetRole = PackagedRole;
 export type NavigatorPhase = "plan" | "apply" | null;
@@ -591,11 +593,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const modelPromise = (async () => {
         try {
           // Same resolution authority as createNativeNavigatorSessionFactory (#590).
-          const resolved = await resolveNavigatorSeatSelection(
-            options.context,
-            options.modelSettingPath,
-            options.modelSettingPath ?? navigatorModelSettingPath(),
-          );
+          const resolved = await resolveNavigatorSeatSelection(options.context);
           return resolved.configuredLabel;
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
@@ -735,6 +733,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               return;
             }
             if (promptFailure !== undefined) throw promptFailure;
+            const sessionNoReceipt = activeSession.noReceipt?.();
+            if (sessionNoReceipt !== undefined) {
+              // This session already settled without an accepted receipt on its own
+              // budget; one more prompt opens an independent summon, not a delivery
+              // request on the settled session (#675).
+              delivery.recordNestedNoReceipt(sessionNoReceipt);
+              return;
+            }
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);
@@ -831,6 +837,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
+      // Dispose during post-role grace must ignore late completion entirely (#675).
+      if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
@@ -876,8 +884,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // table. After selection (speculative or rebound), advice is passed
           // through as-is (ADR 0010 / ADR 0061: caller may ignore).
           if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
+            if (disposed) return;
             prepareBoundSettlement = settlement;
             prepared = await prepare();
+            if (disposed) return;
             selected = selectNavigatorCandidate(prepared, settlement);
           }
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
@@ -933,10 +943,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure: report.routePlaybookReadFailure }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
-      // Dispose during post-role grace must ignore late completion (ADR 0052 / #106).
+      // Dispose during post-role grace must ignore late completion (ADR 0052 / #106 / #675).
       // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
-      if (!disposed) {
+      // Only the disposed bit is typed authority to drop — never match free-text Error.message.
+      if (disposed) return;
+      try {
         await options.onEvent(event, report);
+      } catch (error) {
+        // Race: dispose landed between the check and onEvent; drop only then.
+        if (disposed) return;
+        throw error;
       }
       preparation = undefined;
       sessionReady = undefined;

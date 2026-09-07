@@ -38,8 +38,9 @@ import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
-import type { RoleTurnHost } from "../host-contracts.ts";
-import { loadProductionGrokHostFactory } from "./load-production-grok-host.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { packagedExternalHostNames } from "../host-descriptions.ts";
+import { loadProductionAcpHostFactory } from "./load-production-acp-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -50,6 +51,7 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
+  parseDiaristArgv,
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
@@ -58,6 +60,8 @@ import {
   parseInspectorArgv,
   parseMergerArgv,
   parseNavigatorArgv,
+  parseAuditorArgv,
+  parseEvidenceChildArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -77,6 +81,7 @@ import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -125,6 +130,9 @@ const RESUME_SEAT_DISPATCH: Record<
   inspector: { seat: "inspector", run: runPublicInspectorResume },
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+  auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
+  "evidence-child": { seat: "evidence-child", run: runPublicInstructionSeatResume },
+  diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -167,6 +175,9 @@ export const PUBLIC_ROLE_ARGV = {
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
+  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
+  "evidence-child": { parse: parseEvidenceChildArgv, options: optionsForOwner("evidence-child") },
+  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -321,19 +332,19 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
-  // Composition-root unique adapter table (#522 / #580): pi + S6 grok-build true adapter.
-  const adapters = env.hostAdapters ?? [
+  // Composition-root adapter table: pi (in-process default) + one ACP adapter per description-table key.
+  const adapters: readonly NamedRoleTurnHostAdapter[] = env.hostAdapters ?? [
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
-    {
-      name: "grok-build",
+    ...packagedExternalHostNames().map((name) => ({
+      name,
       create: () => {
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
         let hostPromise: Promise<RoleTurnHost> | undefined;
         return {
           ok: true as const,
           host: {
-            executeTurn: async (request) => {
-              hostPromise ??= loadProductionGrokHostFactory(env.packageRoot).then((create) =>
+            executeTurn: async (request: RoleTurnRequest) => {
+              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot, name).then((create) =>
                 create({
                   packageRoot: env.packageRoot,
                   principalAuthority: options.principalAuthority,
@@ -344,7 +355,7 @@ function resolveRoleTurnHost(
           },
         };
       },
-    },
+    })),
   ];
   const hostName = options.seat.host;
   const adapter = adapters.find((candidate) => candidate.name === hostName);
@@ -1310,6 +1321,31 @@ export async function runAkRole(
       };
     }
 
+    // Diarist public run path (#708): 起居郎 is summoned like any other seat.
+    if (parsed.command === "diarist") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "diarist",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicDiarist(
+        parsed.args,
+        createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.diarist.parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
     // Coder public run path with package-owned TDD method (#109).
     if (parsed.command === "coder") {
       const agentDir = resolveAgentDir(env, home);
@@ -1509,9 +1545,13 @@ export async function runAkRole(
       };
     }
 
-    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
-    // a role like any other; one parameterized branch for both.
-    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
+    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor / evidence-child.
+    if (
+      parsed.command === "gatekeeper"
+      || parsed.command === "navigator"
+      || parsed.command === "auditor"
+      || parsed.command === "evidence-child"
+    ) {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
@@ -1528,9 +1568,7 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
         parsed.command,
-        parsed.command === "gatekeeper"
-          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
-          : PUBLIC_ROLE_ARGV.navigator.parse,
+        PUBLIC_ROLE_ARGV[parsed.command].parse,
       );
       return {
         exitCode: result.exitCode,

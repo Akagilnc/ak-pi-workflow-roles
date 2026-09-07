@@ -24,6 +24,7 @@ import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
+import { stampShapeUnreadableDetails } from "../shape-unreadable-failure.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
@@ -99,6 +100,11 @@ import {
   validateRecordedGleanerLeftOutput,
 } from "../gleaner-left-contracts.ts";
 import {
+  DIARIST_OUTPUT_TOOL_NAME,
+  diaristDecisiveFacts,
+  validateRecordedDiaristOutput,
+} from "../diarist-contracts.ts";
+import {
   INSPECTOR_OUTPUT_TOOL_NAME,
   inspectorDecisiveFacts,
   validateRecordedInspectorOutput,
@@ -113,6 +119,17 @@ import {
   navigatorDecisiveFacts,
   validateRecordedNavigatorOutput,
 } from "../package-contracts/navigator-output.ts";
+import {
+  AUDITOR_OUTPUT_TOOL_NAME,
+  auditorDecisiveFacts,
+  projectLawfulAuditorOutput,
+  validateRecordedAuditorOutput,
+} from "../package-contracts/auditor-output.ts";
+import {
+  EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+  evidenceChildDecisiveFacts,
+  validateRecordedEvidenceChildOutput,
+} from "../package-contracts/evidence-child-output.ts";
 import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
@@ -145,6 +162,7 @@ import {
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
+  type AdmittedDiaristInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedGatekeeperInvocation,
@@ -1217,9 +1235,11 @@ function typedFailedTerminatingToolKnownFailure(
     const diagnostic = isRecord(textPart) ? textPart.text : undefined;
     // Durable details already carry fact + typed evidence from envelope one-shot projection (#475).
     // Do not re-parse retained compliance responses here.
+    // Host infrastructure must NOT map to cause=output — that cause is reserved for
+    // shape-unreadable retained candidates (ADR 0055 / #675 producer→consumer diversion).
     const details = isRecord(message.details) ? message.details : classification.fact;
     return {
-      cause: "output",
+      cause: "activation",
       identity: { name: message.toolName, code: message.toolCallId },
       ...(typeof diagnostic === "string" && diagnostic.trim() !== "" ? { diagnostic } : {}),
       details,
@@ -1483,6 +1503,16 @@ function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> 
   }
 }
 
+/** Typed unreadable audit leg beside accepted parent candidate (ADR 0055 / #675). */
+function auditUnreadableDecisiveFact(candidate: object): Record<string, unknown> {
+  const projected = safelyRead(candidate, "auditUnreadable");
+  if (!projected.readable || projected.value === undefined) return {};
+  if (typeof projected.value !== "object" || projected.value === null || Array.isArray(projected.value)) {
+    return { auditUnreadable: projected.value };
+  }
+  return { auditUnreadable: projected.value as Record<string, unknown> };
+}
+
 /** Countersign terminal projection — escalate keeps decisionGate; continue keeps fix (#572 / ADR 0074). */
 function countersignDecisiveFacts(
   verdict: object,
@@ -1525,6 +1555,7 @@ function judgeDecisiveFacts(
   const facts: Record<string, unknown> = {
     judgeStatus,
     ...auditNoReceiptDecisiveFact(verdict),
+    ...auditUnreadableDecisiveFact(verdict),
   };
   const statusBase = judgeStatus;
   if (statusBase === "continue") {
@@ -1689,7 +1720,10 @@ function collectorDecisiveFacts(
 function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
   const candidate = output as unknown as object;
   const status = safelyRead(candidate, "status");
-  const facts: Record<string, unknown> = { ...auditNoReceiptDecisiveFact(candidate) };
+  const facts: Record<string, unknown> = {
+    ...auditNoReceiptDecisiveFact(candidate),
+    ...auditUnreadableDecisiveFact(candidate),
+  };
   if (status.readable && typeof status.value === "string") facts.doctorStatus = status.value;
   const statusBase =
     status.readable && typeof status.value === "string"
@@ -3360,7 +3394,10 @@ type SeatAcceptedSettlementSpec = {
     | "gleaner-left"
     | "inspector"
     | "gatekeeper"
-    | "navigator";
+    | "navigator"
+    | "auditor"
+    | "evidence-child"
+    | "diarist";
   readonly toolName: string;
   readonly nonUsableDiagnostic: string;
   readonly projectAccepted: (
@@ -3387,7 +3424,10 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGleanerLeftInvocation
     | AdmittedInspectorInvocation
     | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation,
+    | AdmittedNavigatorInvocation
+    | import("./invocation.ts").AdmittedAuditorInvocation
+    | import("./invocation.ts").AdmittedEvidenceChildInvocation
+    | AdmittedDiaristInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3428,7 +3468,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
         return settleFailureTerminalResult(admitted, {
           cause: "output",
           diagnostic: residual.diagnostic,
-          details: { candidate: residual.candidate, acceptedReceipt: false },
+          details: stampShapeUnreadableDetails(residual.candidate),
         }, authority);
       }
       if (
@@ -3446,7 +3486,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
       return settleFailureTerminalResult(admitted, {
         cause: "output",
         diagnostic: spec.nonUsableDiagnostic,
-        details: { candidate: acceptedNonUsable, acceptedReceipt: false },
+        details: stampShapeUnreadableDetails(acceptedNonUsable),
       }, authority);
     }
     return undefined;
@@ -3457,7 +3497,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
       {
         cause: "output",
         diagnostic: spec.nonUsableDiagnostic,
-        details: { candidate: roleOutcome.decisiveFacts, acceptedReceipt: false },
+        details: stampShapeUnreadableDetails(roleOutcome.decisiveFacts),
       },
       authority,
     );
@@ -3651,6 +3691,46 @@ export async function trySettleGleanerLeftTerminalResult(
   return settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
 }
 
+/** Lawful Diarist accepted outcome (completed 入录选择, #708). */
+export type LawfulDiaristRoleOutcome = {
+  kind: "accepted";
+  role: "diarist";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulDiaristTerminalResult(
+  admitted: AdmittedDiaristInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "diarist",
+    toolName: DIARIST_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "起居郎回执无显式 completed",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedDiaristOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedDiaristOutput(sealed.decisiveFacts);
+      const accepted: LawfulDiaristRoleOutcome = {
+        kind: "accepted",
+        role: "diarist",
+        status: sealed.status,
+        decisiveFacts: diaristDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  }, scope);
+}
+
+/** Try to settle a lawful Diarist Terminal; undefined only for genuine absence. */
+export async function trySettleDiaristTerminalResult(
+  admitted: AdmittedDiaristInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulDiaristTerminalResult(admitted, authority, scope);
+}
+
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */
 export type LawfulInspectorRoleOutcome = {
   kind: "accepted";
@@ -3768,6 +3848,89 @@ export async function trySettleNavigatorTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
+}
+
+/** Lawful Auditor accepted outcome (pass/revise/escalate, #675). */
+export type LawfulAuditorRoleOutcome = {
+  kind: "accepted";
+  role: "auditor";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulAuditorTerminalResult(
+  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "auditor",
+    toolName: AUDITOR_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "审刑院回执无显式 pass/revise/escalate",
+    // Only pass/revise/escalate are lawful releases. Unreadable mystery status
+    // fails closed with candidate retained for parent ComplianceCandidateUnreadableError.
+    tryAcceptDetails: (details) => projectLawfulAuditorOutput(details) !== undefined,
+    projectAccepted: (sealed) => {
+      const lawful = projectLawfulAuditorOutput(sealed.decisiveFacts);
+      if (lawful === undefined) {
+        throw new Error("auditor projectAccepted requires lawful pass/revise/escalate");
+      }
+      const accepted: LawfulAuditorRoleOutcome = {
+        kind: "accepted",
+        role: "auditor",
+        status: lawful.status,
+        decisiveFacts: auditorDecisiveFacts(lawful),
+      };
+      return accepted;
+    },
+  }, scope);
+}
+
+export async function trySettleAuditorTerminalResult(
+  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulAuditorTerminalResult(admitted, authority, scope);
+}
+
+/** Lawful Evidence-Child accepted outcome (#675). */
+export type LawfulEvidenceChildRoleOutcome = {
+  kind: "accepted";
+  role: "evidence-child";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+async function settleLawfulEvidenceChildTerminalResult(
+  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "evidence-child",
+    toolName: EVIDENCE_CHILD_OUTPUT_TOOL_NAME,
+    nonUsableDiagnostic: "取证回执无报告正文",
+    tryAcceptDetails: tryAcceptWithValidator(validateRecordedEvidenceChildOutput),
+    projectAccepted: (sealed) => {
+      const output = validateRecordedEvidenceChildOutput(sealed.decisiveFacts);
+      const accepted: LawfulEvidenceChildRoleOutcome = {
+        kind: "accepted",
+        role: "evidence-child",
+        status: "report",
+        decisiveFacts: evidenceChildDecisiveFacts(output),
+      };
+      return accepted;
+    },
+  }, scope);
+}
+
+export async function trySettleEvidenceChildTerminalResult(
+  admitted: import("./invocation.ts").AdmittedEvidenceChildInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulEvidenceChildTerminalResult(admitted, authority, scope);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

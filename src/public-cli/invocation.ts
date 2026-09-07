@@ -73,12 +73,7 @@ import {
   type OptionOwner,
   type PublicOptionDefinition,
 } from "./option-definitions.ts";
-import { loadPublicCliConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
-import {
-  resolveInstitutionalSeatSelections,
-  writeInstitutionalResolutionPage,
-} from "../institutional-resolution.ts";
 
 export type FrozenAttachment = {
   /** Original caller path retained only as provenance. */
@@ -110,7 +105,7 @@ export type AdmittedRoleInvocationBase = {
    */
   readonly correlationId?: string;
   /**
-   * Typed ticketNumber after known-ticket reuse or notary source-run inheritance
+   * Typed ticketNumber after known-identity reuse or notary source-run inheritance
    * (#635 / #709). Admission does not bind from CLI flag or attachment frontmatter.
    */
   readonly ticketNumber?: number;
@@ -142,6 +137,18 @@ export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "navigator";
+};
+
+export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "auditor";
+};
+
+export type AdmittedEvidenceChildInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "evidence-child";
+};
+
+export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "diarist";
 };
 
 export type CoderPhase = "plan" | "apply";
@@ -227,6 +234,9 @@ export type AdmittedRoleInvocation =
   | AdmittedInspectorInvocation
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
+  | AdmittedAuditorInvocation
+  | AdmittedEvidenceChildInvocation
+  | AdmittedDiaristInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -355,10 +365,6 @@ async function writeRoleInvocationLedger(
     `${JSON.stringify(identity, null, 2)}\n`,
     "utf8",
   );
-  const home = homeFromRunDirectory(source.runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(source.runDirectory, institutionalPage);
 }
 
 /**
@@ -405,20 +411,6 @@ export async function recordEffectiveInvocationModel(
     `${JSON.stringify(next, null, 2)}\n`,
     "utf8",
   );
-  const effectiveModel: InvocationEffectiveModel | undefined =
-    typeof next.provider === "string" && typeof next.model === "string"
-      ? {
-          provider: next.provider,
-          model: next.model,
-          ...(typeof next.thinking === "string"
-            ? { thinking: next.thinking }
-            : {}),
-        }
-      : undefined;
-  const home = homeFromRunDirectory(runDirectory);
-  const config = await loadPublicCliConfig(home);
-  const institutionalPage = resolveInstitutionalSeatSelections(config, effectiveModel);
-  await writeInstitutionalResolutionPage(runDirectory, institutionalPage);
 }
 
 /** Merge observed launch-time fields into the single existing invocation.json identity page. */
@@ -439,9 +431,39 @@ async function mergeInvocationIdentityPage(
 }
 
 /**
- * Bind a post-admission ticketNumber onto the in-memory admitted object and both
- * durable pages (invocation.json + admitted-request.json). Used by seat known-ticket
- * reuse when admission was unbound (#635 / #709). Never clears an existing binding.
+ * Persist parent --source-run path onto admitted-request for officer resume lookup (#747).
+ * Reuses the existing notary sourceRunPath key; does not invent a new field name.
+ */
+export async function persistAdmittedSourceRunPath(
+  admitted: AdmittedRoleInvocation,
+  sourceRunPath: string,
+): Promise<void> {
+  if (sourceRunPath.trim() === "") {
+    throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
+  }
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  if (typeof current.sourceRunPath === "string") {
+    if (current.sourceRunPath === sourceRunPath) return;
+    throw new Error(
+      `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
+    );
+  }
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, sourceRunPath }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+/**
+ * Bind a post-admission resolved ticketNumber onto the in-memory admitted
+ * object and both durable pages (invocation.json + admitted-request.json).
+ * Used by known-ticket reuse when admission was unbound (#635 / #709).
+ * Never clears an existing binding.
  */
 export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
@@ -535,6 +557,10 @@ export type ParseInstructionArgvResult = {
   instruction: string;
   attachmentPaths: string[];
   project?: string;
+  /** Auditor only — audited subject selecting soul materials (#675 owner). */
+  subject?: "judge" | "doctor";
+  /** Auditor source-run locator — same input surface for direct and nested (#675). */
+  sourceRun?: string;
 };
 
 /** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
@@ -543,6 +569,7 @@ export type ParseCountersignArgvResult = ParseInstructionArgvResult;
 export type ParseInspectorArgvResult = ParseInstructionArgvResult;
 export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
 export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
+export type ParseDiaristArgvResult = ParseInstructionArgvResult;
 
 /** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
@@ -563,10 +590,12 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
+  let subject: "judge" | "doctor" | undefined;
+  let sourceRun: string | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions(owner);
@@ -588,6 +617,24 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "subject") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw !== "judge" && raw !== "doctor") {
+          throw new CliUsageError(
+            `auditor --subject must be judge|doctor, got ${taken.value ?? "(missing)"}`,
+          );
+        }
+        subject = raw;
+        continue;
+      }
+      if (taken.def.id === "source-run") {
+        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
+        if (raw === "") {
+          throw new CliUsageError("auditor --source-run requires a run locator");
+        }
+        sourceRun = raw;
+        continue;
+      }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -602,6 +649,8 @@ function parseInstructionArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
+    ...(subject === undefined ? {} : { subject }),
+    ...(sourceRun === undefined ? {} : { sourceRun }),
   };
 }
 
@@ -803,6 +852,21 @@ export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvR
   return parseInstructionArgv(args, "navigator");
 }
 
+export type ParseAuditorArgvResult = ParseInstructionArgvResult;
+export type ParseEvidenceChildArgvResult = ParseInstructionArgvResult;
+
+export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
+  return parseInstructionArgv(args, "auditor");
+}
+
+export function parseEvidenceChildArgv(args: readonly string[]): ParseEvidenceChildArgvResult {
+  return parseInstructionArgv(args, "evidence-child");
+}
+
+export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
+  return parseInstructionArgv(args, "diarist");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -943,7 +1007,7 @@ async function freezeRegularFileAttachment(
   };
 }
 
-/** Freeze attachments only — ticket identity is reused post-admission (#635 / #709). */
+/** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
 async function freezeAttachments(
   attachmentPaths: readonly string[],
   attachmentsDirectory: string,
@@ -1002,15 +1066,16 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
 
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
 
 /**
  * Shared instruction-seat admission for Judge and Inspector: project check,
  * principal/placement issue, attachment freeze, admitted-request and invocation
  * ledger write. CorrelationId is projected only when supplied (Inspector).
- * Ticket identity is reused post-admission from records this book already holds (#709).
+ * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "evidence-child" | "diarist",
 >(
   role: R,
   options: AdmitJudgeInvocationOptions & { correlationId?: string },
@@ -1130,6 +1195,33 @@ export async function admitNavigatorInvocation(
   return admitStandardMaterialInvocation("navigator", options);
 }
 
+export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitEvidenceChildInvocationOptions = AdmitInspectorInvocationOptions;
+
+/** Admit a public 审刑院 run (#675). */
+export async function admitAuditorInvocation(
+  options: AdmitAuditorInvocationOptions,
+): Promise<AdmittedAuditorInvocation> {
+  return admitStandardMaterialInvocation("auditor", options);
+}
+
+/** Admit a public evidence-child run (#675). */
+export async function admitEvidenceChildInvocation(
+  options: AdmitEvidenceChildInvocationOptions,
+): Promise<AdmittedEvidenceChildInvocation> {
+  return admitStandardMaterialInvocation("evidence-child", options);
+}
+
+/**
+ * Admit a direct Diarist (起居郎) run (#708): freeze attachments, persist the
+ * request, reserve session placement — same instruction-seat face.
+ */
+export async function admitDiaristInvocation(
+  options: AdmitDiaristInvocationOptions,
+): Promise<AdmittedDiaristInvocation> {
+  return admitStandardMaterialInvocation("diarist", options);
+}
+
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 export function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
@@ -1208,7 +1300,7 @@ export async function admitCountersignInvocation(
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-  // Ticket identity is reused post-admission (#709); admission stays unbound.
+  // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";

@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  instructResumeHandbookRead,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -27,13 +28,25 @@ import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
-  RoleTurnHost,
   RoleTurnContinuation,
+  RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+
+/** Append one system section to a continuation prompt, keeping its kind. */
+function appendContinuationSection(
+  continuation: RoleTurnContinuation,
+  section: string,
+): RoleTurnContinuation {
+  const prompt = `${continuation.prompt}\n\n${section}`;
+  return continuation.kind === "initial"
+    ? { kind: "initial", prompt }
+    : { kind: "resume", prompt };
+}
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -80,18 +93,6 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import { runWithAutoResumeLoop } from "./auto-resume.ts";
-import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
-
-/** Append one system section to a continuation prompt, keeping its kind. */
-function appendContinuationSection(
-  continuation: RoleTurnContinuation,
-  section: string,
-): RoleTurnContinuation {
-  const prompt = `${continuation.prompt}\n\n${section}`;
-  return continuation.kind === "initial"
-    ? { kind: "initial", prompt }
-    : { kind: "resume", prompt };
-}
 
 /** Previous main-session host recorded on invocation.json, if any. */
 async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
@@ -123,6 +124,12 @@ export type PostAdmissionEnv = {
   sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
   createRunId?: () => string;
+  /**
+   * Parent cancellation for a nested public summon (#675). Every dispatched turn
+   * carries it so an aborted parent terminates the nested activation; a CLI
+   * process has no parent and leaves it absent.
+   */
+  signal?: AbortSignal;
   /**
    * #724 explicit fresh summons (`ak-role new <role>`): skip same-ticket auto-resume
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
@@ -296,7 +303,7 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
-    // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
+    // Single authority projectHostTransitionPriorNative classifies the prior native volume.
     // Same-run resume (#637) keeps host identity on the run's invocation page.
     let previousHost: string | undefined;
     const liveHost = env.host;
@@ -333,8 +340,8 @@ export async function dispatchPostAdmissionTurn<
 
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    // beforeDispatch (e.g. countersign diarist station) runs after running is
-    // marked — its failures must settle the run, not leave it permanently running.
+    // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
+    // its failures must settle the run, not leave it permanently running.
     if (adapters.beforeDispatch !== undefined) {
       try {
         await adapters.beforeDispatch(admitted);
@@ -355,13 +362,16 @@ export async function dispatchPostAdmissionTurn<
     }
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
-    // settled — the seat's ticket bind re-projection and, for countersign, the diary
-    // station's own writes. Case dossier delivery (ADR 0081) rides here for every
-    // public entry: first call, same-ticket re-summons and manual resume alike.
-    // System refs append their own neutral section; caller frozen attachments and
-    // the seat's own prompt bytes are never rewritten.
+    // settled — the seat's ticket bind re-projection. Case dossier delivery
+    // (ADR 0081) rides here for every public entry: first call, same-ticket
+    // re-summons and manual resume alike. System refs append their own neutral
+    // section; caller frozen attachments and the seat's own prompt bytes are
+    // never rewritten.
     let turnRequest: RoleTurnRequest =
-      hostTransition === undefined ? request : { ...request, hostTransition };
+      env.signal === undefined ? request : { ...request, signal: env.signal };
+    if (hostTransition !== undefined) {
+      turnRequest = { ...turnRequest, hostTransition };
+    }
     const dossierSection = await projectCaseDossierPointerSection({
       ticketNumber: admitted.ticketNumber,
       projectRoot: admitted.projectRoot,
@@ -518,12 +528,15 @@ export function resumeTurnRequestProjectionOptions(
       summonsPrepared !== undefined &&
       summonsPrepared.attachments.length > 0
     ) {
-      prompt = buildInstructionTransportPrompt(
-        {
-          instruction: request.message,
-          instructionEmpty: false,
-          attachments: summonsPrepared.attachments,
-        },
+      prompt = instructResumeHandbookRead(
+        buildInstructionTransportPrompt(
+          {
+            instruction: request.message,
+            instructionEmpty: false,
+            attachments: summonsPrepared.attachments,
+          },
+          engineMaterial,
+        ),
         engineMaterial,
       );
     } else {
@@ -534,7 +547,10 @@ export function resumeTurnRequestProjectionOptions(
       });
     }
   } else if (summonsPrepared !== undefined) {
-    prompt = buildInstructionTransportPrompt(summonsPrepared, engineMaterial);
+    prompt = instructResumeHandbookRead(
+      buildInstructionTransportPrompt(summonsPrepared, engineMaterial),
+      engineMaterial,
+    );
   } else {
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
