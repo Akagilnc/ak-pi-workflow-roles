@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #330 analyst-C2 — cohort contrast output tracer.
  *
@@ -18,7 +19,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import type {
   AnalystCohortOptionalMetric,
   AnalystCohortRoleStats,
 } from "../../src/analyst-cohort.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -119,8 +120,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-c2-business-"));
-  try {
+  return withTempRoot("analyst-c2-business-", async (businessRepo) => {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
     execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
@@ -133,19 +133,14 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     const result = await fn(businessRepo);
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-  }
+  });
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-c2-home-"));
-  try {
+  return withTempRoot("analyst-c2-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 function roleStats(

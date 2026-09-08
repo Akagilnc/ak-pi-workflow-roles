@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * S2 factory board — external behavior at:
  *   1) isolated BoardSnapshot → HTML (no network)
@@ -9,11 +10,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
@@ -198,8 +200,7 @@ async function booksWithLedgers(workspace: string): Promise<FactoryBoardBook[]> 
 }
 
 test("board lists title and milestone per ticket; same-number tickets stay in their lanes", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-lanes-"));
-  try {
+  await withTempRoot("factory-board-lanes-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
     const beforeRoles = await treeFingerprint(books[0]!.ledgerDir);
     const beforeOrch = await treeFingerprint(books[1]!.ledgerDir);
@@ -243,14 +244,11 @@ test("board lists title and milestone per ticket; same-number tickets stay in th
       assert.match(firstChunk, /data-book="orch"/);
       assert.match(secondChunk, /data-book="roles"/);
     }
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("family parent row aggregates structural counts and expands child trajectories", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-"));
-  try {
+  await withTempRoot("factory-board-family-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
     const html = await renderFactoryBoardHtml(
       books,
@@ -283,14 +281,11 @@ test("family parent row aggregates structural counts and expands child trajector
     const planCourt = runs.find((r) => r["data-run-id"] === "plan-court-001@ak-roles-127");
     assert.equal(planCourt?.["data-has-result"], "true");
     assert.equal(planCourt?.["data-result-status"], "converged");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("zero-run tickets render as pending; blocked badge stacks on non-closed", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-pending-"));
-  try {
+  await withTempRoot("factory-board-pending-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
     const html = await renderFactoryBoardHtml(
       books,
@@ -318,14 +313,11 @@ test("zero-run tickets render as pending; blocked badge stacks on non-closed", a
     assert.equal(t130["data-ticket-state"], "closed");
     assert.equal(t130["data-pending"], "false");
     assert.equal(t130["data-blocked-by"] ?? "", "");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("named closed tickets enter the board and remain drillable", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-closed-"));
-  try {
+  await withTempRoot("factory-board-closed-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
     // Add a closed non-family ticket with a run so drill shows trajectory
     const closedRunDir = join(books[0]!.ledgerDir, "issues", "99", "runs", "coder-x@demo", "session");
@@ -378,14 +370,11 @@ test("named closed tickets enter the board and remain drillable", async () => {
       elementsWith(html, "data-run-id").some((r) => r["data-run-id"] === "coder-x@demo"),
       "closed ticket trajectory is drillable",
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("binding or API failure renders loud error — never a silent empty board", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-error-"));
-  try {
+  await withTempRoot("factory-board-error-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
 
     const bindingHtml = await renderFactoryBoardHtml(
@@ -412,9 +401,7 @@ test("binding or API failure renders loud error — never a silent empty board",
     assert.equal(elementsWith(apiHtml, "data-board-error")[0]?.["data-board-error"], "api");
     assert.equal(elementsWith(apiHtml, "data-lane").length, 0);
     assert.equal(elementsWith(apiHtml, "data-ticket").length, 0);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("snapshot adapter maps transport payloads into titled tickets with parent and blocked_by", async () => {
@@ -549,8 +536,7 @@ test("snapshot adapter fails loudly on missing binding fields and transport erro
 });
 
 test("page write lands outside every ledger and stays read-only on books", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-write-"));
-  try {
+  await withTempRoot("factory-board-write-", async (workspace) => {
     const books = await booksWithLedgers(workspace);
     const before = await Promise.all(books.map((b) => treeFingerprint(b.ledgerDir)));
     const outputPath = join(workspace, "out", "board.html");
@@ -576,9 +562,7 @@ test("page write lands outside every ledger and stays read-only on books", async
         }),
       /outside|ledger|output/i,
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 async function runFactoryBoardCli(args: string[]) {
@@ -608,8 +592,7 @@ test("CLI binding failures write the binding error page and exit nonzero", async
     },
   ] as const;
   for (const row of rows) {
-    const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-binding-"));
-    try {
+    await withTempRoot("factory-board-cli-binding-", async (workspace) => {
       const outputPath = join(workspace, "board.html");
       const result = await runFactoryBoardCli(row.args(outputPath));
       assert.notEqual(result.code, 0, `${row.label}: must exit nonzero`);
@@ -621,15 +604,12 @@ test("CLI binding failures write the binding error page and exit nonzero", async
       );
       assert.equal(elementsWith(html, "data-lane").length, 0, row.label);
       assert.equal(elementsWith(html, "data-ticket").length, 0, row.label);
-    } finally {
-      await rm(workspace, { recursive: true, force: true });
-    }
+        });
   }
 });
 
 test("duplicate bookKey bindings fail closed before API and never cross-wire lanes", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-dup-book-"));
-  try {
+  return await withTempRoot("factory-board-dup-book-", async (workspace) => {
     const ledgerA = join(workspace, "ledger-a");
     const ledgerB = join(workspace, "ledger-b");
     await mkdir(join(ledgerA, "issues", "1"), { recursive: true });
@@ -730,14 +710,11 @@ test("duplicate bookKey bindings fail closed before API and never cross-wire lan
     assert.equal(elementsWith(snapDupHtml, "data-board-error")[0]?.["data-board-error"], "binding");
     assert.equal(elementsWith(snapDupHtml, "data-lane").length, 0);
     assert.equal(elementsWith(snapDupHtml, "data-ticket").length, 0);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("nested A→B→C is one rooted whole-family with each ticket rendered once", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-nested-family-"));
-  try {
+  await withTempRoot("factory-board-nested-family-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     for (const n of [10, 11, 12]) {
       await mkdir(join(ledgerDir, "issues", String(n)), { recursive: true });
@@ -793,9 +770,7 @@ test("nested A→B→C is one rooted whole-family with each ticket rendered once
       elementsWith(html, "data-family").filter((el) => el["data-parent"] === "11").length,
       0,
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -896,8 +871,7 @@ function acceptedCoderFinal(ts: string, costTotal = 0.01, totalTokens = 10): unk
 }
 
 test("S3 four-state is mutually exclusive and decided only by the latest run", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-state-"));
-  try {
+  await withTempRoot("factory-board-s3-state-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     const nowMs = now.getTime();
@@ -1116,14 +1090,11 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
         `#${n} unaccepted band must show visible last-activity`,
       );
     }
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 last activity projects newest parent/axis content timestamp", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-activity-"));
-  try {
+  await withTempRoot("factory-board-s3-activity-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     // Parent last record 11:00; axis leg continues to 11:30 — activity must be 11:30, not parent endedAt.
@@ -1177,14 +1148,11 @@ test("S3 last activity projects newest parent/axis content timestamp", async () 
     assert.ok(actLabel, "unaccepted ticket must render visible last-activity label");
     assert.equal(actLabel["data-last-activity-at"], "2026-08-05T11:30:00.000Z");
     assert.ok(visibleTicketLabel(html, "data-leg-age-label", 40), "visible leg-age label required");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 wallclock: only current latest unaccepted ends at now; historical unaccepted stay capped", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-wall-"));
-  try {
+  await withTempRoot("factory-board-s3-wall-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     // Historical unaccepted: 10:00–10:05 (=300000ms)
     await writeRunSession(
@@ -1258,14 +1226,11 @@ test("S3 wallclock: only current latest unaccepted ends at now; historical unacc
     assert.equal(wallLabelA["data-wall-ms"], ticketA["data-wall-ms"]);
     assert.equal(landLabelA["data-landing-cycle-ms"], ticketA["data-landing-cycle-ms"]);
     assert.notEqual(wallLabelA["data-wall-ms"], landLabelA["data-landing-cycle-ms"]);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledger record", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-landing-"));
-  try {
+  await withTempRoot("factory-board-s3-landing-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     // First run 10:00–10:30; second (last ledger) 11:00–11:15.
     await writeRunSession(
@@ -1376,14 +1341,11 @@ test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledge
       assert.equal(landL["data-landing-cycle-ms"], expectedLand);
       assert.notEqual(wallL["data-wall-ms"], landL["data-landing-cycle-ms"]);
     }
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 cost/tokens aggregate per station and ticket; axis legs fold into station; sort control present", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-cost-"));
-  try {
+  await withTempRoot("factory-board-s3-cost-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
 
@@ -1542,14 +1504,11 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
       executeProductionBoardSort(html, "roles", "ticket-asc").map(laneSortIdentity),
       [20, 21, 22],
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 board projects no textual conclusion and excludes unlabelled narrative self-report", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-conclusion-"));
-  try {
+  await withTempRoot("factory-board-s3-conclusion-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     // Session carries free-text assistant narrative + a model-claimed commitSha inside an
@@ -1633,14 +1592,11 @@ test("S3 board projects no textual conclusion and excludes unlabelled narrative 
     assert.equal(Number(t["data-cost-usd"]), 0.01);
     assert.equal(Number(t["data-total-tokens"]), 10);
     assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 production sort: #130 per-ticket burn participates under native #78 family", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-sort-family-"));
-  try {
+  await withTempRoot("factory-board-s3-sort-family-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
 
@@ -1749,14 +1705,11 @@ test("S3 production sort: #130 per-ticket burn participates under native #78 fam
     // Counterfactual: parent-only costs (0.01 / 1.0 / 0.05) would bury the family on cost-desc.
     // Production order above differs because the family key carries #130's nested burn.
     assert.notDeepEqual(desc, [50, 40, 78], "aggregate #130 burn must move family off parent-only order");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-127-"));
-  try {
+  await withTempRoot("factory-board-s3-127-", async (workspace) => {
     const rolesLedger = join(workspace, "ledgers", "roles");
     await cp(fixtureLedger, rolesLedger, { recursive: true });
     // Controlling frozen counterexample: multi-round unaccepted then latest accepted.
@@ -1811,9 +1764,7 @@ test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", 
     const runCosts = elementsWith(html, "data-run-id").map((r) => Number(r["data-cost-usd"]));
     const sum = runCosts.reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(Number(t["data-cost-usd"]) - sum) < 1e-9);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 /** Independent JSONL usage scan — not the board/trajectory loader — for true-home reconciliation. */
@@ -2098,8 +2049,7 @@ test("snapshot adapter carries closedAt and refuses closed issues without it", a
 });
 
 test("production factory-board lifecycle regenerates within refresh boundary and stops", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-refresh-"));
-  try {
+  await withTempRoot("factory-board-refresh-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await writeRunSession(
       ledgerDir,
@@ -2206,9 +2156,7 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     assert.equal(await treeFingerprint(ledgerDir), afterAdd);
 
     assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -2304,8 +2252,7 @@ function breadcrumbStepsOf(html: string, issueNumber: number): Array<Record<stri
 }
 
 test("kanban placement totality: every ticket lands in its yamen column or the unknown set", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-place-"));
-  try {
+  await withTempRoot("factory-board-kanban-place-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     const nowMs = now.getTime();
@@ -2588,14 +2535,11 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       assert.ok(!columnEntryOrder(html, "roles", col).includes("9"), `#9 must not sit in column ${col}`);
       assert.ok(!columnEntryOrder(html, "roles", col).includes("16"), `#16 must not sit in column ${col}`);
     }
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("kanban completed column: family clusters, open-root extraction, closedAt-desc order", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-done-"));
-  try {
+  await withTempRoot("factory-board-kanban-done-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
 
@@ -2688,9 +2632,7 @@ test("kanban completed column: family clusters, open-root extraction, closedAt-d
 
     // 已完成 column order: closedAt desc (cluster 11:00 → family30 10:00 → single 08:00).
     assert.deepEqual(columnEntryOrder(html, "roles", "done"), ["20", "30", "40"]);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -2843,8 +2785,7 @@ test("fetchBoardSnapshot passes retentionNow through only when supplied", async 
  * (tick by tick) → HTML. Never hand-return a snapshot that already contains closed tickets.
  */
 test("retention tracer: transport→fetch→watch loadView→HTML (window, family clock, drill)", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-retention-tracer-"));
-  try {
+  return await withTempRoot("factory-board-retention-tracer-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     // Zero-run issue dirs so the render seam can join every retained ticket.
     for (const n of [10, 11, 20, 21, 30, 31, 40, 41, 50]) {
@@ -2989,14 +2930,11 @@ test("retention tracer: transport→fetch→watch loadView→HTML (window, famil
     assert.equal(await treeFingerprint(ledgerDir), before, "retention watch path stays read-only");
 
     await handle.stop();
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("watch lifecycle faults loadView failures and requires view or loadView", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-watch-fault-"));
-  try {
+  await withTempRoot("factory-board-watch-fault-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
@@ -3024,15 +2962,12 @@ test("watch lifecycle faults loadView failures and requires view or loadView", a
         }),
       /view or loadView/i,
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown set, read-only", async () => {
   const kanbanFixtureLedger = join(packageRoot, "test/fixtures/factory-board-kanban/ledger");
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-fixture-"));
-  try {
+  await withTempRoot("factory-board-kanban-fixture-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await cp(kanbanFixtureLedger, ledgerDir, { recursive: true });
     // #127's authentic cut already lives in the S1 fixture tree — compose, don't duplicate.
@@ -3142,9 +3077,7 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
         "unaccepted #127 floats above accepted #104 in 尚书省",
       );
     }
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -3300,8 +3233,7 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
 }
 
 test("kanban page script: per-column sort never moves cards across columns", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-sort-"));
-  try {
+  await withTempRoot("factory-board-kanban-script-sort-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
     const html = await renderFactoryBoardHtml(
@@ -3342,14 +3274,11 @@ test("kanban page script: per-column sort never moves cards across columns", asy
     // Cards never leak across columns: pending/court/unknown memberships unchanged.
     assert.ok(page.columns["pending"]!.children.some((el) => el.getAttribute("data-ticket") === "2"));
     assert.ok(page.columns["court"]!.children.some((el) => el.hasAttribute("data-family")));
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("kanban page script: project and family filters drive lanes, badge count, column counts", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-filter-"));
-  try {
+  await withTempRoot("factory-board-kanban-script-filter-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
     const html = await renderFactoryBoardHtml(
@@ -3420,9 +3349,7 @@ test("kanban page script: project and family filters drive lanes, badge count, c
       page.familySel.children.find((o) => o.value === "78")?.getAttribute("data-child-count"),
       "1",
     );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 /** Drive the script's own option rebuild path (project switch) without changing the value. */
@@ -3438,8 +3365,7 @@ function familySelRebuild(page: KanbanFakePage): void {
 // ---------------------------------------------------------------------------
 
 test("kanban presentation: six resident columns always, empty count 0, other on demand", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-six-cols-"));
-  try {
+  await withTempRoot("factory-board-six-cols-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     // Only a pending ticket — five other resident columns must still appear empty.
     await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
@@ -3478,14 +3404,11 @@ test("kanban presentation: six resident columns always, empty count 0, other on 
       assert.equal(counts.get(key), "0", `${key} empty resident column keeps count 0`);
     }
     assert.ok(!counts.has("other:auditor"), "non-resident column absent when empty");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("kanban presentation: ledger-order breadcrumb collapses, marks return and rejected", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-breadcrumb-"));
-  try {
+  await withTempRoot("factory-board-breadcrumb-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     const now = new Date("2026-08-05T12:00:00.000Z");
     const nowMs = now.getTime();
@@ -3577,14 +3500,11 @@ test("kanban presentation: ledger-order breadcrumb collapses, marks return and r
     assert.equal(steps[2]?.["data-station"], "judge");
     assert.equal(steps[2]?.["data-return"], "true", "reappearance after another station is a return");
     assert.equal(steps[2]?.["data-rejected"], "false");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });
 
 test("kanban presentation: family options carry mechanical open-child count", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-opt-"));
-  try {
+  await withTempRoot("factory-board-family-opt-", async (workspace) => {
     const ledgerDir = join(workspace, "ledger");
     await mkdir(join(ledgerDir, "issues", "10"), { recursive: true });
     await mkdir(join(ledgerDir, "issues", "11"), { recursive: true });
@@ -3614,7 +3534,5 @@ test("kanban presentation: family options carry mechanical open-child count", as
     assert.equal(options.length, 1);
     assert.equal(options[0]?.["data-family-option"], "10");
     assert.equal(options[0]?.["data-child-count"], "2");
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+    });
 });

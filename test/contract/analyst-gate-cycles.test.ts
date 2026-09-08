@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #446 analyst gate-cycle metric family — real-entry tracers only.
  *
@@ -5,13 +6,11 @@
  * - runAnalyst issue page → gateCycles (historical + current officer faces,
  *   zero-round siblings, rejected/missing terminal receipt, damaged JSONL)
  * - runAnalyst cohort → gateCyclesByOfficer fold from ensured pages
- *
  * Oracles are hand values from fixture volumes (typed status / span / findings
  * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,6 +20,7 @@ import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystGateCyclesSection } from "../../src/analyst-metric-families/gate-cycles.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -237,13 +237,10 @@ function gateSection(page: AnalystIssueMetricsPage): AnalystGateCyclesSection {
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-gate-home-"));
-  try {
+  return withTempRoot("analyst-gate-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 function judgeAuditorDir(home: string): string {
@@ -318,6 +315,7 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
 
 
     // Rejected/no-result historical terminals do not form rounds.
+    // Clear prior volume so the rejected fixture is the sole auditor state.
     await rm(judgeAuditorDir(home), { recursive: true, force: true });
     await writeRejectedTerminalFixture(judgeAuditorDir(home));
     const rejected = await runAnalyst({
@@ -466,6 +464,59 @@ test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume kee
         origin: { kind: "direct" },
       },
     ]);
+  });
+});
+
+test("analyst gate-cycles via runAnalyst: continuous volume multi-binding keeps per-summons wall", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    // One continuous auditor volume: summons A (1s wall) then B (2s wall).
+    // Whole-volume span would report ~62s for both (judge r1 probe); interval read must not.
+    const partA = gateToolSessionJsonl({
+      id: "summons-a",
+      startedAt: "2026-09-03T00:00:00.000Z",
+      endedAt: "2026-09-03T00:00:01.000Z",
+      toolName: "ak_inspector_output",
+      args: { status: "bounce", findings: ["a-only"] },
+      attemptEntryId: "attempt-a",
+    });
+    const partB = gateToolSessionJsonl({
+      id: "summons-b",
+      startedAt: "2026-09-03T00:01:00.000Z",
+      endedAt: "2026-09-03T00:01:02.000Z",
+      toolName: "ak_inspector_output",
+      args: { status: "pass", findings: [] },
+      attemptEntryId: "attempt-b",
+      includeHeader: false,
+    });
+    await writeFile(
+      join(auditorDir, "continuous-inspector.jsonl"),
+      `${partA}${partB}`,
+      "utf8",
+    );
+
+    const result = await runAnalyst(
+      {
+        mode: "issue",
+        projectRoot: ISSUE_PROJECT_ROOT,
+      },
+      { home },
+    );
+    const leg = gateSection(result.page).legs.find((row) => row.runId === GATE_JUDGE_RUN);
+    assert.ok(leg, "continuous multi-binding volume must remain readable");
+    assert.equal(leg.roundCount, 2);
+    assert.deepEqual(
+      leg.rounds.map((round) => ({
+        status: round.status,
+        officerWallMs: round.officerWallMs,
+        findingsCount: round.findingsCount,
+      })),
+      [
+        { status: "bounce", officerWallMs: 1_000, findingsCount: 1 },
+        { status: "pass", officerWallMs: 2_000, findingsCount: 0 },
+      ],
+    );
   });
 });
 

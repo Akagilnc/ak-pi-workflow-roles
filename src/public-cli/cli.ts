@@ -34,12 +34,18 @@ import {
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import {
+  loadHostProvidersTable,
+  projectHostFacingProvider,
+  renderHostProvidersTable,
+} from "./host-providers.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
-import type { RoleTurnHost } from "../host-contracts.ts";
-import { loadProductionGrokHostFactory } from "./load-production-grok-host.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { packagedExternalHostNames } from "../host-descriptions.ts";
+import { loadProductionAcpHostFactory } from "./load-production-acp-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -50,6 +56,7 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseCountersignArgv,
+  parseDiaristArgv,
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
@@ -58,6 +65,7 @@ import {
   parseInspectorArgv,
   parseMergerArgv,
   parseNavigatorArgv,
+  parseAuditorArgv,
   parseNotaryArgv,
   parseReviewerArgv,
   recordLaunchedPiIdentity,
@@ -77,6 +85,7 @@ import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -125,6 +134,8 @@ const RESUME_SEAT_DISPATCH: Record<
   inspector: { seat: "inspector", run: runPublicInspectorResume },
   gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
+  auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
+  diarist: { seat: "diarist", run: runPublicDiaristResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -168,6 +179,8 @@ export const PUBLIC_ROLE_ARGV = {
   reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
   gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
+  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
+  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -295,6 +308,11 @@ export type CliEnv = {
   /** Override Notary role-run timeout (tests). */
   notaryTimeoutMs?: number;
   createRunId?: () => string;
+  /**
+   * #724: set by the `new` support verb before role dispatch; seat runners
+   * skip same-ticket auto-resume. Not a public flag — the verb is the choice.
+   */
+  freshSummons?: true;
 };
 
 /** Compose the Pi turn host for one role dispatch (sole public-cli → pi contact). */
@@ -317,19 +335,19 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
-  // Composition-root unique adapter table (#522 / #580): pi + S6 grok-build true adapter.
-  const adapters = env.hostAdapters ?? [
+  // Composition-root adapter table: pi (in-process default) + one ACP adapter per description-table key.
+  const adapters: readonly NamedRoleTurnHostAdapter[] = env.hostAdapters ?? [
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
-    {
-      name: "grok-build",
+    ...packagedExternalHostNames().map((name) => ({
+      name,
       create: () => {
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
         let hostPromise: Promise<RoleTurnHost> | undefined;
         return {
           ok: true as const,
           host: {
-            executeTurn: async (request) => {
-              hostPromise ??= loadProductionGrokHostFactory(env.packageRoot).then((create) =>
+            executeTurn: async (request: RoleTurnRequest) => {
+              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot, name).then((create) =>
                 create({
                   packageRoot: env.packageRoot,
                   principalAuthority: options.principalAuthority,
@@ -340,7 +358,7 @@ function resolveRoleTurnHost(
           },
         };
       },
-    },
+    })),
   ];
   const hostName = options.seat.host;
   const adapter = adapters.find((candidate) => candidate.name === hostName);
@@ -414,23 +432,36 @@ function createRoleEnvironment(
 
   // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
   // come from the live seat table (invocation flag → persistent → default).
+  // #788 expectation 2: select a registered host first; only then project the
+  // host-facing provider (table > unique directory > fail). Bad host never
+  // reaches model resolution.
+  const roleTurnHost = resolveRoleTurnHost(env, {
+    role,
+    seat: options.seat,
+    principalAuthority: env.principalAuthority!,
+    ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
+  const hostFacingSelection =
+    options.seat.selection === undefined
+      ? undefined
+      : projectHostFacingProvider(
+          options.seat.selection,
+          options.seat.host,
+          loadHostProvidersTable(options.home),
+          options.home,
+        );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
     agentDir: options.agentDir,
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
-    roleTurnHost: resolveRoleTurnHost(env, {
-      role,
-      seat: options.seat,
-      principalAuthority: env.principalAuthority!,
-      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    }),
+    roleTurnHost,
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -438,6 +469,7 @@ function createRoleEnvironment(
     ...(options.config?.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
+    ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
   };
 }
 
@@ -461,16 +493,6 @@ function cliResultFromRoleRun(result: {
     ...(result.staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
   };
 }
-
-const THINKING_LEVELS = new Set([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
 
 function defaultIo(): CliIo {
   return {
@@ -506,10 +528,8 @@ type ParsedGlobal = {
 };
 
 function parseThinking(value: string): PublicThinkingLevel {
-  if (!THINKING_LEVELS.has(value)) {
-    throw new CliUsageError(`unknown thinking level: ${value}`);
-  }
-  return value as PublicThinkingLevel;
+  // #683: opaque pass-through — no local whitelist.
+  return value;
 }
 
 function parseArgv(argv: readonly string[]): ParsedGlobal {
@@ -768,6 +788,7 @@ function renderHelp(): string {
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
+    "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Effective seats: ak-role roles",
   );
@@ -896,7 +917,7 @@ function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
   return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
 }
 
-function renderConfig(config: PublicCliConfig): string {
+function renderConfig(config: PublicCliConfig, home: string): string {
   const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
   const rows = projectConfigDisplaySeats(config);
   if (rows.length === 0) {
@@ -908,7 +929,9 @@ function renderConfig(config: PublicCliConfig): string {
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
   lines.push(`autoResumeLimit\t${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
-  return `${lines.join("\n")}\n`;
+  // #788: owner host-providers table as written on disk (separate file).
+  const hostProvidersBlock = renderHostProvidersTable(loadHostProvidersTable(home));
+  return `${lines.join("\n")}\n${hostProvidersBlock}`;
 }
 
 async function runConfigCommand(
@@ -928,7 +951,7 @@ async function runConfigCommand(
       );
       return 0;
     }
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -957,7 +980,7 @@ async function runConfigCommand(
       config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -979,7 +1002,7 @@ async function runConfigCommand(
       seat,
     );
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -997,7 +1020,7 @@ async function runConfigCommand(
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1021,7 +1044,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1043,7 +1066,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1076,7 +1099,7 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1097,12 +1120,14 @@ export async function runAkRole(
       packageRoot: await realpath(env.packageRoot),
       principalAuthority: env.principalAuthority ?? piDurablePrincipalAuthority,
     };
-    const parsed = parseArgv(argv);
-    // Host/engine axes: callable roles + resume (#617 DK-3: resume shares seat axes).
+    let parsed = parseArgv(argv);
+    // Host/engine axes: callable roles + resume + new (#617 DK-3; #724 new shares seat axes).
     // Support commands (roles/config/…) still refuse both flags.
     const acceptsSeatAxes =
       parsed.command !== undefined &&
-      (isPublicCallableRole(parsed.command) || parsed.command === "resume");
+      (isPublicCallableRole(parsed.command) ||
+        parsed.command === "resume" ||
+        parsed.command === "new");
     if (
       parsed.host !== undefined &&
       !parsed.help &&
@@ -1173,6 +1198,24 @@ export async function runAkRole(
       };
     }
 
+    // #724 explicit fresh summons: `ak-role new <role> …` — same role argv, always mint.
+    // Rewrites onto the role command with freshSummons; auto-resume and resume stay intact.
+    if (parsed.command === "new") {
+      const role = parsed.args[0];
+      if (role === undefined) {
+        throw new CliUsageError("usage: ak-role new <role> …");
+      }
+      if (!isPublicCallableRole(role)) {
+        throw new CliUsageError(`usage: ak-role new <role> …; unknown role: ${role}`);
+      }
+      parsed = {
+        ...parsed,
+        command: role,
+        args: parsed.args.slice(1),
+      };
+      env = { ...env, freshSummons: true };
+    }
+
     // Resume reopens an exact Role run (#416): caller decides; session principal
     // must still exist. Seat and dispatch follow the durable admitted role.
     // #471: unique parser owns {runId, message?}; five role paths only consume it.
@@ -1215,7 +1258,10 @@ export async function runAkRole(
       return cliResultFromRoleRun(result);
     }
 
-    if (isPublicCliSupportCommand(parsed.command)) {
+    if (
+      parsed.command !== undefined &&
+      isPublicCliSupportCommand(parsed.command)
+    ) {
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 
@@ -1287,6 +1333,31 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: "gleaner-left", home, agentDir, cwd, credentials, seat, config }),
         io,
         PUBLIC_ROLE_ARGV["gleaner-left"].parse,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Diarist public run path (#708): 起居郎 is summoned like any other seat.
+    if (parsed.command === "diarist") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadAndValidateConfig(home, env.packageRoot);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "diarist",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicDiarist(
+        parsed.args,
+        createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
+        io,
+        PUBLIC_ROLE_ARGV.diarist.parse,
       );
       return {
         exitCode: result.exitCode,
@@ -1493,9 +1564,12 @@ export async function runAkRole(
       };
     }
 
-    // Gatekeeper/Navigator direct public run paths (#639) — instruction seats,
-    // a role like any other; one parameterized branch for both.
-    if (parsed.command === "gatekeeper" || parsed.command === "navigator") {
+    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor.
+    if (
+      parsed.command === "gatekeeper"
+      || parsed.command === "navigator"
+      || parsed.command === "auditor"
+    ) {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
@@ -1512,9 +1586,7 @@ export async function runAkRole(
         createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
         parsed.command,
-        parsed.command === "gatekeeper"
-          ? PUBLIC_ROLE_ARGV.gatekeeper.parse
-          : PUBLIC_ROLE_ARGV.navigator.parse,
+        PUBLIC_ROLE_ARGV[parsed.command].parse,
       );
       return {
         exitCode: result.exitCode,

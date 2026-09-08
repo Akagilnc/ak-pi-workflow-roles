@@ -3,6 +3,7 @@ import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts"
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -18,7 +19,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -43,14 +43,10 @@ import {
   sampleCompletedDoctorOutput,
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-doctor-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-doctor-", scenario);
 }
 
 function captureIo() {
@@ -374,8 +370,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(completed.terminal!.roleOutcome.status, "completed");
-    assert.equal(completed.terminal!.roleOutcome.decisiveFacts.issueNumber, 40);
-    assert.equal(completed.terminal!.roleOutcome.decisiveFacts.findingsCount, 1);
+    // #757: full receipt passes through — issueNumber stays under case, not lifted.
+    const completedCase = completed.terminal!.roleOutcome.decisiveFacts.case as { issueNumber?: number } | undefined;
+    assert.equal(completedCase?.issueNumber, 40);
+    assert.ok(Array.isArray(completed.terminal!.roleOutcome.decisiveFacts.findings));
+    assert.equal((completed.terminal!.roleOutcome.decisiveFacts.findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")

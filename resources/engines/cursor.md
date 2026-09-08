@@ -30,7 +30,8 @@ cursor-agent -p -f --output-format text --model <MODEL_ID> "YOUR_LABOR_PROMPT"
   bracket override form (`'claude-opus-4-8[context=1m,effort=high]'` — see
   `cursor-agent --help`).
 - Owner pool directive 2026-08-28: default labor model = `cursor-grok-4.6-low`.
-- Stream JSON events for long labor: `--output-format stream-json`.
+- Always `--output-format text`; never `stream-json` (the event stream goes back
+  into the seat's context as noise — see `opus.md`).
 
 Prefer `cursor-agent --help` on the host over any remembered flag set. Do not
 wrap this engine behind `ak-role` flags.

@@ -1,3 +1,5 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 /**
  * #412 — analyst library-index legacy bookKey + cohort book scope.
  *
@@ -10,7 +12,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -59,7 +60,7 @@ function modernRow(
   };
 }
 
-test("401-F1: raw-existing legacy rows upsert without localeCompare crash", () => {
+test("401-F1: raw-existing legacy rows upsert without localeCompare crash", async () => {
   const legacyA = bareLegacyRow("/analyst-fixture/412-legacy-a", 1);
   const modern = modernRow("book-new", "/analyst-fixture/412-modern", 3);
 
@@ -80,10 +81,12 @@ test("401-F1: raw-existing legacy rows upsert without localeCompare crash", () =
 });
 
 test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other book; wrong book absent", async () => {
-  const home = await mkdtemp(join(tmpdir(), "analyst-412-entry-"));
-  const repo = await mkdtemp(join(tmpdir(), "analyst-412-repo-"));
+  await withTempRoot("analyst-412-entry-", async (home) => {
+  const repo = await mkdtemp(worktreeTempPrefix("analyst-412-repo-"));
   const previousCwd = process.cwd();
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     // Real Git repository cwd — book identity comes from the same true source
     // (git common-dir host directory) the issue/sweep path uses.
     execFileSync("git", ["init", "-b", "main"], { cwd: repo });
@@ -260,9 +263,9 @@ test("#412 public entry tracer: bare N hits cwd book (legacy row); book:N other 
         projectRoot: commaRoot,
       },
     ]);
-  } finally {
-    process.chdir(previousCwd);
-    await rm(home, { recursive: true, force: true });
-    await rm(repo, { recursive: true, force: true });
-  }
+        },
+      async () => { process.chdir(previousCwd); },
+      async () => { await rm(repo, { recursive: true, force: true }); }
+    );
+  });
 });

@@ -3,6 +3,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -126,17 +127,17 @@ function humanDecisionText(
     lines.push(`Reason: ${result.reason}`);
   }
   if (Array.isArray(result.conflicts)) {
-    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
+    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${readableGateItem(conflict)}`));
   }
   if (officer !== undefined && Array.isArray(result.findings) && result.findings.length > 0) {
-    lines.push("Findings:", ...result.findings.map((finding) => `- ${finding}`));
+    lines.push("Findings:", ...result.findings.map((finding) => `- ${readableGateItem(finding)}`));
   }
   const gate = result.auditDecisionGate;
   if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
     const record = gate as Record<string, unknown>;
     if (typeof record.question === "string") lines.push(`Question: ${record.question}`);
     if (Array.isArray(record.options)) {
-      lines.push("Options:", ...record.options.map((option) => `- ${option}`));
+      lines.push("Options:", ...record.options.map((option) => `- ${readableGateItem(option)}`));
     }
   }
   return lines.join("\n");
@@ -175,7 +176,15 @@ export type ComplianceDecisionHandlers<T> = {
     facts: Extract<ComplianceDecision, { status: "no-receipt" }>,
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
-  revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
+  /**
+   * Parent work stands with the auditor's raw reply (#757).
+   * Not a shape-unreadable judgment — the reply is what the auditor said.
+   */
+  received?: (
+    facts: Extract<ComplianceDecision, { status: "received" }>,
+    usageProjection: { usage?: Usage },
+  ) => T | PromiseLike<T>;
+  bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
 };
 
@@ -201,8 +210,17 @@ export async function disposeComplianceDecision<T>(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
-    case "revise":
-      return await handlers.revise(decision.violations);
+    case "received":
+      // Parent candidate stands; raw auditor reply rides beside — not judged unreadable (#757).
+      if (handlers.received === undefined) {
+        throw new Error("Compliance received projection handler is unavailable");
+      }
+      return await handlers.received(
+        decision,
+        decision.usage === undefined ? {} : { usage: decision.usage },
+      );
+    case "bounce":
+      return await handlers.bounce(decision.violations);
     case "escalate":
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),

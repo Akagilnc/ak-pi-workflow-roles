@@ -1,3 +1,4 @@
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #399 analyst book-scope — three defects on the analysis seat (owner-ratified).
  *
@@ -14,7 +15,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,7 @@ import {
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -185,13 +186,13 @@ async function withBookScopeWorld<T>(
   }) => Promise<T>,
 ): Promise<T> {
   // Each temp root is owned by a registered cleanup before the next fallible step.
-  const home = await mkdtemp(join(tmpdir(), "analyst-399-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-399-home-"));
   let mainRoot = "";
   let worktreeParent1 = "";
   let worktreeParent2 = "";
   return withPrimaryAwareCleanup(
     async () => {
-      mainRoot = await mkdtemp(join(tmpdir(), "analyst-399-main-"));
+      mainRoot = await mkdtemp(worktreeTempPrefix("analyst-399-main-"));
       execFileSync("git", ["init"], { cwd: mainRoot });
       execFileSync("git", ["branch", "-M", "main"], { cwd: mainRoot });
       await writeFile(join(mainRoot, "README.md"), "399\n", "utf8");
@@ -203,8 +204,8 @@ async function withBookScopeWorld<T>(
       );
 
       // Own each parent immediately after allocation (not after both succeed).
-      worktreeParent1 = await mkdtemp(join(tmpdir(), "analyst-399-wt1-"));
-      worktreeParent2 = await mkdtemp(join(tmpdir(), "analyst-399-wt2-"));
+      worktreeParent1 = await mkdtemp(worktreeTempPrefix("analyst-399-wt1-"));
+      worktreeParent2 = await mkdtemp(worktreeTempPrefix("analyst-399-wt2-"));
       const worktreeRoot = join(worktreeParent1, "wt");
       const worktree2Root = join(worktreeParent2, "wt");
       execFileSync("git", ["worktree", "add", worktreeRoot, "-b", "wt1"], { cwd: mainRoot });
@@ -261,13 +262,13 @@ async function withBookScopeWorld<T>(
       await rm(home, { recursive: true, force: true });
     },
     async () => {
-      if (mainRoot) await rm(mainRoot, { recursive: true, force: true });
+      if (mainRoot !== "") await rm(mainRoot, { recursive: true, force: true });
     },
     async () => {
-      if (worktreeParent1) await rm(worktreeParent1, { recursive: true, force: true });
+      if (worktreeParent1 !== "") await rm(worktreeParent1, { recursive: true, force: true });
     },
     async () => {
-      if (worktreeParent2) await rm(worktreeParent2, { recursive: true, force: true });
+      if (worktreeParent2 !== "") await rm(worktreeParent2, { recursive: true, force: true });
     },
   );
 }
@@ -275,9 +276,7 @@ async function withBookScopeWorld<T>(
 // D1
 test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set", async () => {
   await withBookScopeWorld(async ({ home, mainRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const bare = captureIo();
       const bareResult = await runAkRole(["analyst"], { packageRoot, home, io: bare.io });
       assert.equal(bareResult.exitCode, 0, bare.stderr.join(""));
@@ -308,18 +307,14 @@ test("D1 analyst #399 --ticket filters strictly; empty of unbound; != bare set",
       assert.equal(ticketIds.includes(RUN_MAIN_TICKET_B), false);
       // Damaged ticket-A run is unreadable exclusion, not silent drop (D7 sample).
       assert.ok(body.page.unreadable.some((u) => u.runId === RUN_DAMAGED));
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
 // D2
 test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", async () => {
   await withBookScopeWorld(async ({ home, mainRoot, worktreeRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(worktreeRoot);
-    try {
+    await withProcessCwd(worktreeRoot, async () => {
       const bare = captureIo();
       const bareResult = await runAkRole(["analyst"], { packageRoot, home, io: bare.io });
       assert.equal(bareResult.exitCode, 0, bare.stderr.join(""));
@@ -339,9 +334,7 @@ test("D2 analyst #399 bare sees main+2 worktree runs; --project-root rejected", 
       assert.equal(rejectResult.exitCode, 2);
       assert.match(rejected.stderr.join(""), /project-root/i);
       assert.match(rejected.stderr.join(""), /deleted|bare|--ticket/i);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
@@ -359,9 +352,7 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
       },
     );
 
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(["analyst", "--ticket", String(TICKET_A)], {
         packageRoot,
@@ -378,20 +369,19 @@ test("D3 analyst #399 --ticket without library-index: live book compute", async 
         [RUN_WORKTREE_TICKET_A, RUN_MAIN_TICKET_A].sort(),
       );
       assert.doesNotMatch(stdout.join("") + stderr.join(""), /library index|index miss/i);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 
 // D4
 test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file count stable", async () => {
-  const home = await mkdtemp(join(tmpdir(), "analyst-399-nongit-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-399-nongit-home-"));
   const previousCwd = process.cwd();
+  // nonGit must sit outside this git worktree; outside isolation root is not deleted.
   let nonGit = "";
   await withPrimaryAwareCleanup(
     async () => {
-      nonGit = await mkdtemp(join(tmpdir(), "analyst-399-nongit-cwd-"));
+      nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-399-nongit-cwd-"));
       await mkdir(join(home, ".ak-roles", "analyst"), { recursive: true });
       const before = await countAnalystFiles(home);
       process.chdir(nonGit);
@@ -408,22 +398,19 @@ test("D4 analyst #399 non-git cwd bare: nonzero + must-enter-repo; analyst file 
     async () => {
       await rm(home, { recursive: true, force: true });
     },
-    async () => {
-      if (nonGit) await rm(nonGit, { recursive: true, force: true });
-    },
   );
 });
 
 // D5
 test("D5 analyst #399 two books ticket 181: pages distinct by book identity", async () => {
-  const home = await mkdtemp(join(tmpdir(), "analyst-399-d5-home-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-399-d5-home-"));
   const previousCwd = process.cwd();
   let repoA = "";
   let repoB = "";
   await withPrimaryAwareCleanup(
     async () => {
-      repoA = await mkdtemp(join(tmpdir(), "analyst-399-d5-a-"));
-      repoB = await mkdtemp(join(tmpdir(), "analyst-399-d5-b-"));
+      repoA = await mkdtemp(worktreeTempPrefix("analyst-399-d5-a-"));
+      repoB = await mkdtemp(worktreeTempPrefix("analyst-399-d5-b-"));
       for (const repo of [repoA, repoB]) {
         execFileSync("git", ["init"], { cwd: repo });
         await writeFile(join(repo, "README.md"), "x\n", "utf8");
@@ -491,10 +478,10 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
       await rm(home, { recursive: true, force: true });
     },
     async () => {
-      if (repoA) await rm(repoA, { recursive: true, force: true });
+      if (repoA !== "") await rm(repoA, { recursive: true, force: true });
     },
     async () => {
-      if (repoB) await rm(repoB, { recursive: true, force: true });
+      if (repoB !== "") await rm(repoB, { recursive: true, force: true });
     },
   );
 });
@@ -502,9 +489,7 @@ test("D5 analyst #399 two books ticket 181: pages distinct by book identity", as
 // D6
 test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback", async () => {
   await withBookScopeWorld(async ({ home, mainRoot }) => {
-    const previousCwd = process.cwd();
-    process.chdir(mainRoot);
-    try {
+    await withProcessCwd(mainRoot, async () => {
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["analyst", "--ticket", String(TICKET_EMPTY)],
@@ -521,9 +506,7 @@ test("D6 analyst #399 unmatched ticket: honest empty page, no full-book fallback
       assert.equal(body.page.issueNumber, TICKET_EMPTY);
       assert.deepEqual(body.page.legs, []);
       assert.equal(body.page.unreadableCount, 0);
-    } finally {
-      process.chdir(previousCwd);
-    }
+    });
   });
 });
 

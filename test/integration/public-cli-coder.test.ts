@@ -2,6 +2,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -15,7 +16,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -35,14 +35,10 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-coder-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-coder-", scenario);
 }
 
 function captureIo() {
@@ -337,6 +333,9 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
             role: "coder",
             details: receipt,
             toolCallId: "alt-1",
+            ...(request.courtAttemptId === undefined
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
@@ -838,19 +837,17 @@ test("syntactically valid unknown provider/model is not rejected at thinking par
   });
 });
 
-// #346: colon present with empty/illegal thinking stays a typed format reject at the real entry.
-test("malformed --model thinking suffix is rejected at public entry without dispatch", async () => {
+// #346/#683: structural model-spec rejects stay; thinking suffix is opaque pass-through.
+test("structurally malformed --model is rejected; opaque thinking suffix still dispatches", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    for (const badSpec of [
-      "openai-codex/gpt-5.6-luna:bogus",
-      "openai-codex/gpt-5.6-luna:",
-      ":provider/model",
-    ] as const) {
-      const { io, stderr } = captureIo();
+    // Leading colon leaves empty provider/model — still a format reject.
+    {
+      const badSpec = ":provider/model";
+      const { io } = captureIo();
       let dispatched = false;
       const result = await runAkRole(
         [
@@ -860,7 +857,50 @@ test("malformed --model thinking suffix is rejected at public entry without disp
           "plan",
           "--project",
           project,
-          "Malformed thinking must not dispatch.",
+          "Malformed structure must not dispatch.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => "run-cli-coder-bad-thinking-leading",
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              dispatched = true;
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        },
+      );
+      assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
+      assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
+    }
+
+    // Opaque suffix (including former whitelist rejects) reaches dispatch as-is.
+    for (const spec of [
+      "openai-codex/gpt-5.6-luna:bogus",
+      "openai-codex/gpt-5.6-luna:xhigh",
+    ] as const) {
+      const { io } = captureIo();
+      let captured: string[] | undefined;
+      await runAkRole(
+        [
+          "--model",
+          spec,
+          "coder",
+          "plan",
+          "--project",
+          project,
+          "Opaque thinking suffix must dispatch.",
         ],
         {
           packageRoot,
@@ -868,38 +908,27 @@ test("malformed --model thinking suffix is rejected at public entry without disp
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () =>
-            `run-cli-coder-bad-thinking-${
-              badSpec.endsWith(":")
-                ? "trail"
-                : badSpec.startsWith(":")
-                  ? "leading"
-                  : "bogus"
-            }`,
+            `run-cli-coder-opaque-thinking-${spec.endsWith(":bogus") ? "bogus" : "xhigh"}`,
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-            dispatched = true;
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
+              captured = [...args];
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+              };
+            },
           }),
         },
       );
-      assert.equal(dispatched, false, `${badSpec} must not reach pi dispatch`);
-      assert.notEqual(result.exitCode, 0, `${badSpec} must be rejected`);
-      assert.match(
-        stderr.join(""),
-        /model specification must be provider\/model\[:thinking\]/,
-        `${badSpec} must keep typed format rejection; got: ${stderr.join("")}`,
-      );
-      // Must not wash into the persistent-config "thinking required" channel.
-      assert.equal(stderr.join("").includes("requires a thinking level"), false);
+      assert.ok(captured !== undefined, `${spec} must reach pi dispatch`);
+      const thinking = spec.slice(spec.lastIndexOf(":") + 1);
+      assert.equal(captured!.includes("--thinking"), true, `${spec} must forward --thinking`);
+      assert.equal(captured![captured!.indexOf("--thinking") + 1], thinking);
     }
   });
 });

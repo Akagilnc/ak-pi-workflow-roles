@@ -1,6 +1,6 @@
 # @akagilnc/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
+Packaged workflow roles for [Pi](https://pi.dev): `judge`, `countersign`, `gleaner-left`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `merger`, `notary`, `inspector`, `diarist`, `analyst`. 中文说明见 [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md)。
 
 ## Install
 
@@ -10,8 +10,6 @@ Install through Pi so the CLI and runtime come from the same package copy, and a
 pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 ```
-
-Four court seats (`coder` / `fixer` / `judge` / `countersign`) resolve an unbound ticket from the instruction via a Hermes labor-engine detour before the turn runs. Keep a working `hermes` executable on `PATH` for those seats; spawn failure, nonzero exit, or unusable output stops the run through the existing infrastructure-failure path with the original cause visible ([ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)). Pi-only installs that never dispatch those seats do not need Hermes.
 
 Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; seat and Gate-officer configuration lives under Reading results below.
 
@@ -40,7 +38,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
 
-`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. `[message]` applies only to seats that accept caller instruction: for those seats the optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Notary/符宝郎 must omit `message` and derives evidence from the existing source-run/dossier binding. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`, Grok: `runDirectory/grok-home`), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Every callable role accepts manual resume; Countersign and Gleaner-Left gained it in #599, Collector, Doctor, Notary, and Inspector in #633.
+`ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. `[message]` applies only to seats that accept caller instruction: for those seats the optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Notary/符宝郎 must omit `message` and derives evidence from the existing source-run/dossier binding. Global `--model` / `--host` / `--engine` override the table for that resume only. On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`; Grok CLI journals stay in the operator grok home, factory dossier is sitian records on the run), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Every callable role accepts manual resume; Countersign and Gleaner-Left gained it in #599, Collector, Doctor, Notary, and Inspector in #633.
 
 Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
@@ -65,6 +63,8 @@ ak-role config set-auto-resume-limit 3
 
 **Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
 
+**Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
+
 For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`. The persistent file is machine-wide and shared across CLI builds: seat keys this build does not know are skipped on read (not an error); unknown field-level keys on known seats keep their existing tolerance.
 
 Receipts are typed, so callers compose roles without parsing prose; ordering and stopping stay caller-owned ([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)). Programmatic consumers derive contracts from the exported schemas in `src/package-contracts/`, not from this guide.
@@ -76,7 +76,7 @@ Gate submission gate: on DONE-side submissions (`completed` / `partially_complet
 The examples below are usage sketches; option identity, aliases, requiredness, and mode faces are owned by `ak-role help <command>`, not by a second flag contract here.
 
 ```bash
-# countersign — ticket-court review before work starts; resume continues the exact session
+# countersign — ticket-court review before work starts; admission runs the ticket's diarist first (#742, caller-transparent); resume continues the exact session
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction
@@ -117,7 +117,10 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 # navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
-# countersign — ticket-court five questions; ticket recognition via instruction
+# diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)
+ak-role diarist "整理 #708 的本案依据。"
+
+# countersign — ticket-court five questions; ticket recognition via instruction; admission runs the ticket's diarist first (#742)
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # analyst — deterministic metrics; bare call = whole book

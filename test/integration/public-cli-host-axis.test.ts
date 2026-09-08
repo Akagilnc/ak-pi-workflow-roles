@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -12,6 +12,7 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -29,8 +30,7 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  const home = await mkdtemp(join(tmpdir(), "ak-host-axis-"));
-  try { await fn(home); } finally { await rm(home, { recursive: true, force: true }); }
+  await withTempRoot("ak-host-axis-", fn);
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });
@@ -172,7 +172,7 @@ const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
   ...(roleTurnHost === undefined ? {} : { roleTurnHost }),
 });
 
-test("production adapter table registers grok-build and keeps pi selectable", async () => homeTest(async (home) => {
+test("production adapter table registers grok-build and hermes and keeps pi selectable", async () => homeTest(async (home) => {
   let piTurns = 0;
   const countingPi: RoleTurnHost = {
     executeTurn: async () => {
@@ -202,7 +202,7 @@ test("production adapter table registers grok-build and keeps pi selectable", as
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
-    registeredHosts: ["pi", "grok-build"],
+    registeredHosts: ["pi", "grok-build", "hermes"],
   });
   assert.equal(piTurns, 2);
 }));
@@ -247,6 +247,142 @@ test("grok-build selection and execution have no provider restriction", async ()
     assert.equal(grokTurns, 1, spec);
     assert.equal(grokProviders[0], spec.split("/")[0], spec);
   }
+}));
+
+// #788: table > unique host-directory > fail on the public entry; pi unaffected.
+// Host must be registered before any provider projection (expectation 2).
+test("host provider resolution prefers table, then unique directory, else fails loud", async () => homeTest(async (home) => {
+  const seen: Array<{ host: string; provider: string | undefined }> = [];
+  const probe = (name: string): NamedRoleTurnHostAdapter => ({
+    name,
+    create: () => ({
+      ok: true as const,
+      host: {
+        executeTurn: async (request) => {
+          seen.push({ host: name, provider: request.model?.provider });
+          return { code: 1, stderr: "probe-stop", timedOut: false };
+        },
+      },
+    }),
+  });
+  const adapters = [probe("pi"), probe("hermes")];
+
+  await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], base(home, []));
+
+  // Owner table wins even when the host directory would be ambiguous.
+  await mkdir(join(home, ".ak-roles"), { recursive: true });
+  await writeFile(
+    join(home, ".ak-roles", "host-providers.json"),
+    `${JSON.stringify({ hermes: { xai: "xai-oauth" } }, null, 2)}\n`,
+    "utf8",
+  );
+  await mkdir(join(home, ".hermes"), { recursive: true });
+  await writeFile(
+    join(home, ".hermes", "provider_models_cache.json"),
+    JSON.stringify({
+      "xai-oauth": { models: ["grok-4.5"] },
+      nous: { models: ["x-ai/grok-4.5"] },
+      openrouter: { models: ["x-ai/grok-4.5"] },
+    }),
+    "utf8",
+  );
+
+  // Unregistered host fails as host-unregistered — never as a model/provider error.
+  // Production adapter table on this build has no hermes; use pi-only adapters.
+  const unregistered = await runAkRole(
+    ["judge", "--host", "hermes", "host-first"],
+    base(home, [probe("pi")]),
+  );
+  assert.equal(unregistered.exitCode, 1);
+  assert.deepEqual(unregistered.hostFailure, {
+    kind: "host-unregistered",
+    host: "hermes",
+    seat: "judge",
+    model: "xai/grok-4.5",
+    registeredHosts: ["pi"],
+  });
+  assert.equal(seen.length, 0);
+
+  const tableHit = await runAkRole(["judge", "--host", "hermes", "table-probe"], base(home, adapters));
+  assert.equal(tableHit.hostFailure, undefined);
+  assert.equal(tableHit.exitCode, 1);
+
+  const pi = await runAkRole(["judge", "--host", "pi", "pi-probe"], base(home, adapters));
+  assert.equal(pi.hostFailure, undefined);
+  assert.equal(pi.exitCode, 1);
+  assert.deepEqual(seen, [
+    { host: "hermes", provider: "xai-oauth" },
+    { host: "pi", provider: "xai" },
+  ]);
+
+  // Drop the table entry → directory is ambiguous → leg does not start.
+  await writeFile(
+    join(home, ".ak-roles", "host-providers.json"),
+    `${JSON.stringify({}, null, 2)}\n`,
+    "utf8",
+  );
+  seen.length = 0;
+  const ambiguous = await runAkRole(["judge", "--host", "hermes", "ambiguous"], base(home, adapters));
+  assert.equal(ambiguous.exitCode, 1);
+  assert.equal(ambiguous.hostFailure, undefined);
+  assert.equal(seen.length, 0);
+
+  // Unique directory match replaces without a table row.
+  await writeFile(
+    join(home, ".hermes", "provider_models_cache.json"),
+    JSON.stringify({ "xai-oauth": { models: ["grok-4.5"] } }),
+    "utf8",
+  );
+  seen.length = 0;
+  const unique = await runAkRole(["judge", "--host", "hermes", "unique"], base(home, adapters));
+  assert.equal(unique.hostFailure, undefined);
+  assert.deepEqual(seen, [{ host: "hermes", provider: "xai-oauth" }]);
+
+  // Seat rows themselves stay as written.
+  assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+}));
+
+test("public grok-build turn inherits operator HOME and leaves sitian-only run records", async () => homeTest(async (home) => {
+  const envDump = join(home, "child-env.json");
+  await mkdir(join(home, ".grok", "bin"), { recursive: true });
+  const binary = join(home, ".grok", "bin", "grok");
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(envDump)}, JSON.stringify(process.env));
+if (process.argv.includes("inspect")) {
+  process.stdout.write(JSON.stringify({
+    skills: [], plugins: [], agents: [], hooks: [], mcpServers: [], projectInstructions: [],
+  }));
+}
+process.exit(0);
+`,
+    { encoding: "utf8" },
+  );
+  await chmod(binary, 0o755);
+  await configureJudge(home, "grok-build");
+  const result = await runAkRole(["judge", "public-grok-sitian"], productionBase(home));
+  assert.equal(result.hostFailure, undefined);
+
+  const booksRoot = join(home, ".ak-roles", "books");
+  const books = await readdir(booksRoot);
+  assert.ok(books.length >= 1);
+  const runsRoot = join(booksRoot, books[0]!, "runs");
+  const runs = await readdir(runsRoot);
+  // #717: this turn is sitian-only (no run-scoped grok-home). #675 nested public
+  // navigator attendance may mint sibling role runs; the grok isolation contract
+  // is on the judge run, not on book-wide run count.
+  const judgeRuns = runs.filter((name) => name.endsWith("@judge"));
+  assert.equal(judgeRuns.length, 1);
+  const children = await readdir(join(runsRoot, judgeRuns[0]!));
+  assert.equal(children.some((name) => name.endsWith("-home")), false);
+  const dumped = JSON.parse(await readFile(envDump, "utf8")) as NodeJS.Dict<string>;
+  assert.equal(dumped.HOME, process.env.HOME);
 }));
 
 /** #595: birth host is a typed invocation field at admission. */

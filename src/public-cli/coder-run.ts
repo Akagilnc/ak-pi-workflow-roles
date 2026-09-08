@@ -21,7 +21,6 @@ import {
   buildCoderTransportPrompt,
   type AdmittedCoderInvocation,
 } from "./invocation.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
   buildResumeContinuationPrompt,
   loadResumableCoderRun,
@@ -199,12 +198,7 @@ export async function runPublicCoder(
           }),
         },
       }),
-    adapters: {
-      ...coderAdapters(methodProvenance),
-      beforeDispatch: async (admittedSeat) => {
-        await resolveSeatTicketBinding(admittedSeat, env);
-      },
-    },
+    adapters: coderAdapters(methodProvenance),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

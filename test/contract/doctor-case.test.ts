@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, DoctorSubmissionContractError, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { outsideWorktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -196,30 +197,6 @@ test("partial and non-monotonic sessions remain reportable with every explicit d
   });
 });
 
-test("grok-home native journals are excluded and do not become false incomplete Pi legs", async () => {
-  await withTempRoot("doctor-grok-home-", async (root) => {
-    const runs = homeRuns(root, 594);
-    const runDir = "fixer-apply@roles-594";
-    await mkdir(join(runs, runDir, "session"), { recursive: true });
-    await mkdir(join(runs, runDir, "grok-home", "sessions", "cwd-encoded", "session-123"), { recursive: true });
-    const piBody = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
-    await writeFile(join(runs, runDir, "session", "session.jsonl"), piBody);
-    // Grok native journal shape (no Pi session header) retained under run books (ADR 0077).
-    await writeFile(
-      join(runs, runDir, "grok-home", "sessions", "cwd-encoded", "session-123", "updates.jsonl"),
-      '{"type":"message","text":"grok-native"}\n',
-    );
-    const patient = await loadDoctorCase(runs);
-    assert.deepEqual(patient.cost.legs, { count: 1, sources: [`${runDir}/session/session.jsonl`] });
-    assert.equal(patient.cost.sessions.length, 1);
-    assert.equal(patient.cost.sessions[0]?.completion, "accepted");
-    assert.equal(patient.cost.sessions[0]?.source.includes("grok-home"), false);
-    assert.equal(patient.evidence.some((entry) => entry.id.includes("grok-home")), false);
-    assert.equal(patient.cost.modelApiTurns.count, 1);
-    assert.equal(patient.cost.outputTokens.count, 7);
-  });
-});
-
 test("case admission rejects runs trees outside the ledger-home path", async () => {
   await withTempRoot("doctor-invalid-path-", async (root) => {
     const runs = join(root, "issues/40/runs");
@@ -269,11 +246,13 @@ test("case identity is repository-relative with an absolute fallback outside rep
     assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/issues/40/runs");
   });
 
-  await withTempRoot("doctor-identity-outside-", async (outside) => {
-    const outsideRuns = homeRuns(outside, 40);
-    await mkdir(outsideRuns, { recursive: true });
-    assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
-  });
+  // Absolute-fallback arm must sit truly outside any git worktree. worktreeTempPrefix
+  // roots live inside this repo, so stableRunsIdentity would return a relative path.
+  // Outside create-and-abandon: owner 2026-09-06 forbids deleting outside the worktree.
+  const outside = await mkdtemp(outsideWorktreeTempPrefix("doctor-identity-outside-"));
+  const outsideRuns = homeRuns(outside, 40);
+  await mkdir(outsideRuns, { recursive: true });
+  assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
 });
 
 test("case identity discovery propagates unexpected filesystem errors", async () => {

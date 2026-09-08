@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #337 analyst public CLI sweep — caller-invoked attach path (ADR 0052 / ADR 0068).
  *
@@ -17,7 +18,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,7 @@ import {
   type AnalystLibraryIndexPage,
 } from "../../src/analyst-index.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -78,32 +79,33 @@ async function withSweepFixture<T>(
     attachDir: string;
   }) => Promise<T>,
 ): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-337-business-"));
-  const home = await mkdtemp(join(tmpdir(), "analyst-337-home-"));
-  const attachDir = await mkdtemp(join(tmpdir(), "analyst-337-attach-"));
-  try {
-    execFileSync("git", ["init"], { cwd: businessRepo });
-    await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
-    execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
-      { cwd: businessRepo },
-    );
-    assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
-    await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
-    const result = await fn({
-      home,
-      ledgerHome: join(home, ".ak-roles"),
-      attachDir,
-    });
-    assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
-    return result;
-  } finally {
-    await rm(attachDir, { recursive: true, force: true });
-    await rm(home, { recursive: true, force: true });
-    await rm(businessRepo, { recursive: true, force: true });
-  }
+  const businessRepo = await mkdtemp(worktreeTempPrefix("analyst-337-business-"));
+  const home = await mkdtemp(worktreeTempPrefix("analyst-337-home-"));
+  const attachDir = await mkdtemp(worktreeTempPrefix("analyst-337-attach-"));
+  return withPrimaryAwareCleanup(
+    async () => {
+      execFileSync("git", ["init"], { cwd: businessRepo });
+      await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
+      execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        { cwd: businessRepo },
+      );
+      assert.equal(gitPorcelain(businessRepo), "", "business repo starts clean");
+      await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
+      const result = await fn({
+        home,
+        ledgerHome: join(home, ".ak-roles"),
+        attachDir,
+      });
+      assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
+      return result;
+    },
+    async () => { await rm(businessRepo, { recursive: true, force: true }); },
+    async () => { await rm(home, { recursive: true, force: true }); },
+    async () => { await rm(attachDir, { recursive: true, force: true }); },
+  );
 }
 
 async function snapshotAnalystDir(ledgerHome: string): Promise<Map<string, string>> {
@@ -144,7 +146,6 @@ test("analyst public CLI sweep: one typed attach → pages+index match runAnalys
     await writeFile(attachPath, `${JSON.stringify(VALID_SWEEP_INPUT)}\n`);
 
     const oracle = await runAnalyst(VALID_SWEEP_INPUT, { home });
-    await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(

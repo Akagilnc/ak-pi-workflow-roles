@@ -6,7 +6,8 @@
 - **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳另立法典(`souls/audit-law.md`、`souls/quality-law.md`);审刑院法典参审四席=大理寺/御史台主会话+两审计席(太医线不动)([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470) 御批四)。确定性角色无 soul。
 - **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持有不可约职责与判断原则，Skill 持有可替换的方法步骤。强制 Skill 是包的运行依赖，不是用户 home 目录的隐含前提。
 - **角色门禁(Role gating)**:车间内的机械限制——对 LLM 角色是工具集收窄与工具调用拦截,对确定性角色是其自身的能力边界。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
-- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
+- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。工具＝回执 schema 通道：handler 只记录回执与排队,不校验形状、不判内容、不丢字段([#750](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/750) / [#757](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/757))。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
+- **审核席(Review seat)**:父席交卷后由代码排队传召的审核角色(给事中→符宝郎、判官→审刑院、将作监/修内司→察院)。代码只读结论字段(`pass`/`bounce`/`escalate`)以排队;对方说了什么原样递回父席;读不出三态则 resume 说话者本人——代码不分类、不映射、不判「不可读/不可用/不合法」、不替对方终局、不替选下一步、不丢字段。传输/生命周期事实(进程死、无交卷、文件缺失)如实呈现;ADR 0066 typed 闸与 autoResumeLimit 保留。
 - **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。
 - **形状校验(Shape validation)**:拒收理由**只涉数据的排布**——在场/缺席、键拼写、基数、类型、跨字段组合。一旦拒收理由需要引用**外部可观察事实或世界规则**(现场 Git 状态、字节重算、路径授权、对象同一性),即**非**形状校验。代码对角色输出的形状校验拒收权与中止权归零,见 CLAUDE.md 第 0 条。**该禁令只约束代码**——审刑院等 LLM 角色据此打回不在禁止之列,它们走既有重交通道、不掐局。
@@ -25,11 +26,11 @@
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **门下省(Gate province)**:审署诏敕与质量保证的省部级席位。它是调用者可经公开入口单独传召的普通角色，不再由交卷闸主动传召；给事中（票庭）亦属本省，由调用者开工前传召。省不是纯分类词，也不是外层编排器。各官仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
 _Avoid_:把「门下省」当作通进司的公开角色名。
-- **给事中(Countersign)**:门下省下的**票庭审读官**。凡开工前的票面——派单、方案、处置案——先过给事中，裁决五问：①是否符合既定制度②授权是否真实（以起居录为据）③文书是否与原意一致④是否存在必须退回重议的问题⑤是否具备正式发布与执行资格。票庭流水线在本席 turn 前先跑起居郎工序（调用者无感）。交卷闸出席符宝郎内闸。读码取证是本职；把实现细节过早堆上票面是失职；实质听证为传召取证之权，裁决落法度与事实，不落施工设计。三态判词映射：署（converged，放行开工）／封驳（continue，退回重议）／上呈（escalate）。非闸派——由调用者开工前传召。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **给事中(Countersign)**:门下省下的**票庭审读官**。凡开工前的票面——派单、方案、处置案——先过给事中，裁决五问：①是否符合既定制度②授权是否真实（以起居录为据）③文书是否与原意一致④是否存在必须退回重议的问题⑤是否具备正式发布与执行资格。起居录由起居郎（独立角色，见「起居郎」词条）修；是否先跑起居郎归调用者（ADR 0010）。交卷闸出席符宝郎内闸。读码取证是本职；把实现细节过早堆上票面是失职；实质听证为传召取证之权，裁决落法度与事实，不落施工设计。三态判词映射：署（converged，放行开工）／封驳（continue，退回重议）／上呈（escalate）。非闸派——由调用者开工前传召。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
 - **察院(Inspector)**:事后察举官（原给事中，[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 分立）。审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；交卷闸按该受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。机器键仍为 `inspector`，也可被外层调用者单独派发；挂靠御史台一案挂起。
 - **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。首责唯一：**核实实际授权出处**——乱编乱扩、伪造或过度解释授权，无条件驳。行事两步：读该票起居录→以录核旨。引语真伪与票面对齐为其手段；受审物是大理寺拟判与给事中署章，交卷闸按这两类受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写，不是本局失败），也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
-- **起居录(ticket-provenance)**:每票一份、票键组织的司天台记录 kind；整块誊录决策相关对话，JSONL 权威、md 人读派生。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
-- **起居郎(diarist)**:票庭流水线在给事中前的一站（非公开席位、无 soul 开府、不出席闸）。LLM 语义收集＋机械保全（来源枚举、去重滤噪、引语逐字反验）；调用者无感；每次过庭增量刷新。生成者唯一；其余席位只读。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
+- **起居录(ticket-provenance)**:每票一份的共同案卷，汇集本案决定及相关依据，帮助接手衙门理解当前方向并追溯原件；不同于一次运行的卷宗。现行制度见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)，案卷整理与随案递送设计见 [ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。
+- **起居郎(diarist)**:为本票搜集、整理决策依据并修订起居录的记录者，不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内独立观察外部 GitHub PR 材料、可选请求、判定停止观察并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。

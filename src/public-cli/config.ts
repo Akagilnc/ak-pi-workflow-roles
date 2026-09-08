@@ -4,6 +4,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { assertRegisteredHostName, DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
@@ -101,16 +102,6 @@ export type InvocationModelOverride = {
   engine?: string;
   host?: string;
 };
-
-export const THINKING_LEVELS = new Set<PublicThinkingLevel>([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
 
 export function publicCliConfigPath(home: string): string {
   if (typeof home !== "string" || home.trim() === "") {
@@ -228,7 +219,8 @@ export function setPersistentSeatHost(
     }
     return { ...config, seats: { ...config.seats, [seat]: rest } };
   }
-  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host } } };
+  const registered = assertRegisteredHostName(host);
+  return { ...config, seats: { ...config.seats, [seat]: { ...previous, host: registered } } };
 }
 
 /**
@@ -305,7 +297,7 @@ export function setAutoResumeLimit(
  * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
  * engine names need only path-safety syntax (no closed material catalog;
  * #376 / #378 / #391 / ADR 0069). Syntax authority = assertLegalEngineName
- * (no injected duplicate).
+ * (no injected duplicate). Persistent host must be pi or a description-table key (#510 / #731).
  */
 export function validatePublicCliConfigAxes(
   config: PublicCliConfig,
@@ -313,14 +305,25 @@ export function validatePublicCliConfigAxes(
 ): void {
   for (const seat of Object.keys(config.seats) as PublicConfigurableSeat[]) {
     const row = config.seats[seat];
-    if (row?.engine === undefined) continue;
-    try {
-      assertLegalEngineName(row.engine);
-    } catch (error) {
-      throw new Error(
-        `config seat ${seat} engine is illegal: ${row.engine}`,
-        { cause: error },
-      );
+    if (row?.engine !== undefined) {
+      try {
+        assertLegalEngineName(row.engine);
+      } catch (error) {
+        throw new Error(
+          `config seat ${seat} engine is illegal: ${row.engine}`,
+          { cause: error },
+        );
+      }
+    }
+    if (row?.host !== undefined) {
+      try {
+        assertRegisteredHostName(row.host);
+      } catch (error) {
+        throw new Error(
+          `config seat ${seat} host is unregistered: ${row.host}`,
+          { cause: error },
+        );
+      }
     }
   }
 }
@@ -336,17 +339,10 @@ export function parseModelSpec(
   const thinkingSplit = trimmed.lastIndexOf(":");
   let modelPart = trimmed;
   let thinking: PublicThinkingLevel | undefined = fallbackThinking;
-  // #346: no colon → bare provider/model is legal. Colon present (any index,
-  // including 0) → suffix must be a typed PublicThinkingLevel (empty/unknown
-  // stay format rejects; never swallow ":…" into the model name).
+  // #346/#683: no colon → bare provider/model is legal. Colon present → suffix
+  // is opaque thinking pass-through (no local whitelist); never swallow into model.
   if (thinkingSplit !== -1) {
-    const maybeThinking = trimmed.slice(thinkingSplit + 1);
-    if (!THINKING_LEVELS.has(maybeThinking as PublicThinkingLevel)) {
-      throw new Error(
-        `model specification must be provider/model[:thinking], got ${spec}`,
-      );
-    }
-    thinking = maybeThinking as PublicThinkingLevel;
+    thinking = trimmed.slice(thinkingSplit + 1);
     modelPart = trimmed.slice(0, thinkingSplit);
   }
   const slash = modelPart.indexOf("/");
@@ -507,14 +503,9 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   if (typeof raw.model !== "string" || raw.model.trim() === "") {
     throw new Error(`config seat ${seat} requires model`);
   }
-  // #384: thinking is optional on persistent seats; when present it must be typed.
-  if (raw.thinking !== undefined) {
-    if (
-      typeof raw.thinking !== "string" ||
-      !THINKING_LEVELS.has(raw.thinking as PublicThinkingLevel)
-    ) {
-      throw new Error(`config seat ${seat} requires a valid thinking level`);
-    }
+  // #384/#683: thinking is optional opaque pass-through; when present must be a string.
+  if (raw.thinking !== undefined && typeof raw.thinking !== "string") {
+    throw new Error(`config seat ${seat} thinking must be a string`);
   }
   const parsed: PersistentSeatConfig = {
     provider: raw.provider as string,
@@ -572,7 +563,7 @@ function attachHostAxis(
   if (invocation?.host !== undefined) return { ...seat, host: invocation.host, hostSource: "invocation" };
   const persistent = config.seats[seat.seat]?.host;
   if (persistent !== undefined) return { ...seat, host: persistent, hostSource: "persistent" };
-  return { ...seat, host: "pi", hostSource: "default" };
+  return { ...seat, host: DEFAULT_ROLE_TURN_HOST, hostSource: "default" };
 }
 
 function attachEngineAxis(
@@ -687,7 +678,13 @@ export function resolveEffectiveSeat(
     }
   }
 
-  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
+  // Seat axes only. Host-facing provider projection (#788) runs after the host
+  // is selected as registered — never before (bad host must not reach model).
+  return attachHostAxis(
+    attachEngineAxis(modelSeat, config, invocation),
+    config,
+    invocation,
+  );
 }
 
 export function effectiveSeatConfigurations(

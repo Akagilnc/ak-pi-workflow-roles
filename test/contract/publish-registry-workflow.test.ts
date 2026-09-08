@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -70,23 +71,26 @@ esac
   chmodSync(join(bin, "npm"), 0o755);
 }
 
-function runStamp(options: {
-  readonly channel: string;
-  readonly viewHit: boolean;
-  readonly shortSha: string;
-  readonly useRealNpmVersion?: boolean;
-}): {
+function runStamp(
+  root: string,
+  options: {
+    readonly channel: string;
+    readonly viewHit: boolean;
+    readonly shortSha: string;
+    readonly useRealNpmVersion?: boolean;
+  },
+): {
   readonly root: string;
   readonly status: number;
   readonly stderr: string;
   readonly npmPath: string;
   readonly packageVersion: string;
+  readonly pwnedExists: boolean;
   readonly publishTag?: string;
   readonly publishVersion?: string;
   readonly distTagPackage?: string;
   readonly distTagName?: string;
 } {
-  const root = mkdtempSync(join(tmpdir(), "ak-publish-registry-"));
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({ name: "@akagilnc/pi-workflow-roles", version: "0.0.0" }),
@@ -133,6 +137,7 @@ function runStamp(options: {
     stderr,
     npmPath: readOptional("npm-path") ?? "",
     packageVersion: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version as string,
+    pwnedExists: existsSync(join(root, "PWND")),
     ...(publishTag === undefined ? {} : { publishTag }),
     ...(publishVersion === undefined ? {} : { publishVersion }),
     ...(distTagPackage === undefined ? {} : { distTagPackage }),
@@ -140,33 +145,39 @@ function runStamp(options: {
   };
 }
 
-test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", () => {
+async function withStamp(
+  options: Parameters<typeof runStamp>[1],
+  observe: (result: ReturnType<typeof runStamp>) => void,
+): Promise<void> {
+  // Own the root at the create seam before setup/parse can throw past finally.
+  await withTempRoot("ak-publish-registry-", async (root) => {
+    observe(runStamp(root, options));
+  });
+}
+
+test("malicious CHANNEL is data to real npm and fails Invalid version without shell execution", async () => {
   const malicious = 'x$(echo pwned >PWND)y; echo injected" `uname` ';
   const shortSha = "abc1234";
-  const result = runStamp({
+  await withStamp({
     channel: malicious,
     viewHit: false,
     shortSha,
     useRealNpmVersion: true,
-  });
-  try {
+  }, (result) => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Invalid version/i);
-    assert.equal(existsSync(join(result.root, "PWND")), false);
+    assert.equal(result.pwnedExists, false);
     assert.equal(result.npmPath, "");
     assert.equal(result.publishVersion, undefined);
     // package.json must not have been stamped to the malicious identity.
     assert.equal(result.packageVersion, "0.0.0");
-  } finally {
-    rmSync(result.root, { recursive: true, force: true });
-  }
+  });
 });
 
-test("legal missing-version publish carries next shortsha artifact identity", () => {
+test("legal missing-version publish carries next shortsha artifact identity", async () => {
   const channel = "next";
   const shortSha = "abc1234";
-  const result = runStamp({ channel, viewHit: false, shortSha });
-  try {
+  await withStamp({ channel, viewHit: false, shortSha }, (result) => {
     const expected = `0.1.9-${channel}.${shortSha}`;
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "publish");
@@ -174,16 +185,13 @@ test("legal missing-version publish carries next shortsha artifact identity", ()
     assert.equal(result.publishTag, channel);
     assert.equal(result.packageVersion, expected);
     assert.equal(result.distTagPackage, undefined);
-  } finally {
-    rmSync(result.root, { recursive: true, force: true });
-  }
+  });
 });
 
-test("legal existing-version moves next dist-tag only", () => {
+test("legal existing-version moves next dist-tag only", async () => {
   const channel = "next";
   const shortSha = "def5678";
-  const result = runStamp({ channel, viewHit: true, shortSha });
-  try {
+  await withStamp({ channel, viewHit: true, shortSha }, (result) => {
     const expectedVersion = `0.1.9-${channel}.${shortSha}`;
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "dist-tag");
@@ -192,21 +200,16 @@ test("legal existing-version moves next dist-tag only", () => {
     assert.equal(result.packageVersion, expectedVersion);
     assert.equal(result.publishTag, undefined);
     assert.equal(result.publishVersion, undefined);
-  } finally {
-    rmSync(result.root, { recursive: true, force: true });
-  }
+  });
 });
 
-test("latest channel publishes monotonic version without shortsha suffix", () => {
-  const result = runStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" });
-  try {
+test("latest channel publishes monotonic version without shortsha suffix", async () => {
+  await withStamp({ channel: "latest", viewHit: false, shortSha: "abc1234" }, (result) => {
     const expected = "0.1.9";
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "publish");
     assert.equal(result.publishVersion, expected);
     assert.equal(result.publishTag, "latest");
     assert.equal(result.packageVersion, expected);
-  } finally {
-    rmSync(result.root, { recursive: true, force: true });
-  }
+  });
 });

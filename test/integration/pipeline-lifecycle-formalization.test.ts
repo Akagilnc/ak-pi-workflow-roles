@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -21,8 +22,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
  * stages ①②④⑤ are still borne by AK, not by the substituted host.
  */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
-  const home = await mkdtemp(join(tmpdir(), "ak-faux-host-test-"));
-  try {
+  return await withTempRoot("ak-faux-host-test-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -98,7 +98,5 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       typeof artifactBody.cause === "string" && artifactBody.cause.length > 0,
       "artifact must carry a structured outcome (cause)",
     );
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    });
 });

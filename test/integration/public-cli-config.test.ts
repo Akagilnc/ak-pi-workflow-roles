@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import {
   projectConfigDisplaySeats,
@@ -23,14 +23,10 @@ import {
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-config-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-config-", scenario);
 }
 
 test("bulk persistent configuration survives a new process boundary", async () => {
@@ -149,8 +145,11 @@ test("effective seats prefer credentials: codex-only, xai-only, both prefers cod
     "inspector",
     "gatekeeper",
     "navigator",
+    "auditor",
+    "diarist",
   ]);
-  assert.equal(seats.includes("auditor" as never), false);
+  assert.equal(seats.includes("auditor"), true);
+  // #744: evidence-child is not a public seat (deepEqual roster above).
 
   // #453/#620/#639: gatekeeper keeps no package startup; subordinates have none either.
   assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
@@ -431,15 +430,22 @@ test("malformed model specs keep the pre-#346 typed rejection surface", () => {
     () => parseModelSpec("/missing-provider"),
     /model specification must be provider\/model\[:thinking\]/,
   );
-  // Colon present but suffix empty/unknown: typed format reject (not swallowed into model).
-  assert.throws(
-    () => parseModelSpec("openai-codex/gpt-5.6-luna:bogus"),
-    /model specification must be provider\/model\[:thinking\]/,
-  );
-  assert.throws(
-    () => parseModelSpec("openai-codex/gpt-5.6-luna:"),
-    /model specification must be provider\/model\[:thinking\]/,
-  );
+  // #683: suffix is opaque pass-through — no whitelist reject.
+  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:bogus"), {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "bogus",
+  });
+  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:xhigh"), {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "xhigh",
+  });
+  assert.deepEqual(parseModelSpec("openai-codex/gpt-5.6-luna:"), {
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    thinking: "",
+  });
   // Unknown provider/model is syntactically legal — resolution is not this parser's job.
   assert.deepEqual(parseModelSpec("no-such-provider/no-such-model"), {
     provider: "no-such-provider",

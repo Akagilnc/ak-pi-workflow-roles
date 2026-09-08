@@ -2,9 +2,8 @@
  * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
  * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
  */
-import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
+import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
 export function context() {
   return {
@@ -32,28 +31,24 @@ export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
   };
 }
 
-export async function cleanupTempDir(root: string, primaryFailure?: unknown): Promise<void> {
-  try {
-    await rm(root, { recursive: true, force: true });
-  } catch (cleanupFailure) {
-    if (primaryFailure === undefined) throw cleanupFailure;
-    throw new AggregateError([primaryFailure, cleanupFailure], "Test failed and cleanup failed", { cause: primaryFailure });
-  }
-}
-
 export function sessionHarness() {
   const entries: unknown[] = [];
-  const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
+  const modelSettings: Array<{ model: string; thinkingLevel?: string }> = [];
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
   const rejectedPrepareReasons: string[] = [];
   const transportFailures: string[] = [];
   let providerFailure: { source: "transport"; cause: "transport" } | undefined;
+  const sessionNoReceipts: NoReceiptLifecycleFacts[] = [];
+  let noReceipt: NoReceiptLifecycleFacts | undefined;
   const session: NavigatorPreparationSession = {
     async prompt(_text) {
       prompts += 1;
       providerFailure = undefined;
+      noReceipt = sessionNoReceipts.shift();
+      // A session that settled without an accepted receipt returns its turn.
+      if (noReceipt !== undefined) return;
       const rejected = rejectedPrepareReasons.shift();
       if (rejected !== undefined) {
         const id = `rejected-prepare-${prompts}`;
@@ -71,7 +66,12 @@ export function sessionHarness() {
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
     providerFailure: () => providerFailure,
-    async setModel(model, thinkingLevel) { modelSettings.push({ model, thinkingLevel }); },
+    noReceipt: () => noReceipt,
+    async setModel(model, thinkingLevel) {
+      modelSettings.push(
+        thinkingLevel === undefined ? { model } : { model, thinkingLevel },
+      );
+    },
     recordPointer: () => "/fixture/navigator-record",
     dispose() {},
   };
@@ -82,6 +82,18 @@ export function sessionHarness() {
     prompts: () => prompts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
+    /** Next prompt settles the session itself without an accepted receipt (#675 nested no-receipt). */
+    settleWithoutReceipt(...rejectedReasons: string[]) {
+      sessionNoReceipts.push({
+        terminalToolCalled: rejectedReasons.length > 0,
+        rejectedReceipts: rejectedReasons.map((reason) => ({ reason, diagnosticAvailable: reason.trim() !== "" })),
+        deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+        sessionCompletion: "settled-without-accepted-receipt",
+        runPointer: "/fixture/nested-run",
+        attemptPointer: "nested-attempt",
+        acceptedReceipt: false,
+      });
+    },
     /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
     retainedContext: () => {
       const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");

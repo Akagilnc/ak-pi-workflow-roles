@@ -1,4 +1,5 @@
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -13,7 +14,10 @@ import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
-import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
+import {
+  homeFromRunDirectory,
+  resolveActivationLedgerHomeForPath,
+} from "./activation-ledger-topology.ts";
 import {
   appendAcceptedActivationToBook,
   buildAcceptedActivationFact,
@@ -69,6 +73,16 @@ import {
 } from "./inspector-role.ts";
 import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
 import {
+  DIARIST_TOOL_SPEC,
+  type DiaristRuntimeDependencies,
+} from "./diarist-role.ts";
+import {
+  DIARIST_ACCEPTED_TEXT,
+  projectDiaristEntries,
+} from "./diarist-contracts.ts";
+import { commitDiaristEntries } from "./diarist.ts";
+import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
+import {
   GATEKEEPER_TOOL_SPEC,
   type GatekeeperRuntimeDependencies,
 } from "./gatekeeper-role.ts";
@@ -76,6 +90,11 @@ import {
   NAVIGATOR_TOOL_SPEC,
   type NavigatorRuntimeDependencies,
 } from "./navigator-role.ts";
+import {
+  AUDITOR_TOOL_SPEC,
+  type AuditorRuntimeDependencies,
+} from "./auditor-role.ts";
+import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
@@ -92,7 +111,6 @@ import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, p
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
-  type SoulAuditResult,
 } from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
@@ -128,7 +146,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-authority-refs",
     definition: Object.freeze({
-      description: "JSON array of durable authority references for Spec evidence-child material only",
+      description: "JSON array of durable authority references for Spec-axis material only",
       type: "string" as const,
     }),
   }),
@@ -325,17 +343,16 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
-export { executeAuditorChild } from "./evidence-child-executor.ts";
-export type { AuditorDecisionTool } from "./evidence-child-executor.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
-  createOfficerDecisionTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
-export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export { gateOfficerForSubject } from "./gatekeeper-role.ts";
+import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -347,7 +364,6 @@ export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
-  type SoulAuditResult,
 } from "./judge-role.ts";
 export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
@@ -373,9 +389,15 @@ export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisi
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
 export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
-export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
+export {
+  AUDITOR_SOUL_ROLES,
+  AK_ROLE_AUDITOR_SUBJECT_ENV,
+  loadAuditorSoul,
+  loadAuditorSoulFromSubjectInput,
+  resolveAuditorSubject,
+} from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
-export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
+export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
@@ -439,6 +461,8 @@ type ActivationRuntime = {
   inspector: { activate(): Promise<void> };
   gatekeeper: { activate(): Promise<void> };
   navigator: { activate(): Promise<void> };
+  auditor: { activate(): Promise<void> };
+  diarist: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -487,6 +511,8 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
     case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
+    case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
+    case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -594,6 +620,8 @@ export type RoleRuntimeDependencies = {
   loadInspectorSoul?(): Promise<string>;
   loadGatekeeperSoul?(): Promise<string>;
   loadNavigatorSoul?(): Promise<string>;
+  loadAuditorSoul?(): Promise<string>;
+  loadDiaristSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -611,9 +639,6 @@ export type RoleRuntimeDependencies = {
     options: { context: HostContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
-  auditSoulCompliance(
-    options: { context: HostContext; signal?: AbortSignal },
-  ): Promise<SoulAuditResult>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -706,13 +731,17 @@ export async function projectClosedSubmissionLifecycle(
   await settle(publicNavigatorSettlement(projection.role, phase, closure));
 }
 
-/** Optional pre-accept hook on the shared filed-officer envelope (ADR 0075). */
+/**
+ * Optional pre-accept hook on the shared filed-officer envelope (ADR 0075).
+ * May return a details projection (envelope-owned machine facts recorded next to
+ * the submitted parameters); undefined keeps the parameters as submitted.
+ */
 type FiledOfficerBeforeAccept = (input: {
   readonly toolCallId: string;
   readonly parameters: unknown;
   readonly signal: AbortSignal | undefined;
   readonly ctx: HostContext;
-}) => Promise<void>;
+}) => Promise<unknown>;
 
 /**
  * Shared registration envelope for filed officers (ADR 0018 / #572):
@@ -748,14 +777,15 @@ function createFiledOfficerRuntime(
           parameters: spec.tool.parameters as never,
           async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
-            if (spec.beforeAccept !== undefined) {
-              await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            }
+            const projected =
+              spec.beforeAccept === undefined
+                ? undefined
+                : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
               content: [{ type: "text" as const, text: spec.acceptedText }],
-              details: parameters,
+              details: projected === undefined ? parameters : projected,
               terminate: true as const,
             };
           },
@@ -848,6 +878,196 @@ export function createNavigatorRoleRuntime(
   );
 }
 
+/** #675: public 审刑院 seat on the shared filed-officer envelope. */
+export function createAuditorRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: AuditorRuntimeDependencies,
+) {
+  const base = createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "auditor",
+      tool: AUDITOR_TOOL_SPEC,
+      acceptedText: AUDITOR_ACCEPTED_TEXT,
+      soulTag: "auditor",
+    },
+    dependencies,
+  );
+  return {
+    async activate() {
+      await base.activate();
+      // Same tools whether nested or direct (#675): dossier tool always registered.
+      // Source run: only the shared --source-run input face (never own-run fallback).
+      const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
+        await import("./auditor-dossier-tool.ts");
+      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("./auditor-soul.ts");
+      const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
+      if (already) return;
+      const sourceRun =
+        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+        && process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
+          ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
+          : undefined;
+      roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
+    },
+  };
+}
+
+/**
+ * LLM typed court-target assertion from diarist output (ADR 0075 / #779).
+ * null/absent = true-unbound; positive safe integer = ticket N.
+ * Shape-only read of the typed field — not content judgment of free text.
+ * Any other shape fails honestly — never washes into unbound.
+ */
+function readDiaristTicketAssertion(
+  submitted: Record<string, unknown> | undefined,
+): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } {
+  if (submitted === undefined || !("ticketNumber" in submitted)) {
+    return { kind: "true-unbound" };
+  }
+  const raw = submitted.ticketNumber;
+  if (raw === null) return { kind: "true-unbound" };
+  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+    return { kind: "ticket", ticketNumber: raw };
+  }
+  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isSafeInteger(n) && n >= 1) {
+      return { kind: "ticket", ticketNumber: n };
+    }
+  }
+  throw new Error(
+    "diarist ticketNumber must be a safe integer >= 1, null, or absent",
+  );
+}
+
+/** Run coordinates + optional pre-bound ticket from durable pages (#779). */
+function readDiaristRunCoordinates(): {
+  readonly runDirectory: string;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly boundTicketNumber?: number;
+} {
+  const runDirectory = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDirectory !== "string" || runDirectory.trim() === "") {
+    throw new Error("diarist accept requires AK_ROLE_RUN_DIR");
+  }
+  const admittedPath = join(runDirectory, "admitted-request.json");
+  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`diarist admitted-request missing projectRoot (${admittedPath})`);
+  }
+  const bound =
+    typeof admitted.ticketNumber === "number" &&
+    Number.isSafeInteger(admitted.ticketNumber) &&
+    admitted.ticketNumber >= 1
+      ? admitted.ticketNumber
+      : undefined;
+  return {
+    runDirectory,
+    projectRoot: admitted.projectRoot,
+    home: homeFromRunDirectory(runDirectory),
+    ...(bound === undefined ? {} : { boundTicketNumber: bound }),
+  };
+}
+
+/**
+ * #708 / #779: 起居郎 public seat on the shared filed-officer envelope.
+ * Semantic collection happened in this role's own turn (LLM finds materials).
+ * Accept hook: bind typed ticket assertion → idempotent sitian append of whole
+ * blocks the LLM submitted. No frozen catalog, no quote/ticket reverse-verify
+ * of LLM output. Machine facts never come from model self-report (锚定宪法).
+ */
+export function createDiaristRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: DiaristRuntimeDependencies,
+) {
+  return createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "diarist",
+      tool: DIARIST_TOOL_SPEC,
+      acceptedText: DIARIST_ACCEPTED_TEXT,
+      soulTag: "diarist",
+      beforeAccept: async ({ parameters }) => {
+        const submitted =
+          parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+            ? (parameters as Record<string, unknown>)
+            : undefined;
+
+        // LLM cannot identify the court target — escalate without machine facts.
+        // Strip sitian (锚定宪法) and ticketNumber (must not leak into
+        // caller-visible admitted typed key via decisiveFacts mirror).
+        if (submitted?.status === "escalate") {
+          if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
+            return submitted;
+          }
+          const stripped = { ...submitted };
+          delete stripped.sitian;
+          delete stripped.ticketNumber;
+          return stripped;
+        }
+
+        const assertion = readDiaristTicketAssertion(submitted);
+        const coords = readDiaristRunCoordinates();
+
+        // Already bound before the turn (typed handoff / resume): skip re-recognition
+        // and commit under that identity (ADR 0075 已绑定 ticket 优先).
+        const ticketNumber =
+          coords.boundTicketNumber !== undefined
+            ? coords.boundTicketNumber
+            : assertion.kind === "ticket"
+              ? assertion.ticketNumber
+              : undefined;
+
+        // true-unbound → 无录 (no volume). Cannot-identify must arrive as
+        // status=escalate above — never as silent unbound.
+        if (ticketNumber === undefined) {
+          if (submitted === undefined || !("sitian" in submitted)) {
+            return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };
+          }
+          const stripped: Record<string, unknown> = {
+            ...submitted,
+            ticketNumber: null,
+          };
+          delete stripped.sitian;
+          return stripped;
+        }
+
+        if (coords.boundTicketNumber === undefined) {
+          await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
+        }
+
+        const facts = await commitDiaristEntries({
+          ticketNumber,
+          cwd: coords.projectRoot,
+          home: coords.home,
+          entries: projectDiaristEntries(parameters),
+        });
+        return {
+          ...(submitted ?? { receipt: parameters }),
+          ticketNumber,
+          sitian: facts,
+        };
+      },
+    },
+    dependencies,
+  );
+}
+
+/** Countersign status words the queue reads (#753). */
+const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
+
+/**
+ * Plain-language re-ask when countersignStatus is not a known queue word.
+ * Back to countersign itself — notary is not summoned (#753).
+ */
+const COUNTERSIGN_STATUS_REASK =
+  "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
+
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
@@ -855,9 +1075,28 @@ export function createCountersignRoleRuntime(
 ) {
   // Notary inner gate difference only — lifecycle stays on the shared envelope.
   // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
+  // #753 queue: read countersignStatus only — escalate skips gate (thrown to caller);
+  // unreadable status returns to countersign; else notary inner gate.
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
-      ? async ({ toolCallId, signal, ctx }) => {
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const record =
+            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+              ? (parameters as Record<string, unknown>)
+              : undefined;
+          const status =
+            record !== undefined && typeof record.countersignStatus === "string"
+              ? record.countersignStatus
+              : undefined;
+          if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
+            // Parent status unreadable → back to countersign itself; do not summon notary,
+            // do not forge an officer bounce face (#753).
+            throw new ParentQueueReaskError(COUNTERSIGN_STATUS_REASK);
+          }
+          if (status === "escalate") {
+            // Parent escalate → throw to caller as-is; notary does not attend (#753).
+            return undefined;
+          }
           await roleHost.requireGatekeeperPass!({
             context: ctx,
             subject: { kind: "countersign_verdict" },
@@ -930,6 +1169,9 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
+    // Public-run fetch observation (in-process-session statusAwareFetch face).
+    let priorFetch: typeof globalThis.fetch | undefined;
+    let fetchWrapped = false;
     const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
@@ -940,6 +1182,9 @@ export function createRoleRuntimeExtension(
           return;
         }
         const settlePromise = attendance.settle(settlement);
+        // Attach catch immediately so a late rejection after grace timeout cannot
+        // surface as unhandledRejection / stale-ctx after session dispose (#675).
+        void settlePromise.catch(() => undefined);
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
@@ -966,7 +1211,6 @@ export function createRoleRuntimeExtension(
           pendingNavigatorPresentation = { event, report };
         }
         await attendance.dispose();
-        void settlePromise.catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
       await pending;
@@ -1193,6 +1437,11 @@ export function createRoleRuntimeExtension(
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       envelopeHost.stopKeepalive();
+      if (fetchWrapped && priorFetch !== undefined) {
+        globalThis.fetch = priorFetch;
+        priorFetch = undefined;
+        fetchWrapped = false;
+      }
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1232,7 +1481,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: dependencies.loadJudgeSoul,
-        auditSoulCompliance: dependencies.auditSoulCompliance,
       },
       hostActions,
     );
@@ -1361,6 +1609,21 @@ export function createRoleRuntimeExtension(
         return dependencies.loadNavigatorSoul();
       },
     });
+    const auditor = createAuditorRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadAuditorSoul) throw new Error("Auditor runtime dependencies are not configured");
+        return dependencies.loadAuditorSoul();
+      },
+    });
+    const diarist = createDiaristRoleRuntime(
+      roleHost,
+      {
+        async loadSoul() {
+          if (!dependencies.loadDiaristSoul) throw new Error("Diarist runtime dependencies are not configured");
+          return dependencies.loadDiaristSoul();
+        },
+      },
+    );
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
@@ -1516,20 +1779,19 @@ export function createRoleRuntimeExtension(
     });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // 2xx clears prior observation (see recordTypedProviderHttpStatus). Non-success
-    // write failure must surface — never silently drop authorized error evidence.
-    roleHost.on("after_provider_response", async (event, ctx) => {
+    // Same observation owner as in-process-session statusAwareFetch → typed-provider-http
+    // sidecar (settlement already merges observation.httpStatus into knownFailure).
+    // after_provider_response covers the success-path onResponse face; fetch wrap covers
+    // non-2xx Responses where openai-completions throws before onResponse (#675).
+    const recordHttpObservation = async (
+      status: number,
+      provider: string,
+      ctx: HostContext,
+    ): Promise<void> => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
-      const provider = ctx.model?.provider;
-      if (typeof provider !== "string" || provider.trim() === "") return;
-      const status = event.status;
-      if (typeof status !== "number") return;
       try {
-        await recordTypedProviderHttpStatus(runDir, {
-          httpStatus: status,
-          provider,
-        });
+        await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
         if (
           status >= 200 &&
@@ -1542,9 +1804,49 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       }
+    };
+    roleHost.on("after_provider_response", async (event, ctx) => {
+      const status = event.status;
+      if (typeof status !== "number") return;
+      const fromCtx = ctx.model?.provider;
+      const provider =
+        typeof fromCtx === "string" && fromCtx.trim() !== ""
+          ? fromCtx
+          : "unknown";
+      await recordHttpObservation(status, provider, ctx);
     });
 
     roleHost.on("session_start", async (event, ctx) => {
+      // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
+      if (!fetchWrapped && typeof globalThis.fetch === "function") {
+        priorFetch = globalThis.fetch.bind(globalThis);
+        const underlying = priorFetch;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await underlying(input, init);
+          const runDir = process.env.AK_ROLE_RUN_DIR;
+          if (
+            typeof runDir === "string"
+            && runDir.trim() !== ""
+            && typeof response?.status === "number"
+            && (response.status < 200 || response.status >= 300)
+          ) {
+            const provider =
+              typeof ctx.model?.provider === "string" && ctx.model.provider.trim() !== ""
+                ? ctx.model.provider
+                : "unknown";
+            try {
+              await recordTypedProviderHttpStatus(runDir, {
+                httpStatus: response.status,
+                provider,
+              });
+            } catch {
+              // Observation must not break the provider stream (same as in-process-session).
+            }
+          }
+          return response;
+        }) as typeof globalThis.fetch;
+        fetchWrapped = true;
+      }
       admitted = false;
       selectedRole = undefined;
       activeReviewerParent = undefined;
@@ -1597,6 +1899,8 @@ export function createRoleRuntimeExtension(
         inspector,
         gatekeeper,
         navigator,
+        auditor,
+        diarist,
         merger: async () => {
           if (dependencies.mergerGitState === undefined) {
             sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
@@ -1615,7 +1919,14 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        if (dependencies.createNavigatorAttendance !== undefined) {
+        // Same public activation face for every role (#675 / owner 09-06): no nested-env
+        // skip, no work-role whitelist. Attendance attaches when the envelope supplies it.
+        // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
+        // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
+        if (
+          dependencies.createNavigatorAttendance !== undefined
+          && entry.role !== "navigator"
+        ) {
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

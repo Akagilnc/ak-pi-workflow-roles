@@ -21,6 +21,11 @@ export function gateToolSessionJsonl(input: {
    * Historical dispatch↔officer pairs must share this typed key.
    */
   readonly attemptEntryId?: string;
+  /**
+   * When false, omit the session header — used to append a second summons onto an
+   * existing continuous auditor volume (multi-attempt interval read).
+   */
+  readonly includeHeader?: boolean;
 }): string {
   const receipt = input.receipt ?? "accepted";
   const header = {
@@ -59,10 +64,15 @@ export function gateToolSessionJsonl(input: {
           timestamp: input.startedAt,
           data: {
             version: 1,
-            parent: { attemptEntryId: input.attemptEntryId },
+            parent: {
+              attemptEntryId: input.attemptEntryId,
+            },
           },
         };
-  const prefix = binding === undefined ? [header] : [header, binding];
+  const prefixRows: unknown[] = [];
+  if (input.includeHeader !== false) prefixRows.push(header);
+  if (binding !== undefined) prefixRows.push(binding);
+  const prefix = prefixRows;
   if (receipt === "omit") {
     // Tail keeps span endedAt without a toolResult — unpaired call is not a receipt.
     const tail = {

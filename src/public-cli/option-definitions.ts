@@ -34,6 +34,8 @@ export type OptionOwner =
   | "inspector"
   | "gatekeeper"
   | "navigator"
+  | "auditor"
+  | "diarist"
   | "analyst";
 
 /**
@@ -288,8 +290,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Override thinking level: off|minimal|low|medium|high|xhigh|max.",
-      zh: "覆盖 thinking 档位：off|minimal|low|medium|high|xhigh|max。",
+      en: "Override thinking level (opaque pass-through to Pi; e.g. off|minimal|low|medium|high|xhigh|max).",
+      zh: "覆盖 thinking 档位（原样透传给 Pi；例如 off|minimal|low|medium|high|xhigh|max）。",
     },
   },
   {
@@ -422,9 +424,47 @@ const NAVIGATOR_OPTIONS = [
   bindOwner("navigator", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const AUDITOR_OPTIONS = [
+  bindOwner("auditor", SHARED_PROJECT_SEMANTICS),
+  bindOwner("auditor", SHARED_ATTACH_SEMANTICS),
+  {
+    id: "subject",
+    owner: "auditor",
+    canonical: "--subject",
+    aliases: [],
+    valueMetavar: "judge|doctor",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required audited subject: judge or doctor (selects judge-auditor.md / doctor-auditor.md).",
+      zh: "必填受审对象：judge 或 doctor（装 judge-auditor.md / doctor-auditor.md）。",
+    },
+  },
+  {
+    id: "source-run",
+    owner: "auditor",
+    canonical: "--source-run",
+    aliases: [],
+    valueMetavar: "runId@role|path",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required source run locator of the audited subject volume (same input for direct and nested summons).",
+      zh: "必填受审卷宗 locator（直调与传召同一输入面）。",
+    },
+  },
+] as const satisfies readonly PublicOptionDefinition[];
+
 const COUNTERSIGN_OPTIONS = [
   bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
   bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
+const DIARIST_OPTIONS = [
+  bindOwner("diarist", SHARED_PROJECT_SEMANTICS),
+  bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const CODER_OPTIONS = [
@@ -785,6 +825,8 @@ export const PUBLIC_OPTION_TABLE = {
   inspector: INSPECTOR_OPTIONS,
   gatekeeper: GATEKEEPER_OPTIONS,
   navigator: NAVIGATOR_OPTIONS,
+  auditor: AUDITOR_OPTIONS,
+  diarist: DIARIST_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -805,6 +847,8 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "inspector",
   "gatekeeper",
   "navigator",
+  "auditor",
+  "diarist",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1203,6 +1247,25 @@ const ROLE_COMMAND_HELP = {
       'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
     ],
   },
+  auditor: {
+    command: "auditor",
+    summary: "Direct Auditor (审刑院) compliance audit: pass, bounce, or escalate.",
+    usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
+    examples: [
+      'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
+      'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
+    ],
+  },
+  diarist: {
+    command: "diarist",
+    summary:
+      "Direct Diarist (起居郎) pass: gather and organize this case's decision basis into its 起居录.",
+    usage: ["ak-role diarist [options] [instruction]"],
+    examples: [
+      'ak-role diarist "整理 #708 的本案依据。"',
+      'ak-role diarist --attach ./design.md "补录本轮设计修订。"',
+    ],
+  },
   notary: {
     command: "notary",
     summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
@@ -1237,7 +1300,7 @@ const SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults.",
+    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults. Host providers live in ~/.ak-roles/host-providers.json (owner-edited).",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config unset <gatekeeper|inspector|notary>",
@@ -1271,6 +1334,17 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role resume 01abc… \"owner ruling\"",
       "ak-role --host grok-build resume 01abc…",
       "ak-role --engine agy resume 01abc…",
+    ],
+  },
+  new: {
+    command: "new",
+    summary:
+      "Explicit fresh summons: same role options as a direct call, but always mint a new run (skip same-ticket auto-resume). Caller chooses new vs resume; no overflow judgment.",
+    usage: ["ak-role new <role> [options] …"],
+    examples: [
+      'ak-role new countersign --attach ./ticket.md "裁：本票 #708 是否足以开工。"',
+      "ak-role new notary --source-run 01abc…@countersign",
+      "ak-role --host grok-build new inspector --attach ./change.patch",
     ],
   },
 } as const satisfies Record<string, PublicCommandHelpFacts>;

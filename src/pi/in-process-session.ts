@@ -207,7 +207,7 @@ export type OpenPiInstitutionalSessionResult = {
   readonly streamFailure: unknown;
 };
 
-export async function openPiInstitutionalSession(
+export async function openPiInProcessSession(
   options: OpenPiInstitutionalSessionOptions,
 ): Promise<OpenPiInstitutionalSessionResult> {
   const label = options.label ?? "Institutional sub-session";
@@ -254,13 +254,15 @@ export async function openPiInstitutionalSession(
     const fallbackApi = providerDefaultModel?.api
       ?? (childProvider as any)?.api
       ?? (selection.provider === "openai-codex" ? "openai-codex-responses" : "openai-completions");
+    // Fallback model facts come from the provider surface only — never derive
+    // reasoning (or any capability) from the thinking string (#683 pass-through).
     const modelToUse = foundModel ?? {
       id: selection.model,
       name: selection.model,
       api: fallbackApi as any,
       provider: selection.provider,
       baseUrl: providerDefaultModel?.baseUrl ?? "",
-      reasoning: selection.thinking !== undefined && selection.thinking !== "off",
+      reasoning: providerDefaultModel?.reasoning ?? false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
@@ -632,14 +634,25 @@ export async function openPiInstitutionalSession(
     }
 
     // 7. Create AgentSession
-    // Existing Navigator contract: requested thinking must stick after open. Pi
-    // clamps unsupported levels; if max was requested and not applied, fail as
-    // typed unavailable/thinking (pre-#590 attendance setModel check).
-    const requestedThinking = options.selection.thinking === "max" ? "max" : "off";
+    // Thinking is opaque pass-through (#683 / #675 ⑥). Absent selection omits
+    // thinkingLevel (Pi owns default). Pi clamps unsupported levels itself;
+    // we do not re-check or invent package defaults. When reusing a session file,
+    // re-apply seat model after open so Pi cannot restore a stale model over
+    // selection (#675 ⑤ / #697).
+    const requestedThinking = selection.thinking;
+    const priorEntries =
+      typeof (sessionManager as { getEntries?: () => readonly unknown[] }).getEntries === "function"
+        ? (sessionManager as { getEntries: () => readonly unknown[] }).getEntries()
+        : [];
+    const reusedSession = priorEntries.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const type = (entry as { type?: unknown }).type;
+      return type === "message" || type === "model_change" || type === "thinking_level_change";
+    });
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model: effectiveModel,
-      thinkingLevel: requestedThinking as any,
+      ...(requestedThinking === undefined ? {} : { thinkingLevel: requestedThinking as any }),
       modelRuntime: runtime,
       sessionManager,
       settingsManager: settings,
@@ -649,14 +662,23 @@ export async function openPiInstitutionalSession(
       ...(options.toolsAllowlist === undefined ? {} : { tools: options.toolsAllowlist as string[] }),
       ...(customTools.length === 0 ? {} : { customTools }),
     });
-    if (requestedThinking === "max" && session.thinkingLevel !== "max") {
-      session.dispose();
-      throw withTypedReason(
-        new Error(
-          `${label} thinking level max is unavailable for ${selection.provider}/${selection.model}`,
-        ),
-        "thinking",
-      );
+    if (reusedSession) {
+      try {
+        await session.setModel(effectiveModel);
+        if (requestedThinking !== undefined) {
+          session.setThinkingLevel(requestedThinking as any);
+        }
+      } catch (error) {
+        session.dispose();
+        throw withTypedReason(
+          error instanceof Error
+            ? error
+            : new Error(
+              `${label} failed to apply seat model/thinking for ${selection.provider}/${selection.model}`,
+            ),
+          requestedThinking !== undefined ? "thinking" : "model",
+        );
+      }
     }
 
     // 8. Event subscriptions
@@ -836,3 +858,4 @@ export async function openPiInstitutionalSession(
     throw openError;
   }
 }
+

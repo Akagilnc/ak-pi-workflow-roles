@@ -5,26 +5,47 @@
  * initial role facades before entering; manual resume never re-admits.
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
+import {
+  buildInstructionTransportPrompt,
+  freezeAttachmentsIntoRun,
+} from "./invocation.ts";
+import { pathContainedIn } from "../activation-ledger-topology.ts";
 
 import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
+  RoleTurnContinuation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+
+/** Append one system section to a continuation prompt, keeping its kind. */
+function appendContinuationSection(
+  continuation: RoleTurnContinuation,
+  section: string,
+): RoleTurnContinuation {
+  const prompt = `${continuation.prompt}\n\n${section}`;
+  return continuation.kind === "initial"
+    ? { kind: "initial", prompt }
+    : { kind: "resume", prompt };
+}
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -33,16 +54,22 @@ import {
 } from "./public-run-credentials.ts";
 import {
   acquireRunWriterLease,
+  clearCurrentCourt,
   clearTypedProviderHttpObservation,
   markRunResumable,
   markRunRunning,
   markRunTerminal,
+  readCurrentCourt,
+  recordCurrentCourt,
   renderResumeCommand,
   RunWriterLeaseHeldError,
+  type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
+import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import { readSealedSubmission } from "../submission-ledger.ts";
 import {
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
@@ -96,6 +123,17 @@ export type PostAdmissionEnv = {
   sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
   createRunId?: () => string;
+  /**
+   * Parent cancellation for a nested public summon (#675). Every dispatched turn
+   * carries it so an aborted parent terminates the nested activation; a CLI
+   * process has no parent and leaves it absent.
+   */
+  signal?: AbortSignal;
+  /**
+   * #724 explicit fresh summons (`ak-role new <role>`): skip same-ticket auto-resume
+   * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
+   */
+  freshSummons?: true;
 };
 
 /**
@@ -106,10 +144,14 @@ export type PostAdmissionAdapters<
   A extends AdmittedRoleInvocation = AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
 > = {
-  trySettle: (admitted: A, authority: DurablePrincipalAuthority) => Promise<T | undefined>;
+  trySettle: (
+    admitted: A,
+    authority: DurablePrincipalAuthority,
+    /** Current court turn scope (#637); omit for run-scoped sealed reads. */
+    scope?: { readonly courtAttemptId?: string },
+  ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
-  trySettleSecondary?: (admitted: A, authority: DurablePrincipalAuthority) => Promise<TerminalResult | undefined>;
   resolveRunnerKnownFailure?: (input: {
     result: RoleTurnResult;
     sessionFile: string;
@@ -129,6 +171,8 @@ export type ControlledFailureInput = {
     readonly code?: string | number;
   };
   knownDiagnostic?: string;
+  /** Secondary evidence already owned by the typed production failure channel. */
+  knownDetails?: Readonly<Record<string, unknown>>;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
 };
@@ -169,12 +213,18 @@ export async function presentControlledFailure<
     admitted.principal !== undefined
       ? await inspectJudgeSession(authority.decode(admitted.principal).sessionFile)
       : undefined;
+  // knownFailure channel owns details when present; otherwise caller knownDetails.
+  const fromKnownFailure =
+    explicitInternalKnownFailureClassificationInput(knownFailure);
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
     ...(hasThrown ? { thrown: failureInput.thrown } : {}),
-    ...explicitInternalKnownFailureClassificationInput(knownFailure),
+    ...(failureInput.knownDetails === undefined
+      ? {}
+      : { knownDetails: failureInput.knownDetails }),
+    ...fromKnownFailure,
     ...(failureInput.knownCause === undefined
       ? {}
       : { knownCause: failureInput.knownCause }),
@@ -218,14 +268,6 @@ export async function presentControlledFailure<
   };
 }
 
-function presentSecondaryTerminal(terminal: TerminalResult, io: CliIo): void {
-  if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-    presentFailureTerminal(terminal, io);
-  } else {
-    io.stdout(formatTerminalResult(terminal));
-  }
-}
-
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -260,25 +302,45 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
-    // Single authority projectHostTransitionPriorNative owns known-host prior native paths.
-    const previousHost = await readInvocationHost(admitted.runDirectory);
+    // Single authority projectHostTransitionPriorNative classifies the prior native volume.
+    // Same-run resume (#637) keeps host identity on the run's invocation page.
+    let previousHost: string | undefined;
     const liveHost = env.host;
-    const hostTransition =
-      previousHost !== undefined && liveHost !== undefined && admitted.principal !== undefined
-        ? await projectHostTransitionPriorNative({
-            previousHost,
-            liveHost,
-            runDirectory: admitted.runDirectory,
-            piSessionFile: env.principalAuthority.decode(admitted.principal).sessionFile,
-          })
-        : undefined;
-    const turnRequest: RoleTurnRequest =
-      hostTransition === undefined ? request : { ...request, hostTransition };
+    const principalCoordinates =
+      admitted.principal === undefined
+        ? undefined
+        : env.principalAuthority.decode(admitted.principal);
+    let hostTransition: RoleTurnRequest["hostTransition"];
+    try {
+      previousHost = await readInvocationHost(admitted.runDirectory);
+      hostTransition =
+        previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
+          ? await projectHostTransitionPriorNative({
+              previousHost,
+              liveHost,
+              piSessionFile: principalCoordinates.sessionFile,
+            })
+          : undefined;
+    } catch (error) {
+      // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
 
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    // beforeDispatch (e.g. countersign diarist station) runs after running is
-    // marked — its failures must settle the run, not leave it permanently running.
+    // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
+    // its failures must settle the run, not leave it permanently running.
     if (adapters.beforeDispatch !== undefined) {
       try {
         await adapters.beforeDispatch(admitted);
@@ -296,6 +358,32 @@ export async function dispatchPostAdmissionTurn<
           io,
         )) as { exitCode: number; admitted: A; terminal: T };
       }
+    }
+
+    // Turn request is assembled after beforeDispatch so this turn sees whatever it
+    // settled — the seat's ticket bind re-projection and any court diarist station
+    // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
+    // every public entry: first call, same-ticket re-summons and manual resume
+    // alike. System refs append their own neutral section; caller frozen
+    // attachments and the seat's own prompt bytes are never rewritten.
+    let turnRequest: RoleTurnRequest =
+      env.signal === undefined ? request : { ...request, signal: env.signal };
+    if (hostTransition !== undefined) {
+      turnRequest = { ...turnRequest, hostTransition };
+    }
+    const dossierSection = await projectCaseDossierPointerSection({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+    });
+    if (dossierSection !== undefined) {
+      turnRequest = {
+        ...turnRequest,
+        continuation: appendContinuationSection(
+          turnRequest.continuation,
+          dossierSection,
+        ),
+      };
     }
 
     let result: RoleTurnResult;
@@ -327,9 +415,16 @@ export async function dispatchPostAdmissionTurn<
     }
 
     let settled: T | undefined;
+    // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
+    // prior sealed pass cannot wash this turn's missing/escalated/failed result.
+    const courtScope =
+      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+        ? undefined
+        : { courtAttemptId: request.courtAttemptId };
     try {
-      settled = await adapters.trySettle(admitted, env.principalAuthority);
+      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
     } catch (error) {
+      // Settle throw is a real failure fact — never swallow into undefined.
       return (await presentControlledFailure(
         admitted,
         {
@@ -344,6 +439,14 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
+      // This court sealed — drop open-court pointer so bare resume is run-scoped idempotent.
+      if (
+        settled.roleOutcome.kind === "accepted" &&
+        request.courtAttemptId !== undefined &&
+        request.courtAttemptId.length > 0
+      ) {
+        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+      }
       await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
@@ -351,19 +454,6 @@ export async function dispatchPostAdmissionTurn<
         admitted,
         terminal: settled,
       };
-    }
-
-    if (adapters.trySettleSecondary !== undefined) {
-      const secondary = await adapters.trySettleSecondary(admitted, env.principalAuthority);
-      if (secondary !== undefined) {
-        await markRunTerminal(admitted.runDirectory);
-        presentSecondaryTerminal(secondary, io);
-        return {
-          exitCode: exitCodeForTerminalOutcome(secondary.roleOutcome),
-          admitted,
-          terminal: secondary as unknown as T,
-        };
-      }
     }
 
     const sessionFile =
@@ -403,15 +493,64 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
- * Shared resume continuation projection (#471 / #600 / #633): seat-table
- * model/engine/timeout axes, restored correlation, and the package resume
- * envelope (message optional). Seats add only their activation projection.
+ * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755):
+ * seat-table model/engine/timeout axes, restored correlation, and either
+ * - manual resume (no same-ticket summons): package envelope / optional caller
+ *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
+ * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
+ *   attachment paths only — no「重新读」、no engine handbook packaging
+ *   (#750/#755), whether or not attachments are present.
+ * Caller message wins as prompt base when supplied (bytes unchanged, including
+ * blank/whitespace); else summons instruction. Attachment projection must not
+ * re-interpret the caller message as instructionEmpty.
+ * Seats add only their activation projection. Call prepareSummonsResumeMaterials
+ * first when request.summons carries instruction or attachment paths.
  */
 export function resumeTurnRequestProjectionOptions(
   admitted: AdmittedRoleInvocation,
   request: PublicResumeRequest,
   env: PostAdmissionEnv,
+  summonsPrepared?: {
+    readonly instruction: string;
+    readonly instructionEmpty: boolean;
+    readonly attachments: readonly { frozenPath: string }[];
+  },
 ): RoleTurnRequestProjectionOptions {
+  let prompt: string;
+  if (request.message !== undefined) {
+    if (summonsPrepared !== undefined) {
+      // #755: same-ticket review / open-court — caller words + optional paths.
+      // Attachments are not a gate: message-only summons must stay plain too.
+      prompt = buildInstructionTransportPrompt({
+        instruction: request.message,
+        instructionEmpty: false,
+        attachments: summonsPrepared.attachments,
+      });
+    } else if (request.summons !== undefined) {
+      // #755: same-ticket summons without prepared materials — caller words only.
+      prompt = request.message;
+    } else {
+      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
+      prompt = buildResumeContinuationPrompt({
+        packageRoot: env.packageRoot,
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        message: request.message,
+      });
+    }
+  } else if (summonsPrepared !== undefined) {
+    // #755: same-ticket review summons — instruction/attachments only.
+    prompt = buildInstructionTransportPrompt(summonsPrepared);
+  } else if (request.summons !== undefined) {
+    // #755: same-ticket summons with no instruction/attachments (e.g. notary
+    // source-run pointer) — plain resume envelope, no handbook / 重新读.
+    prompt = RESUME_TRANSPORT_ENVELOPE;
+  } else {
+    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
+    prompt = buildResumeContinuationPrompt({
+      packageRoot: env.packageRoot,
+      ...(env.engine === undefined ? {} : { engine: env.engine }),
+    });
+  }
   return {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -424,13 +563,56 @@ export function resumeTurnRequestProjectionOptions(
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "resume",
-      prompt: buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(request.message === undefined ? {} : { message: request.message }),
-      }),
+      prompt,
     },
   };
+}
+
+function isAlreadyFrozenSummonsAttachment(
+  runDirectory: string,
+  attachmentPath: string,
+): boolean {
+  const absolute = isAbsolute(attachmentPath)
+    ? attachmentPath
+    : resolve(attachmentPath);
+  return pathContainedIn(join(runDirectory, "attachments"), absolute);
+}
+
+/**
+ * Freeze same-ticket summons attachments into the retained run directory (#637).
+ * No-op materials (no paths / instruction-only) skip the freeze.
+ * Paths already under this run's attachments/ are the accepted freeze identity —
+ * reuse them; do not re-freeze from external originals on bare resume.
+ * Manual resume never calls this — old attachment semantics stay intact.
+ */
+export async function prepareSummonsResumeMaterials(
+  runDirectory: string,
+  summons: SameTicketSummonsMaterials | undefined,
+): Promise<
+  | {
+      readonly instruction: string;
+      readonly instructionEmpty: boolean;
+      readonly attachments: readonly { frozenPath: string }[];
+    }
+  | undefined
+> {
+  if (summons === undefined) return undefined;
+  if (summons.instruction === undefined && (summons.attachmentPaths?.length ?? 0) === 0) {
+    return undefined;
+  }
+  const instruction = summons.instruction ?? "";
+  const instructionEmpty =
+    summons.instructionEmpty ?? instruction.trim() === "";
+  let attachments: readonly { frozenPath: string }[] = [];
+  if (summons.attachmentPaths !== undefined && summons.attachmentPaths.length > 0) {
+    const alreadyFrozen = summons.attachmentPaths.every((path) =>
+      isAlreadyFrozenSummonsAttachment(runDirectory, path),
+    );
+    attachments = alreadyFrozen
+      ? summons.attachmentPaths.map((frozenPath) => ({ frozenPath }))
+      : await freezeAttachmentsIntoRun(summons.attachmentPaths, runDirectory);
+  }
+  return { instruction, instructionEmpty, attachments };
 }
 
 /**
@@ -438,6 +620,10 @@ export function resumeTurnRequestProjectionOptions(
  * package resume envelope (#599 / #633): load → structural rejection → seat
  * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
  * turn builder, and adapters stay on the seat.
+ *
+ * Court open/recovery transaction (#637): under the existing writer lease,
+ * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
+ * and record. No pre-lease clear or stale court-snapshot consumption.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -446,14 +632,23 @@ export async function runPostAdmissionSeatResume<
   request: PublicResumeRequest;
   env: PostAdmissionEnv;
   io: CliIo;
-  load: () => Promise<{ admitted: A }>;
-  buildTurnRequest: (admitted: A) => RoleTurnRequest;
+  /** Load admitted state; receives the effective resume request (may carry rehydrated summons). */
+  load: (request: PublicResumeRequest) => Promise<{ admitted: A }>;
+  /** Build turn from admitted + effective request (summons ride existing projection). */
+  buildTurnRequest: (
+    admitted: A,
+    request: PublicResumeRequest,
+  ) => RoleTurnRequest | Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+  let request = input.request;
+
+  // Load once for runDirectory / structural rejection; court identity is judged
+  // only after the writer lease is held (below).
   let loaded;
   try {
-    loaded = await input.load();
+    loaded = await input.load(request);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
@@ -461,14 +656,124 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  return await runPostAdmissionManualResume({
-    admitted: loaded.admitted,
-    env: input.env,
-    io: input.io,
-    request: input.buildTurnRequest(loaded.admitted),
-    adapters: input.adapters,
-    ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
-  });
+
+  // Entire court recovery / open path runs after lease. forceContinuation skips
+  // the pre-lease sealed short-circuit; when the after-lease builder leaves no
+  // courtAttemptId, manual resume still presents run-scoped sealed idempotence
+  // under the same held lease.
+  try {
+    return await runPostAdmissionManualResume({
+      admitted: loaded.admitted,
+      env: input.env,
+      io: input.io,
+      adapters: input.adapters,
+      ...(input.effectiveEngine === undefined
+        ? {}
+        : { effectiveEngine: input.effectiveEngine }),
+      forceContinuation: true,
+      buildRequestAfterLease: async () => {
+        let openCourtAttemptId: string | undefined;
+        // Build uses the admitted judged under this lease (rehydrated when open
+        // court materials ride). Settlement identity stays on the outer admitted.
+        let admittedForBuild = loaded.admitted;
+
+        // Bare resume: read + seal-judge + bound clear only under the held lease.
+        if (request.summons === undefined) {
+          const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
+          if (openCourt !== undefined) {
+            const sealedForOpen = await readSealedSubmission(
+              admittedForBuild.projectRoot,
+              admittedForBuild.runId,
+              {
+                home: homeFromRunDirectory(admittedForBuild.runDirectory),
+                attemptId: openCourt.courtAttemptId,
+              },
+            );
+            if (sealedForOpen === undefined) {
+              // Continue open court: same summons materials + existing courtAttemptId.
+              // Caller message (if any) stays on the request — projection keeps it.
+              openCourtAttemptId = openCourt.courtAttemptId;
+              request = {
+                runId: request.runId,
+                ...(request.message === undefined
+                  ? {}
+                  : { message: request.message }),
+                ...(openCourt.summons === undefined
+                  ? {}
+                  : { summons: openCourt.summons }),
+              };
+              if (openCourt.summons !== undefined) {
+                const reloaded = await input.load(request);
+                admittedForBuild = reloaded.admitted;
+              }
+            } else {
+              // Open court already sealed — clear only the court id just judged.
+              await clearCurrentCourt(
+                admittedForBuild.runDirectory,
+                openCourt.courtAttemptId,
+              );
+            }
+          }
+        }
+
+        // Freeze external paths once; rewrite summons to the frozen identity so
+        // currentCourt + later bare resume reuse the accepted snapshot.
+        if (request.summons !== undefined) {
+          const prepared = await prepareSummonsResumeMaterials(
+            admittedForBuild.runDirectory,
+            request.summons,
+          );
+          if (
+            prepared !== undefined &&
+            (request.summons.attachmentPaths?.length ?? 0) > 0
+          ) {
+            request = {
+              ...request,
+              summons: {
+                ...request.summons,
+                attachmentPaths: prepared.attachments.map(
+                  (attachment) => attachment.frozenPath,
+                ),
+              },
+            };
+          }
+        }
+
+        let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+
+        // Court path only when continuing an open court or opening a new summons court.
+        // Bare resume with no open court (or cleared sealed pointer) keeps no
+        // courtAttemptId so run-scoped sealed idempotence can present under lease.
+        if (openCourtAttemptId !== undefined || request.summons !== undefined) {
+          const courtAttemptId =
+            openCourtAttemptId ??
+            (turnRequest.courtAttemptId !== undefined &&
+            turnRequest.courtAttemptId.length > 0
+              ? turnRequest.courtAttemptId
+              : randomUUID());
+          turnRequest = { ...turnRequest, courtAttemptId };
+          if (openCourtAttemptId === undefined) {
+            const court: CurrentCourtState = {
+              courtAttemptId,
+              ...(request.summons === undefined
+                ? {}
+                : { summons: request.summons }),
+            };
+            await recordCurrentCourt(admittedForBuild.runDirectory, court);
+          }
+        }
+        return turnRequest;
+      },
+    });
+  } catch (error) {
+    // Open-court rehydrate load under lease may still surface seat structural
+    // rejection (e.g. notary rejects caller message) — same exit face as pre-lease.
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, input.io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
 }
 
 /**
@@ -567,37 +872,22 @@ export async function runPostAdmissionResumable<
 }
 
 /**
- * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
- * When the submission ledger is already sealed, project that accepted terminal
- * idempotently — do not dispatch a doomed turn that would append
- * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
+ * Single authority for manual-resume run-scoped sealed-accepted presentation
+ * (#599 / #648 / #672 / #637). Used both before lease (eager request path) and
+ * after court-recovery builder under lease when no courtAttemptId remains.
+ * Returns undefined to fall through to dispatch; never rebuilds the gate.
  */
-export async function runPostAdmissionManualResume<
+async function presentSealedAcceptedManualResumeIfAny<
   A extends AdmittedRoleInvocation,
-  T extends TerminalResult = TerminalResult,
+  T extends TerminalResult,
 >(input: {
   admitted: A;
   env: PostAdmissionEnv;
   io: CliIo;
-  request: RoleTurnRequest;
   adapters: PostAdmissionAdapters<A, T>;
-  /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
-  effectiveEngine?: string;
-}): Promise<{
-  exitCode: number;
-  admitted?: A;
-  terminal?: T;
-  staleWriterLeaseReclaimed?: true;
-}> {
-  const { admitted, env, io, request, adapters, effectiveEngine } = input;
-  // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
-  const effectiveModel = env.model;
-  const shouldPresent =
-    adapters.shouldPresentSettled ??
-    ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
-
-  // Sealed accepted receipt only — audit_escalation / residual failure must not
-  // short-circuit; those still need a real continuation turn.
+  shouldPresent: (terminal: T) => boolean;
+}): Promise<{ exitCode: number; admitted: A; terminal?: T } | undefined> {
+  const { admitted, env, io, adapters, shouldPresent } = input;
   try {
     const existing = await adapters.trySettle(admitted, env.principalAuthority);
     if (
@@ -614,9 +904,8 @@ export async function runPostAdmissionManualResume<
       };
     }
   } catch (error) {
-    // Settlement-owned sealed disposition (#648 / #599 / #672): sealed accepted +
-    // publication/settle throw fail closed without redispatch; authority failure
-    // preserves true cause. Manual resume only presents — does not rebuild the gate.
+    // Settlement-owned sealed disposition: sealed accepted + publication/settle
+    // throw fail closed without redispatch; authority failure preserves cause.
     const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
     if (disposition.kind === "block") {
       return (await presentControlledFailure(
@@ -638,6 +927,77 @@ export async function runPostAdmissionManualResume<
     // Pre-dispatch settle failure without a sealed accepted projection is not
     // proof of seal; fall through to dispatch so the attempt path can settle
     // or fail honestly.
+  }
+  return undefined;
+}
+
+/**
+ * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
+ * When the submission ledger is already sealed, project that accepted terminal
+ * idempotently — do not dispatch a doomed turn that would append
+ * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
+ * Same-ticket re-summons (#637) pass forceContinuation + courtAttemptId so a new
+ * court turn still runs with this summons' materials despite a prior sealed
+ * acceptance, while submission-ledger sole-final stays per-attempt.
+ */
+export async function runPostAdmissionManualResume<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  admitted: A;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  /** Eager turn request (non-court path / seats that build before lease). */
+  request?: RoleTurnRequest;
+  /**
+   * Court-opening path (#637): build turn + freeze + record currentCourt only
+   * after the writer lease is held. Mutually exclusive with a prebuilt request
+   * when forceContinuation is set.
+   */
+  buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
+  adapters: PostAdmissionAdapters<A, T>;
+  /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
+  effectiveEngine?: string;
+  /** Same-ticket re-summons: skip sealed-accepted short-circuit and dispatch. */
+  forceContinuation?: boolean;
+}): Promise<{
+  exitCode: number;
+  admitted?: A;
+  terminal?: T;
+  staleWriterLeaseReclaimed?: true;
+}> {
+  const {
+    admitted,
+    env,
+    io,
+    adapters,
+    effectiveEngine,
+    forceContinuation,
+    buildRequestAfterLease,
+  } = input;
+  let request = input.request;
+  // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
+  const effectiveModel = env.model;
+  const shouldPresent =
+    adapters.shouldPresentSettled ??
+    ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+  const sealedIdempotenceInput = {
+    admitted,
+    env,
+    io,
+    adapters,
+    shouldPresent,
+  } as const;
+
+  // Sealed accepted receipt only — audit_escalation / residual failure must not
+  // short-circuit; those still need a real continuation turn.
+  // Same-ticket re-summons / court recovery forceContinuation skips the pre-lease
+  // face; post-builder reuses the same presenter when no courtAttemptId remains.
+  if (forceContinuation !== true && request !== undefined) {
+    const presented = await presentSealedAcceptedManualResumeIfAny(
+      sealedIdempotenceInput,
+    );
+    if (presented !== undefined) return presented;
   }
 
   let lease: RunWriterLease;
@@ -666,24 +1026,65 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
-  const result = await dispatchPostAdmissionTurn({
-    admitted,
-    env: {
-      ...env,
-      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-      ...(admitted.correlationId === undefined ? {} : { correlationId: admitted.correlationId }),
-    },
-    io,
-    request,
-    lease,
-    adapters,
-    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-  });
-  if (result.terminal !== undefined) {
-    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+  // Court open/recovery under held lease until dispatch owns release (finally
+  // below). Builder, sealed presenter, and any throw on this seam must release
+  // here — dispatch's finally only runs after handoff.
+  let handedOffToDispatch = false;
+  try {
+    if (request === undefined) {
+      if (buildRequestAfterLease === undefined) {
+        throw new Error(
+          "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+        );
+      }
+      request = await buildRequestAfterLease();
+
+      if (
+        request.courtAttemptId === undefined ||
+        request.courtAttemptId.length === 0
+      ) {
+        const presented = await presentSealedAcceptedManualResumeIfAny(
+          sealedIdempotenceInput,
+        );
+        if (presented !== undefined) {
+          return {
+            ...presented,
+            ...(staleWriterLeaseReclaimed === true
+              ? { staleWriterLeaseReclaimed: true as const }
+              : {}),
+          };
+        }
+      }
+    }
+
+    handedOffToDispatch = true;
+    const result = await dispatchPostAdmissionTurn({
+      admitted,
+      env: {
+        ...env,
+        ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+        ...(admitted.correlationId === undefined
+          ? {}
+          : { correlationId: admitted.correlationId }),
+      },
+      io,
+      request,
+      lease,
+      adapters,
+      ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+    });
+    if (result.terminal !== undefined) {
+      (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
+    }
+    return {
+      ...result,
+      ...(staleWriterLeaseReclaimed === true
+        ? { staleWriterLeaseReclaimed: true as const }
+        : {}),
+    };
+  } finally {
+    if (!handedOffToDispatch) {
+      await lease.release();
+    }
   }
-  return {
-    ...result,
-    ...(staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
-  };
 }

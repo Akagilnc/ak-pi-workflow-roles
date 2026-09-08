@@ -1,3 +1,4 @@
+import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #336 analyst public CLI — separately callable role surface (ADR 0052 / ADR 0068).
  * #399: issue query = bare whole book / --ticket N from cwd git common-dir;
@@ -17,7 +18,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,8 @@ import {
   analystIssuePagePath,
   type AnalystIssueMetricsPage,
 } from "../../src/analyst-page.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureHome = join(packageRoot, "test/fixtures/analyst/home");
@@ -89,8 +91,7 @@ function gitPorcelain(cwd: string): string {
 }
 
 async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T> {
-  const businessRepo = await mkdtemp(join(tmpdir(), "analyst-336-business-"));
-  try {
+  return withTempRoot("analyst-336-business-", async (businessRepo) => {
     execFileSync("git", ["init"], { cwd: businessRepo });
     await writeFile(join(businessRepo, "README.md"), "business\n", "utf8");
     execFileSync("git", ["add", "README.md"], { cwd: businessRepo });
@@ -103,19 +104,14 @@ async function withBusinessRepo<T>(fn: (repo: string) => Promise<T>): Promise<T>
     const result = await fn(businessRepo);
     assert.equal(gitPorcelain(businessRepo), "", "business repo zero write");
     return result;
-  } finally {
-    await rm(businessRepo, { recursive: true, force: true });
-  }
+  });
 }
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "analyst-336-home-"));
-  try {
+  return withTempRoot("analyst-336-home-", async (home) => {
     await cp(fixtureHome, join(home, ".ak-roles"), { recursive: true });
     return await fn(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 /** Recursive analyst-dir snapshot for zero-write oracle (path → file bytes). */
@@ -232,11 +228,8 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         ticketNumber: TICKET_C4,
         issueNumber: TICKET_C4,
       }, { home });
-      await rm(join(ledgerHome, "analyst"), { recursive: true, force: true });
 
-      const previousCwd = process.cwd();
-      process.chdir(repo);
-      try {
+      await withProcessCwd(repo, async () => {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
           ["analyst", "--ticket", String(TICKET_C4)],
@@ -255,9 +248,7 @@ test("analyst public CLI --ticket path: live book compute matches runAnalyst ora
         assert.equal(page.issueNumber, TICKET_C4);
         assert.deepEqual(page.legs, oracle.page.legs);
         assert.ok(page.legs.some((leg) => leg.runId === runId));
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });
@@ -272,9 +263,7 @@ test("analyst public CLI bare call: whole book from cwd git common-dir", async (
         ticketNumber: 77,
         runId,
       });
-      const previousCwd = process.cwd();
-      process.chdir(repo);
-      try {
+      await withProcessCwd(repo, async () => {
         const { io, stdout, stderr } = captureIo();
         const result = await runAkRole(["analyst"], { packageRoot, home, io });
         assert.equal(result.exitCode, 0, stderr.join(""));
@@ -284,9 +273,7 @@ test("analyst public CLI bare call: whole book from cwd git common-dir", async (
         assert.equal(body.page.bookKey, bookKey);
         assert.equal(body.page.issueNumber, undefined);
         assert.ok(body.page.legs.some((leg) => leg.runId === runId));
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });
@@ -336,29 +323,24 @@ test("analyst public CLI non-git cwd bare: usage-class failure + zero analyst wr
     const ledgerHome = join(home, ".ak-roles");
     await mkdir(join(ledgerHome, "analyst"), { recursive: true });
     const before = await snapshotAnalystDir(ledgerHome);
-    const nonGit = await mkdtemp(join(tmpdir(), "analyst-336-nongit-"));
-    const previousCwd = process.cwd();
-    process.chdir(nonGit);
-    try {
+    // Must sit outside this git worktree so analyst sees a true non-repo cwd.
+    // Outside isolation root is not deleted (r12/r6 outside-worktree rule).
+    const nonGit = await mkdtemp(outsideWorktreeTempPrefix("analyst-336-nongit-"));
+    await withProcessCwd(nonGit, async () => {
       const { io, stderr } = captureIo();
       const result = await runAkRole(["analyst"], { packageRoot, home, io });
       assert.notEqual(result.exitCode, 0);
       assert.match(stderr.join(""), /git repository|common-dir|inside a repository/i);
       const after = await snapshotAnalystDir(ledgerHome);
       assertSnapshotsEqual(before, after);
-    } finally {
-      process.chdir(previousCwd);
-      await rm(nonGit, { recursive: true, force: true });
-    }
+    });
   });
 });
 
 test("analyst public CLI bare --ticket with no bindings: live empty page, not library-index miss", async () => {
   await withBusinessRepo(async (businessRepo) => {
     await withTempHome(async (home) => {
-      const previousCwd = process.cwd();
-      process.chdir(businessRepo);
-      try {
+      await withProcessCwd(businessRepo, async () => {
         const { io, stdout, stderr } = captureIo();
         const result = await runAkRole(
           ["analyst", "--ticket", String(TICKET_EMPTY)],
@@ -377,9 +359,7 @@ test("analyst public CLI bare --ticket with no bindings: live empty page, not li
         assert.deepEqual(body.page.legs, []);
         assert.equal(body.page.unreadableCount, 0);
         assert.doesNotMatch(stdout.join(""), /library index/i);
-      } finally {
-        process.chdir(previousCwd);
-      }
+      });
     });
   });
 });

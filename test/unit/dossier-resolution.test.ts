@@ -1,25 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { resolveAuditDossier } from "../../src/dossier-resolution.ts";
+import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
-import {
-  JUDGE_OUTPUT_TOOL_NAME,
-  resolveAuditDossier,
-  readJudgeAuditSubjects,
-} from "../../src/dossier-resolution.ts";
-
-// bare-Pi absent pointer and missing-dossier path gates are covered at the
-// real auditor entry (judge-auditor-dossier.test.ts); keep only the concurrent
-// isolation contract and helper-level subject shape here.
+// Judge subject pre-check deleted with createPiJudgeAuditor (#756); gate officers self-fetch.
+// Keep concurrent isolation contract for the shared AK_ROLE_RUN_DIR pointer.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-dossier-concurrent-"));
+  await withTempRoot("ak-dossier-concurrent-", async (root) => {
   const previous = process.env.AK_ROLE_RUN_DIR;
-  try {
+    return withPrimaryAwareCleanup(
+      async () => {
+
     const runA = join(root, "run-a");
     const runB = join(root, "run-b");
     const { mkdir } = await import("node:fs/promises");
@@ -38,36 +32,9 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
       assert.equal(b.runDirectory, runB);
       assert.notEqual(a.runDirectory, b.runDirectory);
     }
-  } finally {
-    if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previous;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("judge subjects require assignment and candidate verdict on the parent session", () => {
-  const empty = SessionManager.inMemory();
-  assert.deepEqual(readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext), {
-    status: "incomplete",
-    observation: { kind: "missing-subject", subject: "assignment" },
+        },
+      async () => { if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previous; }
+    );
   });
-
-  empty.appendMessage({ role: "user", content: "OWNER: adjudicate", timestamp: Date.now() });
-  assert.deepEqual(readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext), {
-    status: "incomplete",
-    observation: { kind: "missing-subject", subject: "candidate-verdict" },
-  });
-
-  empty.appendMessage({
-    role: "assistant",
-    content: [{ type: "toolCall", id: "v1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
-    api: "openai-responses",
-    provider: "test",
-    model: "test",
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    stopReason: "toolUse",
-    timestamp: Date.now(),
-  });
-  const ready = readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext);
-  assert.equal(ready.status, "ok");
 });

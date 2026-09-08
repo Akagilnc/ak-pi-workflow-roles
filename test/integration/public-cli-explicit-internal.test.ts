@@ -1,9 +1,9 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Pi adapter seam — controlled session + close-once three paths (#526 acceptance B).
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
@@ -18,17 +18,15 @@ import {
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-explicit-internal-"));
-  try {
+  return withTempRoot("ak-public-cli-explicit-internal-", async (home) => {
     seedGitRepository(home);
     return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  });
 }
 
 async function writeExecutableStub(path: string, source: string): Promise<void> {
@@ -314,6 +312,55 @@ setInterval(() => {}, 1000);
       await readFile(join(coords.sessionDirectory, "session.jsonl"), "utf8"),
       sessionLine,
     );
+  });
+});
+
+test("a parent abort terminates the nested activation with SIGTERM", async () => {
+  await withTempHome(async (home) => {
+    const signalFile = join(home, "signal");
+    const ready = join(home, "ready");
+    const runDirectory = join(home, "run");
+    const stub = join(home, "abort-child.mjs");
+    await mkdir(runDirectory, { recursive: true });
+    await writeExecutableStub(
+      stub,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => {
+  writeFileSync(${JSON.stringify(signalFile)}, "SIGTERM");
+  process.exit(143);
+});
+writeFileSync(${JSON.stringify(ready)}, "ready");
+setInterval(() => {}, 1000);
+`,
+    );
+
+    // Nested public summons await a child activation in-process; a cancelled parent
+    // must stop the child instead of letting it run and spend on (#675 T5/T6).
+    const baseSpawn = createDefaultPiSpawnRunner({});
+    const host = createPiRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      spawnRunner: async (args, options) =>
+        baseSpawn(args, { ...options, env: { ...options.env, PI_BINARY: stub } }),
+    });
+
+    const parent = new AbortController();
+    const resultPromise = host.executeTurn({
+      ...minimalTurnRequest(home, runDirectory),
+      // The production runner has no default wall clock (ADR 0010), so the caller
+      // supplies the budget: a child that outlives a dropped abort is reaped by it
+      // in under a second and reports timedOut, instead of hanging this test.
+      timeoutMs: 750,
+      signal: parent.signal,
+    });
+    await waitForFile(ready, resultPromise);
+    parent.abort();
+    const result = await resultPromise;
+
+    assert.equal(await readFile(signalFile, "utf8"), "SIGTERM");
+    assert.equal(result.timedOut, false, "parent abort is not a timeout");
+    assert.notEqual(result.code, 0);
   });
 });
 

@@ -10,12 +10,9 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext, HostInstitutionalModelSelection } from "./host-contracts.ts";
-import {
-  InstitutionalResolutionError,
-  readInstitutionalSeatSelection,
-} from "./institutional-resolution.ts";
+import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
@@ -162,8 +159,14 @@ export type NavigatorPreparationSession = {
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   providerFailure?(): NavigatorProviderFailureFact | undefined;
-  setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
-  getThinkingLevel?(): string;
+  /**
+   * Facts of a nested session that already settled without an accepted receipt.
+   * Present means its own delivery budget is spent — another prompt would open an
+   * independent summon rather than press the session that owes the receipt.
+   */
+  noReceipt?(): NoReceiptLifecycleFacts | undefined;
+  setModel?(model: string, thinkingLevel?: string): Promise<void>;
+  getThinkingLevel?(): string | undefined;
   recordPointer(): string;
   dispose(): void | Promise<void>;
 };
@@ -204,79 +207,84 @@ export async function writeNavigatorModelSetting(model: string, path = navigator
 export function parseNavigatorModelSetting(value: string): {
   provider: string;
   model: string;
-  thinkingLevel: "off" | "max";
+  /** Host thinking passthrough — omit when bare provider/model (#675 ⑥). */
+  thinkingLevel?: string;
 } {
   const slash = value.indexOf("/");
   if (slash <= 0 || slash === value.length - 1) {
-    throw new Error("Navigator model setting must be provider/model[:max]");
+    throw new Error("Navigator model setting must be provider/model[:thinking]");
   }
   const provider = value.slice(0, slash);
   const modelWithThinking = value.slice(slash + 1);
   const colon = modelWithThinking.lastIndexOf(":");
   const suffix = colon < 0 ? undefined : modelWithThinking.slice(colon + 1);
-  if (suffix !== undefined && suffix !== "max") {
-    throw new Error("Navigator model setting must use :max or omit the thinking suffix");
-  }
   const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
   if (model === "") throw new Error("Navigator model setting must include a model");
-  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
+  if (suffix !== undefined && suffix.trim() === "") {
+    throw new Error("Navigator model setting thinking suffix must be non-blank");
+  }
+  return {
+    provider,
+    model,
+    ...(suffix === undefined ? {} : { thinkingLevel: suffix }),
+  };
 }
 
 /**
- * Prefer institutional-resolution navigator seat; fall back to model file only when
- * the page is missing or lacks the seat (typed reasons). Corrupted pages fail loud.
+ * Navigator model selection from the public seat table only (#675 / #617 DK-3).
+ * No legacy navigator-model.json fallback — missing seat is a real model failure.
+ * Host/engine axes ride the shared public summons path; attendance open consumes
+ * model/thinking here and defers host selection to the shared envelope when present.
  */
 export async function resolveNavigatorSeatSelection(
   context: HostContext,
-  modelSettingPath: string | undefined,
-  defaultModelSettingPath: string,
-): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel: "off" | "max" }> {
-  const runDirectory = auditorRunDirectory(context);
-  if (runDirectory !== undefined) {
-    try {
-      const selection = await readInstitutionalSeatSelection(runDirectory, "navigator");
-      const thinkingLevel = selection.thinking === "max" ? "max" : "off";
+): Promise<{ selection: HostInstitutionalModelSelection; configuredLabel: string; thinkingLevel?: string }> {
+  try {
+    const { loadPublicCliConfig } = await import("./public-cli/config.ts");
+    const { seatModelOnly } = await import("./public-cli/registry.ts");
+    const { packageMachineHome } = await import("./activation-ledger-topology.ts");
+    const homeCandidate = (context as unknown as { home?: unknown }).home;
+    const envHome = process.env.HOME;
+    // Prefer explicit context home, then process HOME (hermetic tests), never
+    // jump straight to the real machine home when a temp HOME is armed.
+    const home =
+      typeof homeCandidate === "string"
+        ? homeCandidate
+        : typeof envHome === "string" && envHome.trim() !== ""
+          ? envHome
+          : packageMachineHome();
+    const config = await loadPublicCliConfig(home);
+    const modelOnly = seatModelOnly(config.seats.navigator);
+    // Seat table is the only model authority — no legacy navigator-model.json.
+    // Bare missing seat uses the package default constant (not a file path).
+    if (modelOnly === undefined) {
+      const parsed = parseNavigatorModelSetting(NAVIGATOR_DEFAULT_MODEL);
       return {
         selection: {
-          provider: selection.provider,
-          model: selection.model,
-          ...(selection.thinking === undefined ? {} : { thinking: selection.thinking }),
+          provider: parsed.provider,
+          model: parsed.model,
+          ...(parsed.thinkingLevel === undefined ? {} : { thinking: parsed.thinkingLevel }),
         },
-        configuredLabel: `${selection.provider}/${selection.model}${thinkingLevel === "max" ? ":max" : ""}`,
-        thinkingLevel,
+        configuredLabel: NAVIGATOR_DEFAULT_MODEL,
+        ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
       };
-    } catch (error) {
-      if (
-        error instanceof InstitutionalResolutionError
-        && (error.reason === "missing-page" || error.reason === "missing-seat")
-      ) {
-        // documented bare-seam fallback
-      } else {
-        throw error instanceof NavigatorUnavailableError
-          ? error
-          : navigatorUnavailableError("model", error);
-      }
     }
-  }
-  let configured: string;
-  try {
-    configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
+    // Host params passthrough only — no map/validate/default (#675 ⑥).
+    const thinkingRaw = modelOnly.thinking;
+    const configuredLabel =
+      thinkingRaw === undefined
+        ? `${modelOnly.provider}/${modelOnly.model}`
+        : `${modelOnly.provider}/${modelOnly.model}:${thinkingRaw}`;
+    return {
+      selection: {
+        provider: modelOnly.provider,
+        model: modelOnly.model,
+        ...(thinkingRaw === undefined ? {} : { thinking: thinkingRaw }),
+      },
+      configuredLabel,
+      ...(thinkingRaw === undefined ? {} : { thinkingLevel: thinkingRaw }),
+    };
   } catch (error) {
     throw navigatorUnavailableError("model", error);
   }
-  let parsed: ReturnType<typeof parseNavigatorModelSetting>;
-  try {
-    parsed = parseNavigatorModelSetting(configured);
-  } catch (error) {
-    throw navigatorUnavailableError("model", error);
-  }
-  return {
-    selection: {
-      provider: parsed.provider,
-      model: parsed.model,
-      thinking: parsed.thinkingLevel,
-    },
-    configuredLabel: configured,
-    thinkingLevel: parsed.thinkingLevel,
-  };
 }

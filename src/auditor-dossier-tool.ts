@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 import { Type } from "typebox";
 
 export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier" as const;
@@ -60,6 +61,38 @@ export function readLatestToolCallLeaf(context: GateSubmissionSessionContext): u
 
 export function gateSubmissionCandidatePath(runDirectory: string): string {
   return join(runDirectory, "artifacts", GATE_SUBMISSION_CANDIDATE_FILE);
+}
+
+/**
+ * Arguments of the latest assistant toolCall leaf — the in-flight 交卷 body.
+ * Transport assembly only: does not interpret field contents (#786).
+ */
+export function readLatestSubmissionArguments(
+  context: GateSubmissionSessionContext,
+): unknown | undefined {
+  const leaf = readLatestToolCallLeaf(context);
+  if (!isRecord(leaf) || !isRecord(leaf.message) || !Array.isArray(leaf.message.content)) {
+    return undefined;
+  }
+  for (const part of leaf.message.content) {
+    if (isRecord(part) && part.type === "toolCall" && "arguments" in part) {
+      return part.arguments;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Verbatim parent-submission body for gate-officer same-parent resume (#786).
+ * Three pairs share this face: countersign↔notary, judge↔auditor, worker↔inspector.
+ * Code relays bytes; it does not parse, judge, or rewrite the submission.
+ * Symmetric with bounce direction (officer receipt → parent via readableGateItem).
+ * No path/pointer substitute — argv 卷宗指针 stays on the code-summons face (ADR 0079).
+ */
+export function buildGateOfficerReviewInstruction(input: {
+  readonly submission: unknown;
+}): string {
+  return readableGateItem(input.submission);
 }
 
 /**

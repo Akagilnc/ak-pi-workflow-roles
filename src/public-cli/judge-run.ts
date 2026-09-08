@@ -15,7 +15,6 @@ import {
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
-import { resolveSeatTicketBinding } from "./seat-ticket-binding.ts";
 import {
   loadResumableJudgeRun,
   markRunAdmitted,
@@ -156,12 +155,7 @@ export async function runPublicJudge(
           }),
         },
       }),
-    adapters: {
-      ...judgeAdapters(),
-      beforeDispatch: async (admittedSeat) => {
-        await resolveSeatTicketBinding(admittedSeat, env);
-      },
-    },
+    adapters: judgeAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
@@ -184,12 +178,12 @@ export async function runPublicResume(
     request,
     env,
     io,
-    load: () =>
-      loadResumableJudgeRun(env.home, request.runId, env.principalAuthority),
-    buildTurnRequest: (admitted) =>
+    load: (effective) =>
+      loadResumableJudgeRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
       buildJudgeTurnRequest(
       admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
+      resumeTurnRequestProjectionOptions(admitted, effective, env),
     ),
     adapters: judgeAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

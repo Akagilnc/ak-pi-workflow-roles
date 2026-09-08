@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -14,7 +13,6 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   assertWritableTestAgentDir,
@@ -23,14 +21,10 @@ import {
 } from "./test-agent-dir-guard.ts";
 
 export { assertWritableTestAgentDir, realMachineAgentDir, realMachineHome };
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { withPrimaryAwareCleanup, withTempRoot } from "./primary-aware-cleanup.ts";
+import { worktreeTempPrefix } from "./worktree-temp.ts";
 import { promisify } from "node:util";
-
-import { isolatedTestProcessEnv } from "./test-process-fixtures.ts";
-import {
-  runTestSubprocess,
-  type TestSubprocessResult,
-} from "./test-subprocess.ts";
 
 import {
   type CredentialStore,
@@ -41,7 +35,6 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import {
-  createAgentSession,
   DefaultResourceLoader,
   type ExtensionContext,
   type InlineExtension,
@@ -90,7 +83,6 @@ export async function waitForEventLoopCondition(
 export const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );
-export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
 
 /**
  * Git-visible package inputs eligible for private materialization.
@@ -193,8 +185,7 @@ export async function packIsolatedPackage(
   options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
-  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
-  try {
+  return withTempRoot("ak-pack-mat-", async (root) => {
     await materializePackageTree(root, {
       nodeModules: options.nodeModules ?? "symlink",
     });
@@ -214,428 +205,7 @@ export async function packIsolatedPackage(
       filename: entry.filename,
       files: entry.files,
     };
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
-export interface ConstructionProvenance {
-  /** `git rev-parse HEAD` at fixture build time. */
-  head: string;
-  /** Fingerprint of HEAD + worktree dirty paths + content hashes of dirty paths. */
-  fingerprint: string;
-  builtAt: string;
-}
-
-/**
- * Provenance for the current construction HEAD. Dirty worktrees hash dirty
- * file contents so the shared fixture never reuses a stale artifact.
- */
-export function constructionProvenance(): ConstructionProvenance {
-  const head = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-  }).trim();
-  const status = execFileSync(
-    "git",
-    ["-C", packageRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    { encoding: "buffer" },
-  ).toString("utf8");
-  const hash = createHash("sha256").update(head).update("\0");
-  if (status.length > 0) {
-    hash.update(status);
-    for (const entry of status.split("\0")) {
-      if (!entry) continue;
-      // porcelain -z: XY SPACE path, or rename "R  old\0new"
-      const pathPart = entry.slice(3);
-      if (!pathPart) continue;
-      const abs = resolve(packageRoot, pathPart);
-      if (!existsSync(abs)) {
-        hash.update("missing:").update(pathPart);
-        continue;
-      }
-      try {
-        hash.update(pathPart).update("\0");
-        hash.update(execFileSync("git", ["-C", packageRoot, "hash-object", abs]));
-      } catch {
-        hash.update("unreadable:").update(pathPart);
-      }
-    }
-  }
-  return {
-    head,
-    fingerprint: hash.digest("hex").slice(0, 24),
-    builtAt: new Date().toISOString(),
-  };
-}
-
-export interface SharedPackFixture extends IsolatedPackResult {
-  provenance: ConstructionProvenance;
-  cacheDir: string;
-}
-
-export interface SharedColdInstallFixture extends ColdInstalledPackage {
-  provenance: ConstructionProvenance;
-  cacheDir: string;
-}
-
-const FIXTURE_CACHE_ROOT = resolve(
-  tmpdir(),
-  "ak-pi-workflow-roles-cold-fixtures",
-);
-
-async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
-  const started = Date.now();
-  while (true) {
-    try {
-      await mkdir(lockDir);
-      return async () => {
-        await rm(lockDir, { recursive: true, force: true });
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() - started > timeoutMs) {
-        throw new Error(`timed out waiting for fixture lock at ${lockDir}`);
-      }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-    }
-  }
-}
-
-async function waitForReady(
-  readyPath: string,
-  lockDir: string,
-  timeoutMs = 300_000,
-): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started <= timeoutMs) {
-    if (existsSync(readyPath)) return true;
-    if (!existsSync(lockDir)) {
-      // Builder crashed without ready marker — caller may rebuild.
-      return false;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-  }
-  throw new Error(`timed out waiting for fixture readiness at ${readyPath}`);
-}
-
-let sharedPackMemo: Promise<SharedPackFixture> | undefined;
-let sharedColdInstallMemo: Promise<SharedColdInstallFixture> | undefined;
-
-/**
- * Build or reuse one isolated pack for the current construction HEAD.
- * Cross-process safe via a fingerprint-keyed cache under os.tmpdir().
- */
-export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
-  sharedPackMemo ??= (async () => {
-    const provenance = constructionProvenance();
-    const cacheDir = resolve(FIXTURE_CACHE_ROOT, provenance.fingerprint, "pack");
-    const readyPath = resolve(cacheDir, "ready.json");
-    const metaPath = resolve(cacheDir, "meta.json");
-    const lockDir = resolve(cacheDir, ".lock");
-
-    await mkdir(cacheDir, { recursive: true });
-
-    const loadReady = async (): Promise<SharedPackFixture | undefined> => {
-      if (!existsSync(readyPath) || !existsSync(metaPath)) return undefined;
-      const meta = JSON.parse(await readFile(metaPath, "utf8")) as {
-        filename: string;
-        files: Array<{ path: string }>;
-        provenance: ConstructionProvenance;
-      };
-      const tarball = resolve(cacheDir, meta.filename);
-      if (!existsSync(tarball)) return undefined;
-      return {
-        root: cacheDir,
-        tarball,
-        filename: meta.filename,
-        files: meta.files,
-        provenance: meta.provenance,
-        cacheDir,
-      };
-    };
-
-    const existing = await loadReady();
-    if (existing) return existing;
-
-    if (await waitForReady(readyPath, lockDir)) {
-      const ready = await loadReady();
-      if (ready) return ready;
-    }
-
-    const release = await acquireDirLock(lockDir);
-    try {
-      const raced = await loadReady();
-      if (raced) return raced;
-
-      const packDestination = cacheDir;
-      const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
-      try {
-        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
-        const { stdout } = await execFileAsync(
-          "npm",
-          ["pack", "--json", "--pack-destination", packDestination],
-          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false" } },
-        );
-        const jsonStart = stdout.indexOf("[");
-        if (jsonStart < 0) throw new Error(`npm pack did not emit JSON: ${stdout}`);
-        const pack = JSON.parse(stdout.slice(jsonStart)) as Array<{
-          filename: string;
-          files: Array<{ path: string }>;
-        }>;
-        const entry = pack[0]!;
-        const builtProvenance = constructionProvenance();
-        await writeFile(
-          metaPath,
-          JSON.stringify(
-            {
-              filename: entry.filename,
-              files: entry.files,
-              provenance: builtProvenance,
-            },
-            null,
-            2,
-          ),
-        );
-        await writeFile(
-          readyPath,
-          JSON.stringify(
-            {
-              head: builtProvenance.head,
-              fingerprint: builtProvenance.fingerprint,
-              builtAt: builtProvenance.builtAt,
-            },
-            null,
-            2,
-          ),
-        );
-        return {
-          root: cacheDir,
-          tarball: resolve(cacheDir, entry.filename),
-          filename: entry.filename,
-          files: entry.files,
-          provenance: builtProvenance,
-          cacheDir,
-        };
-      } finally {
-        await rm(materialRoot, { recursive: true, force: true });
-      }
-    } finally {
-      await release();
-    }
-  })();
-  return sharedPackMemo;
-}
-
-/** file:/registry peers the cold consumer must resolve when importing installed sources. */
-const COLD_INSTALL_FILE_PEERS = [
-  "@earendil-works/pi-ai",
-  "@earendil-works/pi-coding-agent",
-] as const;
-
-function coldInstallPeerFileSpec(name: string): string {
-  // realpath so pnpm store targets are absolute and not dead checkout-relative links.
-  return `file:${realpathSync(resolve(packageRoot, "node_modules", name))}`;
-}
-
-function coldInstallDependencySpec(tarball: string): Record<string, string> {
-  return {
-    "@akagilnc/pi-workflow-roles": `file:${tarball}`,
-    "@earendil-works/pi-ai": coldInstallPeerFileSpec("@earendil-works/pi-ai"),
-    "@earendil-works/pi-coding-agent": coldInstallPeerFileSpec(
-      "@earendil-works/pi-coding-agent",
-    ),
-    // Exercise the optional peer exactly as an isolated consumer would: npm
-    // materializes its own copy instead of preserving a link into this checkout.
-    typebox: "1.3.8",
-  };
-}
-
-function coldInstallPeerPathResolvable(peerPath: string): boolean {
-  if (!existsSync(peerPath)) return false;
-  try {
-    realpathSync(peerPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function coldInstallPeersResolvable(fixtureRoot: string): boolean {
-  if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules/typebox"))) {
-    return false;
-  }
-  for (const rel of COLD_INSTALL_FILE_PEERS) {
-    if (!coldInstallPeerPathResolvable(resolve(fixtureRoot, "node_modules", rel))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Build or reuse one cold-installed consumer tree for the current HEAD.
- * Cross-process safe; tests should clone via withColdInstalledPackage / cloneSharedColdInstall.
- */
-export async function getSharedColdInstalledPackage(): Promise<SharedColdInstallFixture> {
-  sharedColdInstallMemo ??= (async () => {
-    const pack = await getSharedIsolatedPack();
-    const cacheDir = resolve(
-      FIXTURE_CACHE_ROOT,
-      pack.provenance.fingerprint,
-      // v3: materialize optional peers on clone; reject caches with broken peer links.
-      "cold-install-v3",
-    );
-    const readyPath = resolve(cacheDir, "ready.json");
-    const lockDir = resolve(cacheDir, ".lock");
-    const fixture = resolve(cacheDir, "consumer");
-    const installedRoot = resolve(
-      fixture,
-      "node_modules/@akagilnc/pi-workflow-roles",
-    );
-
-    await mkdir(cacheDir, { recursive: true });
-
-    const loadReady = async (): Promise<SharedColdInstallFixture | undefined> => {
-      if (!existsSync(readyPath) || !existsSync(installedRoot)) return undefined;
-      // Stale cross-worktree caches may retain npm file: peer symlinks to dead paths.
-      if (!coldInstallPeersResolvable(fixture)) return undefined;
-      const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
-        provenance: ConstructionProvenance;
-      };
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-      return {
-        fixture,
-        pack,
-        installedRoot,
-        installed,
-        provenance: ready.provenance,
-        cacheDir,
-      };
-    };
-
-    const existing = await loadReady();
-    if (existing) return existing;
-
-    if (await waitForReady(readyPath, lockDir)) {
-      const ready = await loadReady();
-      if (ready) return ready;
-    }
-
-    const release = await acquireDirLock(lockDir);
-    try {
-      const raced = await loadReady();
-      if (raced) return raced;
-
-      await rm(fixture, { recursive: true, force: true });
-      await mkdir(fixture, { recursive: true });
-      await writeFile(
-        resolve(fixture, "package.json"),
-        JSON.stringify({
-          private: true,
-          type: "module",
-          dependencies: coldInstallDependencySpec(pack.tarball),
-        }),
-      );
-      await execFileAsync(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-        { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-      );
-
-      const builtProvenance = pack.provenance;
-      await writeFile(
-        readyPath,
-        JSON.stringify(
-          {
-            head: builtProvenance.head,
-            fingerprint: builtProvenance.fingerprint,
-            builtAt: new Date().toISOString(),
-            provenance: builtProvenance,
-            tarball: pack.tarball,
-          },
-          null,
-          2,
-        ),
-      );
-
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-      return {
-        fixture,
-        pack,
-        installedRoot,
-        installed,
-        provenance: builtProvenance,
-        cacheDir,
-      };
-    } finally {
-      await release();
-    }
-  })();
-  return sharedColdInstallMemo;
-}
-
-/**
- * Clone the shared cold-install tree into dest so each test owns a private
- * consumer workspace (and a writable installed package copy).
- */
-export async function cloneSharedColdInstall(
-  dest: string,
-): Promise<ColdInstalledPackage> {
-  const shared = await getSharedColdInstalledPackage();
-  await rm(dest, { recursive: true, force: true });
-  await mkdir(dirname(dest), { recursive: true });
-  await cp(shared.fixture, dest, { recursive: true, force: true });
-  // typebox is registry-installed in the shared fixture; copy bytes rather than
-  // relocating npm's checkout-bound symlink.
-  const typeboxPath = resolve(dest, "node_modules/typebox");
-  await rm(typeboxPath, { recursive: true, force: true });
-  await cp(resolve(shared.fixture, "node_modules/typebox"), typeboxPath, {
-    recursive: true,
-    force: true,
-    dereference: true,
   });
-  // file: peers live in the pnpm virtual store with sibling deps (chalk, …).
-  // Do not byte-copy the package alone — that drops the sibling graph. Retarget
-  // clone links to this checkout's realpath so resolution stays inside the store.
-  for (const rel of COLD_INSTALL_FILE_PEERS) {
-    const destPath = resolve(dest, "node_modules", rel);
-    await rm(destPath, { recursive: true, force: true });
-    await mkdir(dirname(destPath), { recursive: true });
-    await symlink(
-      await realpath(resolve(packageRoot, "node_modules", rel)),
-      destPath,
-    );
-  }
-  const installedRoot = resolve(dest, "node_modules/@akagilnc/pi-workflow-roles");
-  const installed = (relativePath: string) =>
-    import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-  return {
-    fixture: dest,
-    pack: shared.pack,
-    installedRoot,
-    installed,
-  };
-}
-
-export interface ColdInstalledPackage {
-  fixture: string;
-  pack: IsolatedPackResult;
-  installedRoot: string;
-  installed(relativePath: string): Promise<any>;
-}
-
-/**
- * Pack and install the current package into a private consumer directory.
- * Uses the shared HEAD-keyed cold-install fixture and clones it under home.
- */
-export async function withColdInstalledPackage<T>(
-  home: string,
-  scenario: (fixture: ColdInstalledPackage) => Promise<T>,
-): Promise<T> {
-  const fixture = await cloneSharedColdInstall(resolve(home, "consumer"));
-  return await scenario(fixture);
 }
 
 export interface RawPackageManifest {
@@ -660,72 +230,6 @@ export async function loadRawPackageManifest(): Promise<RawPackageManifest> {
  */
 export function resolvePackageEntrypoint(_manifest?: RawPackageManifest): string {
   return resolve(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-
-/** Pi-managed private npm root under an isolated agent dir (user scope). */
-export function piPrivateNpmRoot(agentDir: string): string {
-  return resolve(agentDir, "npm");
-}
-
-/** Pi private npm bin directory — where package bins surface after install. */
-export function piPrivateNpmBinDir(agentDir: string): string {
-  return resolve(piPrivateNpmRoot(agentDir), "node_modules", ".bin");
-}
-
-export interface PiManagedInstall {
-  agentDir: string;
-  npmRoot: string;
-  binDir: string;
-  installedRoot: string;
-  akRoleBin: string;
-  pack: IsolatedPackResult;
-}
-
-/**
- * Install one packed artifact through Pi's user install owner (`pi install` →
- * PackageManager) so `ak-role` is discovered via Pi's private npm bin (ADR 0052).
- */
-export async function installPackedArtifactIntoPiNpm(
-  agentDir: string,
-  home: string,
-): Promise<PiManagedInstall> {
-  const pack = await getSharedIsolatedPack();
-  const source = `npm:@akagilnc/pi-workflow-roles@file:${pack.tarball}`;
-  const result = await runPiSubprocess(["install", source], {
-    cwd: home,
-    timeoutMs: 120_000,
-    env: {
-      ...process.env,
-      HOME: home,
-      PI_CODING_AGENT_DIR: agentDir,
-      PI_OFFLINE: "1",
-    },
-  });
-  if (result.localTimeout) {
-    throw new Error(`pi install timed out for ${source}`);
-  }
-  if (result.code !== 0) {
-    throw new Error(
-      `pi install failed (code ${String(result.code)}): ${result.stderr || result.stdout}`,
-    );
-  }
-  const npmRoot = piPrivateNpmRoot(agentDir);
-  const installedRoot = resolve(
-    npmRoot,
-    "node_modules",
-    "@akagilnc",
-    "pi-workflow-roles",
-  );
-  const binDir = piPrivateNpmBinDir(agentDir);
-  const akRoleBin = resolve(binDir, "ak-role");
-  return {
-    agentDir,
-    npmRoot,
-    binDir,
-    installedRoot,
-    akRoleBin,
-    pack,
-  };
 }
 
 /**
@@ -758,38 +262,36 @@ export async function withHermeticHome<T>(
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
 ): Promise<T> {
   return await withProcessGlobalLock(async () => {
-    // Prefer /tmp over os.tmpdir(): Linux CI tmpdir is /tmp already; macOS
-    // os.tmpdir() is deeper under /var/folders and can hide shallow-path
-    // footguns (host-pi-runtime / analyst bundle layout). Same pin as those tests.
-    const home = await mkdtemp(
-      resolve("/tmp", options.prefix ?? "ak-pi-test-"),
-    );
-    const agentDir = resolve(home, ".pi-agent");
-    await mkdir(agentDir, { recursive: true });
-    const previousHome = process.env.HOME;
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousOffline = process.env.PI_OFFLINE;
-    const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-    process.env.HOME = home;
-    // Pin host-Pi surfaces so in-process children do not inherit machine agent
-    // dir, ambient run bindings, or online catalog refresh (CI strips these via
-    // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.PI_OFFLINE = "1";
-    delete process.env.AK_ROLE_RUN_DIR;
-    try {
-      return await scenario({ home, agentDir });
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousOffline === undefined) delete process.env.PI_OFFLINE;
-      else process.env.PI_OFFLINE = previousOffline;
-      if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-      else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-      await rm(home, { recursive: true, force: true });
-    }
+    // #685: hermetic home under worktree .test-tmp so exit cleanup is lawful.
+    // Own the root at the create seam before mkdir/env setup can throw.
+    return withTempRoot(options.prefix ?? "ak-pi-test-", async (home) => {
+      const agentDir = resolve(home, ".pi-agent");
+      await mkdir(agentDir, { recursive: true });
+      const previousHome = process.env.HOME;
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const previousOffline = process.env.PI_OFFLINE;
+      const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+      process.env.HOME = home;
+      // Pin host-Pi surfaces so in-process children do not inherit machine agent
+      // dir, ambient run bindings, or online catalog refresh (CI strips these via
+      // isolatedTestProcessEnv; local shells often leak PI_CODING_AGENT_DIR/auth).
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.PI_OFFLINE = "1";
+      delete process.env.AK_ROLE_RUN_DIR;
+      return withPrimaryAwareCleanup(
+        () => scenario({ home, agentDir }),
+        async () => {
+          if (previousHome === undefined) delete process.env.HOME;
+          else process.env.HOME = previousHome;
+          if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+          else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+          if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+          else process.env.PI_OFFLINE = previousOffline;
+          if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+          else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+        },
+      );
+    });
   });
 }
 
@@ -836,30 +338,44 @@ export function createTempPackageHomeLedger(input: {
   sessionFile: string;
   dispose(): void;
 } {
-  const home = mkdtempSync(join(tmpdir(), input.prefix));
-  const bookKey = basename(home);
-  const ledgerHome = machineLedgerHome(home);
-  const runDirectory = join(
-    ledgerHome,
-    "books",
-    bookKey,
-    "runs",
-    input.runName ?? "test-run",
-  );
-  const sessionDirectory = join(runDirectory, "session");
-  mkdirSync(sessionDirectory, { recursive: true });
-  const sessionFile = join(sessionDirectory, "session.jsonl");
-  return {
-    home,
-    bookKey,
-    ledgerHome,
-    runDirectory,
-    sessionDirectory,
-    sessionFile,
-    dispose() {
+  const home = mkdtempSync(worktreeTempPrefix(input.prefix));
+  try {
+    const bookKey = basename(home);
+    const ledgerHome = machineLedgerHome(home);
+    const runDirectory = join(
+      ledgerHome,
+      "books",
+      bookKey,
+      "runs",
+      input.runName ?? "test-run",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    mkdirSync(sessionDirectory, { recursive: true });
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    return {
+      home,
+      bookKey,
+      ledgerHome,
+      runDirectory,
+      sessionDirectory,
+      sessionFile,
+      dispose() {
+        rmSync(home, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    // Setup primary must survive dispose failure (same rule as withPrimaryAwareCleanup).
+    try {
       rmSync(home, { recursive: true, force: true });
-    },
-  };
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Test failed and cleanup failed",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 /** Book key for a git cwd whose common-dir host basename is the directory name. */
@@ -952,6 +468,10 @@ export function activationExtensionContext(input: {
       getEntries: () => [],
       getSessionDir: () => sessionDir,
       getSessionFile: () => sessionFile,
+      // Pi adapter projects getHeader without optional chaining; missing method becomes
+      // TypeError before durableSessionPointer. null = no in-memory deferred header
+      // (missing-file arms keep ENOENT cause via ActivationSessionFileMissingError wrap).
+      getHeader: () => null,
     },
   } as unknown as ExtensionContext;
 }
@@ -977,123 +497,16 @@ export async function withProcessCwd<T>(
   return await withProcessGlobalLock(async () => {
     const previous = process.cwd();
     process.chdir(cwd);
-    try {
-      return await scenario();
-    } finally {
-      process.chdir(previous);
-    }
+    return withPrimaryAwareCleanup(
+      () => scenario(),
+      async () => {
+        process.chdir(previous);
+      },
+    );
   });
 }
 
-export type PiSubprocessResult = TestSubprocessResult;
 
-export async function runNodeSubprocess(
-  args: string[],
-  options: {
-    cwd: string;
-    env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
-  },
-): Promise<PiSubprocessResult> {
-  return runTestSubprocess(process.execPath, args, {
-    cwd: options.cwd,
-    ...(options.env === undefined ? {} : { env: options.env }),
-    timeoutMs: options.timeoutMs ?? 30_000,
-    owner: "runNodeSubprocess",
-  });
-}
-
-export async function runPiSubprocess(
-  args: string[],
-  options: {
-    cwd: string;
-    env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
-  },
-): Promise<PiSubprocessResult> {
-  const env = isolatedTestProcessEnv({
-    ...(options.env === undefined ? {} : { env: options.env }),
-    home: options.env?.HOME ?? options.cwd,
-    agentDir: options.env?.PI_CODING_AGENT_DIR ?? join(options.cwd, ".pi-agent"),
-  });
-  // Isolation masks ambient machine AK_ROLE_RUN_DIR. Public CLI children receive an
-  // explicit run binding in options.env — restore it so typed child→parent pages
-  // (provider HTTP / knownFailure) match production defaultExplicitInternalPiRunner.
-  const injectedRunDir = options.env?.AK_ROLE_RUN_DIR;
-  if (typeof injectedRunDir === "string" && injectedRunDir.trim() !== "") {
-    env.AK_ROLE_RUN_DIR = injectedRunDir;
-  }
-  // Pi's package-manager install/update path does not pass --no-audit/--offline into
-  // npm. On hosts where registry HTTPS is sinkholed (e.g. 198.18.0.0/15 VPN), a local
-  // file: tarball still hangs in npm audit after the package is already cache-resolved.
-  // Hermetic harness installs/updates never need audit/fund network; silence those
-  // side-channels without widening the 120s deadline.
-  if (args[0] === "install" || args[0] === "update") {
-    env.npm_config_audit ??= "false";
-    env.npm_config_fund ??= "false";
-  }
-  return runTestSubprocess(piCli, args, {
-    cwd: options.cwd,
-    env,
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    owner: "runPiSubprocess",
-  });
-}
-
-export interface InProcessPiOptions {
-  cwd: string;
-  agentDir: string;
-  home?: string;
-  faux: FauxProviderHandle;
-  model?: Model<any>;
-  provider?: Provider;
-  modelsPath?: string | null;
-  additionalExtensionPaths?: string[];
-  extensionFactories?: InlineExtension[];
-  additionalSkillPaths?: string[];
-  /** Optional caller-owned persisted SessionManager for same-session assertions. */
-  sessionManager?: SessionManager;
-  /** When set, forwarded to DefaultResourceLoader; default remains true. */
-  noSkills?: boolean;
-  /** When set, forwarded to DefaultResourceLoader; default remains true. */
-  noContextFiles?: boolean;
-  skillsOverride?: ConstructorParameters<typeof DefaultResourceLoader>[0]["skillsOverride"];
-  appendSystemPrompt?: string[];
-  systemPrompt: string;
-  mode: "print" | "tui" | "json";
-  flags: Record<string, string>;
-  noTools?: "all" | "builtin";
-  customTools?: ToolDefinition[];
-  noExtensions?: boolean;
-  reviewerShutdown?: boolean;
-  /**
-   * Opt-in at activation-owning tests only: real parent SessionManager whose
-   * getSessionFile/getSessionDir share a persisted directory under the machine
-   * ledger book (ADR 0048). Requires explicit `home` (or `agentDir` under that
-   * home) and a git cwd — never process.env.HOME (#604). Generic in-process
-   * callers must leave this unset so they incur no git discovery or
-   * durable-session persistence. cwd/Navigator subject semantics stay fixture-owned.
-   */
-  activationLedgerSession?: boolean;
-  /**
-   * Optional credential store for OAuth/auth fixtures (#351 keepalive E2E).
-   * Defaults to a fresh InMemoryCredentialStore when omitted.
-   */
-  credentials?: CredentialStore;
-}
-
-export interface InProcessPiFixture {
-  faux: FauxProviderHandle;
-  provider: Provider;
-  model: Model<any>;
-  modelRuntime: ModelRuntime;
-  loader: DefaultResourceLoader;
-  extensions: Awaited<
-    ReturnType<typeof createAgentSession>
-  >["extensionsResult"];
-  session: Awaited<ReturnType<typeof createAgentSession>>["session"];
-  sessionManager: SessionManager;
-}
 
 export interface MockProviderServerObservers {
   /** Observe the model id each child stream request carries (model.id round-trips
@@ -1343,146 +756,6 @@ export async function createMockProviderServer(
   };
 }
 
-export async function withInProcessPi<T>(
-  options: InProcessPiOptions,
-  scenario: (fixture: InProcessPiFixture) => Promise<T>,
-): Promise<T> {
-  const model = options.model ?? options.faux.getModel();
-  const provider = options.provider ?? {
-    ...options.faux.provider,
-    auth: {
-      apiKey: {
-        name: "Hermetic test authentication",
-        async resolve() {
-          return { auth: { apiKey: "offline" } };
-        },
-      },
-    },
-    getModels() {
-      return [model];
-    },
-  };
-  const modelRuntime = await ModelRuntime.create({
-    credentials: options.credentials ?? new InMemoryCredentialStore(),
-    modelsPath: options.modelsPath === undefined
-      ? resolve(options.agentDir, "models.json")
-      : options.modelsPath,
-  });
-  modelRuntime.registerNativeProvider(provider);
-  // Same seal as createInheritedRuntime: do not race void background refresh
-  // before session.prompt (mock timers freeze any setTimeout inside refresh).
-  await modelRuntime.refresh({ allowNetwork: false });
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
-  const loader = new DefaultResourceLoader({
-    cwd: options.cwd,
-    agentDir: options.agentDir,
-    settingsManager,
-    ...(options.additionalExtensionPaths === undefined
-      ? {}
-      : { additionalExtensionPaths: options.additionalExtensionPaths }),
-    ...(options.extensionFactories === undefined
-      ? {}
-      : { extensionFactories: options.extensionFactories }),
-    ...(options.additionalSkillPaths === undefined
-      ? {}
-      : { additionalSkillPaths: options.additionalSkillPaths }),
-    ...(options.noExtensions === undefined
-      ? {}
-      : { noExtensions: options.noExtensions }),
-    noSkills: options.noSkills === false || options.noSkills === true
-      ? options.noSkills
-      : true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: options.noContextFiles === false || options.noContextFiles === true
-      ? options.noContextFiles
-      : true,
-    ...(options.skillsOverride === undefined
-      ? {}
-      : { skillsOverride: options.skillsOverride }),
-    ...(options.appendSystemPrompt === undefined
-      ? {}
-      : { appendSystemPrompt: options.appendSystemPrompt }),
-    systemPrompt: options.systemPrompt,
-  });
-  await loader.reload();
-  // Default: plain in-memory session — no git discovery, no durable-session I/O.
-  // Activation-owning tests opt in via activationLedgerSession.
-  let sessionManager: SessionManager = options.sessionManager ?? SessionManager.inMemory(options.cwd);
-  if (options.sessionManager === undefined && options.activationLedgerSession === true) {
-    // Real parent manager: file + dir co-located under the hermetic ledger book so
-    // nested auditor-roles land beside the parent (ADR 0048), not at repo root.
-    // subjectPath treats machine-ledger session dirs like empty getSessionDir, so
-    // cwd/Navigator identity stays fixture-owned.
-    const hermeticHome = options.home ?? (options.agentDir ? dirname(options.agentDir) : undefined);
-    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-      throw new Error("withInProcessPi activationLedgerSession requires home or agentDir");
-    }
-    // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
-    const bookKey = resolveBookKeyFromGit(options.cwd);
-    const parentSessionDir = join(
-      machineLedgerHome(hermeticHome),
-      "books",
-      bookKey,
-      "runs",
-      "activation",
-      "inprocess-pi",
-    );
-    // The host adapter exposes Pi's deferred header/rebind capabilities, so activation
-    // materializes the real principal without a synthetic assistant message.
-    sessionManager = SessionManager.create(options.cwd, parentSessionDir);
-    const runDirectory = dirname(parentSessionDir);
-    await mkdir(runDirectory, { recursive: true });
-    await mkdir(parentSessionDir, { recursive: true });
-    const { writeInstitutionalSeatTable, parentInheritedSeats } = await import("./institutional-seat-table.ts");
-    await writeInstitutionalSeatTable(runDirectory, parentInheritedSeats(model));
-    await writeInstitutionalSeatTable(parentSessionDir, parentInheritedSeats(model));
-  }
-  const { session, extensionsResult } = await createAgentSession({
-    cwd: options.cwd,
-    agentDir: options.agentDir,
-    model,
-    thinkingLevel: "off",
-    modelRuntime,
-    resourceLoader: loader,
-    sessionManager,
-    settingsManager,
-    ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
-    ...(options.customTools === undefined
-      ? {}
-      : { customTools: options.customTools }),
-  });
-  try {
-    for (const [name, value] of Object.entries(options.flags)) {
-      session.extensionRunner.setFlagValue(name, value);
-    }
-    await session.bindExtensions({ mode: options.mode });
-    return await scenario({
-      faux: options.faux,
-      provider,
-      model,
-      modelRuntime,
-      loader,
-      extensions: extensionsResult,
-      session,
-      sessionManager,
-    });
-  } finally {
-    try {
-      if (options.reviewerShutdown) {
-        await session.extensionRunner.emit({
-          type: "session_shutdown",
-          reason: "quit",
-        });
-      }
-    } finally {
-      session.dispose();
-    }
-  }
-}
 
 /**
  * Seed the child institutional sub-session's provider from a faux provider over
@@ -1497,49 +770,57 @@ export async function withInstitutionalProviderFixture<T>(
   faux: ReturnType<typeof fauxProvider>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const mock = await createMockProviderServer(faux);
+  // Own temp agent dir at create seam first; start mock only inside the body so a
+  // failed mkdtemp never leaves a live listener, and setup throws still close it.
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const tempAgentDir = await mkdtemp(join(tmpdir(), "ak-institutional-agent-"));
-  process.env.PI_CODING_AGENT_DIR = tempAgentDir;
-  try {
-    const modelsPath = resolve(tempAgentDir, "models.json");
-    const model = faux.getModel() as {
-      id: string;
-      reasoning?: boolean;
-      thinkingLevelMap?: Record<string, string>;
-    };
-    await writeFile(modelsPath, JSON.stringify({
-      providers: {
-        [faux.provider.id]: {
-          baseUrl: mock.baseUrl,
-          api: "openai-completions",
-          apiKey: "test",
-          models: [{
-            id: model.id,
-            name: model.id,
-            api: "openai-completions",
-            // Preserve faux model reasoning / thinking map so institutional
-            // children honor Navigator :max the same way the parent session does.
-            reasoning: model.reasoning === true,
-            ...(model.thinkingLevelMap === undefined
-              ? {}
-              : { thinkingLevelMap: model.thinkingLevelMap }),
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 128000,
-            maxTokens: 16384,
-            compat: { requiresToolResultName: true },
-          }],
-        },
+  return withTempRoot("ak-institutional-agent-", async (tempAgentDir) => {
+    process.env.PI_CODING_AGENT_DIR = tempAgentDir;
+    let mock: Awaited<ReturnType<typeof createMockProviderServer>> | undefined;
+    return withPrimaryAwareCleanup(
+      async () => {
+        mock = await createMockProviderServer(faux);
+        const modelsPath = resolve(tempAgentDir, "models.json");
+        const model = faux.getModel() as {
+          id: string;
+          reasoning?: boolean;
+          thinkingLevelMap?: Record<string, string>;
+        };
+        await writeFile(modelsPath, JSON.stringify({
+          providers: {
+            [faux.provider.id]: {
+              baseUrl: mock.baseUrl,
+              api: "openai-completions",
+              apiKey: "test",
+              models: [{
+                id: model.id,
+                name: model.id,
+                api: "openai-completions",
+                // Preserve faux model reasoning / thinking map so institutional
+                // children honor Navigator :max the same way the parent session does.
+                reasoning: model.reasoning === true,
+                ...(model.thinkingLevelMap === undefined
+                  ? {}
+                  : { thinkingLevelMap: model.thinkingLevelMap }),
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 16384,
+                compat: { requiresToolResultName: true },
+              }],
+            },
+          },
+        }, null, 2), "utf8");
+        return await run();
       },
-    }, null, 2), "utf8");
-    return await run();
-  } finally {
-    await mock.close();
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    await rm(tempAgentDir, { recursive: true, force: true });
-  }
+      async () => {
+        if (mock !== undefined) await mock.close();
+      },
+      async () => {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      },
+    );
+  });
 }
 
 /**
@@ -1613,7 +894,16 @@ export async function seedAgentDirModelsJsonFromFaux(
     );
     return { close: mock.close, baseUrl: mock.baseUrl };
   } catch (error) {
-    await mock.close();
+    // Setup primary must survive close failure (same rule as withPrimaryAwareCleanup).
+    try {
+      await mock.close();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Test failed and cleanup failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
@@ -1624,11 +914,12 @@ export async function withAgentDirProviderFixture<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const seeded = await seedAgentDirModelsJsonFromFaux(faux, agentDir);
-  try {
-    return await run();
-  } finally {
-    await seeded.close();
-  }
+  return withPrimaryAwareCleanup(
+    () => run(),
+    async () => {
+      await seeded.close();
+    },
+  );
 }
 
 export async function writeTestSkill(

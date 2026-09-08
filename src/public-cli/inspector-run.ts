@@ -3,10 +3,12 @@
  * coordinator → settle Terminal result (#568 / ADR 0074). Lawful releases:
  * pass/bounce/escalate. #633: manual resume continues the exact session. Dual path
  * with gate-province dispatch; this module is the direct command face.
+ * #637 / #747: same-parent (卷宗指针) re-summons resume the seat's previous run.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
@@ -14,6 +16,7 @@ import {
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -23,7 +26,9 @@ import {
 import {
   loadResumableInspectorRun,
   markRunAdmitted,
+  parentRunPathFromGatePointerInstruction,
   type PublicResumeRequest,
+  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import {
   presentStructuralRejection,
@@ -39,6 +44,17 @@ import {
 export type InspectorRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #753 nested gate re-ask: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
+   */
+  reviewReask?: string;
+  /**
+   * #786 same-parent re-summons: verbatim parent-submission body.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv 卷宗指针.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -67,9 +83,66 @@ export async function runPublicInspector(
   admitted?: AdmittedInspectorInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseInspectorArgvResult;
+  try {
+    parsed = parseInspectorArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  // #747: same parent (卷宗指针) → resume prior inspector run with this summons' materials.
+  // #771: no mechanical ticket match against instruction text; parent-run path only.
+  // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
+  const projectRoot = parsed.project ?? env.cwd;
+  // #747: parentRunPath is the pure 卷宗指针 path only — never reask/materials text.
+  // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
+  const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
+  if (parentRunPath !== undefined) {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+    const summons: SameTicketSummonsMaterials = {
+      ...(resumeInstruction === undefined
+        ? {
+            instruction: parsed.instruction,
+            instructionEmpty: parsed.instruction.trim() === "",
+          }
+        : { instruction: resumeInstruction, instructionEmpty: false }),
+      attachmentPaths: parsed.attachmentPaths,
+    };
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot,
+      role: "inspector",
+      parentRunPath,
+      freshSummons: env.freshSummons,
+      summons,
+      resume: (runId, materials) =>
+        runPublicInspectorResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint keeps argv 卷宗指针.
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "inspector review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
+  }
+
   let admitted: AdmittedInspectorInvocation;
   try {
-    const parsed = parseInspectorArgv(argv);
     admitted = await admitInspectorInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -91,6 +164,10 @@ export async function runPublicInspector(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    packageRoot: env.packageRoot,
+  });
   const turnRequest = buildInspectorTurnRequest(admitted, {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -103,13 +180,7 @@ export async function runPublicInspector(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildInspectorTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
-          packageRoot: env.packageRoot,
-        }),
-      ),
+      prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
     },
   });
 
@@ -123,15 +194,24 @@ export async function runPublicInspector(
   });
 }
 
-function inspectorAdapters(): PostAdmissionAdapters<AdmittedInspectorInvocation> {
+function inspectorAdapters(options?: {
+  beforeDispatch?: (
+    admitted: AdmittedInspectorInvocation,
+  ) => void | Promise<void>;
+}): PostAdmissionAdapters<AdmittedInspectorInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleInspectorTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) => trySettleInspectorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
+    ...(options?.beforeDispatch === undefined
+      ? {}
+      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
 /**
- * Resume a previously admitted Inspector run (#633); the session principal reopens.
+ * Resume a previously admitted Inspector run (#633 / #637); the session principal reopens.
+ * Same-ticket summons deliver this turn's instruction + frozen attachments; manual
+ * resume keeps package-envelope / caller-message semantics and birth attachments.
  */
 export async function runPublicInspectorResume(
   request: PublicResumeRequest,
@@ -146,17 +226,27 @@ export async function runPublicInspectorResume(
     request,
     env,
     io,
-    load: () =>
+    load: (effective) =>
       loadResumableInspectorRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    ),
-    buildTurnRequest: (admitted) =>
-      buildInspectorTurnRequest(
-      admitted,
-      resumeTurnRequestProjectionOptions(admitted, request, env),
-    ),
+        env.home,
+        effective.runId,
+        env.principalAuthority,
+      ),
+    buildTurnRequest: async (admitted, effective) => {
+      const summonsPrepared = await prepareSummonsResumeMaterials(
+        admitted.runDirectory,
+        effective.summons,
+      );
+      return buildInspectorTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
+      );
+    },
     adapters: inspectorAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

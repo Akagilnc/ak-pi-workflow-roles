@@ -28,12 +28,3 @@ export function validateRecordedInspectorOutput(value: unknown): InspectorOutput
   throw new Error("Inspector output has no execution discriminator");
 }
 
-/** Machine-facing facts from an accepted 察院 release. Findings retained as submitted. */
-export function inspectorDecisiveFacts(output: InspectorOutput): Record<string, unknown> {
-  const facts: Record<string, unknown> = { status: output.status };
-  const findings = (output as { findings?: unknown }).findings;
-  if (findings !== undefined) facts.findings = findings;
-  const reason = (output as { reason?: unknown }).reason;
-  if (reason !== undefined) facts.reason = reason;
-  return facts;
-}

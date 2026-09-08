@@ -125,6 +125,8 @@ test("unconditional required: table required:true is the sole missing-option gat
     }
   }
   assert.deepEqual(requiredRows.sort(), [
+    "auditor/source-run",
+    "auditor/subject",
     "doctor/issue",
     "gleaner-left/base",
     "notary/source-run",

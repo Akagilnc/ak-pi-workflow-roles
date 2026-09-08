@@ -1,6 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { installHermesFixture } from "../helpers/hermes-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  withNestedTrueUnboundDiaristPiRunner,
+} from "../helpers/role-turn-host-fixture.ts";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -13,7 +16,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -40,6 +42,7 @@ import {
 } from "../../src/public-cli/registry.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 /** Read the durable invocation identity page for a public role run (#358/#391). */
 function readRoleInvocation(
@@ -75,12 +78,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-engine-axis-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-engine-axis-", scenario);
 }
 
 function captureIo() {
@@ -227,8 +225,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
     // (absorbed from the former dedicated unset-engine test; golden byte
     // reassertion deleted with the frozen-baseline oracle).
     {
-      const cliHome = await mkdtemp(join(tmpdir(), "ak-engine-unset-"));
-      try {
+      await withTempRoot("ak-engine-unset-", async (cliHome) => {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
           { packageRoot, home: cliHome, io: captureIo().io },
@@ -245,9 +242,7 @@ test("persistent judge engine round-trips; syntax-illegal engine rejected at par
         );
         assert.equal(unset.exitCode, 0);
         assert.equal((await loadPublicCliConfig(cliHome)).seats.judge?.engine, undefined);
-      } finally {
-        await rm(cliHome, { recursive: true, force: true });
-      }
+            });
     }
   });
 });
@@ -951,7 +946,12 @@ async function materializeConflictedRepo(root: string): Promise<void> {
   }
 }
 
-/** Minimal argv per callable role so the run reaches piRunner (shared fixture). */
+/**
+ * Minimal argv per callable role so the run reaches piRunner (shared fixture).
+ * #747: notary/auditor resume by parent --source-run; this table probes engine
+ * wiring twice against one fixture parent, so mint via `new` (explicit-fresh-summons)
+ * instead of resuming a prior probe that has no durable Pi principal.
+ */
 function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
   switch (role) {
     case "judge":
@@ -966,7 +966,14 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
     case "doctor":
       return [role, "--issue", "1", "--project", project, "engine axis probe"];
     case "notary":
-      return [role, "--source-run", "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge", "--project", project];
+      return [
+        "new",
+        role,
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+      ];
     case "countersign":
       return [role, "--project", project, "engine axis probe"];
     case "gleaner-left":
@@ -977,6 +984,20 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, "--project", project, "engine axis probe"];
     case "navigator":
       return [role, "--project", project, "engine axis probe"];
+    case "auditor":
+      return [
+        "new",
+        role,
+        "--subject",
+        "judge",
+        "--source-run",
+        "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
+        "--project",
+        project,
+        "engine axis probe",
+      ];
+    case "diarist":
+      return [role, "--project", project, "engine axis probe"];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -986,14 +1007,9 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 13);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 15);
     await withTempHome(async (home) => {
-      const binDir = join(home, "bin");
-      await installHermesFixture(binDir);
-      const priorPath = process.env.PATH;
-      process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-      try {
-        const baseProject = join(home, "project");
+      const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
         seedGitProject(baseProject);
         {
@@ -1057,7 +1073,8 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                 roleTurnHost: roleTurnHostFromLegacyPiRunner({
               packageRoot: packageRoot,
               principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (_args, options) => {
+              piRunner: withNestedTrueUnboundDiaristPiRunner(
+                async (_args, options) => {
                   capturedEnv = options.env;
                   return {
                     code: 1,
@@ -1066,6 +1083,8 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
                     args: [..._args],
                   };
                 },
+                { primaryRole: role },
+              ),
             }),
               },
             );
@@ -1122,15 +1141,18 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
               roleTurnHost: roleTurnHostFromLegacyPiRunner({
               packageRoot: packageRoot,
               principalAuthority: piDurablePrincipalAuthority,
-              piRunner: async (_args, options) => {
-                capturedEnv = options.env;
-                return {
-                  code: 1,
-                  stderr: "stop after capture",
-                  timedOut: false,
-                  args: [..._args],
-                };
-              },
+              piRunner: withNestedTrueUnboundDiaristPiRunner(
+                async (_args, options) => {
+                  capturedEnv = options.env;
+                  return {
+                    code: 1,
+                    stderr: "stop after capture",
+                    timedOut: false,
+                    args: [..._args],
+                  };
+                },
+                { primaryRole: role },
+              ),
             }),
             });
             assert.notEqual(
@@ -1163,10 +1185,6 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
             });
           }
         }
-      } finally {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      }
     });
   },
 );

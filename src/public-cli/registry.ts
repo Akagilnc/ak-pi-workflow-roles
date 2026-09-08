@@ -27,18 +27,13 @@ export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "config",
   "help",
   "resume",
+  "new",
 ] as const;
 
 export type PublicCliSupportCommand = (typeof PUBLIC_CLI_SUPPORT_COMMANDS)[number];
 
-export type PublicThinkingLevel =
-  | "off"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max";
+/** Opaque thinking level string — pass-through to Pi; no local whitelist (#683). */
+export type PublicThinkingLevel = string;
 
 export type ModelRef = {
   provider: string;
@@ -104,13 +99,18 @@ const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = 
   // #620: subordinate officers inherit gatekeeper; no package startup model.
   notary: [],
   // #453/#620/#639: gatekeeper callable but no package startup model — caller
-  // configures it or the institutional resolution applies on the province path.
+  // configures it or inherits on the province path.
   gatekeeper: [],
   inspector: [],
   navigator: [
     { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
     { provider: "xai", model: "grok-4.5", thinking: "high" },
   ],
+  // #675: auditor public seat — no package startup; caller configures.
+  auditor: [],
+  // #708 `diarist-seat-default`: owner-set initial value; changed in the seat
+  // table like any other seat. No engine axis, package-default host.
+  diarist: [{ provider: "xai", model: "grok-4.5", thinking: "medium" }],
 };
 
 export function publicStartupCandidates(

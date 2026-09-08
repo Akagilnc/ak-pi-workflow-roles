@@ -28,7 +28,6 @@ test("shared envelope configures every public seat on a non-Pi host", () => {
 
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
-    auditSoulCompliance: async () => ({ status: "pass" }),
   })(envelopeHost);
 
   assert.ok(flags.has("ak-role"));

@@ -126,7 +126,9 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector" }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" };
+  | { readonly role: "navigator" }
+  | { readonly role: "auditor" }
+  | { readonly role: "diarist" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
@@ -141,12 +143,14 @@ export type RoleTurnModelConfig = {
 
 /**
  * Typed cross-host resume handoff (#617 DK-4).
- * Present only when post-admission projects a real switch between known hosts.
- * Cross-host prior volume: previous native record paths for the live host (DK-7).
+ * Present only when post-admission projects a real host switch.
+ * priorNativeKind names the record family the paths belong to — Pi's own
+ * session file, or sitian run records (ADR 0077) — so a consuming adapter
+ * reads the handoff without knowing which host wrote it.
  * Target host reads those files itself; projector never copies bytes.
  */
 export type RoleTurnHostTransition = {
-  readonly previousHost: "pi" | "grok-build";
+  readonly priorNativeKind: "pi-native" | "sitian";
   readonly priorNativePaths: readonly string[];
 };
 
@@ -164,8 +168,20 @@ export type RoleTurnRequest = {
   readonly runDirectory: string;
   readonly correlationId?: string;
   readonly timeoutMs?: number;
+  /**
+   * Parent cancellation for a nested activation (role-inside-role public summons,
+   * #675). The host terminates its child when this aborts; a public CLI process
+   * has no parent to observe and leaves it absent.
+   */
+  readonly signal?: AbortSignal;
   /** Set by post-admission only on a real host switch; never on same-host resume. */
   readonly hostTransition?: RoleTurnHostTransition;
+  /**
+   * Same-ticket re-summons only (#637): opens a new court-turn attempt on the
+   * retained run so submission-ledger sole-final is per attempt, not forever.
+   * Manual resume never sets this — sealed idempotent short-circuit stays intact.
+   */
+  readonly courtAttemptId?: string;
 };
 
 /** Turn result — only fields upper layers currently consume. */
@@ -204,6 +220,11 @@ export type NewDurablePrincipalRequest = {
 /** Host authority for issuing, checking, and temporarily decoding durable principals. */
 export interface DurablePrincipalAuthority {
   issue(request: NewDurablePrincipalRequest): DurablePrincipal;
+  /**
+   * Host-owned seal of already-placed coordinates into a durable principal wire
+   * object. Public layers must not forge opaque principal shapes (#636).
+   */
+  seal(coordinates: DurablePrincipalCoordinates): DurablePrincipal;
   isAvailable(principal: DurablePrincipal): Promise<boolean>;
   decode(principal: unknown): DurablePrincipalCoordinates;
 }
@@ -275,10 +296,10 @@ type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], c
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
 type HostGatekeeperSubject = {
-  readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
+  readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
 };
-/** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" } & Record<string, unknown>;
+/** Gatekeeper bounce/escalate/no_receipt plus other correct submission rejects share one projection map. */
+type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };
@@ -343,7 +364,6 @@ export type InstitutionalSeat =
   | "inspector"
   | "notary"
   | "auditor"
-  | "evidenceChild"
   | (string & {});
 
 /** Non-secret host-neutral seat model selection. Single truth source is RoleTurnModelConfig. */

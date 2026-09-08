@@ -27,14 +27,11 @@ grok --prompt-file /path/to/labor-prompt.md -m grok-4.6 --always-approve --outpu
 - Official docs list `-p/--single` as the canonical headless prompt input;
   `--prompt-file` exists in the installed CLI (`--help`) and is smoke-verified
   on this host — prefer it for long prompts, fall back to `-p` if absent.
-- `--output-format plain` keeps stdout clean for capture — but it stays
-  silent until the run finishes. **For labor longer than ~2 minutes use
-  `--output-format streaming-json` instead**: it emits NDJSON events
-  (thought/text deltas) continuously from the first second, so long runs stay
-  observable instead of appearing hung. Reconstruct the final answer by
-  concatenating each NDJSON object's `data` where `type == "text"`, in stream
-  order; `type == "end"` (stopReason end_turn) marks completion. Do not treat
-  `thought` events as the answer (live-verified stream shape 2026-08-21).
+- `--output-format plain` keeps stdout clean for capture and is the only
+  format to use for labor. Do not use `streaming-json`: its NDJSON deltas go
+  back into the seat's context as noise (see `opus.md` for the measured ratio);
+  progress observability belongs to the runner's process watch, not to the
+  returned body.
 - **Always pass `--reasoning-effort <low|medium|high>`** matching the effort
   tier ordered in the labor mandate (verified live 2026-08-21: flag exists,
   alias `--effort`; a low-tier run completed correctly). If the mandate names

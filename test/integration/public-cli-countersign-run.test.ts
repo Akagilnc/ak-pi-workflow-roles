@@ -1,63 +1,73 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
+ * #742: court admission auto-runs the public 起居郎 station before the body turn.
+ * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
+ * never from mechanical matching of summons text against book records;
+ * ADR 0079: same-ticket re-summons resume prior run via that typed key;
+ * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
+import type { HostContext, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   parseCountersignArgv,
+  type AdmittedCountersignInvocation,
 } from "../../src/public-cli/invocation.ts";
 import {
   buildCountersignTurnRequest,
-  runCountersignDiaristStation,
   runPublicCountersign,
   type CountersignRunEnv,
 } from "../../src/public-cli/countersign-run.ts";
+import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
+import {
+  findLatestRunIdForSeatTicket,
+  readRoleRunState,
+} from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { installGhFixture } from "../helpers/hermes-fixture.ts";
+import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
-  installGhFixture,
-  installHermesFixture,
-} from "../helpers/hermes-fixture.ts";
-import { DiaristIssueSourceError } from "../../src/diarist.ts";
-import { DiaristSourceReadError } from "../../src/diarist-mechanical.ts";
-import { readTicketProvenance } from "../../src/ticket-provenance.ts";
-import { TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC } from "../../src/ticket-provenance-contracts.ts";
+  ensureTicketProvenanceVolume,
+  readTicketProvenance,
+  resolveTicketProvenanceVolume,
+} from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-countersign-"));
-  const binDir = join(home, "bin");
-  await installHermesFixture(binDir);
-  const priorPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-  try {
-    return await scenario(home);
-  } finally {
-    if (priorPath === undefined) delete process.env.PATH;
-    else process.env.PATH = priorPath;
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-countersign-", async (home) => {
+    const binDir = join(home, "bin");
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+    return withPrimaryAwareCleanup(
+      () => scenario(home),
+      async () => {
+        if (priorPath === undefined) delete process.env.PATH;
+        else process.env.PATH = priorPath;
+      },
+    );
+  });
 }
 
 function captureIo() {
@@ -84,6 +94,16 @@ function seedGitProject(root: string): void {
   });
   execFileSync("git", ["config", "user.name", "Countersign Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+/** Court station always runs 起居郎 first (#771); body tests use true-unbound. */
+function withTrueUnboundDiarist(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
+  return async (args, options) => {
+    if (argvFlagValue(args, "--ak-role") === "diarist") {
+      return courtPipelinePiRunner(null)(args, options);
+    }
+    return inner(args, options);
+  };
 }
 
 function scriptedCountersignSession(details: unknown) {
@@ -227,7 +247,12 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
+            // Court station runs 起居郎 first (#771); true-unbound for no-ticket body.
             piRunner: async (args, options) => {
+              const role = argvFlagValue(args, "--ak-role");
+              if (role === "diarist") {
+                return courtPipelinePiRunner(null, receipt)(args, options);
+              }
               const outcome = await scriptedCountersignSession(receipt)(args, options);
               // #634: scriptedTerminatingToolSession writes only the countersign
               // terminating receipt — it never opens a real pi role activation that
@@ -267,12 +292,15 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         unknown
       >;
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
+      // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
       if (receipt.countersignStatus === "continue") {
-        assert.equal(facts.fixSummary, receipt.fix.summary);
+        const fix = facts.fix as { summary?: string } | undefined;
+        assert.equal(fix?.summary, receipt.fix.summary);
       }
       if (receipt.countersignStatus === "escalate") {
-        assert.equal(facts.decisionQuestion, receipt.decisionGate.question);
-        assert.deepEqual(facts.decisionOptions, [...receipt.decisionGate.options]);
+        const gate = facts.decisionGate as { question?: string; options?: string[] } | undefined;
+        assert.equal(gate?.question, receipt.decisionGate.question);
+        assert.deepEqual(gate?.options, [...receipt.decisionGate.options]);
       }
       if (receipt.countersignStatus === "converged") {
         assert.equal(facts.note, receipt.note);
@@ -297,224 +325,6 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
   });
 });
 
-test("public countersign diarist station: issue face/comments/ADR from gh seam; attachments not mislabeled", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
-
-    const adrRel = "docs/adr/0075-ticket-provenance-diarist-pipeline.md";
-    await mkdir(join(project, "docs", "adr"), { recursive: true });
-    await writeFile(
-      join(project, adrRel),
-      "# 0075\n\n| `ticket-provenance-file` | 每票 |\n",
-      "utf8",
-    );
-
-    // Probe attachment must NOT become fake issue-body-comment.
-    const probe = join(project, "probe-attachment.md");
-    await writeFile(probe, "PROBE_ATTACHMENT_ONLY — not the issue body.\n", "utf8");
-
-    const bodyUrl =
-      "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582";
-    const commentUrl =
-      "https://github.com/Akagilnc/ak-pi-workflow-roles/issues/582#issuecomment-9001";
-    // selectAll → volume entries carry typed sourceKind/sourceRef (durable face).
-    await installHermesFixture(join(home, "bin"), { selectAllCandidates: true });
-    await installGhFixture(join(home, "bin"), {
-      issues: {
-        582: {
-          body: [`「立文件。送司天台记录。」`, `see ${adrRel}`].join("\n"),
-          htmlUrl: bodyUrl,
-          comments: [
-            {
-              id: 9001,
-              body: "评论：先起居郎再给事中。",
-              createdAt: "2026-08-31T12:00:00.000Z",
-              htmlUrl: commentUrl,
-            },
-          ],
-        },
-      },
-    });
-
-    const admitted = await admitCountersignInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "裁",
-      attachmentPaths: [probe],
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000d01",
-    });
-    await bindAdmittedTicketNumber(admitted, 582);
-    assert.equal(admitted.ticketNumber, 582);
-    assert.equal(admitted.attachments.length, 1);
-    const frozenAttachment = admitted.attachments[0]!.frozenPath;
-
-    const result = await runCountersignDiaristStation(admitted, {
-      cwd: project,
-      packageRoot,
-    });
-    assert.ok(result);
-    assert.equal(result.collectorStatus, "ok");
-    assert.ok(result.appended >= 1);
-
-    // Durable volume only — typed sourceKind/sourceRef; no transcript locks.
-    const volume = await readTicketProvenance(582, project, home);
-    const kindsSeen = new Set(volume.entries.map((e) => e.sourceKind));
-    const sourceRefs = volume.entries.map((e) => e.sourceRef);
-    assert.ok(kindsSeen.has("issue-body-comment"));
-    assert.ok(kindsSeen.has("ticket-decree-block"));
-    assert.ok(kindsSeen.has("adr-decision-key"));
-    assert.ok(
-      sourceRefs.some((r) => r.url === bodyUrl && r.entryId === "body"),
-    );
-    assert.ok(
-      sourceRefs.some((r) => r.entryId === 9001 && r.url === commentUrl),
-    );
-    assert.ok(sourceRefs.some((r) => r.path === adrRel));
-    // Attachment frozen path must not appear as a candidate sourceRef.
-    assert.equal(
-      sourceRefs.some(
-        (r) => r.path === frozenAttachment || r.path === probe,
-      ),
-      false,
-    );
-  });
-});
-
-test("public countersign diarist station: referenced ADR missing fails typed", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "https://github.com/Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
-
-    await installGhFixture(join(home, "bin"), {
-      issues: {
-        582: {
-          body: "see docs/adr/0075-ticket-provenance-diarist-pipeline.md",
-          comments: [],
-        },
-      },
-    });
-
-    const admitted = await admitCountersignInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "裁",
-      attachmentPaths: [],
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000d02",
-    });
-    await bindAdmittedTicketNumber(admitted, 582);
-
-    await assert.rejects(
-      () =>
-        runCountersignDiaristStation(admitted, {
-          cwd: project,
-          packageRoot,
-        }),
-      (error: unknown) =>
-        error instanceof DiaristSourceReadError && error.reason === "adr-missing",
-    );
-  });
-});
-
-test("public countersign diarist station: bound ticket issue-source failure is typed + durable", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    // No origin remote → origin-unresolved (not silent empty issue face).
-
-    const admitted = await admitCountersignInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "裁",
-      attachmentPaths: [],
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000d03",
-    });
-    await bindAdmittedTicketNumber(admitted, 582);
-    assert.equal(admitted.ticketNumber, 582);
-
-    await assert.rejects(
-      () =>
-        runCountersignDiaristStation(admitted, {
-          cwd: project,
-          packageRoot,
-        }),
-      (error: unknown) =>
-        error instanceof DiaristIssueSourceError &&
-        error.reason === "origin-unresolved" &&
-        error.code === "diarist-issue-source",
-    );
-
-    const volume = await readTicketProvenance(582, project, home);
-    assert.equal(volume.entries.length, 0);
-    assert.equal(volume.diagnostics.length, 1);
-    assert.equal(
-      volume.diagnostics[0]!.recordClass,
-      TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-    );
-    assert.equal(volume.diagnostics[0]!.diagnosticKind, "issue-source-failed");
-    assert.equal(volume.diagnostics[0]!.reason, "origin-unresolved");
-  });
-});
-
-test("public countersign diarist station: issue-unavailable fetcher fails typed + durable", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
-
-    await installGhFixture(join(home, "bin"), {
-      issues: {}, // issue 582 unavailable -> 404
-    });
-
-    const admitted = await admitCountersignInvocation({
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      instruction: "裁",
-      attachmentPaths: [],
-      createRunId: () => "01a0sign00-0000-7000-8000-000000000d04",
-    });
-    await bindAdmittedTicketNumber(admitted, 582);
-
-    await assert.rejects(
-      () =>
-        runCountersignDiaristStation(admitted, {
-          cwd: project,
-          packageRoot,
-        }),
-      (error: unknown) =>
-        error instanceof DiaristIssueSourceError &&
-        error.reason === "issue-unavailable",
-    );
-
-    const volume = await readTicketProvenance(582, project, home);
-    assert.equal(volume.diagnostics.length, 1);
-    assert.equal(volume.diagnostics[0]!.diagnosticKind, "issue-source-failed");
-    assert.equal(volume.diagnostics[0]!.reason, "issue-unavailable");
-  });
-});
-
 test("ak-role resume continues countersign on the exact session", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -535,7 +345,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
+          piRunner: withTrueUnboundDiarist(async (args) => {
             const sessionFile = args[args.indexOf("--session") + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
             await writeFile(sessionFile, "\n", "utf8");
@@ -545,7 +355,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
               timedOut: true,
               args: [...args],
             };
-          },
+          }),
         }),
       },
     );
@@ -574,13 +384,14 @@ test("ak-role resume continues countersign on the exact session", async () => {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args, options) => {
+        // Resume still refreshes 起居郎 (refresh-every-court); true-unbound face.
+        piRunner: withTrueUnboundDiarist(async (args, options) => {
           resumeArgs = [...args];
           return scriptedCountersignSession({
             countersignStatus: "converged",
             note: "RESUMED-续署",
           })(args, options);
-        },
+        }),
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "countersign resume failed");
@@ -621,10 +432,12 @@ test("ak-role resume after sealed countersign presents the sealed verdict withou
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedCountersignSession({
-            countersignStatus: "converged",
-            note: "FIRST-署",
-          }),
+          piRunner: withTrueUnboundDiarist(
+            scriptedCountersignSession({
+              countersignStatus: "converged",
+              note: "FIRST-署",
+            }),
+          ),
         }),
       },
     );
@@ -690,13 +503,15 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedTerminatingToolSession({
-            role: "countersign",
-            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-            details: { countersignStatus: "converged", note: "PRIOR-residual" },
-            isError: true,
-            acceptedText: "PRIOR-attempt-residual-error",
-          }),
+          piRunner: withTrueUnboundDiarist(
+            scriptedTerminatingToolSession({
+              role: "countersign",
+              toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+              details: { countersignStatus: "converged", note: "PRIOR-residual" },
+              isError: true,
+              acceptedText: "PRIOR-attempt-residual-error",
+            }),
+          ),
         }),
       },
     );
@@ -718,7 +533,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
+        piRunner: withTrueUnboundDiarist(async (args) => {
           const sessionFile = args[args.indexOf("--session") + 1]!;
           // Append a resumed user turn; keep the prior residual so the scan
           // boundary is exercised (production resume appends, does not wipe).
@@ -741,7 +556,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
             timedOut: true,
             args: [...args],
           };
-        },
+        }),
       }),
     });
     assert.equal(resumed.exitCode, 1, stdout.join("") || "resume timeout path failed");
@@ -756,175 +571,9 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
   });
 });
 
-function encodeCcProjectPath(cwd: string): string {
-  const abs = cwd.startsWith("/") ? cwd : `/${cwd}`;
-  return abs.replace(/\//g, "-");
-}
-
-test("runPublicCountersign: diarist beforeDispatch failure settles terminal (not stuck running)", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    // No origin → seat ticket verify / diarist station throws origin-unresolved after markRunRunning.
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
-
-    let turnStarted = false;
-    const { io, stderr } = captureIo();
-    const runId = "01a0sign00-0000-7000-8000-000000000d10";
-    const result = await runPublicCountersign(
-      ["裁：本票 #582 是否足以开工。"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn() {
-            turnStarted = true;
-            throw new Error("role turn must not start after diarist failure");
-          },
-        },
-        createRunId: () => runId,
-      },
-      io,
-      parseCountersignArgv,
-    );
-
-    assert.equal(turnStarted, false);
-    assert.ok(result.exitCode !== 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId,
-      role: "countersign",
-      home,
-    });
-    const state = await readRoleRunState(
-      coords.runDirectory,
-      piDurablePrincipalAuthority,
-    );
-    assert.equal(state?.state, "terminal");
-    assert.ok(
-      stderr.some((line) => line.includes("origin-unresolved") || line.length > 0),
-      "controlled failure must present a diagnostic",
-    );
-  });
-});
-
-test("runPublicCountersign: diarist station fills ticket volume before role turn", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
-
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-      collectorResponse: {
-        selections: [
-          {
-            candidateIndex: 0,
-            quotes: ["立文件。送司天台记录。"],
-            triage: "relevant",
-          },
-        ],
-      },
-    });
-    await installGhFixture(join(home, "bin"), {
-      issues: {
-        582: {
-          body: "「立文件。送司天台记录。」",
-          comments: [],
-        },
-      },
-    });
-
-    const ticketPath = join(project, "ticket.md");
-    await writeFile(
-      ticketPath,
-      "---\nticketNumber: 582\n---\n\n「立文件。送司天台记录。」\n",
-      "utf8",
-    );
-
-    const projectsRoot = join(home, ".claude", "projects");
-    const sessionDir = join(projectsRoot, encodeCcProjectPath(project));
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(
-      join(sessionDir, "s.jsonl"),
-      `${JSON.stringify({
-        type: "user",
-        uuid: "u-real",
-        timestamp: "2026-08-31T10:00:00.000Z",
-        message: {
-          role: "user",
-          content: "立文件。送司天台记录。所以每个票都应该有的一份文档。#582 起居录",
-        },
-      })}\n`,
-      "utf8",
-    );
-
-    let volumeAtTurn: number | undefined;
-    let turnStarted = false;
-
-    const baseHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedCountersignSession({
-        countersignStatus: "converged",
-        note: "署",
-      }),
-    });
-
-    const observingHost = {
-      async executeTurn(request: RoleTurnRequest) {
-        turnStarted = true;
-        const read = await readTicketProvenance(582, project, home);
-        volumeAtTurn = read.entries.length;
-        assert.ok(
-          (volumeAtTurn ?? 0) >= 1,
-          "ticket-provenance volume must be visible before role turn",
-        );
-        return baseHost.executeTurn(request);
-      },
-    };
-
-    const result = await runPublicCountersign(
-      ["--attach", ticketPath, "裁：本票 #582 是否足以开工。"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: observingHost,
-        createRunId: () => "01a0sign00-0000-7000-8000-000000000584",
-      },
-      captureIo().io,
-      parseCountersignArgv,
-    );
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(turnStarted, true);
-    assert.ok((volumeAtTurn ?? 0) >= 1);
-    const final = await readTicketProvenance(582, project, home);
-    assert.ok(final.entries.length >= 1);
-  });
-});
-
 /**
- * #582 four-path ticket binding from real public countersign entry.
- * Shared project fixture; four independent path tests; typed fields only.
+ * #709 ticket identity reuse from the real public countersign entry.
+ * Shared project fixture; typed fields only (no prompt-wording assertions).
  */
 
 async function withCountersignProject(
@@ -955,6 +604,10 @@ function countersignPathEnv(input: {
   runId: string;
   onTurn?: (request: RoleTurnRequest) => void;
   blockTurn?: boolean;
+  /** Typed 起居郎 handoff (or no-op). Body-path tests isolate nested seat. */
+  runCourtDiaristStation?: (
+    admitted: AdmittedCountersignInvocation,
+  ) => Promise<void>;
 }): CountersignRunEnv {
   const host = input.blockTurn
     ? {
@@ -987,6 +640,9 @@ function countersignPathEnv(input: {
     sessionAppender: appendPiSessionCustomEntry,
     roleTurnHost: host,
     createRunId: () => input.runId,
+    // Body-path tests isolate the nested 起居郎 seat; #742 station proofs use production env.
+    runCourtDiaristStation:
+      input.runCourtDiaristStation ?? (async () => undefined),
   };
 }
 
@@ -1008,11 +664,10 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
   });
 });
 
-test("public countersign path: unbound resolve+verify binds ticket and runs diary", async () => {
+test("public countersign path: 起居郎 typed handoff binds ticket; dossier volume stays readable", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
+    // Volume may pre-exist; binding still requires 起居郎 typed assertion (#771).
+    ensureTicketProvenanceVolume(582, project, home);
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -1023,6 +678,9 @@ test("public countersign path: unbound resolve+verify binds ticket and runs diar
         onTurn: (req) => {
           turnTicket =
             req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
+        },
+        runCourtDiaristStation: async (admitted) => {
+          await bindAdmittedTicketNumber(admitted, 582);
         },
       }),
       captureIo().io,
@@ -1035,55 +693,14 @@ test("public countersign path: unbound resolve+verify binds ticket and runs diar
       await readFile(join(result.admitted!.runDirectory, "invocation.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(inv.ticketNumber, 582);
-    // Diary station ran for the bound ticket (volume established on disk).
     const volume = await readTicketProvenance(582, project, home);
     assert.ok(volume.recordFile);
     await readFile(volume.recordFile, "utf8");
   });
 });
 
-test("public countersign path: asserted N fails verify → controlled failure, no wash", async () => {
+test("public countersign path: no 起居郎 handoff stays unbound (真无票 face)", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 999999 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p03";
-    const result = await runPublicCountersign(
-      ["裁：票 #999999 并不存在。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId,
-        blockTurn: true,
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId,
-      role: "countersign",
-      home,
-    });
-    assert.equal(
-      (await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority))?.state,
-      "terminal",
-    );
-    const inv = JSON.parse(
-      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(inv.ticketNumber, undefined);
-  });
-});
-
-test("public countersign path: true-unbound skips diary; run page stays unbound", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "true-unbound" },
-    });
     let turnTicket: number | undefined;
     const result = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
@@ -1111,85 +728,304 @@ test("public countersign path: true-unbound skips diary; run page stays unbound"
   });
 });
 
-test("public countersign path: asserted N absent from instruction → controlled failure", async () => {
+test("public countersign path: summons text alone never mints a ticket without 起居郎 assertion", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 582 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p05";
+    // Book has #82; summons mentions #582 — code must not match either.
+    ensureTicketProvenanceVolume(82, project, home);
+    let turnTicket: number | undefined;
     const result = await runPublicCountersign(
-      ["裁：本庭 instruction 不含该号。"],
+      ["裁：票 #582 / 邻 #82 是否足以开工。"],
       countersignPathEnv({
         home,
         project,
-        runId,
-        blockTurn: true,
+        runId: "01a0sign00-0000-7000-8000-000000000p03",
+        onTurn: (req) => {
+          turnTicket =
+            req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
+        },
       }),
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
+    assert.equal(turnTicket, undefined);
   });
 });
 
-test("public countersign path: substring of longer ticket number is not N → controlled failure", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    await installHermesFixture(join(home, "bin"), {
-      resolverResponse: { assertion: "ticket", ticketNumber: 82 },
-    });
-    const runId = "01a0sign00-0000-7000-8000-000000000p06";
-    const result = await runPublicCountersign(
-      ["裁：审票 #582 是否足以开工。"],
-      countersignPathEnv({
-        home,
-        project,
-        runId,
-        blockTurn: true,
-      }),
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.admitted?.ticketNumber, undefined);
-  });
-});
+/**
+ * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound (真无票→无录).
+ */
+function courtPipelinePiRunner(
+  ticketAssertion: number | null = 582,
+  countersignDetails: unknown = {
+    countersignStatus: "converged",
+    note: "署",
+  },
+): LegacyFauxPiRunner {
+  return async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "diarist") {
+      let registered:
+        | {
+            readonly name: string;
+            execute(
+              toolCallId: string,
+              parameters: unknown,
+              signal: undefined,
+              onUpdate: undefined,
+              ctx: HostContext,
+            ): Promise<{ details?: unknown }>;
+          }
+        | undefined;
+      const host = {
+        registerTool(tool: unknown) {
+          registered = tool as typeof registered;
+        },
+        on() {},
+        getAllTools: () =>
+          registered === undefined ? [] : [{ name: registered.name }],
+      } as unknown as RoleHost;
+      const priorRunDir = process.env.AK_ROLE_RUN_DIR;
+      const runDir = options.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir === "string" && runDir.trim() !== "") {
+        process.env.AK_ROLE_RUN_DIR = runDir;
+      }
+      try {
+        const runtime = createDiaristRoleRuntime(host, {
+          loadSoul: async () => "起居郎职分（测试装载）",
+        });
+        await runtime.activate();
+        assert.ok(registered, "diarist envelope registered no output tool");
+        // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
+        const accepted = await registered.execute(
+          "call_diarist_1",
+          {
+            status: "completed",
+            ticketNumber: ticketAssertion,
+            entries: [],
+          },
+          undefined,
+          undefined,
+          {} as HostContext,
+        );
+        return scriptedTerminatingToolSession({
+          role: "diarist",
+          toolName: DIARIST_OUTPUT_TOOL_NAME,
+          details: accepted.details,
+        })(args, options);
+      } finally {
+        if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+        else process.env.AK_ROLE_RUN_DIR = priorRunDir;
+      }
+    }
+    return scriptedCountersignSession(countersignDetails)(args, options);
+  };
+}
 
-test("public countersign path: resolver engine non-zero → controlled failure, no wash to unbound", async () => {
+test("public countersign path: 起居郎 asserts then countersign runs with 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // PATH hermes exits non-zero: product must settle failure, not wash to true-unbound.
-    await installHermesFixture(join(home, "bin"), { defaultExitCode: 2 });
-    const runId = "01a0sign00-0000-7000-8000-000000000p07";
+    // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
+    ensureTicketProvenanceVolume(582, project, home);
+
+    const turnOrder: string[] = [];
+    let turnPrompt = "";
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role") ?? "?";
+        turnOrder.push(role);
+        return courtPipelinePiRunner()(args, options);
+      },
+    });
+    const wrappedHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.activation.role === "countersign") {
+          turnPrompt = request.continuation.prompt;
+        }
+        return host.executeTurn(request);
+      },
+    };
+
     const result = await runPublicCountersign(
-      ["裁：本庭问询。"],
-      countersignPathEnv({
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
         home,
-        project,
-        runId,
-        blockTurn: true,
-      }),
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: wrappedHost,
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000d45",
+      },
       captureIo().io,
       parseCountersignArgv,
     );
-    assert.ok(result.exitCode !== 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    const coords = issuePiDurablePrincipalCoordinates({
+    assert.equal(result.exitCode, 0);
+    // Identity 起居郎 (unbound assert) then bound refresh (issue face handoff).
+    assert.deepEqual(turnOrder, ["diarist", "diarist", "countersign"]);
+    assert.ok(result.admitted?.bookKey);
+    assert.equal(result.admitted?.ticketNumber, 582);
+
+    const diaristRunId = await findLatestRunIdForSeatTicket({
+      home,
+      bookKey: result.admitted!.bookKey,
+      role: "diarist",
+      ticketNumber: 582,
+    });
+    assert.ok(diaristRunId);
+    const diaristCoords = issuePiDurablePrincipalCoordinates({
       cwd: project,
-      runId,
-      role: "countersign",
+      runId: diaristRunId!,
+      role: "diarist",
       home,
     });
-    assert.equal(
-      (await readRoleRunState(coords.runDirectory, piDurablePrincipalAuthority))
-        ?.state,
-      "terminal",
+    const diaristState = await readRoleRunState(
+      diaristCoords.runDirectory,
+      piDurablePrincipalAuthority,
     );
-    const inv = JSON.parse(
-      await readFile(join(coords.runDirectory, "invocation.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(inv.ticketNumber, undefined);
+    assert.equal(diaristState?.role, "diarist");
+    assert.equal(diaristState?.state, "terminal");
+
+    // Feature observation: materials carry the typed volume paths (not heading/wording).
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    assert.ok(turnPrompt.includes(volume.humanViewFile));
+    assert.ok(turnPrompt.includes(volume.recordFile));
+  });
+});
+
+test("public countersign path: same-ticket re-summons resumes prior run via typed 起居郎 key", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    // ADR 0079 ticket-seat-memory-countersign-principal: same ticket → resume,
+    // not a fresh mint. Lookup key is 起居郎's typed assertion only (#771).
+    ensureTicketProvenanceVolume(582, project, home);
+
+    const seen: Array<{ runId: string; kind: string }> = [];
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(582, {
+        countersignStatus: "converged",
+        note: "署",
+      }),
+    });
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.activation.role === "countersign") {
+          const leaf = request.runDirectory.split("/").pop() ?? "";
+          const runId = leaf.endsWith("@countersign")
+            ? leaf.slice(0, -"@countersign".length)
+            : leaf;
+          seen.push({ runId, kind: request.continuation.kind });
+        }
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const envBase = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      roleTurnHost: host,
+    };
+
+    const first = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s001",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.admitted?.ticketNumber, 582);
+    assert.equal(first.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+
+    // createRunId would mint s002 if auto-resume were skipped — must not fire.
+    const second = await runPublicCountersign(
+      ["裁：#582 二轮再审。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(second.exitCode, 0);
+    assert.equal(
+      second.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s001",
+      "same-ticket re-summons must resume prior run via typed key, not mint s002",
+    );
+    assert.equal(second.admitted?.ticketNumber, 582);
+    assert.notEqual(
+      second.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s002",
+    );
+    // A dispatched body turn on re-summons must be resume on the prior run.
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume");
+    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+  });
+});
+
+test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind, no 起居录 paths", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    let turnPrompt = "";
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      // 起居郎 LLM: true-unbound (null) — not a mechanical skip.
+      piRunner: courtPipelinePiRunner(null),
+    });
+    const result = await runPublicCountersign(
+      ["一般性程序问询，本庭无具体票号。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            if (request.activation.role === "countersign") {
+              turnPrompt = request.continuation.prompt;
+            }
+            return host.executeTurn(request);
+          },
+        },
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.admitted?.ticketNumber, undefined);
+    assert.ok(result.admitted?.runDirectory);
+
+    // 起居郎 still ran to assert true-unbound; countersign stays unbound.
+    const runsDir = join(result.admitted!.runDirectory, "..");
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(runsDir).catch(() => [] as string[]);
+    assert.equal(
+      entries.some((entry) => entry.endsWith("@diarist")),
+      true,
+    );
+
+    // Unbound delivers no volume path; a known partition path must not appear.
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    assert.equal(turnPrompt.includes(volume.humanViewFile), false);
+    assert.equal(turnPrompt.includes(volume.recordFile), false);
   });
 });

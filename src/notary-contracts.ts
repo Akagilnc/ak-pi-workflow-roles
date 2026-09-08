@@ -53,13 +53,10 @@ export type NotarySourceRunLocator = {
   readonly role: string;
 };
 
+/** Recognition face only — fields retained as submitted (#753, no disposition/findings forge). */
 export type NotaryOutput =
-  | { readonly status: "pass"; readonly findings: readonly string[] }
-  | {
-      readonly status: "bounce";
-      readonly disposition: "rewrite";
-      readonly findings: readonly string[];
-    }
+  | { readonly status: "pass"; readonly findings?: unknown }
+  | { readonly status: "bounce"; readonly findings?: unknown }
   | {
       readonly status: "escalate";
       readonly reason?: unknown;
@@ -70,32 +67,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function asStringArray(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
-}
-
 /**
- * Project one lawful explicit Notary release (pass | bounce | escalate).
- * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
- * public-terminal projects non-usable releases via typed failure cause.
+ * Recognize one lawful explicit Notary release (pass | bounce | escalate).
+ * #753: no field rewrite — submitted params retained as-is (no disposition forge,
+ * no findings array rewrite). Recognition only for recording/settlement callers.
  */
 export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefined {
   if (!isRecord(value)) return undefined;
   const status = typeof value.status === "string" ? value.status : undefined;
-  if (status === "bounce") {
-    const clone = structuredClone(value) as Record<string, unknown>;
-    if (clone.disposition === undefined) clone.disposition = "rewrite";
-    if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
-    return clone as NotaryOutput;
-  }
-  if (status === "pass") {
-    const clone = structuredClone(value) as Record<string, unknown>;
-    if (!Array.isArray(clone.findings)) clone.findings = asStringArray(clone.findings);
-    return clone as NotaryOutput;
-  }
-  if (status === "escalate") {
-    return structuredClone(value) as NotaryOutput;
+  if (status === "bounce" || status === "pass" || status === "escalate") {
+    return value as NotaryOutput;
   }
   return undefined;
 }
@@ -122,19 +103,3 @@ export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   return projected;
 }
 
-export function notaryDecisiveFacts(output: NotaryOutput): Record<string, unknown> {
-  const status = String(output.status);
-  const facts: Record<string, unknown> = { status, officer: "notary" };
-  if (status === "pass" || status === "bounce") {
-    const findings = (output as { findings?: unknown }).findings;
-    facts.findingsCount = Array.isArray(findings) ? findings.length : 0;
-  }
-  if (status === "bounce") {
-    facts.disposition = "rewrite";
-  }
-  if (status === "escalate") {
-    const reason = (output as { reason?: unknown }).reason;
-    if (reason !== undefined) facts.reason = reason;
-  }
-  return facts;
-}

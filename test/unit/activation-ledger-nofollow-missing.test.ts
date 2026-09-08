@@ -1,3 +1,4 @@
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Mechanical regression for the activation-ledger append seam: when the
  * platform lacks O_NOFOLLOW (Windows — nodejs/node#41590), the JS bitwise-or
@@ -14,15 +15,14 @@
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailable", async () => {
-  const home = mkdtempSync(join(tmpdir(), "ak-ledger-nofollow-"));
-  try {
+  return await withTempRoot("ak-ledger-nofollow-", async (home) => {
     // Shim node:fs so production sees a platform without O_NOFOLLOW (exactly
     // the Windows shape): the constants object simply lacks the key.
     const hooksSource = [
@@ -79,7 +79,5 @@ test("activation ledger append refuses fail-closed when O_NOFOLLOW is unavailabl
     assert.throws(() => statSync(ledgerPath), (error: unknown) => {
       return (error as { code?: unknown }).code === "ENOENT";
     });
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
+    });
 });

@@ -1,8 +1,8 @@
 /**
- * Shared Navigator institutional-child fixture dispatch (#590).
- * One root helper: when the tool surface carries NAVIGATOR_PREPARE_TOOL_NAME,
- * return a deterministic prepare response so provider fixtures that predate
- * the host-neutral Navigator child still queue enough responses.
+ * Shared Navigator public-seat fixture dispatch (#675).
+ * Nested attendance summons the public navigator seat (ak_navigator_output).
+ * One root helper: when the tool surface carries the public output tool,
+ * return a deterministic advice receipt.
  */
 import {
   fauxAssistantMessage,
@@ -10,7 +10,7 @@ import {
   type Context,
 } from "@earendil-works/pi-ai";
 
-import { NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
 
 export type NavigatorChildFixtureOptions = {
   readonly role?: string;
@@ -18,17 +18,18 @@ export type NavigatorChildFixtureOptions = {
   readonly reason?: string;
 };
 
-/** Deterministic prepare response for institutional Navigator child turns. */
-export function navigatorPrepareFixtureResponse(
+/** Deterministic public-seat advice for nested Navigator turns. */
+export function navigatorPublicAdviceResponse(
   options: NavigatorChildFixtureOptions = {},
 ) {
   const role = options.role ?? "judge";
   const phase = options.phase === undefined ? null : options.phase;
   return fauxAssistantMessage(
-    fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+    fauxToolCall(NAVIGATOR_OUTPUT_TOOL_NAME, {
+      status: "advice",
       candidates: [{
         next: { role, phase },
-        reason: options.reason ?? "fixture navigator child prepare",
+        reason: options.reason ?? "fixture navigator public advice",
       }],
     }),
     { stopReason: "toolUse" },
@@ -36,7 +37,7 @@ export function navigatorPrepareFixtureResponse(
 }
 
 /**
- * If `context` is a Navigator prepare turn, return the fixture prepare response;
+ * If `context` is a public Navigator advice turn, return the fixture advice;
  * otherwise return undefined so the caller can dispatch its own seat response.
  */
 export function navigatorChildOrUndefined(
@@ -44,6 +45,6 @@ export function navigatorChildOrUndefined(
   options?: NavigatorChildFixtureOptions,
 ) {
   const names = context.tools?.map((tool) => tool.name) ?? [];
-  if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return undefined;
-  return navigatorPrepareFixtureResponse(options);
+  if (!names.includes(NAVIGATOR_OUTPUT_TOOL_NAME)) return undefined;
+  return navigatorPublicAdviceResponse(options);
 }

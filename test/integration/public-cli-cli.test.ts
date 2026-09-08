@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, mkdtemp, readFile, realpath, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
@@ -32,14 +32,10 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-cli-"));
-  try {
-    return await scenario(home);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  return withTempRoot("ak-public-cli-cli-", scenario);
 }
 
 function captureIo() {
@@ -59,7 +55,7 @@ function captureIo() {
   };
 }
 
-test("Inspector public runner preserves typed pass, bounce, and malformed output", async () => {
+test("Inspector public runner preserves typed pass, bounce, escalate, and non-three-state reply", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project);
@@ -70,15 +66,18 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
     const attachment = join(project, "material.txt");
     await writeFile(attachment, "frozen review material", "utf8");
 
+    // One nested unknown key on the affected accepted path (#696 sample, not schema).
+    const freeExtra = { nested: { ok: true } } as const;
     for (const [index, row] of [
       { status: "pass", exitCode: 0, findings: ["pass-finding"] },
       { status: "bounce", exitCode: 0, findings: ["bounce-finding"] },
       { status: "escalate", exitCode: 0, findings: ["escalate-finding"] },
-      { status: "malformed", exitCode: 1, details: { status: "unknown", findings: "unaltered" } },
+      // #757: non-three-state is not shape-rejected — reply passes through as accepted.
+      { status: "unknown", exitCode: 0, findings: "unaltered" as unknown },
     ].entries()) {
       const runId = `inspector-public-${index}`;
-      const details = row.status === "malformed"
-        ? row.details
+      const details = row.status === "pass"
+        ? { status: row.status, findings: row.findings, freeExtra }
         : { status: row.status, findings: row.findings };
       const result = await runAkRole(
         [
@@ -100,7 +99,6 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
               role: "inspector",
               toolName: INSPECTOR_OUTPUT_TOOL_NAME,
               details,
-              ...(row.status === "malformed" ? { seal: false } : {}),
             }),
           }),
         },
@@ -109,25 +107,17 @@ test("Inspector public runner preserves typed pass, bounce, and malformed output
       assert.equal(result.exitCode, row.exitCode);
       assert.ok(result.terminal);
       const outcome = result.terminal.roleOutcome;
-      if (row.status === "malformed") {
-        assert.equal(outcome.kind, "failure");
-        if (outcome.kind !== "failure") throw new Error("expected malformed output failure");
-        assert.equal(outcome.cause, "output");
-        assert.deepEqual(outcome.decisiveFacts.secondaryEvidence, {
-          candidate: row.details,
-          acceptedReceipt: false,
-        });
-      } else if (row.status === "escalate") {
-        assert.equal(outcome.kind, "audit_escalation");
-        assert.equal(outcome.status, "audit_escalation");
-        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
-        assert.equal(typeof outcome.decisiveFacts.reason, "string");
-        assert.notEqual(outcome.decisiveFacts.reason, "");
-      } else {
-        assert.equal(outcome.kind, "accepted");
-        if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
-        assert.equal(outcome.status, row.status);
-        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      // #753 escalate-thrown-verbatim: escalate seals accepted + raw receipt —
+      // no audit_escalation rewrite, no fabricated reason when absent.
+      assert.equal(outcome.kind, "accepted");
+      if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
+      assert.equal(outcome.status, row.status);
+      assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      if (row.status === "pass") {
+        assert.deepEqual(outcome.decisiveFacts.freeExtra, freeExtra);
+      }
+      if (row.status === "escalate") {
+        assert.equal(outcome.decisiveFacts.reason, undefined);
       }
     }
   });
