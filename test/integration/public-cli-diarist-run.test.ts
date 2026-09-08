@@ -1,5 +1,6 @@
 /**
- * #708 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
+ * #708 / #779 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
+ * No frozen catalog; LLM submits whole blocks; mechanical layer appends only.
  * Owner testing ruling: only prove the 起居录 is generated and readable; content
  * quality is judged by 大理寺 and real use. No quote/note/entry-count locks.
  */
@@ -10,10 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { DiaristCommitFacts } from "../../src/diarist.ts";
-import {
-  DIARIST_OUTPUT_TOOL_NAME,
-  DIARIST_SOURCES_FLAG,
-} from "../../src/diarist-contracts.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
 import {
   issuePiDurablePrincipalCoordinates,
@@ -27,42 +25,20 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import {
-  argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
-  withPrimaryAwareCleanup,
   withTempRoot,
 } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 708;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-diarist-", async (home) => {
-    const binDir = join(home, "bin");
-    // Issue face for live existence verify after LLM ticket assertion (#771 / ADR 0075).
-    await installGhFixture(binDir, {
-      issues: {
-        [TICKET]: {
-          body: "「起居郎建制为角色」\n本票要求起居郎与其他席位同形。",
-        },
-      },
-    });
-    const priorPath = process.env.PATH;
-    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
-    return withPrimaryAwareCleanup(
-      () => scenario(home),
-      async () => {
-        if (priorPath === undefined) delete process.env.PATH;
-        else process.env.PATH = priorPath;
-      },
-    );
-  });
+  return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
 }
 
 type RegisteredTool = {
@@ -77,10 +53,8 @@ type RegisteredTool = {
 };
 
 /**
- * Faux pi process for this seat: drives the production diarist role envelope
- * over the catalog the seat froze into this run's dossier, then hands the
- * envelope's own projection to the shared scripted-session writer. beforeAccept
- * is the real one — nothing about the commit band is re-expressed here.
+ * Faux pi process for this seat: drives the production diarist role envelope.
+ * Sets AK_ROLE_RUN_DIR from the spawn env so accept can bind + commit (#779).
  */
 function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
   return async (args, options) => {
@@ -92,25 +66,33 @@ function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
       on() {},
       getAllTools: () => (registered === undefined ? [] : [{ name: registered.name }]),
     } as unknown as RoleHost;
-    const runtime = createDiaristRoleRuntime(
-      host,
-      { loadSoul: async () => "起居郎职分（测试装载）" },
-      () => argvFlagValue(args, `--${DIARIST_SOURCES_FLAG.name}`),
-    );
-    await runtime.activate();
-    assert.ok(registered, "diarist envelope registered no output tool");
-    const accepted = await registered.execute(
-      "call_diarist_1",
-      submitted,
-      undefined,
-      undefined,
-      {} as HostContext,
-    );
-    return scriptedTerminatingToolSession({
-      role: "diarist",
-      toolName: DIARIST_OUTPUT_TOOL_NAME,
-      details: accepted.details,
-    })(args, options);
+    const priorRunDir = process.env.AK_ROLE_RUN_DIR;
+    const runDir = options.env.AK_ROLE_RUN_DIR;
+    if (typeof runDir === "string" && runDir.trim() !== "") {
+      process.env.AK_ROLE_RUN_DIR = runDir;
+    }
+    try {
+      const runtime = createDiaristRoleRuntime(host, {
+        loadSoul: async () => "起居郎职分（测试装载）",
+      });
+      await runtime.activate();
+      assert.ok(registered, "diarist envelope registered no output tool");
+      const accepted = await registered.execute(
+        "call_diarist_1",
+        submitted,
+        undefined,
+        undefined,
+        {} as HostContext,
+      );
+      return scriptedTerminatingToolSession({
+        role: "diarist",
+        toolName: DIARIST_OUTPUT_TOOL_NAME,
+        details: accepted.details,
+      })(args, options);
+    } finally {
+      if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = priorRunDir;
+    }
   };
 }
 
@@ -119,7 +101,6 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Origin remote is load-bearing: the seat derives ticket identity from it.
     execFileSync(
       "git",
       ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
@@ -142,7 +123,18 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
           piRunner: diaristEnvelopeRunner({
             status: "completed",
             ticketNumber: TICKET,
-            selections: [],
+            entries: [
+              {
+                sourceKind: "cc-session",
+                sourceRef: {
+                  sessionFile: "/fake/session.jsonl",
+                  entryId: "owner-1",
+                },
+                transcript: "起居郎建制为角色。调用方无感。",
+                timestamp: "2026-09-08T00:00:00.000Z",
+                note: "owner 原话",
+              },
+            ],
           }),
         }),
       },
@@ -166,11 +158,15 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(state?.role, "diarist");
     assert.equal(state?.state, "terminal");
 
-    // 起居录 exists and is readable through the existing read entrypoints,
-    // at the very paths this turn's receipt reported writing.
+    // 起居录 exists and is readable through the existing read entrypoints.
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
+    assert.equal(volume.entries.length >= 1, true);
+    assert.equal(
+      volume.entries.some((e) => e.transcript.includes("调用方无感")),
+      true,
+    );
     const humanView = await readFile(paths.humanViewFile, "utf8");
     assert.equal(humanView.length > 0, true, "人读面必须有内容");
 
@@ -182,5 +178,44 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(facts.ticketNumber, TICKET);
     assert.equal(facts.volumeRecordFile, paths.recordFile);
     assert.equal(facts.humanViewFile, paths.humanViewFile);
+    assert.equal(facts.appended >= 1, true);
+  });
+});
+
+test("ak-role diarist true-unbound leaves no 起居录", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const runId = "01a0diar00-0000-7000-8000-000000000002";
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["diarist", "--project", project, "整理这份方案的依据"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner({
+            status: "completed",
+            ticketNumber: null,
+            entries: [],
+          }),
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "true-unbound failed");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const facts = (
+      result.terminal?.roleOutcome as { decisiveFacts?: { ticketNumber?: unknown; sitian?: unknown } }
+    ).decisiveFacts;
+    assert.equal(facts?.ticketNumber ?? null, null);
+    assert.equal(facts?.sitian, undefined);
   });
 });

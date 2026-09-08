@@ -104,8 +104,7 @@ type CourtDiaristIdentity =
  * Non-zero exit without escalate status is not rethrown here — caller decides
  * whether refresh must fail or first-entry settles controlled failure.
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
- * freezes under that key so issue face enters the catalog — never mechanical
- * recognition from prose.
+ * binds under that key before the turn — never mechanical recognition from prose.
  */
 async function invokeCourtDiarist(input: {
   readonly instruction: string;
@@ -218,7 +217,7 @@ export async function runCountersignCourtDiaristStation(
       instruction: `整理 #${admitted.ticketNumber} 的本案依据。`,
       projectRoot: admitted.projectRoot,
       failureLabel: `ticket #${admitted.ticketNumber}`,
-      // Refresh holds a typed key — hand it off so freeze loads issue face.
+      // Refresh holds a typed key — hand it off so identity is bound before turn.
       boundTicketNumber: admitted.ticketNumber,
     },
     env,

@@ -17,10 +17,7 @@ import test from "node:test";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import {
-  DIARIST_OUTPUT_TOOL_NAME,
-  DIARIST_SOURCES_FLAG,
-} from "../../src/diarist-contracts.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -790,30 +787,38 @@ function courtPipelinePiRunner(
         getAllTools: () =>
           registered === undefined ? [] : [{ name: registered.name }],
       } as unknown as RoleHost;
-      const runtime = createDiaristRoleRuntime(
-        host,
-        { loadSoul: async () => "起居郎职分（测试装载）" },
-        () => argvFlagValue(args, `--${DIARIST_SOURCES_FLAG.name}`),
-      );
-      await runtime.activate();
-      assert.ok(registered, "diarist envelope registered no output tool");
-      // 起居郎 LLM asserts the court target; mechanical verify binds (#771).
-      const accepted = await registered.execute(
-        "call_diarist_1",
-        {
-          status: "completed",
-          ticketNumber: ticketAssertion,
-          selections: [],
-        },
-        undefined,
-        undefined,
-        {} as HostContext,
-      );
-      return scriptedTerminatingToolSession({
-        role: "diarist",
-        toolName: DIARIST_OUTPUT_TOOL_NAME,
-        details: accepted.details,
-      })(args, options);
+      const priorRunDir = process.env.AK_ROLE_RUN_DIR;
+      const runDir = options.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir === "string" && runDir.trim() !== "") {
+        process.env.AK_ROLE_RUN_DIR = runDir;
+      }
+      try {
+        const runtime = createDiaristRoleRuntime(host, {
+          loadSoul: async () => "起居郎职分（测试装载）",
+        });
+        await runtime.activate();
+        assert.ok(registered, "diarist envelope registered no output tool");
+        // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
+        const accepted = await registered.execute(
+          "call_diarist_1",
+          {
+            status: "completed",
+            ticketNumber: ticketAssertion,
+            entries: [],
+          },
+          undefined,
+          undefined,
+          {} as HostContext,
+        );
+        return scriptedTerminatingToolSession({
+          role: "diarist",
+          toolName: DIARIST_OUTPUT_TOOL_NAME,
+          details: accepted.details,
+        })(args, options);
+      } finally {
+        if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+        else process.env.AK_ROLE_RUN_DIR = priorRunDir;
+      }
     }
     return scriptedCountersignSession(countersignDetails)(args, options);
   };

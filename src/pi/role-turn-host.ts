@@ -149,13 +149,7 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
     case "auditor":
       return ["--ak-role", "auditor"];
     case "diarist":
-      return [
-        "--ak-role",
-        "diarist",
-        ...(activation.sourcesPath === undefined
-          ? []
-          : ["--ak-diarist-sources", activation.sourcesPath]),
-      ];
+      return ["--ak-role", "diarist"];
     default: {
       const _exhaustive: never = activation;
       return _exhaustive;
