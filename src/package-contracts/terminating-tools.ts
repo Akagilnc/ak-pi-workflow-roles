@@ -303,7 +303,7 @@ export function validateAcceptedLifecycle(
   if (toolName === DIARIST_OUTPUT_TOOL_NAME) {
     // Envelope-owned mechanical sitian facts are runtime-bound on details only
     // (same shape as the Doctor runtime cost); the submitted arguments carry the
-    // role's own selections. Machine facts never come from model self-report.
+    // role's own entries. Machine facts never come from model self-report.
     const { sitian: _mechanical, ...submitted } = details as DiaristOutput & { sitian?: unknown };
     const testimony = validateAcceptedDetails(toolName, argumentsValue);
     if (!deepEqual(testimony, submitted)) throw new Error("accepted tool lifecycle details mismatch");

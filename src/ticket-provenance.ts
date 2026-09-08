@@ -3,7 +3,7 @@
  * Write/read via sitian facade only; no parallel destination logic.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -16,8 +16,6 @@ import {
 import {
   TICKET_PROVENANCE_HUMAN_VIEW,
   TICKET_PROVENANCE_KIND,
-  TICKET_PROVENANCE_OFFERED_WATERMARK,
-  TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
   projectTicketProvenanceDiagnostic,
   projectTicketProvenanceEntry,
   type TicketProvenanceDiagnostic,
@@ -102,7 +100,6 @@ export type TicketProvenanceVolumePath = {
   readonly recordFile: string;
   readonly volumeDir: string;
   readonly humanViewFile: string;
-  readonly offeredWatermarkFile: string;
 };
 
 /** Resolve volume paths for a ticket without writing. */
@@ -122,113 +119,7 @@ export function resolveTicketProvenanceVolume(
     recordFile: path.recordFile,
     volumeDir: path.sessionDir,
     humanViewFile: join(path.sessionDir, TICKET_PROVENANCE_HUMAN_VIEW),
-    offeredWatermarkFile: join(path.sessionDir, TICKET_PROVENANCE_OFFERED_WATERMARK),
   };
-}
-
-/** Typed cause of an offered-identity watermark read failure. */
-export type TicketProvenanceWatermarkReason =
-  | "unreadable"
-  | "malformed-json"
-  | "bad-shape";
-
-/** Honest failure when the offered-identity watermark cannot be read as written. */
-export class TicketProvenanceWatermarkError extends Error {
-  readonly code = "ticket-provenance-watermark" as const;
-  readonly reason: TicketProvenanceWatermarkReason;
-  constructor(
-    reason: TicketProvenanceWatermarkReason,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "TicketProvenanceWatermarkError";
-    this.reason = reason;
-  }
-}
-
-/**
- * Read identities already offered to the collector (append-only watermark).
- * Absent file → empty set. Any non-empty line that is not a JSON object with a
- * non-empty string `identity` throws TicketProvenanceWatermarkError (失败诚实：
- * never interpret corruption as "unseen" and silently re-offer).
- */
-export function readOfferedIdentities(
-  ticketNumber: number,
-  cwd: string,
-  home?: string,
-): ReadonlySet<string> {
-  const { offeredWatermarkFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
-  if (!existsSync(offeredWatermarkFile)) return new Set();
-  let text: string;
-  try {
-    text = readFileSync(offeredWatermarkFile, "utf8");
-  } catch (error) {
-    throw new TicketProvenanceWatermarkError(
-      "unreadable",
-      `ticket-provenance offered watermark unreadable (${offeredWatermarkFile})`,
-      { cause: error },
-    );
-  }
-  const seen = new Set<string>();
-  const lines = text.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = lines[index]!.trim();
-    if (!trimmed) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (error) {
-      throw new TicketProvenanceWatermarkError(
-        "malformed-json",
-        `ticket-provenance offered watermark malformed JSON at line ${index + 1} (${offeredWatermarkFile})`,
-        { cause: error },
-      );
-    }
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed) ||
-      typeof (parsed as { identity?: unknown }).identity !== "string" ||
-      (parsed as { identity: string }).identity.length === 0
-    ) {
-      throw new TicketProvenanceWatermarkError(
-        "bad-shape",
-        `ticket-provenance offered watermark bad shape at line ${index + 1} (${offeredWatermarkFile})`,
-      );
-    }
-    seen.add((parsed as { identity: string }).identity);
-  }
-  return seen;
-}
-
-/**
- * Append offered identities after a successful collector pass (selected or not).
- * Idempotent per identity within the file (skip already-present). Creates volume
- * dir only when writing the first watermark row.
- */
-export function recordOfferedIdentities(input: {
-  readonly ticketNumber: number;
-  readonly cwd: string;
-  readonly home?: string;
-  readonly identities: readonly string[];
-}): void {
-  if (input.identities.length === 0) return;
-  const { volumeDir, offeredWatermarkFile } = resolveTicketProvenanceVolume(
-    input.ticketNumber,
-    input.cwd,
-    input.home,
-  );
-  const already = new Set(readOfferedIdentities(input.ticketNumber, input.cwd, input.home));
-  const rows: string[] = [];
-  for (const identity of input.identities) {
-    if (identity.length === 0 || already.has(identity)) continue;
-    rows.push(`${JSON.stringify({ identity })}\n`);
-    already.add(identity);
-  }
-  if (rows.length === 0) return;
-  mkdirSync(volumeDir, { recursive: true });
-  appendFileSync(offeredWatermarkFile, rows.join(""), "utf8");
 }
 
 export type ReadTicketProvenanceResult = {
@@ -357,103 +248,6 @@ export function ensureTicketProvenanceVolume(
   // by a concurrent first writer.
   appendFileSync(volume.recordFile, "", "utf8");
   return volume;
-}
-
-/**
- * Append a typed diagnostic onto the ticket-provenance volume (append-only).
- * Same sitian kind + subject partition as diary entries; payload uses recordClass
- * discriminator — never forged as a source entry. No sidecar / parallel ledger.
- */
-export function appendTicketProvenanceDiagnostic(input: {
-  readonly ticketNumber: number;
-  readonly cwd: string;
-  readonly home?: string;
-  readonly diagnostic: TicketProvenanceDiagnostic;
-  readonly host?: string;
-  readonly source?: string;
-}): RecordPointer {
-  const subject = ticketProvenanceSubject(input.ticketNumber);
-  // quote-verify: content-stable identity so mid-batch retry does not duplicate.
-  // collector/issue-source: recordedAt keeps per-court failure history.
-  const identityParts =
-    input.diagnostic.diagnosticKind === "quote-verify-failed"
-      ? [
-          subject,
-          input.diagnostic.recordClass,
-          input.diagnostic.diagnosticKind,
-          input.diagnostic.cause,
-          input.diagnostic.reason ?? "",
-        ]
-      : [
-          subject,
-          input.diagnostic.recordClass,
-          input.diagnostic.diagnosticKind,
-          input.diagnostic.recordedAt,
-          input.diagnostic.cause,
-          input.diagnostic.reason ?? "",
-        ];
-  const identity = createHash("sha256")
-    .update(identityParts.join("\u0000"), "utf8")
-    .digest("hex");
-  return sitianReport({
-    level: "event",
-    kind: TICKET_PROVENANCE_KIND,
-    identity,
-    subject,
-    cwd: input.cwd,
-    ...(input.home === undefined ? {} : { home: input.home }),
-    host: input.host ?? "diarist",
-    source: input.source ?? "diarist-diagnostic",
-    payload: input.diagnostic,
-  });
-}
-
-/** Issue-face source acquisition failure — typed diagnostic on the ticket volume. */
-export function appendIssueSourceFailureDiagnostic(input: {
-  readonly ticketNumber: number;
-  readonly cwd: string;
-  readonly home?: string;
-  readonly cause: string;
-  readonly reason: string;
-  readonly recordedAt?: string;
-}): RecordPointer {
-  const recordedAt = input.recordedAt ?? new Date().toISOString();
-  return appendTicketProvenanceDiagnostic({
-    ticketNumber: input.ticketNumber,
-    cwd: input.cwd,
-    ...(input.home === undefined ? {} : { home: input.home }),
-    source: "diarist-issue-source",
-    diagnostic: {
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: "issue-source-failed",
-      cause: input.cause,
-      recordedAt,
-      reason: input.reason,
-    },
-  });
-}
-
-/** Quote reverse-verify failure — single diagnostic expression (not a diary entry). */
-export function appendQuoteVerifyFailureDiagnostic(input: {
-  readonly ticketNumber: number;
-  readonly cwd: string;
-  readonly home?: string;
-  readonly cause: string;
-  readonly recordedAt?: string;
-}): RecordPointer {
-  const recordedAt = input.recordedAt ?? new Date().toISOString();
-  return appendTicketProvenanceDiagnostic({
-    ticketNumber: input.ticketNumber,
-    cwd: input.cwd,
-    ...(input.home === undefined ? {} : { home: input.home }),
-    source: "diarist-quote-verify",
-    diagnostic: {
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: "quote-verify-failed",
-      cause: input.cause,
-      recordedAt,
-    },
-  });
 }
 
 /** Write the co-located human view next to the JSONL volume (derived, not dual-source).

@@ -1307,6 +1307,8 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role config set-host <seat> <name>",
       "ak-role config unset-host <seat>",
       "ak-role config set-auto-resume-limit <N>",
+      "ak-role config set-provider-alias <provider> <host> <alias>",
+      "ak-role config unset-provider-alias <provider> <host>",
     ],
     examples: [
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
@@ -1314,6 +1316,7 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role config set-engine judge opus",
       "ak-role config set-host judge grok-build",
       "ak-role config set-auto-resume-limit 3",
+      "ak-role config set-provider-alias xai hermes xai-oauth",
     ],
   },
   help: {

@@ -1,4 +1,5 @@
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import {
   ExplicitInternalActivationError,
   type HostContext,
@@ -13,7 +14,10 @@ import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
-import { resolveActivationLedgerHomeForPath } from "./activation-ledger-topology.ts";
+import {
+  homeFromRunDirectory,
+  resolveActivationLedgerHomeForPath,
+} from "./activation-ledger-topology.ts";
 import {
   appendAcceptedActivationToBook,
   buildAcceptedActivationFact,
@@ -76,16 +80,9 @@ import {
 } from "./diarist-role.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
-  DIARIST_SOURCES_FLAG,
-  projectDiaristSelections,
+  projectDiaristEntries,
 } from "./diarist-contracts.ts";
-import {
-  commitDiaristSelections,
-  DiaristTicketVerificationError,
-  loadDiaristSourceCatalog,
-  verifyAssertedTicketNumber,
-  type DiaristSourceCatalog,
-} from "./diarist.ts";
+import { commitDiaristEntries } from "./diarist.ts";
 import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
@@ -177,14 +174,6 @@ const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: GLEANER_LEFT_BASE_FLAG.name,
     definition: GLEANER_LEFT_BASE_FLAG.definition,
-  }),
-] as const);
-
-/** Diarist private transport: frozen source catalog path (ADR 0018 / #708). */
-const DIARIST_TRANSPORT_FLAGS = Object.freeze([
-  Object.freeze({
-    name: DIARIST_SOURCES_FLAG.name,
-    definition: DIARIST_SOURCES_FLAG.definition,
   }),
 ] as const);
 
@@ -926,8 +915,9 @@ export function createAuditorRoleRuntime(
 }
 
 /**
- * LLM typed court-target assertion from diarist output (ADR 0075).
+ * LLM typed court-target assertion from diarist output (ADR 0075 / #779).
  * null/absent = true-unbound; positive safe integer = ticket N.
+ * Shape-only read of the typed field — not content judgment of free text.
  * Any other shape fails honestly — never washes into unbound.
  */
 function readDiaristTicketAssertion(
@@ -947,29 +937,56 @@ function readDiaristTicketAssertion(
       return { kind: "ticket", ticketNumber: n };
     }
   }
-  throw new DiaristTicketVerificationError(
-    "assertion-uninterpretable",
+  throw new Error(
     "diarist ticketNumber must be a safe integer >= 1, null, or absent",
   );
 }
 
+/** Run coordinates + optional pre-bound ticket from durable pages (#779). */
+function readDiaristRunCoordinates(): {
+  readonly runDirectory: string;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly boundTicketNumber?: number;
+} {
+  const runDirectory = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDirectory !== "string" || runDirectory.trim() === "") {
+    throw new Error("diarist accept requires AK_ROLE_RUN_DIR");
+  }
+  const admittedPath = join(runDirectory, "admitted-request.json");
+  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`diarist admitted-request missing projectRoot (${admittedPath})`);
+  }
+  const bound =
+    typeof admitted.ticketNumber === "number" &&
+    Number.isSafeInteger(admitted.ticketNumber) &&
+    admitted.ticketNumber >= 1
+      ? admitted.ticketNumber
+      : undefined;
+  return {
+    runDirectory,
+    projectRoot: admitted.projectRoot,
+    home: homeFromRunDirectory(runDirectory),
+    ...(bound === undefined ? {} : { boundTicketNumber: bound }),
+  };
+}
+
 /**
- * #708: 起居郎 public seat on the shared filed-officer envelope.
- * Semantic collection happened in this role's own turn; the accept hook runs the
- * mechanical band (ticket verify when first-summons + verbatim reverse-verify →
- * idempotent sitian append → watermark) and records the resulting sitian facts
- * next to the receipt. Machine facts never come from model self-report (锚定宪法).
+ * #708 / #779: 起居郎 public seat on the shared filed-officer envelope.
+ * Semantic collection happened in this role's own turn (LLM finds materials).
+ * Accept hook: bind typed ticket assertion → idempotent sitian append of whole
+ * blocks the LLM submitted. No frozen catalog, no quote/ticket reverse-verify
+ * of LLM output. Machine facts never come from model self-report (锚定宪法).
  */
 export function createDiaristRoleRuntime(
   roleHost: RoleHost,
   dependencies: DiaristRuntimeDependencies,
-  getSourcesFlag: () => unknown,
 ) {
-  // This turn's catalog, snapshotted at activate: the candidateIndexes the role
-  // saw and the rows accept commits are the same bytes. Accept never re-reads
-  // the file, so anything written to it mid-turn cannot become a diary entry.
-  let catalog: DiaristSourceCatalog | undefined;
-  const runtime = createFiledOfficerRuntime(
+  return createFiledOfficerRuntime(
     roleHost,
     {
       role: "diarist",
@@ -983,8 +1000,8 @@ export function createDiaristRoleRuntime(
             : undefined;
 
         // LLM cannot identify the court target — escalate without machine facts.
-        // Strip sitian (锚定宪法) and ticketNumber (unverified — must not leak
-        // into caller-visible admitted typed key via decisiveFacts mirror).
+        // Strip sitian (锚定宪法) and ticketNumber (must not leak into
+        // caller-visible admitted typed key via decisiveFacts mirror).
         if (submitted?.status === "escalate") {
           if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
             return submitted;
@@ -996,40 +1013,20 @@ export function createDiaristRoleRuntime(
         }
 
         const assertion = readDiaristTicketAssertion(submitted);
-
-        // No frozen catalog: only true-unbound is lawful without volume work.
-        // A self-reported `sitian` is not machine fact (锚定宪法).
-        if (catalog === undefined) {
-          if (assertion.kind === "ticket") {
-            throw new DiaristTicketVerificationError(
-              "assertion-uninterpretable",
-              `diarist asserted ticket #${assertion.ticketNumber} but no source catalog was frozen for this turn`,
-            );
-          }
-          if (submitted === undefined || !("sitian" in submitted)) return undefined;
-          const stripped = { ...submitted };
-          delete stripped.sitian;
-          return stripped;
-        }
+        const coords = readDiaristRunCoordinates();
 
         // Already bound before the turn (typed handoff / resume): skip re-recognition
-        // (ADR 0075 已绑定 ticket 优先) and commit under that identity.
-        if (catalog.ticketNumber !== undefined) {
-          const facts = await commitDiaristSelections({
-            catalog,
-            selections: projectDiaristSelections(parameters),
-          });
-          return {
-            ...(submitted ?? { receipt: parameters }),
-            ticketNumber: catalog.ticketNumber,
-            sitian: facts,
-          };
-        }
+        // and commit under that identity (ADR 0075 已绑定 ticket 优先).
+        const ticketNumber =
+          coords.boundTicketNumber !== undefined
+            ? coords.boundTicketNumber
+            : assertion.kind === "ticket"
+              ? assertion.ticketNumber
+              : undefined;
 
-        // First summons: LLM typed assertion → mechanical verify → bind → commit.
-        // true-unbound → 无录 (no volume). Verification failure throws (失败诚实).
-        // Cannot-identify must arrive as status=escalate above — never as silent unbound.
-        if (assertion.kind === "true-unbound") {
+        // true-unbound → 无录 (no volume). Cannot-identify must arrive as
+        // status=escalate above — never as silent unbound.
+        if (ticketNumber === undefined) {
           if (submitted === undefined || !("sitian" in submitted)) {
             return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };
           }
@@ -1041,50 +1038,25 @@ export function createDiaristRoleRuntime(
           return stripped;
         }
 
-        await verifyAssertedTicketNumber({
-          ticketNumber: assertion.ticketNumber,
-          instruction: catalog.instruction,
-          projectRoot: catalog.projectRoot,
-        });
-        await bindTicketNumberOnRunDirectory(
-          catalog.runDirectory,
-          assertion.ticketNumber,
-        );
-        const boundCatalog: DiaristSourceCatalog = {
-          ...catalog,
-          ticketNumber: assertion.ticketNumber,
-        };
-        const facts = await commitDiaristSelections({
-          catalog: boundCatalog,
-          selections: projectDiaristSelections(parameters),
+        if (coords.boundTicketNumber === undefined) {
+          await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
+        }
+
+        const facts = await commitDiaristEntries({
+          ticketNumber,
+          cwd: coords.projectRoot,
+          home: coords.home,
+          entries: projectDiaristEntries(parameters),
         });
         return {
           ...(submitted ?? { receipt: parameters }),
-          ticketNumber: assertion.ticketNumber,
+          ticketNumber,
           sitian: facts,
         };
       },
     },
     dependencies,
   );
-  return {
-    async activate() {
-      catalog = loadFrozenDiaristCatalog(getSourcesFlag);
-      return runtime.activate();
-    },
-  };
-}
-
-/** Envelope-owned decode + one-shot load of the frozen catalog (ADR 0018). */
-function loadFrozenDiaristCatalog(
-  getFlag: () => unknown,
-): DiaristSourceCatalog | undefined {
-  const raw = getFlag();
-  if (raw === undefined) return undefined;
-  if (typeof raw !== "string" || raw.trim() === "") {
-    throw new Error("Diarist source catalog flag must be a nonempty path");
-  }
-  return loadDiaristSourceCatalog(raw);
 }
 
 /** Countersign status words the queue reads (#753). */
@@ -1170,9 +1142,6 @@ export function createRoleRuntimeExtension(
       roleHost.registerFlag(flag.name, flag.definition);
     }
     for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
-      roleHost.registerFlag(flag.name, flag.definition);
-    }
-    for (const flag of DIARIST_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
 
@@ -1651,7 +1620,6 @@ export function createRoleRuntimeExtension(
           return dependencies.loadDiaristSoul();
         },
       },
-      () => envelopeHost.host.getFlag(DIARIST_SOURCES_FLAG.name),
     );
     let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
