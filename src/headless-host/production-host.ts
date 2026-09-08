@@ -26,7 +26,7 @@ export type ProductionHeadlessHostOptions = Readonly<{
 
 /**
  * Assemble a production headless RoleTurnHost from the shared envelope prepare
- * (transport=mcp for AK tools) and one host description row. Binary is resolved
+ * (MCP relay for AK tools) and one host description row. Binary is resolved
  * from each turn's operator home (`request.home`).
  */
 export function createProductionHeadlessRoleTurnHost(
@@ -56,7 +56,6 @@ export function createProductionHeadlessRoleTurnHost(
           // Same MCP relay as ACP so intermediate AK tools stay reachable;
           // headless adapter projects the row into --mcp-config.
           socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,
-          transport: "mcp",
         }),
     });
 

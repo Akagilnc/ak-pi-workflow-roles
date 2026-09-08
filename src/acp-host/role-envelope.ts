@@ -129,7 +129,6 @@ export function createComposedAcpRoleTurnHost(
       // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
       sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
-      transport: "mcp",
     }),
   });
 }
@@ -148,15 +147,11 @@ export async function prepareAcpRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   /**
-   * MCP unix socket path. Required for transport "mcp"; ignored for "direct"
-   * (headless CLI family feeds structured_output in-process).
+   * MCP unix socket path for the protocol-relay child. Always required — AK tools
+   * (and headless intermediate tools) ride this single MCP path; structured_output
+   * is an additional receipt face that reuses the same terminating-tool ledger path.
    */
-  readonly socketPath?: string;
-  /**
-   * "mcp" (default): listen for the protocol relay child.
-   * "direct": no socket — headless host calls ingestStructuredOutput.
-   */
-  readonly transport?: "mcp" | "direct";
+  readonly socketPath: string;
   /**
    * Durable principal session path (header layout only).
    * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
@@ -164,8 +159,10 @@ export async function prepareAcpRoleEnvelope(options: {
    */
   readonly sessionFile?: string;
 }): Promise<AcpPreparedTurn> {
-  const transport = options.transport ?? "mcp";
   const { request } = options;
+  if (options.socketPath === "") {
+    throw new Error("prepareAcpRoleEnvelope requires socketPath");
+  }
   const flags = projectAcpActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
@@ -557,14 +554,7 @@ export async function prepareAcpRoleEnvelope(options: {
     });
   }
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
-  let serverStarted = false;
-  if (transport === "mcp") {
-    if (options.socketPath === undefined || options.socketPath === "") {
-      throw new Error("prepareAcpRoleEnvelope transport=mcp requires socketPath");
-    }
-    await listen(server, options.socketPath);
-    serverStarted = true;
-  }
+  await listen(server, options.socketPath);
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
   // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
@@ -595,17 +585,14 @@ export async function prepareAcpRoleEnvelope(options: {
     } catch (error) {
       cleanupFailures.push(error);
     }
-    // Server closure only when MCP listen started; direct transport has no listener.
-    if (serverStarted) {
-      try {
-        const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
-        if (typeof closeAll === "function") closeAll.call(server);
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error ? reject(error) : resolve()));
-        });
-      } catch (error) {
-        cleanupFailures.push(error);
-      }
+    try {
+      const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
+      if (typeof closeAll === "function") closeAll.call(server);
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    } catch (error) {
+      cleanupFailures.push(error);
     }
     if (cleanupFailures.length === 1) throw cleanupFailures[0];
     if (cleanupFailures.length > 1) {
@@ -716,17 +703,15 @@ export async function prepareAcpRoleEnvelope(options: {
     }
     const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
     return {
-      mcpServers: transport === "mcp" && options.socketPath !== undefined
-        ? [{
-          name: `ak-${request.activation.role}`,
-          command: process.execPath,
-          args: [relay],
-          env: [
-            { name: "AK_ACP_MCP_SOCKET", value: options.socketPath },
-            { name: "AK_ACP_MCP_TOKEN", value: token },
-          ],
-        }]
-        : [],
+      mcpServers: [{
+        name: `ak-${request.activation.role}`,
+        command: process.execPath,
+        args: [relay],
+        env: [
+          { name: "AK_ACP_MCP_SOCKET", value: options.socketPath },
+          { name: "AK_ACP_MCP_TOKEN", value: token },
+        ],
+      }],
       systemPrompt: { body: systemPromptBody, materials: readingMaterials },
       prompt,
       abortSignal: hostAbort.signal,

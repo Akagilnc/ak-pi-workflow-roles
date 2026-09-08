@@ -242,25 +242,25 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 ? request.signal
                 : AbortSignal.any([prepared.abortSignal, request.signal]);
 
+          // config.env is the production authority for package-root / host child env
+          // (see createProductionHeadlessRoleTurnHost). Do not re-override keys from
+          // process.env after the spread — that erased AK_PACKAGE_ROOT.
           const env: NodeJS.ProcessEnv = {
             ...process.env,
-            ...config.env,
-            AK_PACKAGE_ROOT: process.env.AK_PACKAGE_ROOT,
+            ...(config.env ?? {}),
           };
 
           // Materialize system prompt + MCP config once per prepare (stable across
           // correctable retries). Paths live under the run directory we already own.
+          // Envelope always projects the AK MCP relay row; no empty-server branch.
           const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
           await writeFile(systemPromptPath, systemPrompt, "utf8");
-          let mcpConfigPath: string | undefined;
-          if (prepared.mcpServers.length > 0) {
-            mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
-            await writeFile(
-              mcpConfigPath,
-              `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-              "utf8",
-            );
-          }
+          const mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
+          await writeFile(
+            mcpConfigPath,
+            `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
+            "utf8",
+          );
 
           // No round cap on content review (#750); this bound is only for
           // correctable mechanical resubmit (non-sole etc.), matching ACP's 8.
@@ -280,7 +280,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               prompt,
               systemPromptPath,
               jsonSchema: prepared.jsonSchema,
-              ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
+              mcpConfigPath,
               ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
               ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
               session: sessionKind === "new"
