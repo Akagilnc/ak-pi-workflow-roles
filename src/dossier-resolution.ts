@@ -5,9 +5,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { JUDGE_OUTPUT_TOOL_NAME as JUDGE_OUTPUT_TOOL } from "./package-contracts/judge-output.ts";
-
-export const JUDGE_OUTPUT_TOOL_NAME = JUDGE_OUTPUT_TOOL;
 export const AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR" as const;
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate" as const;
 
@@ -65,43 +62,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Judge subjects must already be on the parent session books before audit starts:
- * assignment (user message) + candidate verdict (sole judge output tool call).
- */
 type AuditSubjectContext = { sessionManager: { getEntries?(): Iterable<unknown> } };
-
-export function readJudgeAuditSubjects(context: AuditSubjectContext): SubjectResolution {
-  const entries = context.sessionManager.getEntries?.() ?? [];
-  let hasAssignment = false;
-  let hasCandidate = false;
-  for (const entry of entries) {
-    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
-    const message = entry.message;
-    if (message.role === "user") {
-      const text = typeof message.content === "string"
-        ? message.content
-        : Array.isArray(message.content)
-          ? message.content.map((part) => (isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : "")).join("")
-          : "";
-      if (text.trim().length > 0) hasAssignment = true;
-    }
-    if (message.role === "assistant" && Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (isRecord(part) && part.type === "toolCall" && part.name === JUDGE_OUTPUT_TOOL_NAME && isRecord(part.arguments)) {
-          hasCandidate = true;
-        }
-      }
-    }
-  }
-  if (!hasAssignment) {
-    return { status: "incomplete", observation: { kind: "missing-subject", subject: "assignment" } };
-  }
-  if (!hasCandidate) {
-    return { status: "incomplete", observation: { kind: "missing-subject", subject: "candidate-verdict" } };
-  }
-  return { status: "ok" };
-}
 
 /**
  * Doctor candidate testimony must be recorded before audit.

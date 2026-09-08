@@ -7,7 +7,6 @@ import {
 } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
@@ -16,76 +15,80 @@ import {
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
-import { retainedShapeUnreadable } from "./shape-unreadable-failure.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
+
+/** Gate review officers — 察院 / 符宝郎 / 审刑院 (#753 / #756). */
+export type GateOfficer = "inspector" | "notary" | "auditor";
 
 /** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
   | { readonly kind: "judge_draft" }
+  | { readonly kind: "judge_compliance" }
   | { readonly kind: "countersign_verdict" };
 
+/**
+ * Gate projection for the review queue (#753 / #750).
+ * Code only reads the conclusion field for queueing. Officer words ride as
+ * `receipt` unchanged — no findings rewrite, no unreadable/unusable label,
+ * no next-step selection for the parent.
+ */
 export type GatekeeperResult =
-  /**
-   * Lawful direct-officer release.
-   */
-  | { readonly status: "pass"; readonly officer: "inspector" | "notary"; readonly findings: readonly string[] }
+  | { readonly status: "pass"; readonly officer: GateOfficer; readonly receipt: unknown }
+  /** bounce | escalate: both return the officer receipt to the parent (#753 / #756). */
+  | { readonly status: "bounce"; readonly officer: GateOfficer; readonly receipt: unknown }
+  | { readonly status: "escalate"; readonly officer: GateOfficer; readonly receipt: unknown }
   | {
-      readonly status: "bounce";
-      readonly officer: "inspector" | "notary";
-      readonly disposition: "rewrite";
-      readonly findings: readonly string[];
-      readonly submission: unknown;
+      /**
+       * Accepted reply whose conclusion is not pass|bounce|escalate.
+       * Envelope resumes the officer with plain-language re-ask — never parent-stands,
+       * never forges bounce (#753 / unreadable-conclusion-resume-speaker).
+       */
+      readonly status: "needs_reask";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
     }
-  | {
-      readonly status: "escalate";
-      readonly officer: "inspector" | "notary";
-      readonly reason?: unknown;
-      readonly findings: unknown;
-      readonly submission: unknown;
-    }
-  | { readonly status: "no_receipt"; readonly stage: "inspector" | "notary"; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
-  | {
-      /** Shape-unreadable officer output — typed fact, not a forged bounce (ADR 0055 / §0). */
-      readonly status: "unreadable";
-      readonly officer: "inspector" | "notary";
-      readonly reason: string;
-      readonly submission: unknown;
-    }
+  | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
       readonly status: "transport_failure";
-      readonly stage: "inspector" | "notary";
+      readonly stage: GateOfficer;
       readonly reason: string;
-      /** Original unusable submission retained for the failure channel. */
+      /** Original transport/process failure payload retained for the failure channel. */
       readonly submission?: unknown;
     };
 
+/** Non-pass faces that bounce the parent session (correctable). */
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "no_receipt" | "unreadable" }
+  { status: "bounce" | "escalate" | "no_receipt" }
 >;
 
-function gateSeatLabel(stage: "inspector" | "notary"): string {
-  return stage === "inspector" ? "察院" : "符宝郎";
+function gateSeatLabel(stage: GateOfficer): string {
+  if (stage === "inspector") return "察院";
+  if (stage === "auditor") return "审刑院";
+  return "符宝郎";
+}
+
+/** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector). */
+export function gateOfficerForSubject(subject: GatekeeperSubject): GateOfficer {
+  if (subject.kind === "worker_completion") return "inspector";
+  if (subject.kind === "judge_compliance") return "auditor";
+  return "notary";
 }
 
 export { GatekeeperDecisionError } from "./submission-errors.ts";
 
-export class GatekeeperEscalationError extends Error {
-  readonly gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>;
-  constructor(gatekeeper: Extract<GatekeeperResult, { status: "escalate" }>) {
-    super(`门下省${gateSeatLabel(gatekeeper.officer)}上呈`);
-    this.name = "GatekeeperEscalationError";
-    this.gatekeeper = gatekeeper;
-  }
-}
-
 export type GateOfficerSummon = (
-  officer: "inspector" | "notary",
+  officer: GateOfficer,
   sourceRunDirectory: string,
   /** Parent cancellation forwarded to the nested activation (#675). */
   signal?: AbortSignal,
+  /**
+   * Plain-language re-ask when the prior officer reply was not a three-state
+   * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
+   */
+  reask?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -94,6 +97,10 @@ export type RunGatekeeperOptions = {
   readonly signal?: AbortSignal;
   /** Run directory of the parent role (pointer-only summons, ADR 0079). */
   readonly runDirectory?: string;
+  /**
+   * Plain-language re-ask for this summon (resume speaker after non-three-state).
+   */
+  readonly reask?: string;
   /**
    * Test seam for public-role summons. Production calls the shared public
    * activation path (#675); inject only in offline tracers.
@@ -145,13 +152,6 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-function asStringArray(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  // Officer findings may be structured objects (category/law/evidence); the
-  // parent role must see them verbatim, not an empty list (#750 / #775).
-  return value.map(readableGateItem);
-}
-
 /** Serializable stand-in when the child tool call had no arguments object. */
 export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
 
@@ -160,7 +160,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Keep original decision bytes for the next reader; undefined becomes a serializable missing-args fact. */
-function retainedSubmission(decision: unknown): unknown {
+function retainedReceipt(decision: unknown): unknown {
   // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
   // Through the real provider adapter an undefined root argument arrives as an
   // empty object after serialization; that must also project a missing-args fact.
@@ -169,66 +169,44 @@ function retainedSubmission(decision: unknown): unknown {
     : decision;
 }
 
-/**
- * Shape-unreadable officer decision — retain original candidate + typed reason.
- * Not a forged bounce, not transport abort (CLAUDE.md §0 / ADR 0055).
- * Real provider/engine/disk failures stay transport_failure elsewhere.
- */
-function shapeUnreadable(
-  officer: "inspector" | "notary",
-  decision: unknown,
-  reason = "decision 无显式 pass/bounce/escalate",
-): Extract<GatekeeperResult, { status: "unreadable" }> {
-  return {
-    status: "unreadable",
-    officer,
-    reason,
-    submission: retainedSubmission(decision),
-  };
-}
-
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
 }
 
+/**
+ * Read only the conclusion field for queueing (#753).
+ * pass | bounce | escalate → queue signal + raw receipt.
+ * Anything else accepted → needs_reask (resume speaker), never unreadable/parent-stand.
+ * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
+ * (keeps missing-args sentinel intact as the receipt).
+ */
 function projectOfficerDecision(
-  officer: "inspector" | "notary",
+  officer: GateOfficer,
   decision: unknown,
+  fallbackStatus?: string,
 ): GatekeeperResult {
+  const receipt = retainedReceipt(decision);
   const record = readRecord(decision);
-  if (record === undefined) return shapeUnreadable(officer, decision);
-  if (record.status === "bounce") {
-    return {
-      status: "bounce",
-      officer,
-      disposition: "rewrite",
-      findings: asStringArray(record.findings),
-      submission: retainedSubmission(decision),
-    };
+  const status =
+    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
+    ?? fallbackStatus;
+  if (status === "pass") {
+    return { status: "pass", officer, receipt };
   }
-  if (record.status === "pass") {
-    return {
-      status: "pass",
-      officer,
-      findings: asStringArray(record.findings),
-    };
+  if (status === "bounce" || status === "escalate") {
+    return { status, officer, receipt };
   }
-  if (record.status === "escalate") {
-    return {
-      status: "escalate",
-      officer,
-      ...(Object.hasOwn(record, "reason") ? { reason: record.reason } : {}),
-      findings: record.findings,
-      submission: retainedSubmission(decision),
-    };
-  }
-  return shapeUnreadable(officer, decision);
+  return { status: "needs_reask", officer, receipt };
 }
 
-/** Map a public-role terminal onto the gate officer result surface. */
+/**
+ * Project a public-role terminal onto the gate queue surface.
+ * Lifecycle facts (no_receipt / transport) stay loud; conclusion reads only
+ * the status field. No unusable/unreadable judgment (#753).
+ */
 function projectOfficerTerminal(
-  officer: "inspector" | "notary",
+  officer: GateOfficer,
   summoned: PublicSummonResult,
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
@@ -253,11 +231,7 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "failure") {
-    // Single settlement marker only (ADR 0055 / #675) — no cause=output re-derivation.
-    const shape = retainedShapeUnreadable(outcome.decisiveFacts);
-    if (shape !== undefined) {
-      return shapeUnreadable(officer, shape.candidate, outcome.diagnostic);
-    }
+    // Real provider/engine/disk failure — keep loud. Not a shape judgment.
     return {
       status: "transport_failure",
       stage: officer,
@@ -265,27 +239,46 @@ function projectOfficerTerminal(
       submission: outcome.decisiveFacts,
     };
   }
-  if (outcome.kind === "accepted") {
-    return projectOfficerDecision(officer, {
-      status: outcome.status,
-      ...outcome.decisiveFacts,
-    });
+  if (outcome.kind === "audit_escalation") {
+    // Residual/compliance escalate face: queue as escalate, receipt as written.
+    // Nested officer escalate itself seals accepted+status escalate (no rewrite).
+    return {
+      status: "escalate",
+      officer,
+      receipt: retainedReceipt(outcome.decisiveFacts),
+    };
   }
+  if (outcome.kind === "accepted") {
+    // Prefer the officer's own decisiveFacts as the receipt body. outcome.status is
+    // only a fallback when facts have no status key (missing-args sentinel stays intact).
+    const facts = outcome.decisiveFacts;
+    if (isRecord(facts) && Object.keys(facts).length > 0) {
+      return projectOfficerDecision(officer, facts, outcome.status);
+    }
+    return projectOfficerDecision(officer, { status: outcome.status });
+  }
+  // Unknown terminal kind: still not a shape judgment — ask the speaker again.
   return {
-    status: "transport_failure",
-    stage: officer,
-    reason: `${gateSeatLabel(officer)} public summon returned unusable terminal kind`,
-    submission: outcome,
+    status: "needs_reask",
+    officer,
+    receipt: retainedReceipt(outcome),
   };
 }
 
 /** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */
 export type GatekeeperProjection = {
-  readonly officer: "inspector" | "notary";
+  readonly officer: GateOfficer;
   readonly result: GatekeeperResult;
   /** Present only when a public summon actually returned (not transport pre-summon failure). */
   readonly summoned?: PublicSummonResult;
 };
+
+/**
+ * Plain-language re-ask when the officer conclusion is not pass|bounce|escalate.
+ * Not a packaged engine handbook line (#755 exception for 读不出三态).
+ */
+export const OFFICER_CONCLUSION_REASK =
+  "上次交卷的结论不是 pass、bounce、escalate 三态之一。请重新输出，结论字段写明其一；打回或上呈的话就是给对方看的原文。" as const;
 
 /**
  * Summon + project only. Lifecycle book and host abort face live on the shared
@@ -294,7 +287,7 @@ export type GatekeeperProjection = {
 export async function projectGatekeeperRun(
   options: RunGatekeeperOptions,
 ): Promise<GatekeeperProjection> {
-  const officer = options.subject.kind === "worker_completion" ? "inspector" : "notary";
+  const officer = gateOfficerForSubject(options.subject);
   const runDirectory = options.runDirectory ?? auditorRunDirectory(options.context);
   if (runDirectory === undefined) {
     return {
@@ -308,21 +301,29 @@ export async function projectGatekeeperRun(
   }
   // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
   // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  persistGateSubmissionCandidate(runDirectory, options.context);
+  // Candidate path also rides same-parent officer resume as 人读材料 (#753 / #750).
+  const submissionCandidatePath = persistGateSubmissionCandidate(
+    runDirectory,
+    options.context,
+  );
   let summoned: PublicSummonResult;
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
           sourceRunDirectory,
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
+          ...(reask === undefined ? {} : { reask }),
+          ...(submissionCandidatePath === undefined
+            ? {}
+            : { submissionCandidatePath }),
         });
       });
-    summoned = await summon(officer, runDirectory, options.signal);
+    summoned = await summon(officer, runDirectory, options.signal, options.reask);
   } catch (error) {
     return {
       officer,

@@ -298,7 +298,7 @@ export async function prepareAcpRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "no_receipt" || record.status === "unreadable"
+      : record.status === "bounce" || record.status === "escalate" || record.status === "no_receipt"
         ? record.status
         : undefined;
     if (code === undefined) return;

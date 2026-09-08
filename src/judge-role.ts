@@ -2,18 +2,19 @@ import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } fro
 import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
-import { disposeComplianceDecision } from "./audit-escalation.ts";
-import type { ComplianceDecision } from "./compliance-transport.ts";
-import { joinReadableGateItems } from "./readable-gate-item.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { ParentQueueReaskError } from "./submission-errors.ts";
 
 import {
-  JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT,
   JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
+
+const JUDGE_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
+const JUDGE_STATUS_REASK =
+  "judgeStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -53,13 +54,8 @@ export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 
-export type SoulAuditResult = ComplianceDecision;
-
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
-  auditSoulCompliance(
-    options: { context: HostContext; signal?: AbortSignal },
-  ): Promise<SoulAuditResult>;
 };
 
 export type JudgeRoleHostActions = HostGatekeeperActions;
@@ -86,15 +82,34 @@ export function createJudgeRoleRuntime(
         pi.registerTool({
           name: JUDGE_OUTPUT_TOOL_NAME,
           label: "大理寺输出",
-          description: "提交大理寺终局判词；受理前经审刑院审计。",
+          description: "提交大理寺终局判词；受理前经符宝郎内闸与审刑院合规审核。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
           async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
+            // #756 queue: read judgeStatus only — escalate skips gates (thrown to caller);
+            // unreadable status returns to judge; else 符宝郎内闸 then 审刑院合规.
+            const rawStatus =
+              parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+              && typeof (parameters as Record<string, unknown>).judgeStatus === "string"
+                ? (parameters as Record<string, unknown>).judgeStatus as string
+                : undefined;
+            if (rawStatus === undefined || !JUDGE_QUEUE_STATUSES.has(rawStatus)) {
+              throw new ParentQueueReaskError(JUDGE_STATUS_REASK);
+            }
+            if (rawStatus === "escalate") {
+              // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
+              const verdict = validateVerdict(parameters);
+              return {
+                content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+                details: verdict,
+                terminate: true as const,
+              };
+            }
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // Gatekeeper runs after the draft is booked and before existing auditor.
+            // #753: 符宝郎内闸 — queue only, raw receipt on bounce/escalate.
             await pi.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "judge_draft" },
@@ -102,49 +117,21 @@ export function createJudgeRoleRuntime(
               hostActions,
               toolCallId,
             });
-            let audit: SoulAuditResult;
-            try {
-              audit = await dependencies.auditSoulCompliance(
-                signal === undefined
-                  ? { context: ctx }
-                  : { context: ctx, signal },
-              );
-            } catch (error) {
-              hostActions.failInfrastructure(error, ctx, toolCallId);
-            }
-            const acceptedDetails = verdict;
-            return disposeComplianceDecision<HostToolResult<unknown>>(
-              audit,
-              {
-                pass: (usage) => ({
-                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
-                  details: acceptedDetails,
-                  terminate: true as const,
-                  ...(usage === undefined ? {} : { usage }),
-                }),
-                noReceipt: (auditNoReceipt, usageProjection) => ({
-                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_AUDIT_NO_RECEIPT_TEXT }],
-                  details: { ...acceptedDetails, auditNoReceipt },
-                  terminate: true as const,
-                  ...usageProjection,
-                }),
-                // #757: parent stands with auditor raw reply — no unreadable judgment.
-                received: (auditReceived, usageProjection) => ({
-                  content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
-                  details: { ...acceptedDetails, audit: auditReceived.reply },
-                  terminate: true as const,
-                  ...usageProjection,
-                }),
-                bounce: (violations) => {
-                  throw new Error(
-                    `大理寺回执违 soul：${joinReadableGateItems(violations)}`,
-                  );
-                },
-                escalate: (result) => result,
-              },
-              // #380: escalate deliveredOutput must carry the same mechanical projection.
-              acceptedDetails,
-            );
+            // #756: 审刑院合规路径 — same review-queue law as 符宝郎/察院.
+            // pass → accept; bounce|escalate → raw auditor receipt back to judge;
+            // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
+            await pi.requireGatekeeperPass!({
+              context: ctx,
+              subject: { kind: "judge_compliance" },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions,
+              toolCallId,
+            });
+            return {
+              content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+              details: verdict,
+              terminate: true as const,
+            };
           },
         });
         pi.on("before_agent_start", (event) => {

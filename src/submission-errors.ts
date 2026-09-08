@@ -1,24 +1,29 @@
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
-import { joinReadableGateItems } from "./readable-gate-item.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
+
+/**
+ * Tool-result text the parent model sees (#753 / #750 evidence).
+ * bounce | escalate → officer receipt verbatim (JSON when structured).
+ * no_receipt → honest lifecycle fact. No findings rewrite, no「（无 findings）」.
+ * #775: structured field content via readableGateItem (DRY with other gate seams).
+ */
+function serializeReceipt(receipt: unknown): string {
+  return readableGateItem(receipt);
+}
 
 function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
-  if (result.status === "bounce") {
-    const findings = result.findings.length === 0
-      ? "（无 findings）"
-      : joinReadableGateItems(result.findings);
-    return `门下省打回重写，findings：${findings}`;
+  if (result.status === "bounce" || result.status === "escalate") {
+    return serializeReceipt(result.receipt);
   }
-  if (result.status === "unreadable") {
-    return `门下省官回执形状不可读（${result.officer}）：${result.reason}`;
-  }
+  // no_receipt
   return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
 export class GatekeeperDecisionError extends Error {
   readonly result: GatekeeperNonPassResult;
-  constructor(result: GatekeeperNonPassResult) {
-    super(gatekeeperNonPassMessage(result));
+  constructor(result: GatekeeperNonPassResult, message?: string) {
+    super(message ?? gatekeeperNonPassMessage(result));
     this.name = "GatekeeperDecisionError";
     this.result = result;
   }
@@ -45,5 +50,17 @@ export class WorkerUnfinishedReasonReminderError extends Error {
   constructor() {
     super("本次 unfinished 回执未含 reason；本接缝缺由至多打回两次。");
     this.name = "WorkerUnfinishedReasonReminderError";
+  }
+}
+
+/**
+ * Parent seat status unreadable for queueing (#753).
+ * Correctable back to the parent itself — not a gate officer bounce, no officer field.
+ */
+export class ParentQueueReaskError extends Error {
+  readonly code = "parent_queue_reask" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "ParentQueueReaskError";
   }
 }

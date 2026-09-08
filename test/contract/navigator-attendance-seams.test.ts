@@ -639,7 +639,6 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         stopKeepalive() {} };
       createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
-        auditSoulCompliance: async () => ({ status: "pass" }),
         loadNavigatorWorkContext: async () => ({
           subjectKey: `${runDir}/work`,
           subject: prose,
@@ -716,7 +715,6 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
 
     createPiRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
-      auditSoulCompliance: async () => ({ status: "pass" }),
       // Production soft miss: session_start has no materials yet (no throw/poison).
       loadNavigatorWorkContext: async () => ({
         subjectKey: join(home, ".ak/work"),
