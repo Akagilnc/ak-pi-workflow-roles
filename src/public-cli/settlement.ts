@@ -44,6 +44,7 @@ import {
 // COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
 // interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -375,12 +376,36 @@ export function formatFailureStderrDiagnostic(failure: ControlledFailure): strin
   return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 
-/** Pre-admission structural rejection: stderr only, no run, no Terminal. */
+/**
+ * #676 B: one cause face for public stderr — Error.message, else object JSON with
+ * status/body/headers when present, else String. Never wash objects to [object Object].
+ */
+export function formatErrorCauseDetail(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "object" && cause !== null) {
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return String(cause);
+    }
+  }
+  return String(cause);
+}
+
+/** Pre-admission structural rejection: stderr only, no run, no Terminal. Cause retained when present. */
 export function presentStructuralRejection(
-  error: { message: string },
+  error: { message: string; cause?: unknown },
   io: { stderr: (text: string) => void },
 ): void {
-  io.stderr(formatCliDiagnostic(error.message));
+  let message = error.message;
+  const cause = error.cause;
+  if (cause !== undefined) {
+    const detail = formatErrorCauseDetail(cause);
+    if (detail.trim().length > 0) {
+      message = `${message}; cause: ${detail}`;
+    }
+  }
+  io.stderr(formatCliDiagnostic(message));
 }
 
 /** ControlledFailure face without admitted-run Terminal (stdout body + stderr line). */
@@ -1520,6 +1545,34 @@ function toolResultText(message: SessionMessage): string {
     .trim();
 }
 
+/**
+ * #676 D1/J3: durable bind-target rejection on the current attempt → public no_receipt facts.
+ * Callers must learn they need explicit --pr without opening the session 正本.
+ * Authority is the latest bind-target toolResult only — a later success clears an earlier failure.
+ */
+function extractCollectorTargetBindRejection(
+  entries: readonly SessionEntry[],
+): { readonly diagnostic: string; readonly code?: string } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COLLECTOR_BIND_TARGET_TOOL) continue;
+    // Latest bind result wins: success means the attempt is no longer rejected.
+    if (message.isError !== true) return undefined;
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) return undefined;
+    const details = message.details;
+    const code =
+      isRecord(details) && typeof details.code === "string" && details.code.trim() !== ""
+        ? details.code
+        : undefined;
+    return code === undefined ? { diagnostic } : { diagnostic, code };
+  }
+  return undefined;
+}
+
 type BoundErroredToolCandidate = {
   candidate: unknown;
   diagnostic: string;
@@ -1697,7 +1750,9 @@ export function assertCollectorReceiptMatchesAdmitted(
       `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
     );
   }
-  if (receipt.prNumber !== admitted.prNumber) {
+  // #676 A: when admission left the target unbound, receipt.prNumber is the role bind.
+  // When admission bound explicitly/head-commit, receipt must match.
+  if (admitted.prNumber !== undefined && receipt.prNumber !== admitted.prNumber) {
     throw collectorReceiptBindingFailure(
       `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
     );
@@ -2787,7 +2842,7 @@ export async function publishCollectorArtifacts(
       {
         runId: admitted.runId,
         role: "collector",
-        prNumber: admitted.prNumber,
+        ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
         repository: admitted.repository.canonical,
         manifestDigest: admitted.manifestDigest,
         sessionDirectory: coordinates.sessionDirectory,
@@ -4178,7 +4233,19 @@ export async function settleFailureTerminalResult(
         try {
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
-            const decisiveFacts: NoReceiptLifecycleFacts = facts;
+            let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
+            // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
+            if (admitted.role === "collector") {
+              const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
+              if (bindRejection !== undefined) {
+                decisiveFacts = {
+                  ...facts,
+                  targetBindRejected: true,
+                  targetBindDiagnostic: bindRejection.diagnostic,
+                  ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
+                };
+              }
+            }
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
             return withOptionalGateProjection(
               {
@@ -4284,6 +4351,15 @@ export function presentFailureTerminal(
     io.stderr(formatFailureStderrDiagnostic({
       cause: terminal.roleOutcome.cause,
       diagnostic: terminal.roleOutcome.diagnostic,
+    }));
+    return;
+  }
+  // #676 D1/J3: no_receipt stays lawful exit 0; surface durable target-bind clarification on stderr.
+  const bindDiagnostic = terminal.roleOutcome.decisiveFacts.targetBindDiagnostic;
+  if (typeof bindDiagnostic === "string" && bindDiagnostic.trim() !== "") {
+    io.stderr(formatFailureStderrDiagnostic({
+      cause: "output",
+      diagnostic: bindDiagnostic,
     }));
   }
 }

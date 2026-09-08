@@ -88,6 +88,10 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 没有绑定直接陛下原话与明确 decision keys，不得标作陛下 authority。
 
+## 席位表与宿主配置（2026-09-09 陛下拍定）
+
+席位表（`ak-role config`：席位的 model／host／engine）与各宿主 CLI 自身的配置、登录、家目录，唯一真源＝陛下现役令与该 CLI 自己。工厂腿（将作监、修内司及一切被派工实例）不得改席位表、不得改任何宿主配置；单次需要别的宿主或模型，只用逐次旗 `--host` / `--model` / `--thinking`（#617 DK-5「单次调用可以覆盖默认设置」）；逐次旗覆盖不到的席（内闸席等）写进回执作发现，不改表。判例：2026-09-09 #645 将作监改真席位表致全局 CLI 报错；2026-09-05 #682。
+
 ## 修订通道
 
 Soul 与本文件的内容修订须经陛下亲自审定，工厂未获授权不得改动。
