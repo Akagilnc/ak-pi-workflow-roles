@@ -51,7 +51,7 @@ export type InspectorRunEnv = PostAdmissionEnv & {
    */
   reviewReask?: string;
   /**
-   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * #786 same-parent re-summons: verbatim parent-submission body.
    * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv 卷宗指针.
    */
   gateReviewInstruction?: string;
@@ -99,7 +99,7 @@ export async function runPublicInspector(
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
   // #747: parentRunPath is the pure 卷宗指针 path only — never reask/materials text.
-  // #753: gate re-ask / new-submission pointers ride summons.instruction on resume.
+  // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
@@ -129,7 +129,7 @@ export async function runPublicInspector(
     if (resumed !== undefined) return resumed;
     // Reask without a prior same-parent run cannot deliver the plain-language ask
     // on a fresh mint without inventing a second prompt path — fail loud (#753).
-    // gateReviewInstruction alone is resume-only; fresh mint keeps argv 卷宗指针.
+    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint keeps argv 卷宗指针.
     if (env.reviewReask !== undefined) {
       presentStructuralRejection(
         new CliUsageError(
