@@ -120,8 +120,9 @@ export function connectAcpStdio(options: {
     for (const waiter of pending.values()) waiter.reject(error);
     pending.clear();
   };
-  // One terminal path: any malformed/unsupported frame or process death closes stdin,
-  // kills the child, and settles every pending request with the same typed error.
+  // Framing corruption or a known required capability with unusable shape still
+  // closes the child. Unknown client methods are answered in-band (JSON-RPC
+  // method not found) and do not terminate the leg (#760).
   const terminate = (error: Error): void => {
     settleClosed(error);
     child.stdin.end();
@@ -142,7 +143,13 @@ export function connectAcpStdio(options: {
       for (const handler of notificationHandlers) handler(message.method, params);
       if (typeof message.id === "number") {
         if (message.method !== "session/request_permission") {
-          terminate(acpError("acp-unsupported-client-request", `Unsupported ACP client request: ${message.method}`));
+          // Vendor extensions (_x.ai/*, …) and any other unhandled client request:
+          // JSON-RPC method-not-found reply; session continues (#760).
+          child.stdin.write(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32601, message: `Method not found: ${message.method}` },
+          })}\n`);
           return;
         }
         const choices = Array.isArray(params.options) ? params.options : [];
