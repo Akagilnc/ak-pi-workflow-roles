@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
-import type { PublicCallableRole } from "./public-cli/registry.ts";
+import type { PublicCallableRole, PublicThinkingLevel } from "./public-cli/registry.ts";
 import type { RoleTurnHost } from "./host-contracts.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 
@@ -65,6 +65,16 @@ export type PublicSummonRequest = {
    * Never folded into argv / parent-run lookup keys (ADR 0079 卷宗指针 stays pure).
    */
   readonly gateReviewInstruction?: string;
+  /**
+   * Parent-invocation host axis (#617 / #645). Nested institutional legs inherit
+   * the live parent `--host` so a single public entry does not require mutating
+   * persistent seat host. Seat-table host still applies when this is unset.
+   */
+  readonly host?: string;
+  /** Parent-invocation model override (provider/model or bare model). */
+  readonly model?: string;
+  /** Parent-invocation thinking override (opaque). */
+  readonly thinking?: PublicThinkingLevel;
   /**
    * Offline test inject — same face as public CLI env.roleTurnHost. Production
    * summons leave this unset and use the seat-resolved host.
@@ -285,7 +295,16 @@ export async function summonPublicRole(
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
-  const seat = resolveEffectiveSeat(config, options.role, credentials);
+  // Nested legs inherit parent invocation host/model when provided (#645 review path).
+  const invocation =
+    options.host === undefined && options.model === undefined && options.thinking === undefined
+      ? undefined
+      : {
+        ...(options.host === undefined ? {} : { host: options.host }),
+        ...(options.model === undefined ? {} : { model: options.model }),
+        ...(options.thinking === undefined ? {} : { thinking: options.thinking }),
+      };
+  const seat = resolveEffectiveSeat(config, options.role, credentials, invocation);
   const env = {
     ...(await createSummonEnv({
       role: options.role,
@@ -411,6 +430,40 @@ export async function summonPublicRole(
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
+/** Read parent invocation host/model so nested officers inherit live --host (#645). */
+async function parentInvocationAxes(sourceRunDirectory: string): Promise<{ 
+  readonly host?: string;
+  readonly model?: string;
+  readonly thinking?: PublicThinkingLevel;
+}> {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const raw = JSON.parse(
+      await readFile(join(sourceRunDirectory, "invocation.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const host = typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
+    const provider = typeof raw.provider === "string" ? raw.provider : undefined;
+    const modelBare = typeof raw.model === "string" ? raw.model : undefined;
+    const model =
+      modelBare === undefined
+        ? undefined
+        : provider !== undefined && provider !== ""
+          ? `${provider}/${modelBare}`
+          : modelBare;
+    const thinking =
+      typeof raw.thinking === "string" && raw.thinking.trim() !== ""
+        ? (raw.thinking as PublicThinkingLevel)
+        : undefined;
+    return {
+      ...(host === undefined ? {} : { host }),
+      ...(model === undefined ? {} : { model }),
+      ...(thinking === undefined ? {} : { thinking }),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor";
   readonly sourceRunDirectory: string;
@@ -451,6 +504,9 @@ export async function summonGateOfficer(options: {
       submission: options.submission,
     });
   }
+  // Inherit parent live --host/--model so review roundtrip stays on one host
+  // without mutating persistent seat tables (#645 acceptance / seat-table law).
+  const parentAxes = await parentInvocationAxes(options.sourceRunDirectory);
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -461,6 +517,7 @@ export async function summonGateOfficer(options: {
     ...(gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction }),
+    ...parentAxes,
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
