@@ -54,6 +54,15 @@ export type PersistentSeatConfig = {
   host?: string;
 };
 
+/**
+ * #778: owner-registered provider name by host. Keyed seat-table provider →
+ * host → host-facing provider. Package code carries the map only — no built-in
+ * pairs. Unregistered (provider, host) pairs pass the seat provider through.
+ */
+export type ProviderHostAliases = Readonly<
+  Record<string, Readonly<Record<string, string>>>
+>;
+
 export type PublicCliConfig = {
   seats: Partial<Record<PublicConfigurableSeat, PersistentSeatConfig>>;
   /**
@@ -63,6 +72,11 @@ export type PublicCliConfig = {
    * bound (ADR 0035).
    */
   autoResumeLimit?: number;
+  /**
+   * #778: owner-registered provider→host aliases. Sibling of `seats`; never
+   * invents pairs. Absent or empty means pure pass-through.
+   */
+  providerAliases?: ProviderHostAliases;
   /**
    * #592: opaque seat rows this build does not own. Carried through every
    * parse→save cycle so a write never silently erases neighboring-line rows
@@ -293,6 +307,81 @@ export function setAutoResumeLimit(
   return { ...config, autoResumeLimit: parseAutoResumeLimit(limit) };
 }
 
+function requireNonEmptyToken(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return trimmed;
+}
+
+/**
+ * #778: register one owner provider→host alias. Opaque strings only — no host
+ * catalog check and no built-in provider pairs. Sibling keys (seats included)
+ * are preserved.
+ */
+export function setProviderHostAlias(
+  config: PublicCliConfig,
+  provider: string,
+  host: string,
+  alias: string,
+): PublicCliConfig {
+  const from = requireNonEmptyToken(provider, "provider");
+  const hostName = requireNonEmptyToken(host, "host");
+  const to = requireNonEmptyToken(alias, "alias");
+  const previous = config.providerAliases ?? {};
+  return {
+    ...config,
+    providerAliases: {
+      ...previous,
+      [from]: {
+        ...(previous[from] ?? {}),
+        [hostName]: to,
+      },
+    },
+  };
+}
+
+/** #778: drop one owner provider→host alias. Empty map collapses to absent. */
+export function unsetProviderHostAlias(
+  config: PublicCliConfig,
+  provider: string,
+  host: string,
+): PublicCliConfig {
+  const from = requireNonEmptyToken(provider, "provider");
+  const hostName = requireNonEmptyToken(host, "host");
+  const previous = config.providerAliases;
+  if (previous === undefined || previous[from] === undefined) return config;
+  const { [hostName]: _dropped, ...restHosts } = previous[from]!;
+  const nextForProvider =
+    Object.keys(restHosts).length === 0 ? undefined : restHosts;
+  const { [from]: _provider, ...restProviders } = previous;
+  const nextAliases =
+    nextForProvider === undefined
+      ? restProviders
+      : { ...restProviders, [from]: nextForProvider };
+  if (Object.keys(nextAliases).length === 0) {
+    const { providerAliases: _gone, ...rest } = config;
+    return rest;
+  }
+  return { ...config, providerAliases: nextAliases };
+}
+
+/**
+ * #778: project seat-table provider through owner aliases for one host.
+ * Unregistered pairs return the seat selection unchanged (pass-through).
+ */
+export function applyProviderHostAlias(
+  selection: SeatModelConfig | undefined,
+  host: string,
+  aliases: ProviderHostAliases | undefined,
+): SeatModelConfig | undefined {
+  if (selection === undefined || aliases === undefined) return selection;
+  const mapped = aliases[selection.provider]?.[host];
+  if (mapped === undefined) return selection;
+  return { ...selection, provider: mapped };
+}
+
 /**
  * Config-parse seam: persistent call axes belong to PUBLIC_CALLABLE_ROLES;
  * engine names need only path-safety syntax (no closed material catalog;
@@ -387,6 +476,7 @@ export function buildSeatModelCliArgs(model: SeatModelConfig | undefined): strin
 function serializePublicCliConfig(config: PublicCliConfig): {
   seats: Record<string, unknown>;
   autoResumeLimit?: number;
+  providerAliases?: ProviderHostAliases;
 } {
   return {
     // Known seats win on any key clash; by construction the two maps are
@@ -398,7 +488,46 @@ function serializePublicCliConfig(config: PublicCliConfig): {
     ...(config.autoResumeLimit === undefined
       ? {}
       : { autoResumeLimit: config.autoResumeLimit }),
+    ...(config.providerAliases === undefined ||
+    Object.keys(config.providerAliases).length === 0
+      ? {}
+      : { providerAliases: config.providerAliases }),
   };
+}
+
+function parseProviderHostAliases(value: unknown): ProviderHostAliases {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("public CLI config.providerAliases must be an object");
+  }
+  const out: Record<string, Record<string, string>> = {};
+  for (const [provider, byHost] of Object.entries(value as Record<string, unknown>)) {
+    if (provider.trim() === "") {
+      throw new Error("public CLI config.providerAliases provider key must be non-empty");
+    }
+    if (byHost === null || typeof byHost !== "object" || Array.isArray(byHost)) {
+      throw new Error(
+        `public CLI config.providerAliases[${provider}] must be an object`,
+      );
+    }
+    const hosts: Record<string, string> = {};
+    for (const [host, alias] of Object.entries(byHost as Record<string, unknown>)) {
+      if (host.trim() === "") {
+        throw new Error(
+          `public CLI config.providerAliases[${provider}] host key must be non-empty`,
+        );
+      }
+      if (typeof alias !== "string" || alias.trim() === "") {
+        throw new Error(
+          `public CLI config.providerAliases[${provider}][${host}] must be a non-empty string`,
+        );
+      }
+      hosts[host] = alias;
+    }
+    if (Object.keys(hosts).length > 0) {
+      out[provider] = hosts;
+    }
+  }
+  return out;
 }
 
 function parsePublicCliConfig(value: unknown): PublicCliConfig {
@@ -408,6 +537,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   const record = value as {
     seats?: unknown;
     autoResumeLimit?: unknown;
+    providerAliases?: unknown;
     unknownSeats?: unknown;
   };
   // #422 round-trip preservation: the sibling top-level key must survive every
@@ -415,6 +545,15 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   let autoResumeLimit: number | undefined;
   if (record.autoResumeLimit !== undefined) {
     autoResumeLimit = parseAutoResumeLimit(record.autoResumeLimit);
+  }
+  // #778: same survival duty as autoResumeLimit — owner aliases must not vanish
+  // on an unrelated seat write.
+  let providerAliases: ProviderHostAliases | undefined;
+  if (record.providerAliases !== undefined) {
+    const parsed = parseProviderHostAliases(record.providerAliases);
+    if (Object.keys(parsed).length > 0) {
+      providerAliases = parsed;
+    }
   }
   // #592: opaque bucket may already be present on an in-memory round-trip
   // (load→set→save calls parse again). Carry it before seats iteration so a
@@ -433,6 +572,7 @@ function parsePublicCliConfig(value: unknown): PublicCliConfig {
   const withOpaque = (seats: PublicCliConfig["seats"]): PublicCliConfig => ({
     seats,
     ...(autoResumeLimit === undefined ? {} : { autoResumeLimit }),
+    ...(providerAliases === undefined ? {} : { providerAliases }),
     ...(Object.keys(unknownSeats).length === 0 ? {} : { unknownSeats }),
   });
   if (record.seats === undefined) {
@@ -678,7 +818,23 @@ export function resolveEffectiveSeat(
     }
   }
 
-  return attachHostAxis(attachEngineAxis(modelSeat, config, invocation), config, invocation);
+  const withAxes = attachHostAxis(
+    attachEngineAxis(modelSeat, config, invocation),
+    config,
+    invocation,
+  );
+  // #778: host-facing provider is the seat-table value after owner aliases.
+  // Disk seats stay as written; only the effective selection is projected.
+  const selection = applyProviderHostAlias(
+    withAxes.selection,
+    withAxes.host,
+    config.providerAliases,
+  );
+  if (selection === undefined) {
+    const { selection: _dropped, ...rest } = withAxes;
+    return rest;
+  }
+  return { ...withAxes, selection };
 }
 
 export function effectiveSeatConfigurations(
