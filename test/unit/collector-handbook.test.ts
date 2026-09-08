@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { ActivationLedgerError } from "../../src/activation-ledger-topology.ts";
 import {
   createCollectorHandbookStore,
   resolveCollectorHandbookRoot,
@@ -60,4 +61,37 @@ test("#677 handbook store: missing session topology fails closed", () => {
     () => resolveCollectorHandbookRoot("/tmp/not-under-ak-roles/session.jsonl"),
     (error: unknown) => error instanceof Error && /books\//.test(error.message),
   );
+});
+
+test("#677 handbook read refuses pre-existing leaf symlink (ADR 0038)", async () => {
+  await withTempRoot("ak-collector-handbook-symlink-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const bookKey = "widgets-book";
+    const sessionPath = join(ledgerHome, "books", bookKey, "runs", "r1@collector", "session", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+
+    const placement = resolveCollectorHandbookRoot(sessionPath);
+    await mkdir(placement.root, { recursive: true });
+
+    const outside = join(home, "outside-secret.txt");
+    await writeFile(outside, "SECRET-OUTSIDE-LEDGER", "utf8");
+    await symlink(outside, join(placement.root, "general.md"));
+
+    const store = createCollectorHandbookStore({
+      ledgerHome: placement.ledgerHome,
+      handbookRoot: placement.root,
+      repositoryCanonical: "acme/widgets",
+      seedGeneral: "seed-must-not-mask-symlink",
+    });
+
+    await assert.rejects(
+      () => store.read(),
+      (error: unknown) => error instanceof ActivationLedgerError,
+    );
+
+    // Outside content must never have been admitted as handbook material.
+    // (Rejection is the contract; this asserts we did not quietly follow the link.)
+    const outsideBytes = await readFile(outside, "utf8");
+    assert.equal(outsideBytes, "SECRET-OUTSIDE-LEDGER");
+  });
 });

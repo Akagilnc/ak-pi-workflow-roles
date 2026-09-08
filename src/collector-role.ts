@@ -519,7 +519,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_HANDBOOK_WRITE_TOOL,
         label: "通进司手册写入",
-        description: "写入通用手册或当前仓库差异全文（整份替换）。内容为工作记忆，不把临时故障写成永久规则。",
+        description: "写入通用手册或当前仓库差异全文（整份替换）。",
         promptSnippet: "更新 bot 手册",
         parameters: handbookWriteSchema,
         async execute(toolCallId: string, params: HandbookWriteParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { writeFileAtomically } from "./atomic-write.ts";
 import {
   activationBookDirectory,
+  assertLedgerFileInsideHome,
   ensureRealDirectoryTree,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
@@ -90,7 +91,13 @@ export function createCollectorHandbookStore(input: {
   const repoDir = join(input.handbookRoot, "repos");
   const repoPath = join(repoDir, collectorHandbookRepoFileName(input.repositoryCanonical));
 
-  const readOptional = async (path: string): Promise<string | undefined> => {
+  /**
+   * ADR 0038: confine at the real read seam. Parent dirs must be physical under
+   * ledger home; the leaf must not be a pre-existing symlink (even in-home).
+   */
+  const readOptional = async (path: string, parentDir: string): Promise<string | undefined> => {
+    ensureRealDirectoryTree(input.ledgerHome, parentDir);
+    assertLedgerFileInsideHome(path, input.ledgerHome);
     try {
       return await readFile(path, "utf8");
     } catch (error) {
@@ -103,8 +110,8 @@ export function createCollectorHandbookStore(input: {
     root: input.handbookRoot,
     repositoryCanonical: input.repositoryCanonical,
     async read() {
-      const bookGeneral = await readOptional(generalPath);
-      const bookRepo = await readOptional(repoPath);
+      const bookGeneral = await readOptional(generalPath, input.handbookRoot);
+      const bookRepo = await readOptional(repoPath, repoDir);
       if (bookGeneral !== undefined) {
         return {
           general: bookGeneral,
@@ -147,6 +154,7 @@ export function createCollectorHandbookStore(input: {
       if (scope === "repo") {
         ensureRealDirectoryTree(input.ledgerHome, repoDir);
       }
+      assertLedgerFileInsideHome(path, input.ledgerHome);
       await writeFileAtomically(path, body);
       return {
         scope,
