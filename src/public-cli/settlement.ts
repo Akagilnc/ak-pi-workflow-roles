@@ -1548,6 +1548,7 @@ function toolResultText(message: SessionMessage): string {
 /**
  * #676 D1/J3: durable bind-target rejection on the current attempt → public no_receipt facts.
  * Callers must learn they need explicit --pr without opening the session 正本.
+ * Authority is the latest bind-target toolResult only — a later success clears an earlier failure.
  */
 function extractCollectorTargetBindRejection(
   entries: readonly SessionEntry[],
@@ -1557,9 +1558,11 @@ function extractCollectorTargetBindRejection(
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
-    if (message.toolName !== COLLECTOR_BIND_TARGET_TOOL || message.isError !== true) continue;
+    if (message.toolName !== COLLECTOR_BIND_TARGET_TOOL) continue;
+    // Latest bind result wins: success means the attempt is no longer rejected.
+    if (message.isError !== true) return undefined;
     const diagnostic = toolResultText(message);
-    if (diagnostic.length === 0) continue;
+    if (diagnostic.length === 0) return undefined;
     const details = message.details;
     const code =
       isRecord(details) && typeof details.code === "string" && details.code.trim() !== ""
