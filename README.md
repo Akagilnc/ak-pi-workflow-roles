@@ -59,13 +59,11 @@ ak-role config unset-engine judge
 ak-role config set-host judge grok-build
 ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
-ak-role config set-provider-alias xai hermes xai-oauth
-ak-role config unset-provider-alias xai hermes
 ```
 
 **Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
 
-**Provider host alias (#778):** seat rows keep one provider name; `config set-provider-alias <provider> <host> <alias>` registers an owner map so the same row hands the host the name it recognizes. Unregistered pairs pass the seat provider through unchanged — the package never invents pairs.
+**Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 
 For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`. The persistent file is machine-wide and shared across CLI builds: seat keys this build does not know are skipped on read (not an error); unknown field-level keys on known seats keep their existing tolerance.
 

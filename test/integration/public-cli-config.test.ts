@@ -560,7 +560,7 @@ test("load skips unknown seat keys without failing the shared config", async () 
 });
 
 // #592 write-path: unknown seat rows must survive load→set→save the same way
-// #422 / #778 keep sibling top-level keys — shared-file neighbor lines must not be
+// #422 keeps sibling top-level keys — shared-file neighbor lines must not be
 // silently erased by any config write from this build.
 test("unknown seat rows survive set→save without entering resolve/enum", async () => {
   await withTempHome(async (home) => {
@@ -586,8 +586,6 @@ test("unknown seat rows survive set→save without entering resolve/enum", async
             "future-seat-from-newer-cli": foreignRow,
           },
           autoResumeLimit: 4,
-          // #778 sibling of seats/autoResumeLimit — must survive the same write.
-          providerAliases: { xai: { hermes: "xai-oauth" } },
         },
         null,
         2,
@@ -613,7 +611,6 @@ test("unknown seat rows survive set→save without entering resolve/enum", async
     const raw = JSON.parse(await readFile(path, "utf8")) as {
       seats: Record<string, unknown>;
       autoResumeLimit?: number;
-      providerAliases?: unknown;
       unknownSeats?: unknown;
     };
     // Disk shape stays seats-only for foreign rows — no parallel top-level dump.
@@ -624,9 +621,8 @@ test("unknown seat rows survive set→save without entering resolve/enum", async
       model: "grok-4.5",
       thinking: "medium",
     });
-    // #422 / #778 siblings must still survive the same write.
+    // #422 sibling must still survive the same write.
     assert.equal(raw.autoResumeLimit, 4);
-    assert.deepEqual(raw.providerAliases, { xai: { hermes: "xai-oauth" } });
 
     const reloaded = await loadPublicCliConfig(home);
     assert.equal(

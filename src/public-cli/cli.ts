@@ -28,14 +28,17 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   setPersistentSeatHost,
-  setProviderHostAlias,
-  unsetProviderHostAlias,
   validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import {
+  loadHostProvidersTable,
+  projectHostFacingProvider,
+  renderHostProvidersTable,
+} from "./host-providers.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -428,23 +431,36 @@ function createRoleEnvironment(
 
   // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
   // come from the live seat table (invocation flag → persistent → default).
+  // #788 expectation 2: select a registered host first; only then project the
+  // host-facing provider (table > unique directory > fail). Bad host never
+  // reaches model resolution.
+  const roleTurnHost = resolveRoleTurnHost(env, {
+    role,
+    seat: options.seat,
+    principalAuthority: env.principalAuthority!,
+    ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
+  const hostFacingSelection =
+    options.seat.selection === undefined
+      ? undefined
+      : projectHostFacingProvider(
+          options.seat.selection,
+          options.seat.host,
+          loadHostProvidersTable(options.home),
+          options.home,
+        );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
     agentDir: options.agentDir,
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
-    roleTurnHost: resolveRoleTurnHost(env, {
-      role,
-      seat: options.seat,
-      principalAuthority: env.principalAuthority!,
-      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    }),
+    roleTurnHost,
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -771,7 +787,7 @@ function renderHelp(): string {
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
-    "Provider host alias: ak-role config set-provider-alias <provider> <host> <alias> | unset-provider-alias <provider> <host>",
+    "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Effective seats: ak-role roles",
   );
@@ -900,7 +916,7 @@ function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
   return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
 }
 
-function renderConfig(config: PublicCliConfig): string {
+function renderConfig(config: PublicCliConfig, home: string): string {
   const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
   const rows = projectConfigDisplaySeats(config);
   if (rows.length === 0) {
@@ -912,17 +928,9 @@ function renderConfig(config: PublicCliConfig): string {
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
   lines.push(`autoResumeLimit\t${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
-  // #778: owner-registered provider→host aliases (disk face; seats stay as written).
-  const aliases = config.providerAliases;
-  if (aliases !== undefined) {
-    for (const provider of Object.keys(aliases).sort()) {
-      const byHost = aliases[provider]!;
-      for (const host of Object.keys(byHost).sort()) {
-        lines.push(`providerAlias\t${provider}\t${host}\t${byHost[host]}`);
-      }
-    }
-  }
-  return `${lines.join("\n")}\n`;
+  // #788: owner host-providers table as written on disk (separate file).
+  const hostProvidersBlock = renderHostProvidersTable(loadHostProvidersTable(home));
+  return `${lines.join("\n")}\n${hostProvidersBlock}`;
 }
 
 async function runConfigCommand(
@@ -942,7 +950,7 @@ async function runConfigCommand(
       );
       return 0;
     }
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -971,7 +979,7 @@ async function runConfigCommand(
       config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -993,7 +1001,7 @@ async function runConfigCommand(
       seat,
     );
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1011,7 +1019,7 @@ async function runConfigCommand(
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1035,7 +1043,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1057,7 +1065,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1090,48 +1098,7 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
-    return 0;
-  }
-
-  // #778: owner-registered provider→host alias (opaque strings; no host catalog).
-  if (args[0] === "set-provider-alias") {
-    if (args.length !== 4) {
-      throw new CliUsageError(
-        "usage: ak-role config set-provider-alias <provider> <host> <alias>",
-      );
-    }
-    let config = await loadAndValidateConfig(home, packageRoot);
-    try {
-      config = setProviderHostAlias(config, args[1]!, args[2]!, args[3]!);
-    } catch (error) {
-      throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
-    await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
-    return 0;
-  }
-
-  if (args[0] === "unset-provider-alias") {
-    if (args.length !== 3) {
-      throw new CliUsageError(
-        "usage: ak-role config unset-provider-alias <provider> <host>",
-      );
-    }
-    let config = await loadAndValidateConfig(home, packageRoot);
-    try {
-      config = unsetProviderHostAlias(config, args[1]!, args[2]!);
-    } catch (error) {
-      throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
-    await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 

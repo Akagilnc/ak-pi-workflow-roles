@@ -167,12 +167,6 @@ function projectSeatHost(seat: EffectiveSeat): { host?: string } {
   return seat.host === undefined ? {} : { host: seat.host };
 }
 
-function projectSeatModel(
-  seat: EffectiveSeat,
-): { model?: import("./public-cli/config.ts").SeatModelConfig } {
-  return seat.selection === undefined ? {} : { model: seat.selection };
-}
-
 async function createSummonEnv(options: {
   readonly role: PublicCallableRole;
   readonly home: string;
@@ -243,6 +237,19 @@ async function createSummonEnv(options: {
       },
     };
   }
+  // #788: host is registered above; only then project host-facing provider.
+  const { loadHostProvidersTable, projectHostFacingProvider } = await import(
+    "./public-cli/host-providers.ts"
+  );
+  const hostFacingSelection =
+    options.seat.selection === undefined
+      ? undefined
+      : projectHostFacingProvider(
+          options.seat.selection,
+          hostName,
+          loadHostProvidersTable(options.home),
+          options.home,
+        );
   return {
     home: options.home,
     principalAuthority,
@@ -252,7 +259,7 @@ async function createSummonEnv(options: {
     roleTurnHost,
     cwd: options.cwd,
     credentials: options.credentials,
-    ...projectSeatModel(options.seat),
+    ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
   };
