@@ -172,7 +172,7 @@ const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
   ...(roleTurnHost === undefined ? {} : { roleTurnHost }),
 });
 
-test("production adapter table registers grok-build and keeps pi selectable", async () => homeTest(async (home) => {
+test("production adapter table registers grok-build and hermes and keeps pi selectable", async () => homeTest(async (home) => {
   let piTurns = 0;
   const countingPi: RoleTurnHost = {
     executeTurn: async () => {
@@ -202,7 +202,7 @@ test("production adapter table registers grok-build and keeps pi selectable", as
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
-    registeredHosts: ["pi", "grok-build"],
+    registeredHosts: ["pi", "grok-build", "hermes"],
   });
   assert.equal(piTurns, 2);
 }));
