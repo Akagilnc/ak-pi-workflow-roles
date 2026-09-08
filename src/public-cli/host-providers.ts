@@ -103,21 +103,32 @@ export function hostCatalogOffersModel(
 /**
  * Providers in the hermes catalog that offer `seatModel`.
  * Reads `~/.hermes/provider_models_cache.json` under the given home.
- * Missing/unreadable cache → empty list (zero → loud failure upstream).
+ * Missing file (ENOENT) → empty list (zero → loud failure upstream).
+ * Other read/parse failures keep their identity — never washed as "no model".
  */
 export function listHermesProvidersForModel(
   home: string,
   seatModel: string,
 ): readonly string[] {
   const path = hermesProviderModelsCachePath(home);
-  let raw: unknown;
+  let text: string;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  } catch {
-    return [];
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw error;
   }
+  const raw: unknown = JSON.parse(text);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return [];
+    throw new Error(
+      `hermes provider_models_cache.json must be an object: ${path}`,
+    );
   }
   const found: string[] = [];
   for (const [provider, entry] of Object.entries(raw as Record<string, unknown>)) {

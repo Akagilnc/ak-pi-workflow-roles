@@ -31,12 +31,12 @@ import {
   validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
-  type HostProviderContext,
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
 import {
   loadHostProvidersTable,
+  projectHostFacingProvider,
   renderHostProvidersTable,
 } from "./host-providers.ts";
 import { seatModelOnly } from "./registry.ts";
@@ -431,23 +431,36 @@ function createRoleEnvironment(
 
   // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
   // come from the live seat table (invocation flag → persistent → default).
+  // #788 expectation 2: select a registered host first; only then project the
+  // host-facing provider (table > unique directory > fail). Bad host never
+  // reaches model resolution.
+  const roleTurnHost = resolveRoleTurnHost(env, {
+    role,
+    seat: options.seat,
+    principalAuthority: env.principalAuthority!,
+    ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
+  const hostFacingSelection =
+    options.seat.selection === undefined
+      ? undefined
+      : projectHostFacingProvider(
+          options.seat.selection,
+          options.seat.host,
+          loadHostProvidersTable(options.home),
+          options.home,
+        );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
     agentDir: options.agentDir,
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
-    roleTurnHost: resolveRoleTurnHost(env, {
-      role,
-      seat: options.seat,
-      principalAuthority: env.principalAuthority!,
-      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    }),
+    roleTurnHost,
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-    ...(options.seat.selection === undefined ? {} : { model: options.seat.selection }),
+    ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -920,10 +933,6 @@ function renderConfig(config: PublicCliConfig, home: string): string {
   return `${lines.join("\n")}\n${hostProvidersBlock}`;
 }
 
-function hostProviderContextFor(home: string): HostProviderContext {
-  return { home, hostProviders: loadHostProvidersTable(home) };
-}
-
 async function runConfigCommand(
   args: readonly string[],
   home: string,
@@ -1177,7 +1186,6 @@ export async function runAkRole(
         config,
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       io.stdout(renderRoles(seats));
       return { exitCode: 0 };
@@ -1232,7 +1240,6 @@ export async function runAkRole(
         dispatch.seat,
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await dispatch.run(
         resumeRequest,
@@ -1269,7 +1276,6 @@ export async function runAkRole(
         "judge",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicJudge(
         parsed.args,
@@ -1295,7 +1301,6 @@ export async function runAkRole(
         "countersign",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicCountersign(
         parsed.args,
@@ -1321,7 +1326,6 @@ export async function runAkRole(
         "gleaner-left",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicGleanerLeft(
         parsed.args,
@@ -1347,7 +1351,6 @@ export async function runAkRole(
         "diarist",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicDiarist(
         parsed.args,
@@ -1373,7 +1376,6 @@ export async function runAkRole(
         "coder",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicCoder(
         parsed.args,
@@ -1399,7 +1401,6 @@ export async function runAkRole(
         "fixer",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicFixer(
         parsed.args,
@@ -1425,7 +1426,6 @@ export async function runAkRole(
         "collector",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicCollector(
         parsed.args,
@@ -1451,7 +1451,6 @@ export async function runAkRole(
         "reviewer",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicReviewer(
         parsed.args,
@@ -1477,7 +1476,6 @@ export async function runAkRole(
         "doctor",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicDoctor(
         parsed.args,
@@ -1503,7 +1501,6 @@ export async function runAkRole(
         "notary",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicNotary(
         parsed.args,
@@ -1528,7 +1525,6 @@ export async function runAkRole(
         "inspector",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicInspector(
         parsed.args,
@@ -1554,7 +1550,6 @@ export async function runAkRole(
         "merger",
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicMerger(
         parsed.args,
@@ -1584,7 +1579,6 @@ export async function runAkRole(
         parsed.command,
         credentials,
         invocationFromParsed(parsed),
-        hostProviderContextFor(home),
       );
       const result = await runPublicInstructionSeat(
         parsed.args,
