@@ -77,9 +77,8 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
     binaryFromHome: Object.freeze([".local", "bin", "claude"]),
     sessionBindingFile: "claude-headless-session.json",
     fixedArgs: Object.freeze([
-      // stream-json: last line is result; system/init lands in the stream for run evidence.
-      "--output-format", "stream-json",
-      "--verbose",
+      // One result envelope (not stream-json): typed receipt only; no event-stream copy.
+      "--output-format", "json",
       "--permission-mode", "bypassPermissions",
       // Empty sources: no user/project/local operator surface (envelope owns materials).
       "--setting-sources", "",

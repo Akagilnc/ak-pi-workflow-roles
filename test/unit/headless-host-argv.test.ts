@@ -5,14 +5,11 @@ import {
   headlessMcpConfigDocument,
   headlessTurnArgs,
 } from "../../src/headless-host/description.ts";
-import {
-  extractSystemInitEvent,
-  parseHeadlessCliStdout,
-} from "../../src/headless-host/role-turn-host.ts";
+import { parseHeadlessCliStdout } from "../../src/headless-host/role-turn-host.ts";
 import { HEADLESS_HOST_DESCRIPTIONS } from "../../src/host-descriptions.ts";
 import { terminatingToolJsonSchema } from "../../src/acp-host/role-envelope.ts";
 
-test("claude headless argv carries schema, system-prompt file, mcp-config, model, effort, session", () => {
+test("claude headless argv carries json receipt, schema, system-prompt file, mcp-config, model, effort, session", () => {
   const description = HEADLESS_HOST_DESCRIPTIONS.claude;
   assert.ok(description);
   const args = headlessTurnArgs({
@@ -27,6 +24,10 @@ test("claude headless argv carries schema, system-prompt file, mcp-config, model
   });
   assert.equal(args[0], "-p");
   assert.equal(args[1], "do the work");
+  assert.ok(args.includes("--output-format"));
+  assert.equal(args[args.indexOf("--output-format") + 1], "json");
+  assert.ok(!args.includes("stream-json"));
+  assert.ok(!args.includes("--verbose"));
   assert.ok(args.includes("--system-prompt-file"));
   assert.equal(args[args.indexOf("--system-prompt-file") + 1], "/tmp/sys.txt");
   assert.ok(args.includes("--json-schema"));
@@ -42,7 +43,6 @@ test("claude headless argv carries schema, system-prompt file, mcp-config, model
   assert.ok(args.includes("--strict-mcp-config"));
   assert.ok(args.includes("--setting-sources"));
   assert.equal(args[args.indexOf("--setting-sources") + 1], "");
-  // resume uses --resume, not --session-id
   const resumeArgs = headlessTurnArgs({
     description,
     prompt: "again",
@@ -80,24 +80,17 @@ test("headless MCP config projects ACP env rows into Claude object shape", () =>
   });
 });
 
-test("parseHeadlessCliStdout prefers result envelope; extractSystemInit finds init", () => {
-  const stream = [
-    JSON.stringify({ type: "system", subtype: "init", mcp_servers: [], plugins: [] }),
-    JSON.stringify({ type: "assistant", message: { content: "x" } }),
-    JSON.stringify({
-      type: "result",
-      subtype: "success",
-      is_error: false,
-      session_id: "sid",
-      structured_output: { status: "completed", report: "ok" },
-    }),
-  ].join("\n");
-  const result = parseHeadlessCliStdout(stream);
+test("parseHeadlessCliStdout reads one json result envelope", () => {
+  const doc = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    session_id: "sid",
+    structured_output: { status: "completed", report: "ok" },
+  });
+  const result = parseHeadlessCliStdout(doc);
   assert.equal(result?.session_id, "sid");
   assert.deepEqual(result?.structured_output, { status: "completed", report: "ok" });
-  const init = extractSystemInitEvent(stream) as { subtype?: string; mcp_servers?: unknown };
-  assert.equal(init?.subtype, "init");
-  assert.deepEqual(init?.mcp_servers, []);
 });
 
 test("terminatingToolJsonSchema forces draft-07 even when parameters declare another meta-schema", () => {

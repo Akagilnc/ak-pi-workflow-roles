@@ -1,7 +1,8 @@
 /**
  * Generic headless CLI RoleTurnHost (#645 / #752).
- * One process per turn: spawn → read stdout/exit → structured_output / MCP → envelope.
+ * One process per turn: spawn → read result envelope/exit → structured_output / MCP → envelope.
  * No reads of the host's private home; session id is package-owned binding only.
+ * No permanent stdout/stderr/init probe copies — sitian + binding are the dossier.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -33,6 +34,7 @@ function failure(
   name: string,
   code: string,
   details?: Readonly<Record<string, unknown>>,
+  diagnostic?: string,
 ): RoleTurnResult {
   return {
     code: null,
@@ -41,12 +43,13 @@ function failure(
     knownFailure: {
       cause,
       identity: { name, code },
+      ...(diagnostic === undefined ? {} : { diagnostic }),
       ...(details === undefined ? {} : { details }),
     },
   };
 }
 
-/** One headless CLI result envelope (claude `--output-format json` / stream-json last line). */
+/** One headless CLI result envelope (`--output-format json`). */
 export type HeadlessCliResult = Readonly<{
   session_id?: string;
   is_error?: boolean;
@@ -60,27 +63,25 @@ export type HeadlessCliResult = Readonly<{
 
 /**
  * Parse host stdout into the result envelope.
- * `json`: whole stdout is one object.
- * `stream-json`: NDJSON; last `type:"result"` (or last object with subtype) wins.
+ * Production uses `--output-format json` (one document). stream-json last-result
+ * parsing remains so a misconfigured description still yields a typed miss rather
+ * than a silent empty parse — not a permanent probe path.
  */
 export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | undefined {
   const trimmed = stdout.trim();
   if (trimmed === "") return undefined;
-  // Prefer a single JSON document (non-stream json mode).
   try {
     const single = JSON.parse(trimmed) as unknown;
     if (typeof single === "object" && single !== null && !Array.isArray(single)) {
       const record = single as HeadlessCliResult & { type?: unknown };
-      // Whole-doc mode is the result envelope; stream-json never arrives as one doc.
       if (record.type === undefined || record.type === "result" || record.structured_output !== undefined) {
         return record;
       }
     }
   } catch {
-    // fall through to NDJSON
+    // fall through
   }
-  // stream-json: only the result message (or any line carrying structured_output).
-  // Do not treat system/task_summary or other subtype lines as the envelope.
+  // Defensive: if a description still requests stream-json, keep only the result line.
   let last: HeadlessCliResult | undefined;
   for (const line of trimmed.split("\n")) {
     const text = line.trim();
@@ -99,21 +100,12 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
   return last;
 }
 
-/** Extract system/init (or first system) event from stream-json stdout for run evidence. */
-export function extractSystemInitEvent(stdout: string): unknown | undefined {
-  for (const line of stdout.split("\n")) {
-    const text = line.trim();
-    if (text === "") continue;
-    try {
-      const value = JSON.parse(text) as { type?: unknown; subtype?: unknown };
-      if (value.type === "system" && (value.subtype === "init" || value.subtype === undefined)) {
-        return value;
-      }
-    } catch {
-      // skip
-    }
-  }
-  return undefined;
+/** Bound stderr retained only for failure diagnostics (not a dossier copy). */
+const STDERR_DIAGNOSTIC_CAP = 16 * 1024;
+
+function clipDiagnostic(text: string): string {
+  if (text.length <= STDERR_DIAGNOSTIC_CAP) return text;
+  return `${text.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
 }
 
 function spawnHeadlessTurn(options: {
@@ -154,7 +146,12 @@ function spawnHeadlessTurn(options: {
       reject(Object.assign(new Error("headless host aborted"), { code: "host-aborted" }));
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      // Cap retained stderr: diagnostics only, not an unbounded transcript face.
+      if (stderr.length < STDERR_DIAGNOSTIC_CAP) {
+        stderr = clipDiagnostic(stderr + chunk);
+      }
+    });
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
@@ -173,6 +170,37 @@ function spawnHeadlessTurn(options: {
   });
 }
 
+function cleanupErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * If dispose/cleanup failed: success becomes typed failure; existing failure keeps
+ * its primary cause and records the cleanup error in details (failure-honesty).
+ */
+function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
+  const message = cleanupErrorMessage(cleanupError);
+  if (outcome.knownFailure === undefined) {
+    return failure(
+      "session",
+      "HeadlessDisposeFailure",
+      "dispose-failed",
+      { cleanupError: message },
+      message,
+    );
+  }
+  return {
+    ...outcome,
+    knownFailure: {
+      ...outcome.knownFailure,
+      details: {
+        ...(outcome.knownFailure.details ?? {}),
+        cleanupError: message,
+      },
+    },
+  };
+}
+
 /**
  * Main-session headless adapter. prepare() is the shared envelope boundary;
  * this module owns only CLI spawn / parse / session-id bind / resume loop.
@@ -184,7 +212,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const execution = serial.then(async (): Promise<RoleTurnResult> => {
         const prepared = await config.prepare(request);
         const systemPrompt = renderAcpSystemPromptOverride(prepared.systemPrompt);
-        let accepted = false;
+        let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
         try {
           // Same-host resume reuses the bound native session id via --resume.
           let sessionId = await config.sessionIdentity.load(request.principal);
@@ -240,9 +268,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             if (abortSignal?.aborted) {
               const closure = await prepared.closeRound();
               if ("failure" in closure) {
-                return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                outcome = { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                break;
               }
-              return failure("session", "HostAborted", "host-aborted", { sessionId });
+              outcome = failure("session", "HostAborted", "host-aborted", { sessionId });
+              break;
             }
 
             const args = headlessTurnArgs({
@@ -276,37 +306,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ) {
                 const closure = await prepared.closeRound();
                 if ("failure" in closure) {
-                  return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                  outcome = { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+                  break;
                 }
-                return failure("session", "HostAborted", "host-aborted", { sessionId });
+                outcome = failure("session", "HostAborted", "host-aborted", { sessionId });
+                break;
               }
-              // Spawn itself failed (binary missing, etc.) — activation surface.
               const message = error instanceof Error ? error.message : String(error);
-              return failure("activation", "HeadlessSpawnFailure", "spawn-failed", {
+              outcome = failure("activation", "HeadlessSpawnFailure", "spawn-failed", {
                 diagnostic: message,
                 binary: config.binary,
-              });
-            }
-
-            // Persist raw stdout + system/init into the run directory (sitian home of
-            // the leg). Code never reads ~/.claude; this is our own process output.
-            try {
-              await writeFile(join(request.runDirectory, `headless-stdout-${attempt}.log`), spawned.stdout, "utf8");
-              await writeFile(join(request.runDirectory, `headless-stderr-${attempt}.log`), spawned.stderr, "utf8");
-              const initEvent = extractSystemInitEvent(spawned.stdout);
-              if (initEvent !== undefined) {
-                await writeFile(
-                  join(request.runDirectory, `headless-system-init-${attempt}.json`),
-                  `${JSON.stringify(initEvent)}\n`,
-                  "utf8",
-                );
-              }
-            } catch {
-              // Evidence write must not override the turn outcome.
+              }, message);
+              break;
             }
 
             if (spawned.timedOut) {
-              return {
+              outcome = {
                 code: spawned.code,
                 stderr: spawned.stderr,
                 timedOut: true,
@@ -316,21 +331,23 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   details: { sessionId },
                 },
               };
+              break;
             }
 
             const envelope = parseHeadlessCliStdout(spawned.stdout);
             if (envelope === undefined) {
-              return {
+              outcome = {
                 code: spawned.code,
                 stderr: spawned.stderr,
                 timedOut: false,
                 knownFailure: {
                   cause: "output",
                   identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
-                  diagnostic: spawned.stderr.trim() || "headless CLI produced no parseable result",
+                  diagnostic: clipDiagnostic(spawned.stderr.trim() || "headless CLI produced no parseable result"),
                   details: { sessionId, exitCode: spawned.code },
                 },
               };
+              break;
             }
 
             // Bind the host-reported session id (authoritative for --resume).
@@ -346,50 +363,58 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   : envelope.is_error === true
                     ? "is_error"
                     : "cli-error";
-              const knownFailure: RoleTurnKnownFailure = {
-                cause: "output",
-                identity: {
-                  name: "HeadlessCliError",
-                  code: errorCode,
-                },
-                diagnostic: typeof envelope.result === "string"
-                  ? envelope.result
-                  : Array.isArray(envelope.errors)
-                    ? envelope.errors.map(String).join("\n")
-                    : spawned.stderr.trim() || "headless CLI reported is_error",
-                details: {
-                  sessionId,
-                  subtype: envelope.subtype,
-                  errors: envelope.errors,
-                  exitCode: spawned.code,
+              const diagnostic = typeof envelope.result === "string"
+                ? envelope.result
+                : Array.isArray(envelope.errors)
+                  ? envelope.errors.map(String).join("\n")
+                  : clipDiagnostic(spawned.stderr.trim() || "headless CLI reported is_error");
+              outcome = {
+                code: spawned.code,
+                stderr: spawned.stderr,
+                timedOut: false,
+                knownFailure: {
+                  cause: "output",
+                  identity: { name: "HeadlessCliError", code: errorCode },
+                  diagnostic,
+                  details: {
+                    sessionId,
+                    subtype: envelope.subtype,
+                    errors: envelope.errors,
+                    exitCode: spawned.code,
+                  },
                 },
               };
-              return { code: spawned.code, stderr: spawned.stderr, timedOut: false, knownFailure };
+              break;
             }
 
             // Dual receipt: structured_output (schema channel) and/or terminating MCP tool.
-            // Missing structured_output is not automatic failure when MCP already submitted.
             if (envelope.structured_output !== undefined) {
               await prepared.ingestStructuredOutput(envelope.structured_output);
             }
             const closure = await prepared.closeRound();
             if (closure.accepted) {
-              accepted = true;
-              return { code: 0, stderr: spawned.stderr, timedOut: false };
+              outcome = { code: 0, stderr: "", timedOut: false };
+              break;
             }
             if ("failure" in closure) {
-              return { code: null, stderr: spawned.stderr, timedOut: false, knownFailure: closure.failure };
+              outcome = { code: null, stderr: spawned.stderr, timedOut: false, knownFailure: closure.failure };
+              break;
             }
             // Correctable rejection → resume same session with plain resubmit prompt.
             prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal structured output (or the sole terminating tool call). Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
             sessionKind = "resume";
+            if (attempt === 7) {
+              outcome = failure("output", "HeadlessRoundLimit", "round-retry-limit", { sessionId });
+            }
           }
-          return failure("output", "HeadlessRoundLimit", "round-retry-limit", { sessionId });
         } finally {
-          try { await prepared.dispose?.(); }
-          catch { /* Preserve the original turn result or failure. */ }
-          void accepted;
+          try {
+            await prepared.dispose?.();
+          } catch (cleanupError) {
+            outcome = withCleanupFailure(outcome, cleanupError);
+          }
         }
+        return outcome;
       });
       serial = execution.then(() => undefined, () => undefined);
       return execution;
