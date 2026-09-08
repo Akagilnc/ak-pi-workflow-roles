@@ -276,10 +276,14 @@ export async function summonPublicRole(
     loadPublicCliConfig,
     resolveEffectiveSeat,
   } = await import("./public-cli/config.ts");
+  const { loadHostProvidersTable } = await import("./public-cli/host-providers.ts");
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
-  const seat = resolveEffectiveSeat(config, options.role, credentials);
+  const seat = resolveEffectiveSeat(config, options.role, credentials, undefined, {
+    home,
+    hostProviders: loadHostProvidersTable(home),
+  });
   const env = {
     ...(await createSummonEnv({
       role: options.role,

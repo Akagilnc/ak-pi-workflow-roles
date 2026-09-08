@@ -59,13 +59,11 @@ ak-role config unset-engine judge
 ak-role config set-host judge grok-build
 ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
-ak-role config set-provider-alias xai hermes xai-oauth
-ak-role config unset-provider-alias xai hermes
 ```
 
 **宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、游奕使、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
 
-**Provider 宿主别名（#778）：** 席位行只写一份 provider 名；`config set-provider-alias <provider> <host> <alias>` 由 owner 在席位表登记映射，使同一行在指定宿主下交出该宿主认得的名。未登记的 (provider, host) 原样透传——包内不内置任何对照。
+**宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
