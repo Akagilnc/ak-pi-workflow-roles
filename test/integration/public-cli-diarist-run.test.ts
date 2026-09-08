@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import type { DiaristCommitFacts } from "../../src/diarist.ts";
@@ -223,15 +223,15 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
     assert.equal(facts?.ticketNumber ?? null, null);
     assert.equal(facts?.sitian, undefined);
 
-    // 真无票→无录: ticket-provenance category under this book must stay unminted.
-    const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
-    const { activationBookDirectory } = await import("../../src/activation-ledger-topology.ts");
-    const bookDir = activationBookDirectory(home, resolveBookKeyFromGit(project));
-    const provenanceRoot = join(bookDir, "ticket-provenance");
+    // 真无票→无录: production volume category (via resolveTicketProvenanceVolume) unminted.
+    const sample = resolveTicketProvenanceVolume(1, project, home);
+    const provenanceCategory = dirname(sample.volumeDir);
+    assert.equal(existsSync(sample.recordFile), false);
+    assert.equal(existsSync(sample.humanViewFile), false);
     assert.equal(
-      existsSync(provenanceRoot),
+      existsSync(provenanceCategory),
       false,
-      `true-unbound must not mint ticket-provenance under ${provenanceRoot}`,
+      `true-unbound must not mint ticket-provenance under ${provenanceCategory}`,
     );
   });
 });
