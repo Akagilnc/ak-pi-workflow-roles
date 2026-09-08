@@ -378,9 +378,7 @@ export function applyProviderHostAlias(
 ): SeatModelConfig | undefined {
   if (selection === undefined || aliases === undefined) return selection;
   const mapped = aliases[selection.provider]?.[host];
-  if (mapped === undefined || mapped === selection.provider) {
-    return selection;
-  }
+  if (mapped === undefined) return selection;
   return { ...selection, provider: mapped };
 }
 
