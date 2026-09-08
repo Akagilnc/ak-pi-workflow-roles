@@ -3,8 +3,8 @@ import {
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
 import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
-import { isAuditEscalationProjection, projectAuditEscalation } from "./audit-escalation.ts";
-import { GatekeeperEscalationError } from "./gatekeeper-role.ts";
+import { isAuditEscalationProjection } from "./audit-escalation.ts";
+
 
 import {
   acceptedFacts,
@@ -358,18 +358,6 @@ export function createSubmissionLedgerHost(
           // correctable-rejection path as execute-thrown rejections below. The
           // candidate is booked first so the bounced attempt stays observable.
           append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
-          const projectOfficerEscalation = (
-            officer: "inspector" | "notary",
-            original: Record<string, unknown>,
-            deliveredOutput: Record<string, unknown> = original,
-          ): HostToolResult<unknown> => projectAuditEscalation({
-            ...original,
-            status: "escalate",
-            officer,
-            reason: original.reason === undefined
-              ? `门下省${officer}上呈（原卷未附 reason）`
-              : original.reason,
-          }, deliveredOutput);
           let result: HostToolResult<unknown>;
           try {
             failOnInfrastructureFailureDeclaration(
@@ -385,14 +373,9 @@ export function createSubmissionLedgerHost(
             );
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (error instanceof GatekeeperEscalationError) {
-              const decision = error.gatekeeper as unknown as Record<string, unknown>;
-              result = projectOfficerEscalation(
-                error.gatekeeper.officer,
-                decision,
-                params as Record<string, unknown>,
-              );
-            } else if (isCorrectableExecuteError(error)) {
+            // #753: gate no longer throws GatekeeperEscalationError to select parent
+            // next-step. Officer bounce|escalate returns as correctable with raw receipt.
+            if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",
                 attemptId,
@@ -413,16 +396,9 @@ export function createSubmissionLedgerHost(
               throw error;
             }
           }
-          if (
-            (role === "inspector" || role === "notary") &&
-            typeof result.details === "object" &&
-            result.details !== null &&
-            !Array.isArray(result.details) &&
-            (result.details as Record<string, unknown>).status === "escalate"
-          ) {
-            const details = result.details as Record<string, unknown>;
-            result = projectOfficerEscalation(role, details);
-          }
+          // #753 escalate-thrown-verbatim: officer escalate seals as accepted with the
+          // raw receipt — no projectOfficerEscalation rewrite, no fabricated reason.
+          // Compliance seats still return live audit_escalation projections below.
           if (isAuditEscalationProjection(result.details)) {
             const candidates = rounds.get(attemptId) ?? [];
             candidates.push({

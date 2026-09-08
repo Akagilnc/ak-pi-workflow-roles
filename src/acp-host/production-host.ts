@@ -14,7 +14,6 @@ import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../c
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import { loadDoctorCase } from "../doctor-evidence.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
-import { createPiJudgeAuditor } from "../judge-auditor.ts";
 import { createProductionMergerGitState } from "../merger-git-state.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "../navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
@@ -42,7 +41,6 @@ const navigatorRoutePlaybookPath = fileURLToPath(
 
 /** Host-neutral packaged role runtime deps for the ACP parent-process envelope. */
 export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
-  const judgeAuditor = createPiJudgeAuditor();
   const doctorAuditor = createPiDoctorAuditor();
   const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
@@ -80,8 +78,7 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-    // #590: four sub-legs on the shared institutional child seam (host-neutral).
-    auditSoulCompliance: (options) => judgeAuditor(options),
+    // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
     auditDoctorCompliance: (options) => doctorAuditor(options),
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),

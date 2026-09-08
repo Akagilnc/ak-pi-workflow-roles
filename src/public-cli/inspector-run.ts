@@ -44,6 +44,17 @@ import {
 export type InspectorRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #753 nested gate re-ask: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
+   */
+  reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv 卷宗指针.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -87,11 +98,18 @@ export async function runPublicInspector(
   // #771: no mechanical ticket match against instruction text; parent-run path only.
   // No bare catch→fresh: lookup/resume failures surface; only true absence mints new.
   const projectRoot = parsed.project ?? env.cwd;
+  // #747: parentRunPath is the pure 卷宗指针 path only — never reask/materials text.
+  // #753: gate re-ask / new-submission pointers ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
+      ...(resumeInstruction === undefined
+        ? {
+            instruction: parsed.instruction,
+            instructionEmpty: parsed.instruction.trim() === "",
+          }
+        : { instruction: resumeInstruction, instructionEmpty: false }),
       attachmentPaths: parsed.attachmentPaths,
     };
     const resumed = await tryResumeSameTicketSeatRun({
@@ -109,6 +127,18 @@ export async function runPublicInspector(
         ),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    // gateReviewInstruction alone is resume-only; fresh mint keeps argv 卷宗指针.
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "inspector review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   }
 
   let admitted: AdmittedInspectorInvocation;
