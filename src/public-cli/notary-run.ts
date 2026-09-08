@@ -53,7 +53,7 @@ export type NotaryRunEnv = PostAdmissionEnv & {
    */
   reviewReask?: string;
   /**
-   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * #786 same-parent re-summons: verbatim parent-submission body.
    * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
    */
   gateReviewInstruction?: string;
@@ -120,7 +120,7 @@ export async function runPublicNotary(
     throw error;
   }
   // #747: officer resume key is this parent source-run path (not ticket number).
-  // #753: gate re-ask and new-submission pointers share summons.instruction
+  // #753/#786: gate re-ask and verbatim submission body share summons.instruction
   // (reask wins when both present; no parallel stack).
   {
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
@@ -148,7 +148,7 @@ export async function runPublicNotary(
     if (resumed !== undefined) return resumed;
     // Reask without a prior same-parent run cannot deliver the plain-language ask
     // on a fresh mint without inventing a second prompt path — fail loud (#753).
-    // gateReviewInstruction alone is resume-only materials; fresh mint ignores it.
+    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint ignores it.
     if (env.reviewReask !== undefined) {
       presentStructuralRejection(
         new CliUsageError(

@@ -4,6 +4,7 @@ import type { HostContext } from "./host-contracts.ts";
 import {
   auditorRunDirectory,
   persistGateSubmissionCandidate,
+  readLatestSubmissionArguments,
 } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -89,6 +90,11 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
+  /**
+   * In-flight parent 交卷 body (tool-call arguments). Production default relays
+   * it verbatim on same-parent officer resume (#786).
+   */
+  submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -106,6 +112,14 @@ export type RunGatekeeperOptions = {
    * activation path (#675); inject only in offline tracers.
    */
   readonly summonOfficer?: GateOfficerSummon;
+  /**
+   * Offline test injects forwarded through the production default summonGateOfficer
+   * path (same faces as public CLI). Production leaves these unset.
+   */
+  readonly home?: string;
+  readonly packageRoot?: string;
+  readonly roleTurnHost?: import("./host-contracts.ts").RoleTurnHost;
+  readonly createRunId?: () => string;
 };
 
 export type GatekeeperPassHostActions = {
@@ -299,18 +313,16 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
-  // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  // Candidate path also rides same-parent officer resume as 人读材料 (#753 / #750).
-  const submissionCandidatePath = persistGateSubmissionCandidate(
-    runDirectory,
-    options.context,
-  );
+  // #632: Grok session.jsonl is header-only — freeze the in-memory tool-call leaf
+  // as a run artifact so dossier exploration still resolves. LLM→LLM resume does
+  // not ride this path: submission body goes verbatim on gateReviewInstruction (#786).
+  persistGateSubmissionCandidate(runDirectory, options.context);
+  const submission = readLatestSubmissionArguments(options.context);
   let summoned: PublicSummonResult;
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask, nextSubmission) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
@@ -318,12 +330,20 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
-          ...(submissionCandidatePath === undefined
-            ? {}
-            : { submissionCandidatePath }),
+          ...(nextSubmission === undefined ? {} : { submission: nextSubmission }),
+          ...(options.home === undefined ? {} : { home: options.home }),
+          ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+          ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+          ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
         });
       });
-    summoned = await summon(officer, runDirectory, options.signal, options.reask);
+    summoned = await summon(
+      officer,
+      runDirectory,
+      options.signal,
+      options.reask,
+      submission,
+    );
   } catch (error) {
     return {
       officer,
