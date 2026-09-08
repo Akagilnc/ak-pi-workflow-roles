@@ -106,11 +106,24 @@ export function createCollectorHandbookStore(input: {
    * ADR 0038: confine at the real read seam. Parent dirs must be physical under
    * ledger home; the leaf must not be a pre-existing symlink (even in-home).
    */
+  /** Sole UTF-8 budget seam — write and read share COLLECTOR_HANDBOOK_MAX_BYTES. */
+  const assertHandbookBudget = (body: string, label: string): number => {
+    const byteLength = Buffer.byteLength(body, "utf8");
+    if (byteLength > COLLECTOR_HANDBOOK_MAX_BYTES) {
+      throw new Error(
+        `通进司手册${label} UTF-8 至多 ${COLLECTOR_HANDBOOK_MAX_BYTES} 字节，收到 ${byteLength}`,
+      );
+    }
+    return byteLength;
+  };
+
   const readOptional = async (path: string, parentDir: string): Promise<string | undefined> => {
     ensureRealDirectoryTree(input.ledgerHome, parentDir);
     assertLedgerFileInsideHome(path, input.ledgerHome);
     try {
-      return await readFile(path, "utf8");
+      const body = await readFile(path, "utf8");
+      assertHandbookBudget(body, "正文");
+      return body;
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
@@ -135,6 +148,7 @@ export function createCollectorHandbookStore(input: {
       }
       const seed = input.seedGeneral;
       if (typeof seed === "string" && seed.length > 0) {
+        assertHandbookBudget(seed, "正文");
         return {
           general: seed,
           repo: bookRepo ?? "",
@@ -154,16 +168,8 @@ export function createCollectorHandbookStore(input: {
       };
     },
     async write(scope, body) {
-      // scope/body shape authority = collectorHandbookWriteArgsSchema (call site host parameters).
-      if (typeof body !== "string") {
-        throw new Error("通进司手册正文须为字符串");
-      }
-      const byteLength = Buffer.byteLength(body, "utf8");
-      if (byteLength > COLLECTOR_HANDBOOK_MAX_BYTES) {
-        throw new Error(
-          `通进司手册正文 UTF-8 至多 ${COLLECTOR_HANDBOOK_MAX_BYTES} 字节，收到 ${byteLength}`,
-        );
-      }
+      // body string shape = collectorHandbookWriteArgsSchema; byte budget is business (UTF-8).
+      const byteLength = assertHandbookBudget(body, "正文");
       ensureRealDirectoryTree(input.ledgerHome, input.handbookRoot);
       const path = scope === "general" ? generalPath : repoPath;
       if (scope === "repo") {

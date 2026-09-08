@@ -79,7 +79,7 @@ test("#677 handbook root uses platform separators only (literal backslash stays 
   });
 });
 
-test("#677 handbook write rejects over UTF-8 byte ceiling", async () => {
+test("#677 handbook write and read share UTF-8 byte ceiling", async () => {
   await withTempRoot("ak-collector-handbook-bound-", async (home) => {
     const ledgerHome = join(home, ".ak-roles");
     const bookKey = "widgets-book";
@@ -93,6 +93,11 @@ test("#677 handbook write rejects over UTF-8 byte ceiling", async () => {
     });
     const over = "x".repeat(COLLECTOR_HANDBOOK_MAX_BYTES + 1);
     await assert.rejects(() => store.write("general", over));
+
+    // Pre-existing / concurrent oversized file must fail at the read seam too.
+    await mkdir(placement.root, { recursive: true });
+    await writeFile(join(placement.root, "general.md"), over, "utf8");
+    await assert.rejects(() => store.read());
   });
 });
 
