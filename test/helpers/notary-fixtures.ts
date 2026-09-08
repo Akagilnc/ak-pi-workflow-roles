@@ -50,6 +50,17 @@ export async function seedCanonicalSourceRun(
     })}\n`,
     "utf8",
   );
+  // Gate source runs necessarily own invocation.json (#645 parent host inherit).
+  await writeFile(
+    join(coords.runDirectory, "invocation.json"),
+    `${JSON.stringify({
+      role: CANONICAL_SOURCE_ROLE,
+      runId,
+      host: "pi",
+      ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
+    })}\n`,
+    "utf8",
+  );
   await writeRoleRunState(coords.runDirectory, {
     runId,
     role: CANONICAL_SOURCE_ROLE,

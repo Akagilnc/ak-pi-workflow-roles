@@ -15,7 +15,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { packagedRoleInputFlag, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
+import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
 import { stripSkillFrontmatter } from "../package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
@@ -131,10 +131,33 @@ export function createComposedAcpRoleTurnHost(
   });
 }
 
+/** JSON Schema draft-07 document for host-native `--json-schema` (headless). */
+export function terminatingToolJsonSchema(parameters: unknown): Readonly<Record<string, unknown>> {
+  const cloned = JSON.parse(JSON.stringify(parameters)) as Record<string, unknown>;
+  // $schema last so a newer declaration on the tool parameters cannot override draft-07.
+  return Object.freeze({
+    ...cloned,
+    $schema: "http://json-schema.org/draft-07/schema#",
+  });
+}
+
 export async function prepareAcpRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
+  /**
+   * MCP unix socket path for the protocol-relay child. Always required — AK tools
+   * ride this single MCP path; headless structured_output reuses the same
+   * terminating-tool ledger path without listing the terminating tool on MCP.
+   */
   readonly socketPath: string;
+  /**
+   * Whether MCP `tools/list` advertises the role terminating tool.
+   * ACP keeps it listed (session-tool receipt). Headless hides it so the host
+   * native `--json-schema` / structured_output is the sole schema channel
+   * (#750 submission-tool-is-schema-channel) and empty MCP probes cannot
+   * pre-empt a later structured_output.
+   */
+  readonly listTerminatingToolOnMcp?: boolean;
   /**
    * Durable principal session path (header layout only).
    * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
@@ -143,6 +166,14 @@ export async function prepareAcpRoleEnvelope(options: {
   readonly sessionFile?: string;
 }): Promise<AcpPreparedTurn> {
   const { request } = options;
+  if (options.socketPath === "") {
+    throw new Error("prepareAcpRoleEnvelope requires socketPath");
+  }
+  const listTerminatingToolOnMcp = options.listTerminatingToolOnMcp !== false;
+  const earlyTerminatingTool = packagedRoleOutputTool(request.activation.role);
+  if (earlyTerminatingTool === undefined) {
+    throw new Error(`role has no terminating tool: ${request.activation.role}`);
+  }
   const flags = projectAcpActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
@@ -403,6 +434,87 @@ export async function prepareAcpRoleEnvelope(options: {
     await emit("tool_execution_end", { toolCallId, toolName, isError: projected.isError });
     return projected;
   }
+  /**
+   * Shared terminating/support tool path for MCP relay and headless structured_output.
+   * Books the call, runs execute, projects tool_result; does not emit turn_end (closeRound).
+   */
+  async function invokeAkTool(name: string, args: unknown): Promise<{
+    content: ContentPart[];
+    isError: boolean;
+    blocked?: true;
+  }> {
+    const tool = tools.get(name);
+    if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
+    const toolCallId = randomUUID();
+    calls.push({ toolCallId, toolName: name });
+    // First-record-then-audit: book the tool-call leaf in memory before execute so
+    // judge/doctor subject gates see the candidate on parent session books.
+    sessionEntries.push({
+      type: "message",
+      message: {
+        role: "assistant" as const,
+        content: [{
+          type: "toolCall",
+          id: toolCallId,
+          name,
+          arguments: args ?? {},
+        }],
+      },
+    });
+    try {
+      await emit("tool_execution_start", { toolCallId, toolName: name });
+      const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: (args ?? {}) as Record<string, unknown> }))
+        .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
+      if (blocked) {
+        // Lawful seatbelt/block stays bare rejection — not infrastructure (#593 r3).
+        return { content: [{ type: "text", text: `AK tool blocked: ${name}` }], isError: true, blocked: true };
+      }
+    } catch (error) {
+      // Pre-execution emit failure shares the non-correctable infra pathway (#593 r3).
+      const declared = declareRoundInfrastructureFailure(error);
+      try {
+        const projected = await projectToolResult(toolCallId, name, {
+          content: declared.content,
+          details: declared.details,
+          isError: true,
+        });
+        return { content: projected.content, isError: true };
+      } catch {
+        return { content: declared.content, isError: true };
+      }
+    }
+    try {
+      const result = await tool.execute(toolCallId, (args ?? {}) as never, undefined, undefined, context);
+      const projected = await projectToolResult(toolCallId, name, {
+        content: result.content,
+        details: result.details,
+        isError: false,
+      });
+      // Candidate only: seal waits for closeRound after the host round boundary.
+      return { content: projected.content, isError: projected.isError };
+    } catch (error) {
+      let content: ContentPart[];
+      let details: Record<string, unknown>;
+      if (isCorrectableExecuteError(error)) {
+        const projected = projectCorrectableExecuteRejection(error);
+        content = [{ type: "text", text: projected.diagnostic }];
+        details = projected.details;
+      } else {
+        // Slot-before-abort; projectToolResult may still project durable details.
+        ({ content, details } = declareRoundInfrastructureFailure(error));
+      }
+      // The shared envelope's tool_result handler is the sole classifier:
+      // it projects either the structured submission non-pass (correctable
+      // rejection) or the typed infrastructure fact onto the reply.
+      const projected = await projectToolResult(toolCallId, name, {
+        content,
+        details,
+        isError: true,
+      });
+      return { content: projected.content, isError: projected.isError };
+    }
+  }
+
   function reply(socket: Socket, id: number, result?: unknown, error?: unknown): void {
     const rpcError = error instanceof Error
       ? { code: "ak-relay-failure", name: error.name, message: error.message }
@@ -424,7 +536,9 @@ export async function prepareAcpRoleEnvelope(options: {
           if (rpc.token !== token) { reply(socket, rpc.id, undefined, "unauthorized relay"); return; }
           try {
             if (rpc.method === "tools/list") {
-              reply(socket, rpc.id, { tools: [...tools.values()].map((tool) => {
+              const listed = [...tools.values()].filter((tool) =>
+                listTerminatingToolOnMcp || tool.name !== earlyTerminatingTool);
+              reply(socket, rpc.id, { tools: listed.map((tool) => {
                 return { name: tool.name, description: tool.description, inputSchema: tool.parameters };
               }) });
               return;
@@ -433,95 +547,24 @@ export async function prepareAcpRoleEnvelope(options: {
             const params = rpc.params as ToolCallParams | undefined;
             const name = params?.name;
             if (typeof name !== "string") throw new Error("MCP tool name is missing");
-            const tool = tools.get(name);
-            if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
-            const toolCallId = randomUUID();
-            calls.push({ toolCallId, toolName: name });
-            // First-record-then-audit: book the tool-call leaf in memory before execute so
-            // judge/doctor subject gates see the candidate on parent session books.
-            {
-              const message = {
-                role: "assistant" as const,
-                content: [{
-                  type: "toolCall",
-                  id: toolCallId,
-                  name,
-                  arguments: params?.arguments ?? {},
-                }],
-              };
-              sessionEntries.push({ type: "message", message });
+            // Headless schema channel owns the terminating receipt — refuse MCP
+            // terminating calls so an empty probe cannot book a non-sealable candidate.
+            if (!listTerminatingToolOnMcp && name === earlyTerminatingTool) {
+              throw new Error(`terminating tool ${name} is schema-channel only on this host`);
             }
-            try {
-              await emit("tool_execution_start", { toolCallId, toolName: name });
-              const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
-                .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
-              if (blocked) {
-                // Lawful seatbelt/block stays bare RPC rejection — not infrastructure (#593 r3).
-                reply(socket, rpc.id, undefined, new Error(`AK tool blocked: ${name}`));
-                return;
-              }
-            } catch (error) {
-              // Pre-execution emit failure (e.g. observation writer) shares the same
-              // non-correctable infra pathway as execute throws (#593 r3).
-              const declared = declareRoundInfrastructureFailure(error);
-              try {
-                const projected = await projectToolResult(toolCallId, name, {
-                  content: declared.content,
-                  details: declared.details,
-                  isError: true,
-                });
-                reply(socket, rpc.id, {
-                  content: projected.content,
-                  isError: true,
-                });
-              } catch {
-                // Slot already filled; durable projection may have partially failed.
-                reply(socket, rpc.id, {
-                  content: declared.content,
-                  isError: true,
-                });
-              }
+            const outcome = await invokeAkTool(name, params?.arguments ?? {});
+            if (outcome.blocked === true) {
+              reply(socket, rpc.id, undefined, new Error(outcome.content.map((p) => p.type === "text" ? p.text : "").join("")));
               return;
             }
-            try {
-              const result = await tool.execute(toolCallId, (params?.arguments ?? {}) as never, undefined, undefined, context);
-              const projected = await projectToolResult(toolCallId, name, {
-                content: result.content,
-                details: result.details,
-                isError: false,
-              });
-              // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
-              // round boundary (closeRound after session/prompt), so delayed siblings stay
-              // in the same round instead of becoming silent post-seal anomalies.
-              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
-            } catch (error) {
-              let content: ContentPart[];
-              let details: Record<string, unknown>;
-              if (isCorrectableExecuteError(error)) {
-                const projected = projectCorrectableExecuteRejection(error);
-                content = [{ type: "text", text: projected.diagnostic }];
-                details = projected.details;
-              } else {
-                // Slot-before-abort; projectToolResult may still project durable details.
-                ({ content, details } = declareRoundInfrastructureFailure(error));
-              }
-              // The shared envelope's tool_result handler is the sole classifier:
-              // it projects either the structured submission non-pass (correctable
-              // rejection) or the typed infrastructure fact onto the reply.
-              const projected = await projectToolResult(toolCallId, name, {
-                content,
-                details,
-                isError: true,
-              });
-              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
-            }
+            reply(socket, rpc.id, { content: outcome.content, ...(outcome.isError ? { isError: true } : {}) });
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();
       }
     });
   }
-  await listen(server, options.socketPath);
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
+  await listen(server, options.socketPath);
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
   // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
@@ -552,8 +595,6 @@ export async function prepareAcpRoleEnvelope(options: {
     } catch (error) {
       cleanupFailures.push(error);
     }
-    // Server closure is unconditional: a shutdown-handler failure must not leave
-    // the listening MCP server keeping the completed invocation alive.
     try {
       const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
       if (typeof closeAll === "function") closeAll.call(server);
@@ -570,6 +611,14 @@ export async function prepareAcpRoleEnvelope(options: {
       });
     }
   };
+
+  const terminatingToolName: string = earlyTerminatingTool;
+  async function ingestStructuredOutput(params: unknown): Promise<void> {
+    // MCP path may already have invoked the terminating tool this round; skip the
+    // duplicate so structured_output + tool-call does not arm non-sole.
+    if (calls.some((call) => call.toolName === terminatingToolName)) return;
+    await invokeAkTool(terminatingToolName, params ?? {});
+  }
 
   const closeRound: AcpPreparedTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
@@ -654,6 +703,11 @@ export async function prepareAcpRoleEnvelope(options: {
     else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
     runDirInjected = true;
 
+    const terminating = tools.get(terminatingToolName);
+    if (terminating === undefined) {
+      throw new Error(`terminating tool not registered after activation: ${terminatingToolName}`);
+    }
+    const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
     return {
       mcpServers: [{
         name: `ak-${request.activation.role}`,
@@ -669,6 +723,9 @@ export async function prepareAcpRoleEnvelope(options: {
       abortSignal: hostAbort.signal,
       closeRound,
       dispose,
+      jsonSchema,
+      terminatingToolName,
+      ingestStructuredOutput,
     };
   } catch (error) {
     // listen already succeeded; dispose is not yet caller-owned. Release the

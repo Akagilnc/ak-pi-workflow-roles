@@ -45,7 +45,7 @@ import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
 import { packagedExternalHostNames } from "../host-descriptions.ts";
-import { loadProductionAcpHostFactory } from "./load-production-acp-host.ts";
+import { loadProductionExternalHostFactory } from "./load-production-external-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -347,7 +347,7 @@ function resolveRoleTurnHost(
           ok: true as const,
           host: {
             executeTurn: async (request: RoleTurnRequest) => {
-              hostPromise ??= loadProductionAcpHostFactory(env.packageRoot, name).then((create) =>
+              hostPromise ??= loadProductionExternalHostFactory(env.packageRoot, name).then((create) =>
                 create({
                   packageRoot: env.packageRoot,
                   principalAuthority: options.principalAuthority,
