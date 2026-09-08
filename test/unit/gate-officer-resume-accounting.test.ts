@@ -1,8 +1,8 @@
 /**
- * #753 class: gate-officer same-parent resume materials + gate-round accounting.
+ * #753 / #786 class: gate-officer same-parent resume + gate-round accounting.
  * - Multiple pointers to one officer session must not multiply rounds.
  * - Direct officer pointer booking upserts a stable leaf per officer.
- * - Same-parent notary resume delivers gate review materials via real seat entry.
+ * - Same-parent notary resume delivers verbatim submission body via real seat entry (#786).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -12,7 +12,10 @@ import test from "node:test";
 
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
-import { gateSubmissionCandidatePath } from "../../src/auditor-dossier-tool.ts";
+import {
+  buildGateOfficerReviewInstruction,
+  readLatestSubmissionArguments,
+} from "../../src/auditor-dossier-tool.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -22,10 +25,7 @@ import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
-import {
-  CANONICAL_SOURCE_ROLE,
-  seedCanonicalSourceRun,
-} from "../helpers/notary-fixtures.ts";
+import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
@@ -135,19 +135,33 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#753 notary same-parent resume delivers gate materials via real seat entry", async () => {
-  await withTempRoot("ak-gate-resume-materials-", async (home) => {
+test("#786 buildGateOfficerReviewInstruction relays submission body verbatim", () => {
+  const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
+  const submission = { status: "completed", report: BODY_MARKER };
+  const leaf = {
+    type: "message",
+    message: {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "c1", name: "ak_coder_output", arguments: submission }],
+    },
+  };
+  const extracted = readLatestSubmissionArguments({
+    sessionManager: { getEntries: () => [leaf] },
+  });
+  assert.deepEqual(extracted, submission);
+  // Contract: instruction IS the body relay (readableGateItem), not a path substitute.
+  assert.equal(
+    buildGateOfficerReviewInstruction({ submission: extracted }),
+    JSON.stringify(submission),
+  );
+});
+
+test("#786 notary same-parent resume delivers verbatim submission body via real seat entry", async () => {
+  await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 753 });
-    const candidatePath = gateSubmissionCandidatePath(sourceRunPath);
-    await mkdir(join(candidatePath, ".."), { recursive: true });
-    await writeFile(
-      candidatePath,
-      `${JSON.stringify({ type: "message", message: { role: "assistant", content: [] } })}\n`,
-      "utf8",
-    );
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 786 });
 
     const prompts: string[] = [];
     const baseHost = roleTurnHostFromLegacyPiRunner({
@@ -179,7 +193,7 @@ test("#753 notary same-parent resume delivers gate materials via real seat entry
     // 1) Fresh mint establishes the same-parent notary run.
     const first = await runPublicNotary(
       ["--source-run", sourceRunPath],
-      { ...envBase, createRunId: () => "01a075300-0000-7000-8000-0000000n001" },
+      { ...envBase, createRunId: () => "01a078600-0000-7000-8000-0000000n001" },
       io,
       parseNotaryArgv,
     );
@@ -187,19 +201,17 @@ test("#753 notary same-parent resume delivers gate materials via real seat entry
     assert.equal(prompts.length, 1);
 
     // 2) Real seat entry: gateReviewInstruction is the face summonGateOfficer writes.
-    // Contract: resume prompt carries source-run + candidate path tokens, not bare envelope.
-    // Do not lock builder Chinese / template wording.
-    const gateReviewInstruction = [
-      "GATE-REVIEW-MATERIALS",
-      sourceRunPath,
-      candidatePath,
-    ].join("\n");
+    // Contract: resume prompt carries the submission body bytes, not path pointers / bare envelope.
+    // Do not lock builder framing / template wording — only the body marker.
+    const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
+    const submission = { status: "completed", report: BODY_MARKER };
+    const gateReviewInstruction = JSON.stringify(submission);
     const resumed = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
         ...envBase,
         gateReviewInstruction,
-        createRunId: () => "01a075300-0000-7000-8000-0000000n002",
+        createRunId: () => "01a078600-0000-7000-8000-0000000n002",
       },
       io,
       parseNotaryArgv,
@@ -207,12 +219,15 @@ test("#753 notary same-parent resume delivers gate materials via real seat entry
     assert.equal(resumed.exitCode, 0);
     assert.equal(prompts.length, 2);
     const resumePrompt = prompts[1]!;
-    assert.equal(resumePrompt.includes(sourceRunPath), true, "resume prompt must name source run");
-    assert.equal(resumePrompt.includes(candidatePath), true, "resume prompt must name candidate path");
+    assert.equal(
+      resumePrompt.includes(BODY_MARKER),
+      true,
+      "resume prompt must carry verbatim submission body",
+    );
     assert.notEqual(
       resumePrompt,
       RESUME_TRANSPORT_ENVELOPE,
-      "resume must not be bare envelope when gate materials ride",
+      "resume must not be bare envelope when submission body rides",
     );
   });
 });

@@ -70,7 +70,7 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
    */
   reviewReask?: string;
   /**
-   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * #786 same-parent re-summons: verbatim parent-submission body.
    * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv instruction.
    */
   gateReviewInstruction?: string;
@@ -294,7 +294,7 @@ export async function runPublicInstructionSeat(
     }
   }
 
-  // #756: auditor reask / new-submission pointers ride summons.instruction on resume.
+  // #756/#786: auditor reask / verbatim submission body ride summons.instruction on resume.
   const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
   const summons: SameTicketSummonsMaterials = {
     ...(resumeInstruction === undefined

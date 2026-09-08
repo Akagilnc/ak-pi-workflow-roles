@@ -60,10 +60,9 @@ export type PublicSummonRequest = {
    */
   readonly reviewReask?: string;
   /**
-   * #753/#750 same-parent re-summons: human-readable pointer materials for the
-   * new parent submission (source run + optional gate-submission-candidate).
+   * #786 same-parent re-summons: verbatim parent-submission body for the gate officer.
    * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
-   * Never folded into argv / parent-run lookup keys.
+   * Never folded into argv / parent-run lookup keys (ADR 0079 卷宗指针 stays pure).
    */
   readonly gateReviewInstruction?: string;
 };
@@ -293,7 +292,7 @@ export async function summonPublicRole(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     // #753: reask rides the existing notary same-ticket resume summons.instruction.
     ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
-    // #753/#750: new-submission pointers on same-parent resume (not conclusion re-ask).
+    // #786: verbatim submission body on same-parent resume (not conclusion re-ask).
     ...(options.gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction: options.gateReviewInstruction }),
@@ -412,10 +411,10 @@ export async function summonGateOfficer(options: {
    */
   readonly reask?: string;
   /**
-   * Path of this turn's gate-submission-candidate when written (#632 / #753).
-   * Becomes human-readable resume materials when reask is absent.
+   * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim on resume
+   * when reask is absent (#786). Never a path pointer substitute.
    */
-  readonly submissionCandidatePath?: string;
+  readonly submission?: unknown;
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
@@ -423,16 +422,13 @@ export async function summonGateOfficer(options: {
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
-  // Conclusion re-ask keeps sole ownership of reviewReask. New-submission materials
-  // ride a separate field so first mint never fails the "reask requires prior" gate.
+  // Conclusion re-ask keeps sole ownership of reviewReask. New-submission body
+  // rides a separate field so first mint never fails the "reask requires prior" gate.
   let gateReviewInstruction: string | undefined;
-  if (options.reask === undefined) {
+  if (options.reask === undefined && options.submission !== undefined) {
     const { buildGateOfficerReviewInstruction } = await import("./auditor-dossier-tool.ts");
     gateReviewInstruction = buildGateOfficerReviewInstruction({
-      sourceRunDirectory: options.sourceRunDirectory,
-      ...(options.submissionCandidatePath === undefined
-        ? {}
-        : { submissionCandidatePath: options.submissionCandidatePath }),
+      submission: options.submission,
     });
   }
   const common = {
