@@ -249,8 +249,9 @@ test("grok-build selection and execution have no provider restriction", async ()
   }
 }));
 
-// #778: seat-table provider alias reaches the public host turn; unregistered pairs pass through.
-test("seat-table provider alias remaps only the registered host on the public entry", async () => homeTest(async (home) => {
+// #788: table > unique host-directory > fail on the public entry; pi unaffected.
+// Host must be registered before any provider projection (expectation 2).
+test("host provider resolution prefers table, then unique directory, else fails loud", async () => homeTest(async (home) => {
   const seen: Array<{ host: string; provider: string | undefined }> = [];
   const probe = (name: string): NamedRoleTurnHostAdapter => ({
     name,
@@ -267,38 +268,77 @@ test("seat-table provider alias remaps only the registered host on the public en
   const adapters = [probe("pi"), probe("hermes")];
 
   await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], base(home, []));
-  // Owner registers the map in the seat table; package code has no built-in pair.
-  const setAlias = await runAkRole(
-    ["config", "set-provider-alias", "xai", "hermes", "xai-oauth"],
-    base(home, []),
-  );
-  assert.equal(setAlias.exitCode, 0);
 
-  const hermes = await runAkRole(["judge", "--host", "hermes", "alias-probe"], base(home, adapters));
-  assert.equal(hermes.hostFailure, undefined);
-  assert.equal(hermes.exitCode, 1);
+  // Owner table wins even when the host directory would be ambiguous.
+  await mkdir(join(home, ".ak-roles"), { recursive: true });
+  await writeFile(
+    join(home, ".ak-roles", "host-providers.json"),
+    `${JSON.stringify({ hermes: { xai: "xai-oauth" } }, null, 2)}\n`,
+    "utf8",
+  );
+  await mkdir(join(home, ".hermes"), { recursive: true });
+  await writeFile(
+    join(home, ".hermes", "provider_models_cache.json"),
+    JSON.stringify({
+      "xai-oauth": { models: ["grok-4.5"] },
+      nous: { models: ["x-ai/grok-4.5"] },
+      openrouter: { models: ["x-ai/grok-4.5"] },
+    }),
+    "utf8",
+  );
+
+  // Unregistered host fails as host-unregistered — never as a model/provider error.
+  // Production adapter table on this build has no hermes; use pi-only adapters.
+  const unregistered = await runAkRole(
+    ["judge", "--host", "hermes", "host-first"],
+    base(home, [probe("pi")]),
+  );
+  assert.equal(unregistered.exitCode, 1);
+  assert.deepEqual(unregistered.hostFailure, {
+    kind: "host-unregistered",
+    host: "hermes",
+    seat: "judge",
+    model: "xai/grok-4.5",
+    registeredHosts: ["pi"],
+  });
+  assert.equal(seen.length, 0);
+
+  const tableHit = await runAkRole(["judge", "--host", "hermes", "table-probe"], base(home, adapters));
+  assert.equal(tableHit.hostFailure, undefined);
+  assert.equal(tableHit.exitCode, 1);
 
   const pi = await runAkRole(["judge", "--host", "pi", "pi-probe"], base(home, adapters));
   assert.equal(pi.hostFailure, undefined);
   assert.equal(pi.exitCode, 1);
-
   assert.deepEqual(seen, [
     { host: "hermes", provider: "xai-oauth" },
     { host: "pi", provider: "xai" },
   ]);
 
-  // Unset restores pass-through on hermes.
-  const unset = await runAkRole(
-    ["config", "unset-provider-alias", "xai", "hermes"],
-    base(home, []),
+  // Drop the table entry → directory is ambiguous → leg does not start.
+  await writeFile(
+    join(home, ".ak-roles", "host-providers.json"),
+    `${JSON.stringify({}, null, 2)}\n`,
+    "utf8",
   );
-  assert.equal(unset.exitCode, 0);
   seen.length = 0;
-  const after = await runAkRole(["judge", "--host", "hermes", "pass-through"], base(home, adapters));
-  assert.equal(after.hostFailure, undefined);
-  assert.deepEqual(seen, [{ host: "hermes", provider: "xai" }]);
+  const ambiguous = await runAkRole(["judge", "--host", "hermes", "ambiguous"], base(home, adapters));
+  assert.equal(ambiguous.exitCode, 1);
+  assert.equal(ambiguous.hostFailure, undefined);
+  assert.equal(seen.length, 0);
 
-  // Seat rows themselves are never rewritten by the alias registration.
+  // Unique directory match replaces without a table row.
+  await writeFile(
+    join(home, ".hermes", "provider_models_cache.json"),
+    JSON.stringify({ "xai-oauth": { models: ["grok-4.5"] } }),
+    "utf8",
+  );
+  seen.length = 0;
+  const unique = await runAkRole(["judge", "--host", "hermes", "unique"], base(home, adapters));
+  assert.equal(unique.hostFailure, undefined);
+  assert.deepEqual(seen, [{ host: "hermes", provider: "xai-oauth" }]);
+
+  // Seat rows themselves stay as written.
   assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
     provider: "xai",
     model: "grok-4.5",
