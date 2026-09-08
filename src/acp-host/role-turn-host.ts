@@ -276,19 +276,24 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           }
 
           // set_model hosts address the seat model by `provider:model` once the
-          // session exists; argv hosts never reach this RPC. set_model may rebuild
-          // the session agent and drop ACP-injected mcpServers, so re-bind via the
-          // same loadSession authority (return value is the live session id).
+          // session exists; argv hosts never reach this RPC. Provider is the seat
+          // table value after owner host-alias projection (#778) — concatenated
+          // here, never dropped, never remapped in package code. set_model may
+          // rebuild the session agent and drop ACP-injected mcpServers, so re-bind
+          // via the same loadSession authority (return value is the live session id).
           if (
             config.modelPassing === "set_model"
             && request.model !== undefined
             && sessionId !== undefined
           ) {
-            await connection.request("session/set_model", {
-              sessionId,
-              modelId: acpModelId(config.modelPassing, request.model),
-            });
-            sessionId = await loadSession(sessionId);
+            const modelId = acpModelId(config.modelPassing, request.model);
+            if (modelId !== undefined) {
+              await connection.request("session/set_model", {
+                sessionId,
+                modelId,
+              });
+              sessionId = await loadSession(sessionId);
+            }
           }
 
           let prompt =
