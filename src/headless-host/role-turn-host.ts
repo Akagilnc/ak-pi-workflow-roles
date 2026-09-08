@@ -387,7 +387,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               break;
             }
 
-            // Dual receipt: structured_output (schema channel) and/or terminating MCP tool.
+            // Schema channel: host-native structured_output is the terminating receipt
+            // (#750). Intermediate tools may have already run via MCP during the process.
             if (envelope.structured_output !== undefined) {
               await prepared.ingestStructuredOutput(envelope.structured_output);
             }

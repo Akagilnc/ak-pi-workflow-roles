@@ -4,10 +4,10 @@
  * No HOME rewrite, no isolated home, no credential parameters — CLI owns auth.
  * Sitian records on the run are the dossier; host private sessions stay private.
  *
- * AK tools (terminating + intermediate) ride the shared envelope MCP relay via
- * host-native `--mcp-config` under `--strict-mcp-config`. Receipt schema rides
- * `--json-schema`; structured_output and/or the terminating MCP tool both feed
- * the same ledger path.
+ * Intermediate AK tools ride the shared envelope MCP relay via host-native
+ * `--mcp-config` under `--strict-mcp-config`. The terminating receipt is the
+ * host-native `--json-schema` / structured_output schema channel only
+ * (#750 submission-tool-is-schema-channel) — terminating tool is not listed on MCP.
  */
 import { randomUUID } from "node:crypto";
 
@@ -56,6 +56,8 @@ export function createProductionHeadlessRoleTurnHost(
           // Same MCP relay as ACP so intermediate AK tools stay reachable;
           // headless adapter projects the row into --mcp-config.
           socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,
+          // Schema channel owns the terminating receipt; hide it from MCP list.
+          listTerminatingToolOnMcp: false,
         }),
     });
 

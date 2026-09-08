@@ -148,10 +148,18 @@ export async function prepareAcpRoleEnvelope(options: {
   readonly dependencies: RoleRuntimeDependencies;
   /**
    * MCP unix socket path for the protocol-relay child. Always required — AK tools
-   * (and headless intermediate tools) ride this single MCP path; structured_output
-   * is an additional receipt face that reuses the same terminating-tool ledger path.
+   * ride this single MCP path; headless structured_output reuses the same
+   * terminating-tool ledger path without listing the terminating tool on MCP.
    */
   readonly socketPath: string;
+  /**
+   * Whether MCP `tools/list` advertises the role terminating tool.
+   * ACP keeps it listed (session-tool receipt). Headless hides it so the host
+   * native `--json-schema` / structured_output is the sole schema channel
+   * (#750 submission-tool-is-schema-channel) and empty MCP probes cannot
+   * pre-empt a later structured_output.
+   */
+  readonly listTerminatingToolOnMcp?: boolean;
   /**
    * Durable principal session path (header layout only).
    * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
@@ -162,6 +170,11 @@ export async function prepareAcpRoleEnvelope(options: {
   const { request } = options;
   if (options.socketPath === "") {
     throw new Error("prepareAcpRoleEnvelope requires socketPath");
+  }
+  const listTerminatingToolOnMcp = options.listTerminatingToolOnMcp !== false;
+  const earlyTerminatingTool = packagedRoleOutputTool(request.activation.role);
+  if (earlyTerminatingTool === undefined) {
+    throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
   const flags = projectAcpActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
@@ -533,7 +546,9 @@ export async function prepareAcpRoleEnvelope(options: {
           if (rpc.token !== token) { reply(socket, rpc.id, undefined, "unauthorized relay"); return; }
           try {
             if (rpc.method === "tools/list") {
-              reply(socket, rpc.id, { tools: [...tools.values()].map((tool) => {
+              const listed = [...tools.values()].filter((tool) =>
+                listTerminatingToolOnMcp || tool.name !== earlyTerminatingTool);
+              reply(socket, rpc.id, { tools: listed.map((tool) => {
                 return { name: tool.name, description: tool.description, inputSchema: tool.parameters };
               }) });
               return;
@@ -542,6 +557,11 @@ export async function prepareAcpRoleEnvelope(options: {
             const params = rpc.params as ToolCallParams | undefined;
             const name = params?.name;
             if (typeof name !== "string") throw new Error("MCP tool name is missing");
+            // Headless schema channel owns the terminating receipt — refuse MCP
+            // terminating calls so an empty probe cannot book a non-sealable candidate.
+            if (!listTerminatingToolOnMcp && name === earlyTerminatingTool) {
+              throw new Error(`terminating tool ${name} is schema-channel only on this host`);
+            }
             const outcome = await invokeAkTool(name, params?.arguments ?? {});
             if (outcome.blocked === true) {
               reply(socket, rpc.id, undefined, new Error(outcome.content.map((p) => p.type === "text" ? p.text : "").join("")));
@@ -602,11 +622,7 @@ export async function prepareAcpRoleEnvelope(options: {
     }
   };
 
-  const resolvedTerminatingTool = packagedRoleOutputTool(request.activation.role);
-  if (resolvedTerminatingTool === undefined) {
-    throw new Error(`role has no terminating tool: ${request.activation.role}`);
-  }
-  const terminatingToolName: string = resolvedTerminatingTool;
+  const terminatingToolName: string = earlyTerminatingTool;
   async function ingestStructuredOutput(params: unknown): Promise<void> {
     // MCP path may already have invoked the terminating tool this round; skip the
     // duplicate so structured_output + tool-call does not arm non-sole.
