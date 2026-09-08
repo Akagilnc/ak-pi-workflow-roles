@@ -9,9 +9,6 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** One-shot isolation evidence face (ticket #645 须真跑证 ②). Not a permanent probe copy. */
-const CAPTURE_INIT_ENV = "AK_ROLE_CAPTURE_INIT";
-
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import {
   renderAcpSystemPromptOverride,
@@ -178,84 +175,6 @@ function cleanupErrorMessage(error: unknown): string {
 }
 
 /**
- * One-shot: spawn with stream-json+verbose, keep only typed isolation fields from
- * system/init (mcp_servers / plugins / permissionMode). Full stream is discarded.
- */
-async function captureHeadlessSystemInitIsolation(options: {
-  readonly binary: string;
-  readonly description: HeadlessHostDescription;
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly systemPromptPath: string;
-  readonly mcpConfigPath: string;
-  readonly runDirectory: string;
-  readonly model?: string;
-}): Promise<void> {
-  const args = [
-    options.description.promptFlag,
-    "isolation-init-probe",
-    // stream-json requires --verbose; not the production receipt face.
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    "bypassPermissions",
-    "--setting-sources",
-    "",
-    "--strict-mcp-config",
-    options.description.systemPromptFlag,
-    options.systemPromptPath,
-    options.description.mcpConfigFlag,
-    options.mcpConfigPath,
-    options.description.sessionIdFlag,
-    randomUUID(),
-  ];
-  if (options.model !== undefined && options.model !== "") {
-    args.push(options.description.modelFlag, options.model);
-  }
-  let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
-  try {
-    spawned = await spawnHeadlessTurn({
-      binary: options.binary,
-      args,
-      cwd: options.cwd,
-      env: options.env,
-      timeoutMs: 120_000,
-    });
-  } catch {
-    return;
-  }
-  let init: Record<string, unknown> | undefined;
-  for (const line of spawned.stdout.split("\n")) {
-    const text = line.trim();
-    if (text === "") continue;
-    try {
-      const value = JSON.parse(text) as unknown;
-      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
-      const record = value as Record<string, unknown>;
-      if (record.type === "system" && record.subtype === "init") {
-        init = record;
-        break;
-      }
-    } catch {
-      // skip
-    }
-  }
-  if (init === undefined) return;
-  const evidence = Object.freeze({
-    mcp_servers: init.mcp_servers ?? null,
-    plugins: init.plugins ?? null,
-    permissionMode: init.permissionMode ?? null,
-    model: init.model ?? null,
-  });
-  await writeFile(
-    join(options.runDirectory, "headless-system-init-isolation.json"),
-    `${JSON.stringify(evidence, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-/**
  * If dispose/cleanup failed: success becomes typed failure; existing failure keeps
  * its primary cause and records the cleanup error in details (failure-honesty).
  */
@@ -342,22 +261,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
-
-          // Optional one-shot system/init isolation evidence (#645 须真跑证 ②).
-          // Production default stays --output-format json (no stream copy). When the
-          // owner sets AK_ROLE_CAPTURE_INIT=1 once, write typed mcp_servers/plugins only.
-          if (process.env[CAPTURE_INIT_ENV] === "1") {
-            await captureHeadlessSystemInitIsolation({
-              binary: config.binary,
-              description: config.description,
-              cwd: request.cwd,
-              env,
-              systemPromptPath,
-              mcpConfigPath,
-              runDirectory: request.runDirectory,
-              model: request.model?.model,
-            });
-          }
 
           // No round cap on content review (#750); this bound is only for
           // correctable mechanical resubmit (non-sole etc.), matching ACP's 8.
