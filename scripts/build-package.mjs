@@ -114,6 +114,33 @@ export async function buildAcpProductionHost(
   );
 }
 
+/**
+ * Deferred generic headless production host artifact (#645). Same peer-free
+ * selection face as ACP: loaded only when a headless description-table row is
+ * selected.
+ */
+export async function buildHeadlessProductionHost(
+  outfile = "dist/headless-host/production-host.js",
+) {
+  await mkdir(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: ["src/headless-host/production-host.ts"],
+    outfile,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    bundle: true,
+    packages: "external",
+    logLevel: "silent",
+  });
+  // Shared envelope resolves ./mcp-relay.mjs from import.meta.url of the bundle
+  // (#645 headless reuses the ACP relay for AK tools under --mcp-config).
+  await copyFile(
+    resolve("src/acp-host/mcp-relay.mjs"),
+    join(dirname(outfile), "mcp-relay.mjs"),
+  );
+}
+
 export async function buildPackageArtifacts() {
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
@@ -139,6 +166,7 @@ export async function buildPackageArtifacts() {
   }
   await buildPublicAkRoleBin();
   await buildAcpProductionHost();
+  await buildHeadlessProductionHost();
 }
 
 const isMain =

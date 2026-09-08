@@ -15,7 +15,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { packagedRoleInputFlag, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
+import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
 import { stripSkillFrontmatter } from "../package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
@@ -129,14 +129,34 @@ export function createComposedAcpRoleTurnHost(
       // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
       sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
       socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
+      transport: "mcp",
     }),
+  });
+}
+
+/** JSON Schema draft-07 document for host-native `--json-schema` (headless). */
+export function terminatingToolJsonSchema(parameters: unknown): Readonly<Record<string, unknown>> {
+  const cloned = JSON.parse(JSON.stringify(parameters)) as Record<string, unknown>;
+  // $schema last so a newer declaration on the tool parameters cannot override draft-07.
+  return Object.freeze({
+    ...cloned,
+    $schema: "http://json-schema.org/draft-07/schema#",
   });
 }
 
 export async function prepareAcpRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
-  readonly socketPath: string;
+  /**
+   * MCP unix socket path. Required for transport "mcp"; ignored for "direct"
+   * (headless CLI family feeds structured_output in-process).
+   */
+  readonly socketPath?: string;
+  /**
+   * "mcp" (default): listen for the protocol relay child.
+   * "direct": no socket — headless host calls ingestStructuredOutput.
+   */
+  readonly transport?: "mcp" | "direct";
   /**
    * Durable principal session path (header layout only).
    * Production passes DurablePrincipalAuthority.decode(principal).sessionFile so
@@ -144,6 +164,7 @@ export async function prepareAcpRoleEnvelope(options: {
    */
   readonly sessionFile?: string;
 }): Promise<AcpPreparedTurn> {
+  const transport = options.transport ?? "mcp";
   const { request } = options;
   const flags = projectAcpActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
@@ -405,6 +426,95 @@ export async function prepareAcpRoleEnvelope(options: {
     await emit("tool_execution_end", { toolCallId, toolName, isError: projected.isError });
     return projected;
   }
+  /**
+   * Shared terminating/support tool path for MCP relay and headless structured_output.
+   * Books the call, runs execute, projects tool_result; does not emit turn_end (closeRound).
+   */
+  async function invokeAkTool(name: string, args: unknown): Promise<{
+    content: ContentPart[];
+    isError: boolean;
+    blocked?: true;
+  }> {
+    const tool = tools.get(name);
+    if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
+    const toolCallId = randomUUID();
+    calls.push({ toolCallId, toolName: name });
+    // First-record-then-audit: book the tool-call leaf in memory before execute so
+    // judge/doctor subject gates see the candidate on parent session books.
+    sessionEntries.push({
+      type: "message",
+      message: {
+        role: "assistant" as const,
+        content: [{
+          type: "toolCall",
+          id: toolCallId,
+          name,
+          arguments: args ?? {},
+        }],
+      },
+    });
+    try {
+      await emit("tool_execution_start", { toolCallId, toolName: name });
+      const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: (args ?? {}) as Record<string, unknown> }))
+        .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
+      if (blocked) {
+        // Lawful seatbelt/block stays bare rejection — not infrastructure (#593 r3).
+        return { content: [{ type: "text", text: `AK tool blocked: ${name}` }], isError: true, blocked: true };
+      }
+    } catch (error) {
+      // Pre-execution emit failure shares the non-correctable infra pathway (#593 r3).
+      const declared = declareRoundInfrastructureFailure(error);
+      try {
+        const projected = await projectToolResult(toolCallId, name, {
+          content: declared.content,
+          details: declared.details,
+          isError: true,
+        });
+        return { content: projected.content, isError: true };
+      } catch {
+        return { content: declared.content, isError: true };
+      }
+    }
+    try {
+      const result = await tool.execute(toolCallId, (args ?? {}) as never, undefined, undefined, context);
+      const projected = await projectToolResult(toolCallId, name, {
+        content: result.content,
+        details: result.details,
+        isError: false,
+      });
+      // Candidate only: seal waits for closeRound after the host round boundary.
+      return { content: projected.content, isError: projected.isError };
+    } catch (error) {
+      let content: ContentPart[];
+      let details: Record<string, unknown>;
+      if (isCorrectableExecuteError(error)) {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        content = [{ type: "text", text: diagnostic }];
+        if (error instanceof GatekeeperDecisionError) {
+          details = { ...error.result };
+        } else if (
+          error instanceof WorkerCommitReminderError
+          || error instanceof WorkerPrefixReminderError
+          || error instanceof WorkerUnfinishedReasonReminderError
+        ) {
+          details = { code: error.code };
+        } else if (typeof (error as unknown as { code?: unknown }).code === "string") {
+          details = { code: (error as unknown as { code: string }).code };
+        } else {
+          details = { code: error instanceof Error && error.name ? error.name : "correctable-submission-error" };
+        }
+      } else {
+        ({ content, details } = declareRoundInfrastructureFailure(error));
+      }
+      const projected = await projectToolResult(toolCallId, name, {
+        content,
+        details,
+        isError: true,
+      });
+      return { content: projected.content, isError: projected.isError };
+    }
+  }
+
   function reply(socket: Socket, id: number, result?: unknown, error?: unknown): void {
     const rpcError = error instanceof Error
       ? { code: "ak-relay-failure", name: error.name, message: error.message }
@@ -435,107 +545,26 @@ export async function prepareAcpRoleEnvelope(options: {
             const params = rpc.params as ToolCallParams | undefined;
             const name = params?.name;
             if (typeof name !== "string") throw new Error("MCP tool name is missing");
-            const tool = tools.get(name);
-            if (tool === undefined) throw new Error(`Unknown AK tool: ${name}`);
-            const toolCallId = randomUUID();
-            calls.push({ toolCallId, toolName: name });
-            // First-record-then-audit: book the tool-call leaf in memory before execute so
-            // judge/doctor subject gates see the candidate on parent session books.
-            {
-              const message = {
-                role: "assistant" as const,
-                content: [{
-                  type: "toolCall",
-                  id: toolCallId,
-                  name,
-                  arguments: params?.arguments ?? {},
-                }],
-              };
-              sessionEntries.push({ type: "message", message });
-            }
-            try {
-              await emit("tool_execution_start", { toolCallId, toolName: name });
-              const blocked = (await emit("tool_call", { toolCallId, toolName: name, input: params?.arguments ?? {} }))
-                .some((value) => typeof value === "object" && value !== null && "block" in value && value.block === true);
-              if (blocked) {
-                // Lawful seatbelt/block stays bare RPC rejection — not infrastructure (#593 r3).
-                reply(socket, rpc.id, undefined, new Error(`AK tool blocked: ${name}`));
-                return;
-              }
-            } catch (error) {
-              // Pre-execution emit failure (e.g. observation writer) shares the same
-              // non-correctable infra pathway as execute throws (#593 r3).
-              const declared = declareRoundInfrastructureFailure(error);
-              try {
-                const projected = await projectToolResult(toolCallId, name, {
-                  content: declared.content,
-                  details: declared.details,
-                  isError: true,
-                });
-                reply(socket, rpc.id, {
-                  content: projected.content,
-                  isError: true,
-                });
-              } catch {
-                // Slot already filled; durable projection may have partially failed.
-                reply(socket, rpc.id, {
-                  content: declared.content,
-                  isError: true,
-                });
-              }
+            const outcome = await invokeAkTool(name, params?.arguments ?? {});
+            if (outcome.blocked === true) {
+              reply(socket, rpc.id, undefined, new Error(outcome.content.map((p) => p.type === "text" ? p.text : "").join("")));
               return;
             }
-            try {
-              const result = await tool.execute(toolCallId, (params?.arguments ?? {}) as never, undefined, undefined, context);
-              const projected = await projectToolResult(toolCallId, name, {
-                content: result.content,
-                details: result.details,
-                isError: false,
-              });
-              // Candidate only: do not emit turn_end here. Seal waits for the typed ACP
-              // round boundary (closeRound after session/prompt), so delayed siblings stay
-              // in the same round instead of becoming silent post-seal anomalies.
-              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
-            } catch (error) {
-              let content: ContentPart[];
-              let details: Record<string, unknown>;
-              if (isCorrectableExecuteError(error)) {
-                const diagnostic = error instanceof Error ? error.message : String(error);
-                content = [{ type: "text", text: diagnostic }];
-                if (error instanceof GatekeeperDecisionError) {
-                  details = { ...error.result };
-                } else if (
-                  error instanceof WorkerCommitReminderError
-                  || error instanceof WorkerPrefixReminderError
-                  || error instanceof WorkerUnfinishedReasonReminderError
-                ) {
-                  details = { code: error.code };
-                } else if (typeof (error as unknown as { code?: unknown }).code === "string") {
-                  details = { code: (error as unknown as { code: string }).code };
-                } else {
-                  details = { code: error instanceof Error && error.name ? error.name : "correctable-submission-error" };
-                }
-              } else {
-                // Slot-before-abort; projectToolResult may still project durable details.
-                ({ content, details } = declareRoundInfrastructureFailure(error));
-              }
-              // The shared envelope's tool_result handler is the sole classifier:
-              // it projects either the structured submission non-pass (correctable
-              // rejection) or the typed infrastructure fact onto the reply.
-              const projected = await projectToolResult(toolCallId, name, {
-                content,
-                details,
-                isError: true,
-              });
-              reply(socket, rpc.id, { content: projected.content, ...(projected.isError ? { isError: true } : {}) });
-            }
+            reply(socket, rpc.id, { content: outcome.content, ...(outcome.isError ? { isError: true } : {}) });
           } catch (error) { reply(socket, rpc.id, undefined, error); }
         })();
       }
     });
   }
-  await listen(server, options.socketPath);
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
+  let serverStarted = false;
+  if (transport === "mcp") {
+    if (options.socketPath === undefined || options.socketPath === "") {
+      throw new Error("prepareAcpRoleEnvelope transport=mcp requires socketPath");
+    }
+    await listen(server, options.socketPath);
+    serverStarted = true;
+  }
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
   // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
@@ -566,16 +595,17 @@ export async function prepareAcpRoleEnvelope(options: {
     } catch (error) {
       cleanupFailures.push(error);
     }
-    // Server closure is unconditional: a shutdown-handler failure must not leave
-    // the listening MCP server keeping the completed invocation alive.
-    try {
-      const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
-      if (typeof closeAll === "function") closeAll.call(server);
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    } catch (error) {
-      cleanupFailures.push(error);
+    // Server closure only when MCP listen started; direct transport has no listener.
+    if (serverStarted) {
+      try {
+        const closeAll = (server as unknown as { closeAllConnections?: () => void }).closeAllConnections;
+        if (typeof closeAll === "function") closeAll.call(server);
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
     }
     if (cleanupFailures.length === 1) throw cleanupFailures[0];
     if (cleanupFailures.length > 1) {
@@ -584,6 +614,18 @@ export async function prepareAcpRoleEnvelope(options: {
       });
     }
   };
+
+  const resolvedTerminatingTool = packagedRoleOutputTool(request.activation.role);
+  if (resolvedTerminatingTool === undefined) {
+    throw new Error(`role has no terminating tool: ${request.activation.role}`);
+  }
+  const terminatingToolName: string = resolvedTerminatingTool;
+  async function ingestStructuredOutput(params: unknown): Promise<void> {
+    // MCP path may already have invoked the terminating tool this round; skip the
+    // duplicate so structured_output + tool-call does not arm non-sole.
+    if (calls.some((call) => call.toolName === terminatingToolName)) return;
+    await invokeAkTool(terminatingToolName, params ?? {});
+  }
 
   const closeRound: AcpPreparedTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
@@ -668,21 +710,31 @@ export async function prepareAcpRoleEnvelope(options: {
     else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
     runDirInjected = true;
 
+    const terminating = tools.get(terminatingToolName);
+    if (terminating === undefined) {
+      throw new Error(`terminating tool not registered after activation: ${terminatingToolName}`);
+    }
+    const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
     return {
-      mcpServers: [{
-        name: `ak-${request.activation.role}`,
-        command: process.execPath,
-        args: [relay],
-        env: [
-          { name: "AK_ACP_MCP_SOCKET", value: options.socketPath },
-          { name: "AK_ACP_MCP_TOKEN", value: token },
-        ],
-      }],
+      mcpServers: transport === "mcp" && options.socketPath !== undefined
+        ? [{
+          name: `ak-${request.activation.role}`,
+          command: process.execPath,
+          args: [relay],
+          env: [
+            { name: "AK_ACP_MCP_SOCKET", value: options.socketPath },
+            { name: "AK_ACP_MCP_TOKEN", value: token },
+          ],
+        }]
+        : [],
       systemPrompt: { body: systemPromptBody, materials: readingMaterials },
       prompt,
       abortSignal: hostAbort.signal,
       closeRound,
       dispose,
+      jsonSchema,
+      terminatingToolName,
+      ingestStructuredOutput,
     };
   } catch (error) {
     // listen already succeeded; dispose is not yet caller-owned. Release the

@@ -1,10 +1,13 @@
 /**
- * Packaged host description table (#729 / #731).
- * Key = seat-table `host` value; the row is the generic ACP factory's input.
+ * Packaged host description tables (#729 / #731 / #645).
+ * Key = seat-table `host` value.
+ * - ACP family rows feed the generic ACP factory.
+ * - Headless CLI family rows feed the generic headless factory (#645; #646 codex next).
  * pi is the in-process default, not a row.
- * Unregistered names fail closed (#510); this table does not fallback.
+ * Unregistered names fail closed (#510); these tables do not fallback.
  */
 import type { AcpHostDescription } from "./acp-host/description.ts";
+import type { HeadlessHostDescription } from "./headless-host/description.ts";
 
 /** Grok CLI reads vendor-private compat surfaces unless each is disabled by name. */
 const PRIVATE_COMPAT_ENV = Object.fromEntries(
@@ -14,6 +17,8 @@ const PRIVATE_COMPAT_ENV = Object.fromEntries(
 );
 
 export const DEFAULT_ROLE_TURN_HOST = "pi" as const;
+
+export type HostFamily = "acp" | "headless";
 
 export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = Object.freeze({
   /** Operator home `~/.grok`, native session/load resume, `agent [--model X] stdio`. */
@@ -60,17 +65,60 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
   }),
 });
 
+/**
+ * Headless CLI family (#645). Claude is the first row; codex (#646) adds another.
+ * fixedArgs: print mode, isolation without `--bare` (OAuth stays), full permissions.
+ * `--setting-sources` empty = load no user/project/local CLAUDE.md/hooks/skills
+ * (role envelope is delivered via `--system-prompt` wholesale replace).
+ * `--strict-mcp-config` with no `--mcp-config` drops operator MCP + claude.ai connectors.
+ */
+export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDescription>> = Object.freeze({
+  "claude": Object.freeze({
+    binaryFromHome: Object.freeze([".local", "bin", "claude"]),
+    sessionBindingFile: "claude-headless-session.json",
+    fixedArgs: Object.freeze([
+      // stream-json: last line is result; system/init lands in the stream for run evidence.
+      "--output-format", "stream-json",
+      "--verbose",
+      "--permission-mode", "bypassPermissions",
+      // Empty sources: no user/project/local operator surface (envelope owns materials).
+      "--setting-sources", "",
+      // With adapter-supplied --mcp-config only (AK relay); drops operator + claude.ai MCP.
+      "--strict-mcp-config",
+    ]),
+    promptFlag: "-p",
+    modelFlag: "--model",
+    effortFlag: "--effort",
+    // File path keeps large role envelopes off ARG_MAX.
+    systemPromptFlag: "--system-prompt-file",
+    jsonSchemaFlag: "--json-schema",
+    mcpConfigFlag: "--mcp-config",
+    sessionIdFlag: "--session-id",
+    resumeFlag: "--resume",
+  }),
+});
+
 export function lookupHostDescription(host: string): AcpHostDescription | undefined {
   return Object.hasOwn(HOST_DESCRIPTIONS, host) ? HOST_DESCRIPTIONS[host] : undefined;
 }
 
-export function packagedExternalHostNames(): readonly string[] {
-  return Object.keys(HOST_DESCRIPTIONS);
+export function lookupHeadlessHostDescription(host: string): HeadlessHostDescription | undefined {
+  return Object.hasOwn(HEADLESS_HOST_DESCRIPTIONS, host) ? HEADLESS_HOST_DESCRIPTIONS[host] : undefined;
 }
 
-/** Legal persistent/invocation host: default pi, or a table key. */
+export function lookupHostFamily(host: string): HostFamily | undefined {
+  if (lookupHostDescription(host) !== undefined) return "acp";
+  if (lookupHeadlessHostDescription(host) !== undefined) return "headless";
+  return undefined;
+}
+
+export function packagedExternalHostNames(): readonly string[] {
+  return [...Object.keys(HOST_DESCRIPTIONS), ...Object.keys(HEADLESS_HOST_DESCRIPTIONS)];
+}
+
+/** Legal persistent/invocation host: default pi, or a table key (any family). */
 export function assertRegisteredHostName(host: string): string {
-  if (host === DEFAULT_ROLE_TURN_HOST || lookupHostDescription(host) !== undefined) {
+  if (host === DEFAULT_ROLE_TURN_HOST || lookupHostFamily(host) !== undefined) {
     return host;
   }
   throw new Error(`unregistered host: ${host}`);

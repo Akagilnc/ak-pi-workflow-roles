@@ -211,14 +211,13 @@ async function createSummonEnv(options: {
   const hostName = options.seat.host ?? "pi";
   let roleTurnHost = piHost;
   if (hostName !== "pi") {
-    const { lookupHostDescription } = await import("./host-descriptions.ts");
-    const { loadProductionAcpHostFactory } = await import(
-      "./public-cli/load-production-acp-host.ts"
+    const { lookupHostFamily } = await import("./host-descriptions.ts");
+    const { loadProductionExternalHostFactory } = await import(
+      "./public-cli/load-production-external-host.ts"
     );
-    // #729: the description table is the sole host authority — every registered
-    // key loads the same generic ACP factory (no per-host fork). Unregistered
-    // keys fail closed before any turn (#510), as the pre-merge fork did.
-    if (lookupHostDescription(hostName) === undefined) {
+    // #729 / #645: description tables are the sole host authority — family
+    // dispatch (ACP vs headless) is data-driven. Unregistered keys fail closed.
+    if (lookupHostFamily(hostName) === undefined) {
       throw new Error(
         `public role summons host unregistered: host=${hostName} seat=${options.role}`,
       );
@@ -226,7 +225,7 @@ async function createSummonEnv(options: {
     let hostPromise: Promise<RoleTurnHost> | undefined;
     roleTurnHost = {
       executeTurn: async (request) => {
-        hostPromise ??= loadProductionAcpHostFactory(options.packageRoot, hostName).then(
+        hostPromise ??= loadProductionExternalHostFactory(options.packageRoot, hostName).then(
           (create) =>
             create({
               packageRoot: options.packageRoot,

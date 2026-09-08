@@ -50,6 +50,9 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
         mcpServers: [{ name: "ak-probe", type: "stdio" }],
         systemPrompt: { body: "probe", materials: [] },
         prompt: "probe",
+        jsonSchema: { type: "object" },
+        terminatingToolName: "ak_judge_output",
+        async ingestStructuredOutput() {},
         async closeRound() {
           return { accepted: true as const };
         },

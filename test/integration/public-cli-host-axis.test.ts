@@ -202,7 +202,7 @@ test("production adapter table registers grok-build and hermes and keeps pi sele
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
-    registeredHosts: ["pi", "grok-build", "hermes"],
+    registeredHosts: ["pi", "grok-build", "hermes", "claude"],
   });
   assert.equal(piTurns, 2);
 }));

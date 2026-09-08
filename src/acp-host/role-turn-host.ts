@@ -43,6 +43,18 @@ export type AcpPreparedTurn = Readonly<{
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   dispose?(): Promise<void>;
+  /**
+   * Headless CLI family (#645): role terminating-tool schema for host-native
+   * `--json-schema`. Present for every prepared turn; ACP ignores it.
+   */
+  jsonSchema: Readonly<Record<string, unknown>>;
+  /** Terminating tool name whose schema is `jsonSchema`. */
+  terminatingToolName: string;
+  /**
+   * Headless CLI family: feed host-native `structured_output` through the same
+   * terminating-tool path the MCP relay uses (ledger + gates). ACP ignores it.
+   */
+  ingestStructuredOutput(params: unknown): Promise<void>;
 }>;
 
 /** Fold structured system-prompt authority into the provider-visible ACP override. */
