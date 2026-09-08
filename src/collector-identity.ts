@@ -2,7 +2,10 @@ import type {
   GitHubMachineIdentity,
 } from "./collector-github.ts";
 import type { CollectorEvidenceRecord, HeadRelation } from "./collector-evidence.ts";
+import type { CollectorSubmissionProjection } from "./package-contracts/collector-output.ts";
 import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
+
+export type { CollectorSubmissionProjection };
 
 export type CollectorMaterialRef = {
   kind: "review" | "issue_comment" | "review_comment" | "reaction";
@@ -21,7 +24,10 @@ export type CollectorMaterialRef = {
 export type CollectorFinding = {
   identity: GitHubMachineIdentity | null;
   source: CollectorMaterialRef;
+  /** Short classification label; not the finding summary. */
   category?: string;
+  /** Finding summary for the caller; not a body transcription. */
+  summary?: string;
   pointer: {
     repository: string;
     prNumber: number;
@@ -30,6 +36,8 @@ export type CollectorFinding = {
     authorLogin?: string;
     kind: CollectorMaterialRef["kind"];
     authoritativeTime?: string | null;
+    /** Corresponding commit when the evidence carries one. */
+    commitOid?: string | null;
   };
 };
 
@@ -121,9 +129,9 @@ export class CollectorUnknownEvidenceError extends CorrectableSubmissionError {
 }
 
 /**
- * #641 chain①: any malformed findings submission is a model misuse the model
- * can correct and resubmit — a branded correctable rejection on every supported
- * engine, never a round infrastructure failure.
+ * Evidence-binding failure for a finding pointer that resolves to the wrong kind
+ * of stored record, lacks a GitHub locator, or has no identity group — not a
+ * free-shape gate on the submission envelope.
  */
 export class CollectorFindingsValidationError extends CorrectableSubmissionError {
   constructor(message: string) {
@@ -133,11 +141,45 @@ export class CollectorFindingsValidationError extends CorrectableSubmissionError
 }
 
 /**
- * #641 chain①: turn model-submitted finding pointer refs into receipt findings.
- * Each pointer must resolve to a stored text-bearing evidence record; the
- * machine locator is enriched from the same record so receipt and volume agree
- * (指针可解析、开卷相符) by construction. Throws branded correctable
- * (non-fatal, model-visible) errors for unresolvable or mis-typed findings.
+ * #676 D6: non-OPEN targets keep collected materials and must not fire new review
+ * requests. Bounce the request as correctable so the seat can still seal output.
+ */
+export class CollectorNonOpenRequestError extends CorrectableSubmissionError {
+  constructor(prState: string) {
+    super(`通进司请求要求 OPEN 状态的 PR 快照；当前为 ${prState}，不再触发新评审，请直接交回已有材料`);
+    this.name = "CollectorNonOpenRequestError";
+  }
+}
+
+function candidateRecord(candidate: unknown): Record<string, unknown> | undefined {
+  if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return undefined;
+  }
+  return candidate as Record<string, unknown>;
+}
+
+/** Canonical top-level keys the collector output projection understands. */
+const COLLECTOR_OUTPUT_CANONICAL_KEYS = new Set([
+  "findings",
+  "unfinishedReasons",
+  "infrastructureFailure",
+]);
+
+/** Non-canonical own keys mean content was present but not under a projectable key. */
+function hasNonCanonicalOwnKeys(record: Record<string, unknown>): boolean {
+  for (const key of Object.keys(record)) {
+    if (!COLLECTOR_OUTPUT_CANONICAL_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
+/**
+ * #641 chain① / #676: turn model-submitted finding pointer refs into receipt findings.
+ * Binds resolvable evidence references only — no pure shape rejection of the
+ * candidate envelope. Unknown refs, wrong kinds, missing GitHub locator, and
+ * missing identity group stay as binding failures. Unreadable findings content
+ * is not washed into "zero findings": projection facts record the gap so
+ * downstream can open the session 正本 (第 0 条 / #676 C).
  */
 export function enrichCollectorFindings(input: {
   candidate: unknown;
@@ -146,63 +188,129 @@ export function enrichCollectorFindings(input: {
   targetHead: string;
   repository: string;
   prNumber: number;
-}): void {
-  const candidate = input.candidate;
-  if (candidate === undefined || candidate === null) return;
-  if (typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new CollectorFindingsValidationError("通进司交件参数必须为对象");
+}): {
+  findingsSource: CollectorSubmissionProjection["findingsSource"];
+  findingsProjectedCount: number;
+  findingsUnprojected: boolean;
+} {
+  // Candidate present but not a record — content existed, none projected (#676 C).
+  if (input.candidate !== undefined && input.candidate !== null && candidateRecord(input.candidate) === undefined) {
+    return { findingsSource: "unreadable", findingsProjectedCount: 0, findingsUnprojected: true };
   }
-  const rawFindings = (candidate as { findings?: unknown }).findings;
-  if (rawFindings === undefined) return;
+  const record = candidateRecord(input.candidate);
+  if (record === undefined) {
+    return { findingsSource: "absent", findingsProjectedCount: 0, findingsUnprojected: false };
+  }
+  if (!Object.hasOwn(record, "findings")) {
+    // Non-canonical top-level content is not "absent" — record the projection gap (#676 C).
+    if (hasNonCanonicalOwnKeys(record)) {
+      return { findingsSource: "unreadable", findingsProjectedCount: 0, findingsUnprojected: true };
+    }
+    return { findingsSource: "absent", findingsProjectedCount: 0, findingsUnprojected: false };
+  }
+  const rawFindings = record["findings"];
   if (!Array.isArray(rawFindings)) {
-    throw new CollectorFindingsValidationError("通进司 findings 必须为数组");
+    // Key present but not an array — content exists, none projected. No shape bounce.
+    return { findingsSource: "unreadable", findingsProjectedCount: 0, findingsUnprojected: true };
   }
-  const byEvidenceId = new Map(input.records.map((record) => [record.evidenceId, record]));
+
+  const byEvidenceId = new Map(input.records.map((evidence) => [evidence.evidenceId, evidence]));
+  let projected = 0;
+  let unprojected = false;
   for (const raw of rawFindings) {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new CollectorFindingsValidationError("通进司 finding 必须为对象");
+      unprojected = true;
+      continue;
     }
-    const evidenceId = (raw as { evidenceId?: unknown }).evidenceId;
+    const item = raw as Record<string, unknown>;
+    const evidenceId = item.evidenceId;
     if (typeof evidenceId !== "string" || evidenceId.length === 0) {
-      throw new CollectorFindingsValidationError("通进司 finding 缺少可解析的 evidenceId 指针");
+      // Present item without a bindable pointer — keep gap fact, do not fabricate.
+      unprojected = true;
+      continue;
     }
-    const record = byEvidenceId.get(evidenceId);
-    if (record === undefined) {
+    const evidence = byEvidenceId.get(evidenceId);
+    if (evidence === undefined) {
       throw new CollectorUnknownEvidenceError(evidenceId);
     }
-    if (record.kind !== "review" && record.kind !== "issue_comment" && record.kind !== "review_comment") {
-      throw new CollectorFindingsValidationError(`通进司 finding 指针指向不可承 finding 的证据种类 ${record.kind}`);
+    if (evidence.kind !== "review" && evidence.kind !== "issue_comment" && evidence.kind !== "review_comment") {
+      throw new CollectorFindingsValidationError(`通进司 finding 指针指向不可承 finding 的证据种类 ${evidence.kind}`);
     }
-    if (record.githubId === undefined) {
+    if (evidence.githubId === undefined) {
       throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 缺少 GitHub id`);
     }
-    const category = (raw as { category?: unknown }).category;
-    if (category !== undefined && (typeof category !== "string" || category.trim().length === 0)) {
-      throw new CollectorFindingsValidationError("通进司 finding category 必须为非空字符串");
-    }
-    const identity = record.machineIdentity ?? null;
+    const identity = evidence.machineIdentity ?? null;
     const group = input.groups.find((candidateGroup) => identityKey(candidateGroup.identity) === identityKey(identity));
     if (group === undefined) {
       throw new CollectorFindingsValidationError(`通进司 finding 指针证据 ${evidenceId} 无归属身份组`);
     }
+    // Bound finding keeps pointer; non-string category/summary are unprojected field gaps
+    // (pointer success ≠ full content projection) — #676 C / 3939511832.
+    const category = item.category;
+    const summary = item.summary;
+    if (Object.hasOwn(item, "category") && typeof category !== "string") unprojected = true;
+    if (Object.hasOwn(item, "summary") && typeof summary !== "string") unprojected = true;
     group.findings.push({
       identity,
       source: {
-        kind: record.kind,
-        id: record.githubId,
-        evidenceId: record.evidenceId,
-        headRelation: headRelationFor(record, input.targetHead),
+        kind: evidence.kind,
+        id: evidence.githubId,
+        evidenceId: evidence.evidenceId,
+        headRelation: headRelationFor(evidence, input.targetHead),
       },
-      ...(category === undefined ? {} : { category: category.trim() }),
+      ...(typeof category === "string" ? { category } : {}),
+      ...(typeof summary === "string" ? { summary } : {}),
       pointer: {
         repository: input.repository,
         prNumber: input.prNumber,
-        commentId: record.githubId,
-        ...(record.htmlUrl === undefined ? {} : { htmlUrl: record.htmlUrl }),
-        ...(record.authorLogin === undefined ? {} : { authorLogin: record.authorLogin }),
-        kind: record.kind,
-        authoritativeTime: record.authoritativeTime ?? null,
+        commentId: evidence.githubId,
+        ...(evidence.htmlUrl === undefined ? {} : { htmlUrl: evidence.htmlUrl }),
+        ...(evidence.authorLogin === undefined ? {} : { authorLogin: evidence.authorLogin }),
+        kind: evidence.kind,
+        authoritativeTime: evidence.authoritativeTime ?? null,
+        ...(evidence.commitOid === undefined ? {} : { commitOid: evidence.commitOid }),
       },
     });
+    projected += 1;
   }
+  return {
+    findingsSource: "array",
+    findingsProjectedCount: projected,
+    findingsUnprojected: unprojected,
+  };
+}
+
+/**
+ * #676 D6/C: optional unfinished reasons from the model submission.
+ * Project readable strings; record when original content could not fully project
+ * (do not wash unreadable unfinishedReasons into "none").
+ */
+export function extractCollectorUnfinishedReasons(candidate: unknown): {
+  reasons: string[] | undefined;
+  source: CollectorSubmissionProjection["unfinishedReasonsSource"];
+  unprojected: boolean;
+} {
+  if (candidate !== undefined && candidate !== null && candidateRecord(candidate) === undefined) {
+    return { reasons: undefined, source: "unreadable", unprojected: true };
+  }
+  const record = candidateRecord(candidate);
+  if (record === undefined) {
+    return { reasons: undefined, source: "absent", unprojected: false };
+  }
+  if (!Object.hasOwn(record, "unfinishedReasons")) {
+    // unfinishedReasons absent is fine when only findings (or nothing) present.
+    // Non-canonical keys alone are recorded on the findings projection path.
+    return { reasons: undefined, source: "absent", unprojected: false };
+  }
+  const raw = record["unfinishedReasons"];
+  if (!Array.isArray(raw)) {
+    return { reasons: undefined, source: "unreadable", unprojected: true };
+  }
+  const reasons = raw.filter((item): item is string => typeof item === "string");
+  const unprojected = reasons.length !== raw.length;
+  return {
+    reasons: reasons.length > 0 ? reasons : undefined,
+    source: "array",
+    unprojected,
+  };
 }

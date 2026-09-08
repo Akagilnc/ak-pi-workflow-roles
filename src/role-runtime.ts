@@ -43,12 +43,10 @@ import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_OUTPUT_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL,
+  COLLECTOR_REQUIRED_TOOLS,
+  COLLECTOR_TRANSPORT_FLAGS,
   createCollectorRoleRuntime,
+  type CollectorActivation,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime } from "./doctor-role.ts";
@@ -449,7 +447,9 @@ type ActivationRuntime = {
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
-  collector: { activate(context: HostContext, event: { reason: string }): Promise<void> };
+  collector: {
+    activate(context: HostContext, event: { reason: string }): Promise<void>;
+  };
   doctor: { activate(): Promise<void> };
   notary: {
     activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
@@ -629,7 +629,6 @@ export type RoleRuntimeDependencies = {
   createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
-  collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
@@ -1144,6 +1143,10 @@ export function createRoleRuntimeExtension(
     for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
+    // Collector transport flags: shared envelope owns registration (ADR 0018 / #676 E).
+    for (const flag of COLLECTOR_TRANSPORT_FLAGS) {
+      roleHost.registerFlag(flag.name, flag.definition);
+    }
 
     let admitted = false;
     let selectedRole: string | undefined;
@@ -1305,10 +1308,46 @@ export function createRoleRuntimeExtension(
           }),
         };
       }
+      // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
+      if (role === "collector" && activeCollector !== undefined) {
+        const options = event.systemPromptOptions;
+        if (options.skills && options.skills.length > 0) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 skills"),
+            ctx,
+          );
+        }
+        if (options.contextFiles && options.contextFiles.length > 0) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 context files"),
+            ctx,
+          );
+        }
+        if (
+          typeof options.appendSystemPrompt === "string"
+          && options.appendSystemPrompt.trim().length > 0
+        ) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到 appendSystemPrompt 漂移"),
+            ctx,
+          );
+        }
+        if (!collectorFirstDispatchDone) {
+          collectorFirstDispatchDone = true;
+          activeCollector.ledger.recordActivation(activeCollector.clock);
+        }
+        return {
+          systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
+        };
+      }
     });
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
+      // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
+      if (role === "collector" && activeCollector !== undefined) {
+        collectorBusiness.onToolResult(activeCollector, event);
+      }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
       const isRoleInfrastructureFailure = pendingInfra !== undefined;
       if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
@@ -1438,6 +1477,16 @@ export function createRoleRuntimeExtension(
         globalThis.fetch = priorFetch;
         priorFetch = undefined;
         fetchWrapped = false;
+      }
+      // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
+      if (
+        selectedRole === "collector"
+        && activeCollector !== undefined
+        && activeCollector.ledger.fatal
+      ) {
+        if (process.exitCode === undefined || process.exitCode === 0) {
+          process.exitCode = 1;
+        }
       }
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
@@ -1630,7 +1679,11 @@ export function createRoleRuntimeExtension(
         completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
       },
     }, hostActions);
-    const collector = createCollectorRoleRuntime(
+    // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
+    // event gates). Role module supplies business activate/tools/materials only.
+    let activeCollector: CollectorActivation | undefined;
+    let collectorFirstDispatchDone = false;
+    const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
         async loadSoul() {
@@ -1664,14 +1717,114 @@ export function createRoleRuntimeExtension(
         ...(dependencies.createCollectorClock === undefined
           ? {}
           : { createClock: dependencies.createCollectorClock }),
-        ...(dependencies.collectorPackageExtensionPath === undefined
-          ? {}
-          : {
-            packageExtensionPath: dependencies.collectorPackageExtensionPath,
-          }),
       },
       hostActions,
     );
+    // #676 J1: business tools + tool_call gate register only behind admission/activation.
+    // before_agent_start / tool_result collector branches live on the shared envelope hooks above.
+    //
+    // #676 J4 dispositions for guards removed from the role-private collector module:
+    // - skills/contextFiles/appendSystemPrompt fail-closed → shared before_agent_start (above).
+    // - ambient skill/prompt/template commands → activate (below).
+    // - session_shutdown fatal exitCode → shared session_shutdown (above).
+    // - subsequent-input latchFatal + fixed-kickoff rewrite → intentionally not migrated:
+    //   #676 materials-first multi-turn abolished the single-shot fixed kickoff; multi-turn
+    //   observe/request/wait requires later inputs. Judge r1: fixed-kickoff equality delete is authorized.
+    // - tool sourceInfo path override check → intentionally not migrated: depended on
+    //   packageExtensionPath deleted under ADR 0018 / #676 E envelope ownership; uniqueness
+    //   + setActiveTools inventory checks remain on activate.
+    let collectorToolCallRegistered = false;
+    const collector = {
+      async activate(context: HostContext, event: { reason: string }) {
+        activeCollector = undefined;
+        collectorFirstDispatchDone = false;
+        // Envelope-owned mode / fork-reload gates (not role-private lifecycle).
+        if (context.mode !== "print" && context.mode !== "json") {
+          throw new Error(
+            `Collector supports only print or json mode (got ${context.mode})`,
+          );
+        }
+        if (event.reason === "fork" || event.reason === "reload") {
+          throw new Error(
+            `Collector does not support session_start reason ${event.reason}`,
+          );
+        }
+        // #676 J4: ambient skill/prompt/template commands fail closed at activation.
+        const commands = roleHost.getCommands?.() ?? [];
+        const ambientCommands = commands.filter((command) => {
+          const name = command.name.toLowerCase();
+          return (
+            name.includes("skill")
+            || name.includes("prompt")
+            || name.startsWith("template")
+          );
+        });
+        if (ambientCommands.length > 0) {
+          throw new Error(
+            `Collector detected ambient instruction commands: ${
+              ambientCommands.map((c) => c.name).join(", ")
+            }`,
+          );
+        }
+        // Business tools behind admission barrier (inert-without-role invariant).
+        // First activation: fail closed if a required name is already occupied.
+        // Later activations reuse the once-registered tools (registerBusinessTools is idempotent).
+        const preExisting = roleHost.getAllTools();
+        const alreadyRegistered = COLLECTOR_REQUIRED_TOOLS.every((required) =>
+          preExisting.some((tool) => tool.name === required),
+        );
+        if (!alreadyRegistered) {
+          for (const required of COLLECTOR_REQUIRED_TOOLS) {
+            const prior = preExisting.filter((tool) => tool.name === required);
+            if (prior.length > 0) {
+              throw new Error(`Collector required tool name collision: ${required}`);
+            }
+          }
+        }
+        collectorBusiness.registerBusinessTools(() => activeCollector);
+        const allTools = roleHost.getAllTools();
+        for (const required of COLLECTOR_REQUIRED_TOOLS) {
+          const matches = allTools.filter((tool) => tool.name === required);
+          if (matches.length === 0) {
+            throw new Error(`Collector required tool missing: ${required}`);
+          }
+          if (matches.length > 1) {
+            throw new Error(`Collector required tool name collision: ${required}`);
+          }
+        }
+        roleHost.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
+        const active = new Set(roleHost.getActiveTools());
+        for (const required of COLLECTOR_REQUIRED_TOOLS) {
+          if (!active.has(required)) {
+            throw new Error(`Collector failed to activate required tool ${required}`);
+          }
+        }
+        for (const name of active) {
+          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
+            throw new Error(`Collector active tool surface includes unexpected ${name}`);
+          }
+        }
+        // Seat-scoped tool_call gate — registered only after collector admission (no install-time tool_call).
+        if (!collectorToolCallRegistered) {
+          collectorToolCallRegistered = true;
+          roleHost.on("tool_call", (toolEvent) => {
+            if (activeCollector === undefined || selectedRole !== "collector") return;
+            if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
+              return {
+                block: true,
+                reason: `通进司禁用工具 ${toolEvent.toolName}`,
+              };
+            }
+            return collectorBusiness.onToolCall(activeCollector, toolEvent);
+          });
+        }
+        const activation = await collectorBusiness.activate(context);
+        if (activation.ledger.activationRecorded) {
+          collectorFirstDispatchDone = true;
+        }
+        activeCollector = activation;
+      },
+    };
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
