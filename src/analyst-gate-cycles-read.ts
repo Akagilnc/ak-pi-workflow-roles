@@ -477,6 +477,10 @@ export async function readAnalystGateCyclesFromAuditorRoles(
     ? [auditorRolesDirectory]
     : auditorRolesDirectory;
   const volumes: ClassifiedVolume[] = [];
+  // Same officer session pointed at N times (historical multi-mint pointers, or
+  // one parent booking many leaves) must classify once — else each accepted
+  // seal is counted ×N in terminal gate-round (#753 acceptance A).
+  const classifiedOfficerSessions = new Set<string>();
   for (const directory of directories) {
     let names: string[];
     try {
@@ -495,10 +499,15 @@ export async function readAnalystGateCyclesFromAuditorRoles(
     }
     for (const name of names) {
       const path = join(directory, name);
-      const sessionPath = name.endsWith(".pointer.json")
+      const fromPointer = name.endsWith(".pointer.json");
+      const sessionPath = fromPointer
         ? await resolveOfficerSessionFromPointerFile(path)
         : path;
       if (sessionPath === undefined) continue;
+      if (fromPointer) {
+        if (classifiedOfficerSessions.has(sessionPath)) continue;
+        classifiedOfficerSessions.add(sessionPath);
+      }
       const classified = await classifyAuditorVolume(sessionPath);
       for (const volume of classified) {
         if (

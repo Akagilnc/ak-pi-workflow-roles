@@ -1,21 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-import {
-  JUDGE_OUTPUT_TOOL_NAME,
-  resolveAuditDossier,
-  readJudgeAuditSubjects,
-} from "../../src/dossier-resolution.ts";
+import { resolveAuditDossier } from "../../src/dossier-resolution.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
-// bare-Pi absent pointer and missing-dossier path gates are covered at the
-// real auditor entry (judge-auditor-dossier.test.ts); keep only the concurrent
-// isolation contract and helper-level subject shape here.
+// Judge subject pre-check deleted with createPiJudgeAuditor (#756); gate officers self-fetch.
+// Keep concurrent isolation contract for the shared AK_ROLE_RUN_DIR pointer.
 
 test("concurrent pointers keep two runs from crossing dossiers", async () => {
   await withTempRoot("ak-dossier-concurrent-", async (root) => {
@@ -46,31 +37,4 @@ test("concurrent pointers keep two runs from crossing dossiers", async () => {
     else process.env.AK_ROLE_RUN_DIR = previous; }
     );
   });
-});
-
-test("judge subjects require assignment and candidate verdict on the parent session", () => {
-  const empty = SessionManager.inMemory();
-  assert.deepEqual(readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext), {
-    status: "incomplete",
-    observation: { kind: "missing-subject", subject: "assignment" },
-  });
-
-  empty.appendMessage({ role: "user", content: "OWNER: adjudicate", timestamp: Date.now() });
-  assert.deepEqual(readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext), {
-    status: "incomplete",
-    observation: { kind: "missing-subject", subject: "candidate-verdict" },
-  });
-
-  empty.appendMessage({
-    role: "assistant",
-    content: [{ type: "toolCall", id: "v1", name: JUDGE_OUTPUT_TOOL_NAME, arguments: { judgeStatus: "converged" } }],
-    api: "openai-responses",
-    provider: "test",
-    model: "test",
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    stopReason: "toolUse",
-    timestamp: Date.now(),
-  });
-  const ready = readJudgeAuditSubjects({ sessionManager: empty } as unknown as ExtensionContext);
-  assert.equal(ready.status, "ok");
 });

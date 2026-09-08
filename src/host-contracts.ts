@@ -127,11 +127,7 @@ export type RoleTurnActivation =
   | { readonly role: "gatekeeper" }
   | { readonly role: "navigator" }
   | { readonly role: "auditor" }
-  | {
-      readonly role: "diarist";
-      /** Frozen source-catalog path; absent for a true-unbound summons (#708). */
-      readonly sourcesPath?: string;
-    };
+  | { readonly role: "diarist" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
@@ -299,10 +295,10 @@ type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], c
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
 type HostGatekeeperSubject = {
-  readonly kind: "worker_completion" | "judge_draft" | "countersign_verdict";
+  readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
 };
-/** Gatekeeper bounce/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "no_receipt" | "unreadable" } & Record<string, unknown>;
+/** Gatekeeper bounce/escalate/no_receipt plus other correct submission rejects share one projection map. */
+type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };

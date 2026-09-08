@@ -63,6 +63,17 @@ export type AdmittedInstructionSeatInvocation =
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #756 nested gate re-ask for auditor: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
+   */
+  reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv instruction.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -283,9 +294,15 @@ export async function runPublicInstructionSeat(
     }
   }
 
+  // #756: auditor reask / new-submission pointers ride summons.instruction on resume.
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
   const summons: SameTicketSummonsMaterials = {
-    instruction: parsed.instruction,
-    instructionEmpty: parsed.instruction.trim() === "",
+    ...(resumeInstruction === undefined
+      ? {
+          instruction: parsed.instruction,
+          instructionEmpty: parsed.instruction.trim() === "",
+        }
+      : { instruction: resumeInstruction, instructionEmpty: false }),
     attachmentPaths: parsed.attachmentPaths,
   };
   if (role === "auditor" && auditorSourceRun !== undefined) {
@@ -309,6 +326,17 @@ export async function runPublicInstructionSeat(
         }),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753 / #756).
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "auditor review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   }
 
   let admitted: AdmittedInstructionSeatInvocation;

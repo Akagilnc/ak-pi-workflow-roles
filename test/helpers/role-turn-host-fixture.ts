@@ -32,7 +32,7 @@ import {
 export const TRUE_UNBOUND_DIARIST_DETAILS = {
   status: "completed" as const,
   ticketNumber: null,
-  selections: [] as const,
+  entries: [] as const,
 };
 
 /** Read a dashed flag value from argv (shared by public-CLI tracers). */

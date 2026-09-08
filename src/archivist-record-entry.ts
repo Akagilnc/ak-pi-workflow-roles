@@ -232,7 +232,7 @@ export const DIRECT_OFFICER_RUN_POINTER_KIND = "direct-officer-run-pointer" as c
 export type DirectOfficerRunPointer = {
   readonly version: 1;
   readonly kind: typeof DIRECT_OFFICER_RUN_POINTER_KIND;
-  readonly officer: "inspector" | "notary";
+  readonly officer: "inspector" | "notary" | "auditor";
   /** Absolute path to the officer session.jsonl 正本. */
   readonly sessionFile: string;
   /** Officer run directory when known. */
@@ -243,10 +243,14 @@ export type DirectOfficerRunPointer = {
  * Book a typed pointer under parent session/auditor-roles (same nest owner as
  * createRecordSession). Never fabricates user/assistant/toolResult rows (#675).
  * Directory placement stays with the archivist record entry (ADR 0018 / 0065).
+ *
+ * Stable leaf per officer under one parent (#753 gate-round accounting):
+ * same-parent re-summons upsert the same pointer instead of minting N files that
+ * each re-scan the full officer session and multiply terminal gate-round counts.
  */
 export function bookDirectOfficerRunPointer(options: {
   readonly parentSessionFile: string;
-  readonly officer: "inspector" | "notary";
+  readonly officer: "inspector" | "notary" | "auditor";
   readonly sessionFile: string;
   readonly runDirectory?: string;
 }): DirectOfficerRunPointer {
@@ -262,7 +266,7 @@ export function bookDirectOfficerRunPointer(options: {
       : {}),
   };
   writeFileSync(
-    join(nest, `${options.officer}-${Date.now().toString(36)}.pointer.json`),
+    join(nest, `${options.officer}.pointer.json`),
     `${JSON.stringify(pointer)}\n`,
     "utf8",
   );

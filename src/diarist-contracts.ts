@@ -1,29 +1,31 @@
 /**
  * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075 `diarist-is-role`.
- * Lawful explicit releases: completed (入录选择) | escalate (认不出本庭对象上抛).
+ * Lawful explicit releases: completed (入录) | escalate (认不出本庭对象上抛).
  * Machine facts about the volume come from the mechanical sitian seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
+ *
+ * #779: no frozen candidate catalog; LLM finds sources and submits whole blocks.
+ * Mechanical layer does not judge LLM output (no quote/ticket/relevance verify).
  */
+
+import type {
+  TicketProvenanceSourceKind,
+  TicketProvenanceSourceRef,
+} from "./ticket-provenance-contracts.ts";
 
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
 
-/** Internal transport: frozen candidate-catalog path for this turn. */
-export const DIARIST_SOURCES_FLAG = {
-  name: "ak-diarist-sources",
-  definition: {
-    description:
-      "Frozen source catalog the diarist selects from (may be unbound until LLM asserts ticketNumber)",
-    type: "string" as const,
-  },
-} as const;
-
-/** One selected block reference into the frozen candidate catalog. */
-export type DiaristSelection = {
-  /** Index into the catalog the diarist received. */
-  readonly candidateIndex: number;
-  /** Quotes claimed verbatim from that block (reverse-verified mechanically). */
-  readonly quotes: readonly string[];
+/**
+ * One whole block the diarist chose to enter (ADR 0075 `transcribe-whole-blocks`).
+ * LLM supplies the block bytes + source pointer; mechanical layer appends as-is.
+ */
+export type DiaristEntrySubmission = {
+  readonly sourceKind: TicketProvenanceSourceKind;
+  readonly sourceRef: TicketProvenanceSourceRef;
+  /** Whole-block transcript — not a pointer-only stand-in. */
+  readonly transcript: string;
+  readonly timestamp: string;
   /** Human-facing note (relation to this case). Not a machine gate. */
   readonly note?: string;
 };
@@ -31,13 +33,14 @@ export type DiaristSelection = {
 export type DiaristOutput =
   | {
       readonly status: "completed";
-      readonly selections: readonly DiaristSelection[];
       /**
        * Typed court-target assertion (ADR 0075 `diarist-resolves-ticket-llm-layer`).
        * Positive integer = 本庭对象=票N; null/absent = true-unbound (真无票→无录).
-       * Mechanical layer verifies N; verification failure is failure, never 无录.
+       * LLM owns recognition; mechanical layer does not re-judge the number.
        */
       readonly ticketNumber?: number | null;
+      /** Whole blocks to append under the asserted ticket. Empty list is lawful. */
+      readonly entries?: readonly DiaristEntrySubmission[];
     }
   | {
       /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
@@ -62,25 +65,38 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
 }
 
 /**
- * Lenient projection of submitted selections (第 0 条: shape is not an admission
- * gate). Rows that carry no usable candidateIndex are dropped from the commit,
- * never bounced back at the role.
+ * Lenient projection of submitted entries (第 0 条: shape is not an admission
+ * gate). Rows that cannot form a lawful volume entry are dropped from the
+ * commit, never bounced back at the role. This is write-seam self-check only —
+ * not quote/ticket/relevance judgment of LLM content (#779).
  */
-export function projectDiaristSelections(value: unknown): DiaristSelection[] {
-  const rows = (value as { selections?: unknown } | null)?.selections;
+export function projectDiaristEntries(value: unknown): DiaristEntrySubmission[] {
+  const rows = (value as { entries?: unknown } | null)?.entries;
   if (!Array.isArray(rows)) return [];
-  const out: DiaristSelection[] = [];
+  const out: DiaristEntrySubmission[] = [];
   for (const row of rows) {
     if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
     const record = row as Record<string, unknown>;
-    const index = record.candidateIndex;
-    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) continue;
-    const quotes = Array.isArray(record.quotes)
-      ? record.quotes.filter((q): q is string => typeof q === "string" && q.length > 0)
-      : [];
+    if (typeof record.sourceKind !== "string") continue;
+    if (typeof record.transcript !== "string" || record.transcript.length === 0) continue;
+    if (typeof record.timestamp !== "string" || record.timestamp.length === 0) continue;
+    if (record.sourceRef === null || typeof record.sourceRef !== "object" || Array.isArray(record.sourceRef)) {
+      continue;
+    }
+    const ref = record.sourceRef as Record<string, unknown>;
+    const sourceRef: TicketProvenanceSourceRef = {
+      ...(typeof ref.sessionFile === "string" ? { sessionFile: ref.sessionFile } : {}),
+      ...(typeof ref.entryId === "string" || typeof ref.entryId === "number"
+        ? { entryId: ref.entryId }
+        : {}),
+      ...(typeof ref.path === "string" ? { path: ref.path } : {}),
+      ...(typeof ref.url === "string" ? { url: ref.url } : {}),
+    };
     out.push({
-      candidateIndex: index,
-      quotes,
+      sourceKind: record.sourceKind as TicketProvenanceSourceKind,
+      sourceRef,
+      transcript: record.transcript,
+      timestamp: record.timestamp,
       ...(typeof record.note === "string" ? { note: record.note } : {}),
     });
   }

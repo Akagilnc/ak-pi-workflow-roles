@@ -1,20 +1,11 @@
 /**
- * Public Diarist (起居郎) Role run — #708 / ADR 0075 `diarist-is-role`.
+ * Public Diarist (起居郎) Role run — #708 / ADR 0075 `diarist-is-role` / #779.
  * Same admit → post-admission → settle shape as the other instruction seats.
- * Semantic collection is the role's own turn; this seat only freezes the
- * mechanical source catalog the turn selects from (`diarist-collector-is-own-turn`).
+ * Semantic collection is the role's own turn: LLM finds materials itself
+ * (no frozen candidate catalog, no path/attachment burden on the caller).
  * Who calls it and in what order is the caller's business (ADR 0010 `no-call-rule`).
  */
-import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import {
-  loadDiaristIssueFace,
-  prepareDiaristSourceCatalog,
-  serializeDiaristSourceCatalog,
-} from "../diarist.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -35,7 +26,6 @@ import {
 import {
   loadResumableDiaristRun,
   markRunAdmitted,
-  readRoleRunIdentity,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -57,107 +47,29 @@ export type DiaristRunEnv = PostAdmissionEnv & {
   /**
    * Typed handoff from a caller that already holds a verified ticket key
    * (countersign refresh / post-assert). Never derived from summons prose.
-   * When set: same-ticket resume under that key, else bind-before-freeze so
-   * issue face enters the catalog (ADR 0075 / 0081).
+   * When set: same-ticket resume under that key, else bind before the turn
+   * so identity is already on the run pages (ADR 0075 / 0081).
    */
   boundTicketNumber?: number;
 };
-
-/** Frozen catalog filename inside the run dossier (durable material, not argv). */
-const DIARIST_SOURCE_CATALOG_FILE = "diarist-sources.json" as const;
-
-/** Neutral path identifier only (ADR 0073) — catalog bytes stay on disk. */
-function withDiaristCatalogPath(
-  prompt: string,
-  sourcesPath: string | undefined,
-): string {
-  if (sourcesPath === undefined || sourcesPath.trim() === "") return prompt;
-  return `${prompt}\n\n已冻结来源文件（路径）：\n- ${sourcesPath}`;
-}
 
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildDiaristTurnRequest(
   admitted: AdmittedDiaristInvocation,
   options: RoleTurnRequestProjectionOptions,
-  sourcesPath?: string,
 ): RoleTurnRequest {
-  const continuation =
-    sourcesPath === undefined
-      ? options.continuation
-      : {
-          ...options.continuation,
-          prompt: withDiaristCatalogPath(options.continuation.prompt, sourcesPath),
-        };
   return projectRoleTurnRequest(
     admitted,
-    {
-      activation: {
-        role: "diarist" as const,
-        ...(sourcesPath === undefined ? {} : { sourcesPath }),
-      },
-    },
-    { ...options, continuation },
+    { activation: { role: "diarist" as const } },
+    options,
   );
 }
 
-/**
- * Mechanical source enumeration into a frozen catalog for this turn.
- * Bound summons: establish the per-ticket volume and load the issue face.
- * First-summons (unbound): freeze session candidates + summons text so the LLM
- * turn can assert ticketNumber; accept verifies and mints the volume (ADR 0075).
- * True-unbound is decided by the LLM assertion (null/absent ticketNumber), not
- * by skipping the freeze here.
- *
- * A run that has not settled yet (crash-resume, open-court continuation) keeps
- * the catalog its candidateIndexes were minted against — re-enumerating there
- * would rebind the role's indexes to bytes it never saw. Only a settled run
- * re-enumerates on the next same-ticket summons (ADR 0075 增量).
- */
-async function freezeDiaristSourceCatalog(
-  admitted: AdmittedDiaristInvocation,
-  env: Pick<DiaristRunEnv, "cwd" | "home">,
-): Promise<string> {
-  const path = join(admitted.runDirectory, DIARIST_SOURCE_CATALOG_FILE);
-  if (existsSync(path)) {
-    const identity = await readRoleRunIdentity(admitted.runDirectory);
-    if (identity !== undefined && identity.state !== "terminal") return path;
-  }
-  const issueFace =
-    admitted.ticketNumber === undefined
-      ? undefined
-      : await loadDiaristIssueFace({
-          ticketNumber: admitted.ticketNumber,
-          projectRoot: admitted.projectRoot,
-          home: env.home,
-        });
-  const catalog = await prepareDiaristSourceCatalog({
-    ...(admitted.ticketNumber === undefined
-      ? {}
-      : { ticketNumber: admitted.ticketNumber }),
-    instruction: admitted.instruction,
-    runDirectory: admitted.runDirectory,
-    projectRoot: admitted.projectRoot,
-    cwd: admitted.projectRoot,
-    home: env.home,
-    ...(issueFace === undefined ? {} : { issueFace }),
-    sessionCwds: [admitted.projectRoot, env.cwd],
-  });
-  await writeFile(path, serializeDiaristSourceCatalog(catalog), "utf8");
-  return path;
-}
-
-function diaristAdapters(options?: {
-  beforeDispatch?: (
-    admitted: AdmittedDiaristInvocation,
-  ) => void | Promise<void>;
-}): PostAdmissionAdapters<AdmittedDiaristInvocation> {
+function diaristAdapters(): PostAdmissionAdapters<AdmittedDiaristInvocation> {
   return {
     trySettle: (admitted, authority, scope) =>
       trySettleDiaristTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
-    ...(options?.beforeDispatch === undefined
-      ? {}
-      : { beforeDispatch: options.beforeDispatch }),
   };
 }
 
@@ -182,11 +94,10 @@ export async function runPublicDiarist(
     throw error;
   }
 
-  // #637 / #771 / ADR 0075: ticket identity is the LLM's typed assertion on this
-  // turn (mechanical verify on accept), OR a typed handoff key already held by
-  // the caller (countersign refresh). Code never pre-judges the summons text
-  // against book-known numbers. First summons without handoff stays unbound
-  // until assert.
+  // #637 / #771 / ADR 0075 / #779: ticket identity is the LLM's typed assertion
+  // on this turn, OR a typed handoff key already held by the caller (countersign
+  // refresh). Code never pre-judges the summons text and never freezes a
+  // candidate catalog. First summons without handoff stays unbound until assert.
 
   const projectRoot = parsed.project ?? env.cwd;
   const handoffTicket = env.boundTicketNumber;
@@ -240,7 +151,7 @@ export async function runPublicDiarist(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  // Typed handoff: bind before freeze so issue face enters the catalog.
+  // Typed handoff: bind before the turn so identity is on durable pages.
   if (
     typeof handoffTicket === "number" &&
     Number.isSafeInteger(handoffTicket) &&
@@ -270,7 +181,6 @@ export async function runPublicDiarist(
       ),
     },
   };
-  // Mutable shell: ticket bind + catalog freeze re-project activation before executeTurn.
   const turnRequest = buildDiaristTurnRequest(admitted, turnProjection);
 
   return await runPostAdmissionOneShot({
@@ -278,15 +188,7 @@ export async function runPublicDiarist(
     env,
     io,
     request: turnRequest,
-    adapters: diaristAdapters({
-      beforeDispatch: async (admittedSeat) => {
-        const sourcesPath = await freezeDiaristSourceCatalog(admittedSeat, env);
-        Object.assign(
-          turnRequest,
-          buildDiaristTurnRequest(admittedSeat, turnProjection, sourcesPath),
-        );
-      },
-    }),
+    adapters: diaristAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   }).then(async (result) => {
     // Accept may have bound ticket onto durable pages after LLM assertion.
@@ -323,9 +225,7 @@ export async function runPublicDiarist(
 
 /**
  * Resume a previously admitted Diarist run (#708 / ADR 0079 同票传召 = resume).
- * A re-entry into a settled run re-enumerates fresh sources; the offered
- * watermark keeps the pass incremental so already-seen blocks are not
- * re-offered. An unfinished run keeps its frozen catalog (see freeze above).
+ * LLM re-finds materials; entry identity keeps the volume idempotent.
  */
 export async function runPublicDiaristResume(
   request: PublicResumeRequest,
@@ -347,7 +247,6 @@ export async function runPublicDiaristResume(
         admitted.runDirectory,
         effective.summons,
       );
-      const sourcesPath = await freezeDiaristSourceCatalog(admitted, env);
       return buildDiaristTurnRequest(
         admitted,
         resumeTurnRequestProjectionOptions(
@@ -356,7 +255,6 @@ export async function runPublicDiaristResume(
           env,
           summonsPrepared,
         ),
-        sourcesPath,
       );
     },
     adapters: diaristAdapters(),
