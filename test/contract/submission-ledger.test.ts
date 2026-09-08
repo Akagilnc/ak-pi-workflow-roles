@@ -8,7 +8,7 @@ import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { GatekeeperDecisionError, GatekeeperEscalationError } from "../../src/gatekeeper-role.ts";
+import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { AcceptedDetailsContractError } from "../../src/package-contracts/terminating-tools.ts";
@@ -238,7 +238,7 @@ test("a forged correctable code remains infrastructure", async () => {
 test("pipeline ledger records typed bounce anchors as correctable-rejection", async () => {
   await withLedgerFixture(async (f) => {
     const anchors: Array<{ label: string; error: Error }> = [
-      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "bounce", officer: "inspector", disposition: "rewrite", findings: [], submission: {} }) },
+      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "bounce", officer: "inspector", receipt: { status: "bounce", findings: ["x"] } }) },
       { label: "unfinished-reason", error: new WorkerUnfinishedReasonReminderError() },
       { label: "shape", error: new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator") },
     ];
@@ -287,24 +287,37 @@ test("pipeline ledger records audit-escalation projection without sealing", asyn
   });
 });
 
-test("officer escalation keeps officer facts separate from the parent receipt", async () => {
+test("officer escalate via gate is correctable bounce-to-parent with raw receipt (#753)", async () => {
   await withLedgerFixture(async (f) => {
-    const parent = { status: "completed", report: "parent-report" };
-    const escalating = registerTool(
+    // #753: gate no longer throws GatekeeperEscalationError to select parent next-step.
+    // Officer escalate returns raw receipt as correctable non-pass to the parent session.
+    const receipt = { status: "escalate", reason: "need owner", findings: ["f"] };
+    const bouncing = registerTool(
       f.root,
-      async () => { throw new GatekeeperEscalationError({ status: "escalate", officer: "notary", reason: undefined, findings: ["f"], submission: {} }); },
+      async () => {
+        throw new GatekeeperDecisionError({
+          status: "escalate",
+          officer: "notary",
+          receipt,
+        });
+      },
       packagedRoleOutputTool("coder")!,
       "coder",
     );
-    await escalating.start("coder-escalation", packagedRoleOutputTool("coder")!);
-    await escalating.tool().execute("coder-escalation", parent, undefined, undefined, escalating.context);
-    await escalating.close();
-    const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
-    assert.equal(projection?.decisiveFacts.status, "completed");
-    assert.equal(projection?.decisiveFacts.report, "parent-report");
-    assert.equal(projection?.decisiveFacts.officer, "notary");
-    assert.equal(typeof projection?.decisiveFacts.reason, "string");
-    assert.deepEqual(projection?.decisiveFacts.findings, ["f"]);
+    await bouncing.start("coder-officer-escalate", packagedRoleOutputTool("coder")!);
+    await assert.rejects(
+      bouncing.tool().execute("coder-officer-escalate", { status: "completed" }, undefined, undefined, bouncing.context),
+      (error: unknown) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "escalate");
+        assert.equal(error.message, JSON.stringify(receipt));
+        return true;
+      },
+    );
+    const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
+    assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection");
+    assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
+    assert.equal(await readAuditEscalationSubmission(f.root, "run-ledger", f.root), undefined);
   });
 });
 

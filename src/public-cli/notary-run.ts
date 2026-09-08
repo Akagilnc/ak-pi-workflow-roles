@@ -4,9 +4,6 @@
  * the shared post-admission seam; this module keeps only Notary adapters.
  * #637 / #747: same-parent (--source-run) re-summons resume the seat's previous run.
  */
-import { existsSync } from "node:fs";
-
-import { gateSubmissionCandidatePath } from "../auditor-dossier-tool.ts";
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import {
   NotarySourceRunError,
@@ -22,6 +19,7 @@ import {
 } from "./invocation.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
+  prepareSummonsResumeMaterials,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -29,7 +27,6 @@ import {
   resumeTurnRequestProjectionOptions,
 } from "./post-admission.ts";
 import {
-  appendResumeMaterialReread,
   loadResumableNotaryRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -49,6 +46,17 @@ import {
 export type NotaryRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * #753 nested gate re-ask: plain-language instruction on same-ticket resume.
+   * Only set by summonPublicRole when the prior officer reply was not three-state.
+   * Never a public CLI argv — external callers still have zero prompt.
+   */
+  reviewReask?: string;
+  /**
+   * #753/#750 same-parent re-summons: human-readable new-submission pointers.
+   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -112,10 +120,16 @@ export async function runPublicNotary(
     throw error;
   }
   // #747: officer resume key is this parent source-run path (not ticket number).
+  // #753: gate re-ask and new-submission pointers share summons.instruction
+  // (reask wins when both present; no parallel stack).
   {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
+      ...(resumeInstruction === undefined
+        ? {}
+        : { instruction: resumeInstruction, instructionEmpty: false }),
     };
     const resumed = await tryResumeSameTicketSeatRun({
       home: env.home,
@@ -132,6 +146,18 @@ export async function runPublicNotary(
         ),
     });
     if (resumed !== undefined) return resumed;
+    // Reask without a prior same-parent run cannot deliver the plain-language ask
+    // on a fresh mint without inventing a second prompt path — fail loud (#753).
+    // gateReviewInstruction alone is resume-only materials; fresh mint ignores it.
+    if (env.reviewReask !== undefined) {
+      presentStructuralRejection(
+        new CliUsageError(
+          "notary review reask requires a prior same-parent run to resume",
+        ),
+        io,
+      );
+      return { exitCode: 2 };
+    }
   }
 
   let admitted: AdmittedNotaryInvocation;
@@ -238,20 +264,26 @@ export async function runPublicNotaryResume(
       }
       return loaded;
     },
-    buildTurnRequest: (admitted, effective) => {
-      const projection = resumeTurnRequestProjectionOptions(
+    buildTurnRequest: async (admitted, effective) => {
+      // #755: review continuation is plain dialogue / resume envelope — no
+      //「重新读」candidate line, no engine handbook packaging.
+      // #753: non-three-state re-ask rides as summons.instruction (人话重问).
+      const summonsPrepared =
+        effective.summons === undefined
+          ? undefined
+          : await prepareSummonsResumeMaterials(
+              admitted.runDirectory,
+              effective.summons,
+            );
+      return buildNotaryTurnRequest(
         admitted,
-        effective,
-        env,
+        resumeTurnRequestProjectionOptions(
+          admitted,
+          effective,
+          env,
+          summonsPrepared,
+        ),
       );
-      const candidatePath = gateSubmissionCandidatePath(admitted.sourceRunPath);
-      const prompt = existsSync(candidatePath)
-        ? appendResumeMaterialReread(projection.continuation.prompt, candidatePath)
-        : projection.continuation.prompt;
-      return buildNotaryTurnRequest(admitted, {
-        ...projection,
-        continuation: { kind: "resume", prompt },
-      });
     },
     adapters: notaryAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

@@ -9,12 +9,6 @@ export const TICKET_PROVENANCE_KIND = "ticket-provenance" as const;
 /** Human-read view filename co-located with the JSONL volume. */
 export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
 
-/**
- * Incremental watermark: identities already offered to the collector this ticket
- * (selected or not). Process state next to the volume — not a diary dual-source.
- */
-export const TICKET_PROVENANCE_OFFERED_WATERMARK = "offered-identities.jsonl" as const;
-
 /** Payload discriminator: diagnostic residue (not a diary body entry). */
 export const TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC = "diagnostic" as const;
 
@@ -27,17 +21,17 @@ export type TicketProvenanceSourceKind =
 
 /**
  * How a block entered the volume.
- * - llm-semantic: LLM collector selected the block (after mechanical reverse-verify).
- *   basis.anchors carry ticket # and mechanical/claimed quote notes for audit only.
+ * - llm-semantic: LLM selected and submitted the whole block (#779: no mechanical reverse-verify).
+ *   basis.anchors may carry ticket # / human notes for audit only — not a gate.
  */
 export type TicketProvenanceBasisMethod = "llm-semantic";
 
-/** Basis for inclusion — LLM judgment plus mechanical anchor notes for audit. */
+/** Basis for inclusion — LLM judgment; anchors/notes are audit-only. */
 export type TicketProvenanceBasis = {
   readonly method: TicketProvenanceBasisMethod;
-  /** Mechanical anchors (ticket #, quotes, keywords) used for candidate/verify reference only. */
+  /** Audit notes (ticket #, human labels). Not a machine gate. */
   readonly anchors?: readonly string[];
-  /** Free diagnostic note (failure cause, filter reason). Not a machine gate. */
+  /** Free diagnostic note. Not a machine gate. */
   readonly note?: string;
 };
 
@@ -66,7 +60,7 @@ export type TicketProvenanceEntry = {
  * Separated by recordClass discriminator — never disguised as a source entry.
  */
 export type TicketProvenanceDiagnosticKind =
-  /** Historical rows only — the diarist turn's own failure settles the run (#708). */
+  /** Historical rows only — retained for reading older volumes (#779 deleted writers). */
   | "collector-failed"
   | "issue-source-failed"
   | "quote-verify-failed";

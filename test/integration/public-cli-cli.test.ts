@@ -107,20 +107,17 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
       assert.equal(result.exitCode, row.exitCode);
       assert.ok(result.terminal);
       const outcome = result.terminal.roleOutcome;
+      // #753 escalate-thrown-verbatim: escalate seals accepted + raw receipt —
+      // no audit_escalation rewrite, no fabricated reason when absent.
+      assert.equal(outcome.kind, "accepted");
+      if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
+      assert.equal(outcome.status, row.status);
+      assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      if (row.status === "pass") {
+        assert.deepEqual(outcome.decisiveFacts.freeExtra, freeExtra);
+      }
       if (row.status === "escalate") {
-        assert.equal(outcome.kind, "audit_escalation");
-        assert.equal(outcome.status, "audit_escalation");
-        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
-        assert.equal(typeof outcome.decisiveFacts.reason, "string");
-        assert.notEqual(outcome.decisiveFacts.reason, "");
-      } else {
-        assert.equal(outcome.kind, "accepted");
-        if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
-        assert.equal(outcome.status, row.status);
-        assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
-        if (row.status === "pass") {
-          assert.deepEqual(outcome.decisiveFacts.freeExtra, freeExtra);
-        }
+        assert.equal(outcome.decisiveFacts.reason, undefined);
       }
     }
   });

@@ -35,7 +35,6 @@ import {
   createProductionMergerGitState,
   formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
-import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
@@ -175,7 +174,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    auditSoulCompliance: (options) => createPiJudgeAuditor()(options),
   }, {
     transcriptFromContext,
     oauthKeepalive: { providers: oauthKeepaliveProviders },

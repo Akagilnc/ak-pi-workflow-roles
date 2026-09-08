@@ -249,6 +249,63 @@ test("grok-build selection and execution have no provider restriction", async ()
   }
 }));
 
+// #778: seat-table provider alias reaches the public host turn; unregistered pairs pass through.
+test("seat-table provider alias remaps only the registered host on the public entry", async () => homeTest(async (home) => {
+  const seen: Array<{ host: string; provider: string | undefined }> = [];
+  const probe = (name: string): NamedRoleTurnHostAdapter => ({
+    name,
+    create: () => ({
+      ok: true as const,
+      host: {
+        executeTurn: async (request) => {
+          seen.push({ host: name, provider: request.model?.provider });
+          return { code: 1, stderr: "probe-stop", timedOut: false };
+        },
+      },
+    }),
+  });
+  const adapters = [probe("pi"), probe("hermes")];
+
+  await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], base(home, []));
+  // Owner registers the map in the seat table; package code has no built-in pair.
+  const setAlias = await runAkRole(
+    ["config", "set-provider-alias", "xai", "hermes", "xai-oauth"],
+    base(home, []),
+  );
+  assert.equal(setAlias.exitCode, 0);
+
+  const hermes = await runAkRole(["judge", "--host", "hermes", "alias-probe"], base(home, adapters));
+  assert.equal(hermes.hostFailure, undefined);
+  assert.equal(hermes.exitCode, 1);
+
+  const pi = await runAkRole(["judge", "--host", "pi", "pi-probe"], base(home, adapters));
+  assert.equal(pi.hostFailure, undefined);
+  assert.equal(pi.exitCode, 1);
+
+  assert.deepEqual(seen, [
+    { host: "hermes", provider: "xai-oauth" },
+    { host: "pi", provider: "xai" },
+  ]);
+
+  // Unset restores pass-through on hermes.
+  const unset = await runAkRole(
+    ["config", "unset-provider-alias", "xai", "hermes"],
+    base(home, []),
+  );
+  assert.equal(unset.exitCode, 0);
+  seen.length = 0;
+  const after = await runAkRole(["judge", "--host", "hermes", "pass-through"], base(home, adapters));
+  assert.equal(after.hostFailure, undefined);
+  assert.deepEqual(seen, [{ host: "hermes", provider: "xai" }]);
+
+  // Seat rows themselves are never rewritten by the alias registration.
+  assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {
+    provider: "xai",
+    model: "grok-4.5",
+    thinking: "high",
+  });
+}));
+
 test("public grok-build turn inherits operator HOME and leaves sitian-only run records", async () => homeTest(async (home) => {
   const envDump = join(home, "child-env.json");
   await mkdir(join(home, ".grok", "bin"), { recursive: true });

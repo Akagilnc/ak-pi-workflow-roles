@@ -79,7 +79,7 @@ export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string,
         : "casePath" in activation ? activation.casePath
           : "inputPath" in activation ? activation.inputPath
             : "sourceRun" in activation ? activation.sourceRun
-              : "sourcesPath" in activation ? activation.sourcesPath : undefined;
+              : undefined;
     if (path !== undefined) flags.set(inputFlag, path);
   }
   if (activation.role === "fixer" && activation.prerequisitesPath !== undefined) flags.set("ak-fixer-prerequisites", activation.prerequisitesPath);
@@ -298,7 +298,7 @@ export async function prepareAcpRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "no_receipt" || record.status === "unreadable"
+      : record.status === "bounce" || record.status === "escalate" || record.status === "no_receipt"
         ? record.status
         : undefined;
     if (code === undefined) return;

@@ -1,6 +1,6 @@
 /**
  * Shared docs/adr path extraction from free text (issue body / ticket face).
- * Single authority for reviewer Spec discovery and diarist source enumeration.
+ * Single authority for reviewer Spec discovery.
  *
  * Shape only: segments under docs/adr/ without `..` or empty parts. Real IO
  * confinement still lives at the read seam (ADR 0038).

@@ -137,7 +137,6 @@ function minimalRoleExtension(oauthKeepalive: {
 }) {
   return createPiRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
-    auditSoulCompliance: async () => ({ status: "pass" as const }),
   }, { oauthKeepalive });
 }
 
