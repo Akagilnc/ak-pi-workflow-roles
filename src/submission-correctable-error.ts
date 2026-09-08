@@ -33,7 +33,10 @@ export function isCorrectableExecuteError(error: unknown): boolean {
   );
 }
 
-/** Durable projection shared by Pi adapter and Grok/ACP envelope tool catches. */
+/**
+ * Durable projection for ACP envelope tool catches only.
+ * Pi path keeps native throw → isError toolResult (no shared projection consumer).
+ */
 export type CorrectableExecuteRejectionProjection = {
   readonly diagnostic: string;
   readonly details: Record<string, unknown>;
@@ -41,7 +44,7 @@ export type CorrectableExecuteRejectionProjection = {
 
 /**
  * One authority for correctable execute → diagnostic text + structured details.
- * Host adapters only wrap this into their transport shape.
+ * Consumed by the ACP envelope tool catch; host adapters wrap transport shape only.
  */
 export function projectCorrectableExecuteRejection(
   error: unknown,

@@ -9,7 +9,10 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
-import { COLLECTOR_BIND_TARGET_TOOL } from "../../src/collector-ledger.ts";
+import {
+  COLLECTOR_ACTIVATION_ENTRY_TYPE,
+  COLLECTOR_BIND_TARGET_TOOL,
+} from "../../src/collector-ledger.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { createSystemCollectorClock } from "../../src/collector-evidence.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -422,6 +425,77 @@ test("#676 production envelope bind unique issue→PR", async () => {
       assert.equal(bind.details.prNumber, 77);
       assert.equal(bind.details.issueNumber, 42);
     });
+  });
+});
+
+/**
+ * #676 K2: J1 migrated collector before_agent_start + tool_result onto shared envelope.
+ * External typed results only — activation journal + bind details after tool_result release.
+ * Mutation: drop before_agent_start → no activation entry; drop tool_result → bind blocked
+ * (OUTPUT tool_call leaves pendingOutputCallId; only onToolResult clears it without execute).
+ */
+test("#676 K2 envelope collector hooks: activation journal + tool_result releases operational slot", async () => {
+  await withActivationHome({ prefix: "ak-collector-hooks-" }, async ({ home }) => {
+    const harness = extensionHarness("collector", {
+      "ak-collector-repo": "acme/widgets",
+    });
+    createPiRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      loadCollectorSoul: async () => "# Collector\nBind and collect.",
+      createCollectorTransport: () => createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull({ headOid: "head-1" }),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      }),
+      createCollectorClock: () => createSystemCollectorClock(),
+    })(harness.pi as unknown as ExtensionAPI);
+
+    const ctx = activationCtx(home);
+    await harness.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+    // before_agent_start branch: durable typed activation journal (not systemPrompt text).
+    await harness.handlers.get("before_agent_start")?.({
+      prompt: "collect materials",
+      systemPrompt: "BASE",
+      systemPromptOptions: {},
+    }, ctx);
+    const activationEntry = ctx.sessionManager.getEntries().find(
+      (entry) => entry.type === "custom" && entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE,
+    ) as { type: "custom"; customType: string; data?: { activationTime?: unknown; deadlineTime?: unknown } } | undefined;
+    assert.ok(activationEntry, "before_agent_start must journal ak-collector-activation");
+    assert.equal(typeof activationEntry.data?.activationTime, "string");
+    assert.equal(typeof activationEntry.data?.deadlineTime, "string");
+    assert.ok(!Number.isNaN(Date.parse(String(activationEntry.data?.activationTime))));
+    assert.ok(!Number.isNaN(Date.parse(String(activationEntry.data?.deadlineTime))));
+
+    // tool_result branch: OUTPUT tool_call begins pendingOutputCallId without execute;
+    // only shared tool_result → onToolResult clears it so a later bind can run.
+    assert.ok(harness.handlers.has("tool_call"), "admission must register collector tool_call gate");
+    await harness.handlers.get("tool_call")?.({
+      toolName: COLLECTOR_OUTPUT_TOOL,
+      toolCallId: "call-output-pending",
+      input: {},
+    }, ctx);
+    await harness.handlers.get("tool_result")?.({
+      toolCallId: "call-output-pending",
+      toolName: COLLECTOR_OUTPUT_TOOL,
+      isError: true,
+      content: [{ type: "text", text: "aborted before execute" }],
+      details: {},
+    }, ctx);
+
+    const tool = harness.tools.get(COLLECTOR_BIND_TARGET_TOOL);
+    assert.ok(tool, "production envelope must register bind-target behind collector admission");
+    const bind = await tool.execute(
+      "call-bind-after-release",
+      { prNumber: 42 },
+      undefined,
+      undefined,
+      ctx as never,
+    );
+    assert.equal((bind.details as { prNumber?: number }).prNumber, 42);
   });
 });
 
