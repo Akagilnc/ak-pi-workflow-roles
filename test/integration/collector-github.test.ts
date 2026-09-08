@@ -1280,6 +1280,9 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
     const observed = await ledger.observe(transportWithCreate, clock);
     assert.equal(observed.snapshot.prCreatedAt, createdAt);
     assert.equal(observed.contextView.prCreatedAt, createdAt);
+    // Evidence version clock stays updatedAt; create success is only the typed prCreatedAt anchor.
+    const prEvidence = ledger.allEvidence().find((row) => row.kind === "pull_request");
+    assert.equal(prEvidence?.authoritativeTime, "2026-01-01T00:04:00.000Z");
     // Role uses create-success time from observe, not current wall after prep/trigger.
     ledger.openWaitWindow(clock, { startedAt: new Date(observed.snapshot.prCreatedAt!) });
     assert.equal(ledger.activationTime?.toISOString(), createdAt);

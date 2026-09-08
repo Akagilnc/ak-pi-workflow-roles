@@ -194,8 +194,8 @@ export function normalizePullRequestEvidence(
     state: pr.state,
     commitOid: pr.headOid,
     htmlUrl: pr.url,
-    // Create time is the new-PR wait-window anchor; fall back to updatedAt only when absent.
-    authoritativeTime: pr.createdAt ?? pr.updatedAt ?? null,
+    // Version clock stays updatedAt. Create success for the wait window is snapshot.prCreatedAt only (#678).
+    authoritativeTime: pr.updatedAt ?? null,
     firstObservedAt: observedAt,
     raw: pr.raw,
   };
