@@ -27,6 +27,7 @@ import {
 } from "./collector-github.ts";
 import { CollectorNonOpenRequestError } from "./collector-identity.ts";
 import {
+  collectorHandbookWriteArgsSchema,
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
   collectorReadArgsSchema,
@@ -41,6 +42,8 @@ export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
 /** #676 A: role-decided target bind — business tool, ledger-booked. */
 export const COLLECTOR_BIND_TARGET_TOOL = "ak_collector_bind_target";
+/** #677: opaque handbook write — business tool, ledger-booked. */
+export const COLLECTOR_HANDBOOK_WRITE_TOOL = "ak_collector_handbook_write";
 export { COLLECTOR_OUTPUT_TOOL };
 
 export const COLLECTOR_OPERATIONAL_TOOLS = [
@@ -49,6 +52,7 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
+  COLLECTOR_HANDBOOK_WRITE_TOOL,
 ] as const;
 
 /**
@@ -217,7 +221,7 @@ export type CollectorLedger = {
   }>;
 
   request(
-    input: { requestId: string; snapshotId: string },
+    input: { requestId: string; snapshotId: string; body?: string },
     transport: CollectorGitHubTransport,
     clock: CollectorClock,
     signal?: AbortSignal,
@@ -259,6 +263,8 @@ export function collectorToolArgumentsValid(
       return Value.Check(collectorRequestArgsSchema, args);
     case COLLECTOR_WAIT_TOOL:
       return Value.Check(collectorWaitArgsSchema, args);
+    case COLLECTOR_HANDBOOK_WRITE_TOOL:
+      return Value.Check(collectorHandbookWriteArgsSchema, args);
     case COLLECTOR_OUTPUT_TOOL:
       return Value.Check(collectorOutputArgsSchema, args);
     default:
@@ -915,9 +921,19 @@ export function createCollectorLedger(
         throw latchFatal("通进司请求时存在未恢复的传输失败");
       }
 
-      const request = config.manifest.requests.find((item) => item.id === input.requestId);
-      if (request === undefined) {
-        throw new Error(`未知通进司 requestId "${input.requestId}"`);
+      const configured = config.manifest.requests.find((item) => item.id === input.requestId);
+      const roleBody = typeof input.body === "string" ? input.body : undefined;
+      if (configured === undefined) {
+        // #677: role-decided trigger from handbook/field activity — body required when not in manifest.
+        if (roleBody === undefined || roleBody.trim().length === 0) {
+          throw new Error(
+            `未知通进司 requestId "${input.requestId}" 且未提供 body；请提交角色判定的请求正文或使用 request-manifest`,
+          );
+        }
+      }
+      const requestId = configured?.id ?? input.requestId;
+      if (typeof requestId !== "string" || requestId.trim().length === 0) {
+        throw new Error("通进司 requestId 须为非空字符串");
       }
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
@@ -936,10 +952,12 @@ export function createCollectorLedger(
         throw latchFatal("通进司请求不在资格截止前");
       }
 
+      // Caller manifest body wins when requestId is configured; otherwise role body.
+      const configuredBody = configured?.requestBody ?? roleBody!;
       const { body, marker } = buildCollectorRequestBody({
-        configuredBody: request.requestBody,
+        configuredBody,
         manifestDigest: config.manifest.digest,
-        requestId: request.id,
+        requestId,
         headOid: snapshot.headOid,
       });
       const existingMarker = snapshot.evidenceIds.some((id) => {
@@ -960,11 +978,11 @@ export function createCollectorLedger(
         config.repository.canonical,
         String(boundPr),
         snapshot.headOid,
-        request.id,
+        requestId,
       ].join("|");
       if (attemptKeys.has(attemptKey)) {
         throw new Error(
-          `通进司进程内请求 "${request.id}" 在 HEAD ${snapshot.headOid} 的 attempt 已用`,
+          `通进司进程内请求 "${requestId}" 在 HEAD ${snapshot.headOid} 的 attempt 已用`,
         );
       }
 
@@ -972,7 +990,7 @@ export function createCollectorLedger(
       const attemptId = sha256Text(`${attemptKey}:${startedAt}`).slice(0, 16);
       const attempt: CollectorRequestAttempt = {
         attemptId,
-        requestId: request.id,
+        requestId,
         observedHead: snapshot.headOid,
         snapshotId: snapshot.snapshotId,
         marker,
@@ -1017,7 +1035,7 @@ export function createCollectorLedger(
         return {
           status: "succeeded",
           attemptId,
-          requestId: request.id,
+          requestId,
           observedHead: snapshot.headOid,
           marker,
           commentEvidenceId: record.evidenceId,
@@ -1032,7 +1050,7 @@ export function createCollectorLedger(
         return {
           status: "ambiguous_loss",
           attemptId,
-          requestId: request.id,
+          requestId,
           observedHead: snapshot.headOid,
           marker,
           diagnostics: result.diagnostics,

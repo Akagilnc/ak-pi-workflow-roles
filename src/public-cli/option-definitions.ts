@@ -598,8 +598,8 @@ const COLLECTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional request manifest JSON path ({requests:[{id,body}]}).",
-      zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。",
+      en: "Optional request manifest JSON path ({requests:[{id,body}]}). Role may also decide request bodies from handbook/field activity without this file.",
+      zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。角色亦可依手册/现场自行判定请求正文，不必依赖本文件。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];

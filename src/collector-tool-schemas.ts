@@ -5,8 +5,19 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
 export const collectorRequestArgsSchema = Type.Object({
-  requestId: Type.String({ minLength: 1, description: "配置请求身份" }),
+  requestId: Type.String({ minLength: 1, description: "请求身份（配置 id 或角色判定的稳定 id）" }),
   snapshotId: Type.String({ minLength: 1, description: "最新留存观察快照" }),
+  body: Type.Optional(Type.String({
+    minLength: 1,
+    description: "角色判定的请求正文；request-manifest 未收录该 requestId 时必填",
+  })),
+}, { additionalProperties: false });
+export const collectorHandbookWriteArgsSchema = Type.Object({
+  scope: Type.Union([
+    Type.Literal("general"),
+    Type.Literal("repo"),
+  ], { description: "general＝通用手册；repo＝当前仓库差异" }),
+  body: Type.String({ description: "手册全文（opaque 工作记忆；整份替换）" }),
 }, { additionalProperties: false });
 export const collectorReadArgsSchema = Type.Object({
   evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),

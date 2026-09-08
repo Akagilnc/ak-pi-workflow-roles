@@ -1,0 +1,165 @@
+/**
+ * Collector bot handbook — opaque working memory under the book topology.
+ * Runtime stores and delivers UTF-8 text only; never parses free text into
+ * code state rules (parent #673 D3 / #677).
+ *
+ * Placement reuses the machine ledger home (ADR 0048) when the admitted
+ * session already sits under books/<bookKey>/ — no parallel persistence frame.
+ */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { writeFileAtomically } from "./atomic-write.ts";
+import {
+  activationBookDirectory,
+  ensureRealDirectoryTree,
+  resolveActivationLedgerHomeForPath,
+} from "./activation-ledger-topology.ts";
+
+export type CollectorHandbookScope = "general" | "repo";
+
+export type CollectorHandbookRead = {
+  readonly general: string;
+  readonly repo: string;
+  readonly generalSource: "book" | "seed" | "empty";
+  readonly repoSource: "book" | "empty";
+  readonly generalPath: string;
+  readonly repoPath: string;
+};
+
+export type CollectorHandbookWriteResult = {
+  readonly scope: CollectorHandbookScope;
+  readonly path: string;
+  readonly byteLength: number;
+};
+
+export type CollectorHandbookStore = {
+  readonly root: string;
+  readonly repositoryCanonical: string;
+  read(): Promise<CollectorHandbookRead>;
+  write(scope: CollectorHandbookScope, body: string): Promise<CollectorHandbookWriteResult>;
+};
+
+export type CollectorHandbookPlacement = {
+  readonly ledgerHome: string;
+  readonly bookKey: string;
+  readonly root: string;
+};
+
+/**
+ * Derive handbook root from an admitted session/run path under
+ * `.ak-roles/books/<bookKey>/...`. Fails closed when topology is absent.
+ */
+export function resolveCollectorHandbookRoot(sessionPath: string): CollectorHandbookPlacement {
+  if (typeof sessionPath !== "string" || sessionPath.trim().length === 0) {
+    throw new Error("Collector handbook requires a non-empty session path under books/<bookKey>/");
+  }
+  const normalized = sessionPath.replaceAll("\\", "/");
+  const match = /(?:^|\/)\.ak-roles\/books\/([^/]+)\//.exec(normalized);
+  if (match === null) {
+    throw new Error(
+      `Collector handbook requires session under books/<bookKey>/; got ${sessionPath}`,
+    );
+  }
+  const bookKey = match[1]!;
+  if (bookKey.length === 0 || bookKey === "." || bookKey === ".." || bookKey.includes("\\")) {
+    throw new Error(`Collector handbook rejects unsafe bookKey ${JSON.stringify(bookKey)}`);
+  }
+  const ledgerHome = resolveActivationLedgerHomeForPath(sessionPath);
+  const root = join(activationBookDirectory(ledgerHome, bookKey), "collector-handbook");
+  return { ledgerHome, bookKey, root };
+}
+
+/** Flat repo file name under handbook/repos/ — avoids nested owner/repo dirs. */
+export function collectorHandbookRepoFileName(repositoryCanonical: string): string {
+  if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(repositoryCanonical)) {
+    throw new Error(
+      `Collector handbook repo file requires canonical owner/repo, got ${JSON.stringify(repositoryCanonical)}`,
+    );
+  }
+  return `${repositoryCanonical.replaceAll("/", "__")}.md`;
+}
+
+export function createCollectorHandbookStore(input: {
+  readonly ledgerHome: string;
+  readonly handbookRoot: string;
+  readonly repositoryCanonical: string;
+  readonly seedGeneral?: string;
+}): CollectorHandbookStore {
+  const generalPath = join(input.handbookRoot, "general.md");
+  const repoDir = join(input.handbookRoot, "repos");
+  const repoPath = join(repoDir, collectorHandbookRepoFileName(input.repositoryCanonical));
+
+  const readOptional = async (path: string): Promise<string | undefined> => {
+    try {
+      return await readFile(path, "utf8");
+    } catch (error) {
+      if (isNotFound(error)) return undefined;
+      throw error;
+    }
+  };
+
+  return {
+    root: input.handbookRoot,
+    repositoryCanonical: input.repositoryCanonical,
+    async read() {
+      const bookGeneral = await readOptional(generalPath);
+      const bookRepo = await readOptional(repoPath);
+      if (bookGeneral !== undefined) {
+        return {
+          general: bookGeneral,
+          repo: bookRepo ?? "",
+          generalSource: "book",
+          repoSource: bookRepo === undefined ? "empty" : "book",
+          generalPath,
+          repoPath,
+        };
+      }
+      const seed = input.seedGeneral;
+      if (typeof seed === "string" && seed.length > 0) {
+        return {
+          general: seed,
+          repo: bookRepo ?? "",
+          generalSource: "seed",
+          repoSource: bookRepo === undefined ? "empty" : "book",
+          generalPath,
+          repoPath,
+        };
+      }
+      return {
+        general: "",
+        repo: bookRepo ?? "",
+        generalSource: "empty",
+        repoSource: bookRepo === undefined ? "empty" : "book",
+        generalPath,
+        repoPath,
+      };
+    },
+    async write(scope, body) {
+      if (typeof body !== "string") {
+        throw new Error("Collector handbook write body must be a string");
+      }
+      if (scope !== "general" && scope !== "repo") {
+        throw new Error(`Collector handbook scope must be general|repo, got ${JSON.stringify(scope)}`);
+      }
+      ensureRealDirectoryTree(input.ledgerHome, input.handbookRoot);
+      const path = scope === "general" ? generalPath : repoPath;
+      if (scope === "repo") {
+        ensureRealDirectoryTree(input.ledgerHome, repoDir);
+      }
+      await writeFileAtomically(path, body);
+      return {
+        scope,
+        path,
+        byteLength: Buffer.byteLength(body, "utf8"),
+      };
+    },
+  };
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT";
+}

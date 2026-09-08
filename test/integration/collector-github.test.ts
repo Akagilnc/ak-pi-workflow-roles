@@ -953,3 +953,108 @@ test("R11 observe abort through ledger does not certify a snapshot", async () =>
   assert.equal(ledger.latestCompleteSnapshotId, undefined);
   assert.equal(ledger.allSnapshots().length, 0);
 });
+
+test("#677 role-decided request body posts without caller request-manifest", async () => {
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-role-1" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger({
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: emptyCollectorManifest(),
+  });
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  ledger.recordActivation(clock);
+  const observed = await ledger.observe(transport, clock);
+  const result = await ledger.request(
+    {
+      requestId: "coderabbit-review",
+      snapshotId: observed.snapshot.snapshotId,
+      body: "@coderabbitai review",
+    },
+    transport,
+    clock,
+  ) as { status: string; requestId: string; marker: string };
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.requestId, "coderabbit-review");
+  assert.equal(transport.calls.create, 1);
+  assert.equal(transport.state.issueComments.length, 1);
+  const posted = transport.state.issueComments[0]!;
+  assert.equal(posted.body.includes("@coderabbitai review"), true);
+  assert.equal(posted.body.includes(result.marker), true);
+
+  // Same HEAD + same requestId must not double-fire (auto-review already covered).
+  await assert.rejects(
+    () => ledger.request(
+      {
+        requestId: "coderabbit-review",
+        snapshotId: observed.snapshot.snapshotId,
+        body: "@coderabbitai review",
+      },
+      transport,
+      clock,
+    ),
+  );
+  assert.equal(transport.calls.create, 1);
+
+  // Distinct task id under the same account remains independently requestable.
+  const other = await ledger.request(
+    {
+      requestId: "coderabbit-full",
+      snapshotId: observed.snapshot.snapshotId,
+      body: "@coderabbitai full review",
+    },
+    transport,
+    clock,
+  ) as { status: string; requestId: string };
+  assert.equal(other.status, "succeeded");
+  assert.equal(other.requestId, "coderabbit-full");
+  assert.equal(transport.calls.create, 2);
+});
+
+test("#677 non-OPEN snapshot still bounces role-decided request", async () => {
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-closed", state: "CLOSED" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger({
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: emptyCollectorManifest(),
+  });
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  ledger.recordActivation(clock);
+  const observed = await ledger.observe(transport, clock);
+  assert.equal(observed.snapshot.prState, "CLOSED");
+  await assert.rejects(
+    () => ledger.request(
+      {
+        requestId: "codex-review",
+        snapshotId: observed.snapshot.snapshotId,
+        body: "@codex review",
+      },
+      transport,
+      clock,
+    ),
+    (error: unknown) =>
+      error instanceof Error && error.name === "CollectorNonOpenRequestError",
+  );
+  assert.equal(transport.calls.create, 0);
+});

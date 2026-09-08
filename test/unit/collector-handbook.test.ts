@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  createCollectorHandbookStore,
+  resolveCollectorHandbookRoot,
+} from "../../src/collector-handbook.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+
+test("#677 handbook store: write general+repo, second store reads same bytes", async () => {
+  await withTempRoot("ak-collector-handbook-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const bookKey = "widgets-book";
+    const sessionPath = join(ledgerHome, "books", bookKey, "runs", "r1@collector", "session", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+
+    const placement = resolveCollectorHandbookRoot(sessionPath);
+    assert.equal(placement.ledgerHome, ledgerHome);
+    assert.equal(placement.bookKey, bookKey);
+
+    const first = createCollectorHandbookStore({
+      ledgerHome: placement.ledgerHome,
+      handbookRoot: placement.root,
+      repositoryCanonical: "acme/widgets",
+      seedGeneral: "seed-general-v1",
+    });
+    const empty = await first.read();
+    assert.equal(empty.general, "seed-general-v1");
+    assert.equal(empty.generalSource, "seed");
+    assert.equal(empty.repo, "");
+    assert.equal(empty.repoSource, "empty");
+
+    await first.write("general", "general-after-field-evidence");
+    await first.write("repo", "repo-diff: coderabbit incremental only");
+
+    const second = createCollectorHandbookStore({
+      ledgerHome: placement.ledgerHome,
+      handbookRoot: placement.root,
+      repositoryCanonical: "acme/widgets",
+      seedGeneral: "seed-general-v1",
+    });
+    const reused = await second.read();
+    assert.equal(reused.general, "general-after-field-evidence");
+    assert.equal(reused.generalSource, "book");
+    assert.equal(reused.repo, "repo-diff: coderabbit incremental only");
+    assert.equal(reused.repoSource, "book");
+
+    // Opaque persistence — file bytes are the authority, not a parsed schema.
+    const generalPath = join(placement.root, "general.md");
+    const repoPath = join(placement.root, "repos", "acme__widgets.md");
+    assert.equal(await readFile(generalPath, "utf8"), "general-after-field-evidence");
+    assert.equal(await readFile(repoPath, "utf8"), "repo-diff: coderabbit incremental only");
+  });
+});
+
+test("#677 handbook store: missing session topology fails closed", () => {
+  assert.throws(
+    () => resolveCollectorHandbookRoot("/tmp/not-under-ak-roles/session.jsonl"),
+    (error: unknown) => error instanceof Error && /books\//.test(error.message),
+  );
+});
