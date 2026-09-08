@@ -1149,6 +1149,8 @@ type LoadedAdmittedRequestFields = {
   readonly repositoryDisplay?: string;
   readonly requestManifestPath?: string;
   readonly manifestDigest?: string;
+  /** Collector wait-window ms restored on resume (#678). */
+  readonly waitWindowMs?: number;
   /** Doctor — admitted single-case identity restored on resume (#633). */
   readonly issueNumber?: number;
   readonly caseRunsPath?: string;
@@ -1244,6 +1246,7 @@ async function loadResumableRunRecord(
   let repositoryDisplay: string | undefined;
   let requestManifestPath: string | undefined;
   let manifestDigest: string | undefined;
+  let waitWindowMs: number | undefined;
   let issueNumber: number | undefined;
   let caseRunsPath: string | undefined;
   let caseIdentity: DoctorCaseIdentity | undefined;
@@ -1303,6 +1306,9 @@ async function loadResumableRunRecord(
       }
       if (typeof record.manifestDigest === "string" && record.manifestDigest.trim() !== "") {
         manifestDigest = record.manifestDigest;
+      }
+      if (typeof record.waitWindowMs === "number" && Number.isSafeInteger(record.waitWindowMs) && record.waitWindowMs >= 1) {
+        waitWindowMs = record.waitWindowMs;
       }
       // Doctor — admitted single-case identity (#633 resume).
       if (typeof record.issueNumber === "number" && Number.isSafeInteger(record.issueNumber) && record.issueNumber >= 1) {
@@ -1471,6 +1477,7 @@ async function loadResumableRunRecord(
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
       ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
       ...(manifestDigest === undefined ? {} : { manifestDigest }),
+      ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
       ...(issueNumber === undefined ? {} : { issueNumber }),
       ...(caseRunsPath === undefined ? {} : { caseRunsPath }),
       ...(caseIdentity === undefined ? {} : { caseIdentity }),
@@ -1913,6 +1920,9 @@ export async function loadResumableCollectorRun(
     ...(loaded.admittedFields.requestManifestPath === undefined
       ? {}
       : { requestManifestPath: loaded.admittedFields.requestManifestPath }),
+    ...(loaded.admittedFields.waitWindowMs === undefined
+      ? {}
+      : { waitWindowMs: loaded.admittedFields.waitWindowMs }),
     manifestDigest,
   };
   return seatLoadedResult(loaded, admitted);

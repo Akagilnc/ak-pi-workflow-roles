@@ -151,6 +151,18 @@ export class CollectorNonOpenRequestError extends CorrectableSubmissionError {
   }
 }
 
+/** #678: wait window ended — bounce request/wait without latching fatal so materials still seal. */
+export class CollectorWaitWindowClosedError extends CorrectableSubmissionError {
+  constructor(action: "request" | "wait") {
+    super(
+      action === "request"
+        ? "通进司请求不在资格截止前"
+        : "通进司等待不在资格截止前",
+    );
+    this.name = "CollectorWaitWindowClosedError";
+  }
+}
+
 function candidateRecord(candidate: unknown): Record<string, unknown> | undefined {
   if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
     return undefined;

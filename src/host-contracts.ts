@@ -106,6 +106,8 @@ export type RoleTurnActivation =
       /** Bound PR when known at admission; omit when role will bind from materials. */
       readonly pr?: string;
       readonly requestManifestPath?: string;
+      /** Wait-window ms as decimal string (#678 D4); omit → package default 10 minutes. */
+      readonly waitMs?: string;
     }
   | { readonly role: "doctor"; readonly casePath: string }
   | {

@@ -135,6 +135,27 @@ test("public Collector accepts PR/repository without an observer declaration", (
   });
 });
 
+test("#678 public Collector --wait-ms is caller-configurable without code change", () => {
+  assert.deepEqual(
+    parseCollectorArgv(["--pr", "1168", "--repo", "acme/widgets", "--wait-ms", "120000"]),
+    {
+      prNumber: 1168,
+      repo: "acme/widgets",
+      waitWindowMs: 120_000,
+      instruction: "",
+      attachmentPaths: [],
+    },
+  );
+  assert.throws(
+    () => parseCollectorArgv(["--wait-ms", "0"]),
+    (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
+  );
+  assert.throws(
+    () => parseCollectorArgv(["--wait-ms", "1.5"]),
+    (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
+  );
+});
+
 test("parseDoctorArgv requires positive issue; accepts optional runs and rejects malformed grammar", () => {
   assert.deepEqual(parseDoctorArgv(["--issue", "40", "note"]), {
     issueNumber: 40,

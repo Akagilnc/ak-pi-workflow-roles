@@ -98,6 +98,7 @@ export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string,
     // #676 D1: pr optional at admission; omit flag when role binds from materials.
     if (activation.pr !== undefined) flags.set("ak-collector-pr", activation.pr);
     if (activation.requestManifestPath !== undefined) flags.set("ak-collector-request-manifest", activation.requestManifestPath);
+    if (activation.waitMs !== undefined) flags.set("ak-collector-wait-ms", activation.waitMs);
   }
   return flags;
 }

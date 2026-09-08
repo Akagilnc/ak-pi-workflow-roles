@@ -116,6 +116,7 @@ function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
         ...(activation.requestManifestPath === undefined
           ? []
           : ["--ak-collector-request-manifest", activation.requestManifestPath]),
+        ...(activation.waitMs === undefined ? [] : ["--ak-collector-wait-ms", activation.waitMs]),
       ];
     case "doctor":
       return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];

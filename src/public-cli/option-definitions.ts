@@ -602,6 +602,20 @@ const COLLECTOR_OPTIONS = [
       zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。角色亦可依手册/现场自行判定请求正文，不必依赖本文件。",
     },
   },
+  {
+    id: "wait-ms",
+    owner: "collector",
+    canonical: "--wait-ms",
+    aliases: [],
+    valueMetavar: "ms",
+    required: false,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Wait-window duration in milliseconds after the work step opens (default 600000 = 10 minutes). Does not require a code change to adjust.",
+      zh: "工作步骤开启后的等待窗时长（毫秒；默认 600000＝十分钟）。改配置即可，无需改代码。",
+    },
+  },
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const DOCTOR_OPTIONS = [

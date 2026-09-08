@@ -176,7 +176,7 @@ function collectorReceipt() {
     prNumber: 3,
     manifestDigest: manifest.digest,
     activationTime: "2026-01-01T00:00:00.000Z",
-    deadlineTime: "2026-01-01T00:15:00.000Z",
+    deadlineTime: "2026-01-01T00:10:00.000Z",
     finalObservationTime: "2026-01-01T00:01:00.000Z",
     finalSnapshotId: "snap-1",
     targetHead: "9".repeat(40),

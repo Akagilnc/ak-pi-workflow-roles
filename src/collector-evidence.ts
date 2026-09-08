@@ -11,7 +11,8 @@ import type {
   GitHubUser,
 } from "./collector-github.ts";
 
-export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
+/** Default collector wait window (D4): 10 minutes from the work-step open, not from session activation. */
+export const COLLECTOR_DEFAULT_WAIT_WINDOW_MS = 10 * 60 * 1000;
 
 export type WindowRelation = "before" | "within" | "after" | "uncertain";
 export type HeadRelation = "current" | "prior";

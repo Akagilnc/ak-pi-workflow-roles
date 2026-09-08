@@ -22,6 +22,7 @@ import {
 } from "../../src/collector-evidence.ts";
 import {
   samplePull,
+  sampleReview,
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
@@ -75,6 +76,7 @@ test("runtime receipt is formed solely from observed typed identity groups", asy
     manifest: emptyCollectorManifest(),
   });
   ledger.recordActivation(clock);
+  ledger.openWaitWindow(clock);
   await ledger.observe(createFakeGitHubTransport({
     user: { login: "collector", raw: { login: "collector" } },
     pullRequest: { number: 1, state: "OPEN", headOid: review.commitId!, updatedAt: "2026-08-11T00:00:00Z", url: "https://github.com/acme/widgets/pull/1", raw: { number: 1 } },
@@ -1071,4 +1073,173 @@ test("#677 non-OPEN snapshot still bounces role-decided request", async () => {
       error instanceof Error && error.name === "CollectorNonOpenRequestError",
   );
   assert.equal(transport.calls.create, 0);
+});
+
+/**
+ * #678 D4: wait window starts at a work step, default 10 minutes, caller-configurable.
+ * Controllable clock only — no real sleep.
+ */
+test("#678 wait window: default 10m from open step; config changes duration; activation alone is not the window", async () => {
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-wait", state: "OPEN" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const baseConfig = {
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: emptyCollectorManifest(),
+  };
+
+  // Session activation alone must not open the wait window (old F040 deleted).
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger(baseConfig);
+    ledger.recordActivation(clock);
+    assert.equal(ledger.activationRecorded, true);
+    assert.equal(ledger.activationTime, undefined);
+    assert.equal(ledger.deadlineTime, undefined);
+    // Prep observe is legal before the wait window opens.
+    const observed = await ledger.observe(transport, clock);
+    assert.equal(observed.snapshot.headOid, "head-wait");
+  }
+
+  // Default window: open at work step → +10 minutes.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger(baseConfig);
+    ledger.recordActivation(clock);
+    clock.advance(90_000); // prep work after activation must not count
+    ledger.openWaitWindow(clock);
+    assert.equal(ledger.activationTime?.toISOString(), "2026-01-01T00:01:30.000Z");
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:11:30.000Z");
+  }
+
+  // Caller config changes the actual wait duration without code edits.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 120_000 });
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock, { startedAt: new Date("2026-01-01T00:00:00.000Z") });
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:02:00.000Z");
+  }
+
+  // New-PR path: window starts from creation success time, not historical later wall clock.
+  {
+    const clock = clockAt("2026-01-01T00:05:00.000Z");
+    const ledger = createCollectorLedger(baseConfig);
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock, { startedAt: new Date("2026-01-01T00:00:00.000Z") });
+    assert.equal(ledger.activationTime?.toISOString(), "2026-01-01T00:00:00.000Z");
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:10:00.000Z");
+  }
+
+  // D6: reopening after PR update does not reset the window.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger(baseConfig);
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock);
+    const firstStart = ledger.activationTime?.toISOString();
+    const firstDeadline = ledger.deadlineTime?.toISOString();
+    clock.advance(60_000);
+    ledger.openWaitWindow(clock);
+    assert.equal(ledger.activationTime?.toISOString(), firstStart);
+    assert.equal(ledger.deadlineTime?.toISOString(), firstDeadline);
+  }
+});
+
+test("#678 wait window: cutoff blocks new requests; timeout still seals materials; early complete before deadline", async () => {
+  const head = "a".repeat(40);
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: head, state: "OPEN" }),
+    reviews: [sampleReview({
+      id: 7,
+      userLogin: "bot[bot]",
+      body: "finding",
+      commitId: head,
+      submittedAt: "2026-01-01T00:00:30.000Z",
+      raw: { id: 7, user: { login: "bot[bot]", id: 1, type: "Bot" } },
+    })],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const baseConfig = {
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: emptyCollectorManifest(),
+  };
+
+  // Early complete: open window, observe materials, seal before deadline — no real sleep.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 60_000 });
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock);
+    await ledger.observe(transport, clock);
+    const receipt = buildCollectorReceipt(ledger, {}, clock);
+    assert.equal(receipt.activationTime, "2026-01-01T00:00:00.000Z");
+    assert.equal(receipt.deadlineTime, "2026-01-01T00:01:00.000Z");
+    assert.equal(receipt.groups.length >= 1, true);
+    assert.equal(receipt.prState, "OPEN");
+  }
+
+  // After cutoff: request is refused; final observe + seal still keeps materials.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 1_000 });
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock);
+    const first = await ledger.observe(transport, clock);
+    clock.advance(2_000);
+    await assert.rejects(
+      () => ledger.request(
+        {
+          requestId: "late-trigger",
+          snapshotId: first.snapshot.snapshotId,
+          body: "@bot review",
+        },
+        transport,
+        clock,
+      ),
+      /资格截止|截止/,
+    );
+    assert.equal(transport.calls.create, 0);
+    await ledger.observe(transport, clock);
+    const receipt = buildCollectorReceipt(ledger, {
+      unfinishedReasons: ["等待窗届满，无新 bot 回复"],
+    }, clock);
+    assert.deepEqual(receipt.unfinishedReasons, ["等待窗届满，无新 bot 回复"]);
+    assert.equal(receipt.groups.length >= 1, true);
+  }
+
+  // Wait sleeps only remaining window (controllable clock; no wall 10 minutes).
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 5_000 });
+    ledger.recordActivation(clock);
+    ledger.openWaitWindow(clock);
+    clock.advance(3_000);
+    const waited = await ledger.wait({ durationMs: 60_000 }, clock) as {
+      effectiveMs: number;
+      cutoffReached: boolean;
+      remainingMsAfter: number;
+    };
+    assert.equal(waited.effectiveMs, 2_000);
+    assert.equal(waited.cutoffReached, true);
+    assert.equal(waited.remainingMsAfter, 0);
+  }
 });

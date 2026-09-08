@@ -31,7 +31,7 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 - **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。首责唯一：**核实实际授权出处**——乱编乱扩、伪造或过度解释授权，无条件驳。行事两步：读该票起居录→以录核旨。引语真伪与票面对齐为其手段；受审物是大理寺拟判与给事中署章，交卷闸按这两类受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写，不是本局失败），也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
 - **起居录(ticket-provenance)**:每票一份的共同案卷，汇集本案决定及相关依据，帮助接手衙门理解当前方向并追溯原件；不同于一次运行的卷宗。现行制度见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)，案卷整理与随案递送设计见 [ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。
 - **起居郎(diarist)**:为本票搜集、整理决策依据并修订起居录的记录者，不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
-- **通进司(Collector)**:门下省下的收证衙门。单次调用内认票、阅读 bot 手册与现场活动、按需触发评审、观察外部 GitHub PR 材料并提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。手册是角色工作记忆（通用＋仓库差异），不是代码状态规则。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
+- **通进司(Collector)**:门下省下的收证衙门。单次调用内认票、阅读 bot 手册与现场活动、按需触发评审、在工作步骤开启可配置等待窗并收证，提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。手册是角色工作记忆（通用＋仓库差异），不是代码状态规则。等待窗默认十分钟、使用方可配置，从 PR 创建成功或本轮触发阶段结束起算，不是从会话激活起算。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。大理寺审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`)+quality-law;太医审计暂=工厂宪法+己 Soul(御批四)。御史台侧审刑院闸已退役(#495 S6 风闻奏事)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。

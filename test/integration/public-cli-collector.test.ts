@@ -52,7 +52,7 @@ function receipt(overrides: Record<string, unknown> = {}) {
     prState: "OPEN",
     manifestDigest: manifest.digest,
     activationTime: "2026-01-01T00:00:00.000Z",
-    deadlineTime: "2026-01-01T00:15:00.000Z",
+    deadlineTime: "2026-01-01T00:10:00.000Z",
     finalObservationTime: "2026-01-01T00:01:00.000Z",
     finalSnapshotId: "snap-1",
     targetHead: "9".repeat(40),
@@ -468,12 +468,12 @@ test("#676 K2 envelope collector hooks: activation journal + tool_result release
     }, ctx);
     const activationEntry = ctx.sessionManager.getEntries().find(
       (entry) => entry.type === "custom" && entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE,
-    ) as { type: "custom"; customType: string; data?: { activationTime?: unknown; deadlineTime?: unknown } } | undefined;
+    ) as { type: "custom"; customType: string; data?: { sessionReady?: unknown; activationTime?: unknown; deadlineTime?: unknown } } | undefined;
     assert.ok(activationEntry, "before_agent_start must journal ak-collector-activation");
-    assert.equal(typeof activationEntry.data?.activationTime, "string");
-    assert.equal(typeof activationEntry.data?.deadlineTime, "string");
-    assert.ok(!Number.isNaN(Date.parse(String(activationEntry.data?.activationTime))));
-    assert.ok(!Number.isNaN(Date.parse(String(activationEntry.data?.deadlineTime))));
+    // #678: session ready only — wait window opens later at a work step, not here.
+    assert.equal(activationEntry.data?.sessionReady, true);
+    assert.equal(activationEntry.data?.activationTime, undefined);
+    assert.equal(activationEntry.data?.deadlineTime, undefined);
 
     // tool_result branch: OUTPUT tool_call begins pendingOutputCallId without execute;
     // only shared tool_result → onToolResult clears it so a later bind can run.
@@ -721,5 +721,72 @@ test("#677 production envelope handbook write survives second activation", async
     const parsed = JSON.parse(payload) as { general?: string; generalSource?: string };
     assert.equal(parsed.general, bodyWithBoundary);
     assert.equal(parsed.generalSource, "book");
+  });
+});
+
+/**
+ * #678: public-config wait-ms reaches the production envelope ledger/method facts;
+ * open-wait-window opens at a work step (controllable clock — no real sleep).
+ */
+test("#678 production envelope wait-ms config and open-wait-window work step", async () => {
+  await withActivationHome({ prefix: "ak-collector-wait-" }, async ({ home }) => {
+    let mono = 0;
+    let wall = new Date("2026-01-01T00:00:00.000Z");
+    const clock = {
+      wallNow: () => new Date(wall),
+      monoNow: () => mono,
+      async sleep(ms: number) {
+        mono += ms;
+        wall = new Date(wall.getTime() + ms);
+      },
+    };
+    const harness = extensionHarness("collector", {
+      "ak-collector-repo": "acme/widgets",
+      "ak-collector-pr": "42",
+      "ak-collector-wait-ms": "120000",
+    });
+    createPiRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      loadCollectorSoul: async () => "# Collector\nCollect.",
+      createCollectorTransport: () => createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull({ headOid: "head-wait", number: 42 }),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      }),
+      createCollectorClock: () => clock,
+    })(harness.pi as unknown as ExtensionAPI);
+
+    const ctx = activationCtx(home);
+    await harness.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+    const materials = await harness.handlers.get("before_agent_start")?.({
+      prompt: "collect",
+      systemPrompt: "BASE",
+      systemPromptOptions: {},
+    }, ctx) as { systemPrompt?: string } | undefined;
+    assert.ok(typeof materials?.systemPrompt === "string");
+    assert.match(materials.systemPrompt, /waitWindowMs: 120000/);
+
+    const openTool = harness.tools.get("ak_collector_open_wait_window");
+    assert.ok(openTool, "production envelope must register open-wait-window");
+    // Advance prep time; window must start at explicit create-success time, not now.
+    mono += 90_000;
+    wall = new Date(wall.getTime() + 90_000);
+    const opened = await openTool.execute(
+      "call-open-wait",
+      { startedAt: "2026-01-01T00:00:00.000Z" },
+      undefined,
+      undefined,
+      ctx as never,
+    );
+    const details = opened.details as {
+      activationTime?: string;
+      deadlineTime?: string;
+      waitWindowMs?: number;
+    };
+    assert.equal(details.activationTime, "2026-01-01T00:00:00.000Z");
+    assert.equal(details.deadlineTime, "2026-01-01T00:02:00.000Z");
+    assert.equal(details.waitWindowMs, 120_000);
   });
 });
