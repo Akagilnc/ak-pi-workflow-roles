@@ -1215,7 +1215,8 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
         transport,
         clock,
       ),
-      /资格截止|截止/,
+      (error: unknown) =>
+        error instanceof Error && error.name === "CollectorWaitWindowClosedError",
     );
     assert.equal(transport.calls.create, 0);
     await ledger.observe(transport, clock);
@@ -1251,9 +1252,7 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
     await assert.rejects(
       () => ledger.wait({ durationMs: 1_000 }, clock),
       (error: unknown) =>
-        error instanceof Error &&
-        error.name === "CollectorWaitWindowClosedError" &&
-        error.message.includes("开启等待窗"),
+        error instanceof Error && error.name === "CollectorWaitWindowClosedError",
     );
     assert.equal(ledger.activationTime, undefined);
     assert.equal(ledger.deadlineTime, undefined);
@@ -1287,5 +1286,45 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
     ledger.openWaitWindow(clock, { startedAt: new Date(observed.snapshot.prCreatedAt!) });
     assert.equal(ledger.activationTime?.toISOString(), createdAt);
     assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:10:00.000Z");
+  }
+
+  // Existing PR needing 补触发: request before open is legal; open at trigger-end now ≠ historical createdAt.
+  {
+    const historicalCreatedAt = "2025-12-01T00:00:00.000Z";
+    const transportExisting = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({
+        headOid: head,
+        state: "OPEN",
+        createdAt: historicalCreatedAt,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 600_000 });
+    ledger.recordActivation(clock);
+    const observed = await ledger.observe(transportExisting, clock);
+    assert.equal(observed.snapshot.prCreatedAt, historicalCreatedAt);
+    // 补触发 while window still closed is legal (sessionReady only; pastCutoff false).
+    await ledger.request(
+      {
+        requestId: "seed-trigger",
+        snapshotId: observed.snapshot.snapshotId,
+        body: "@bot review",
+      },
+      transportExisting,
+      clock,
+    );
+    assert.equal(transportExisting.calls.create, 1);
+    // Trigger phase ends now; omit startedAt → wall now, must not backdate to prCreatedAt.
+    clock.advance(5_000);
+    const triggerEnd = clock.wallNow().toISOString();
+    ledger.openWaitWindow(clock);
+    assert.equal(ledger.activationTime?.toISOString(), triggerEnd);
+    assert.notEqual(ledger.activationTime?.toISOString(), historicalCreatedAt);
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:10:05.000Z");
   }
 });

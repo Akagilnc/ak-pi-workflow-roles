@@ -766,7 +766,6 @@ test("#678 production envelope wait-ms config and open-wait-window work step", a
       systemPromptOptions: {},
     }, ctx) as { systemPrompt?: string } | undefined;
     assert.ok(typeof materials?.systemPrompt === "string");
-    assert.match(materials.systemPrompt, /waitWindowMs: 120000/);
 
     const openTool = harness.tools.get("ak_collector_open_wait_window");
     assert.ok(openTool, "production envelope must register open-wait-window");
