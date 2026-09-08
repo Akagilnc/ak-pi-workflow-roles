@@ -89,6 +89,8 @@ export type ObserveModelView = {
   completedAt: string;
   prState: string;
   headOid: string;
+  /** PR create success time when known — new-PR wait-window startedAt (#678 D4). */
+  prCreatedAt?: string;
   complete: boolean;
   evidence: ObserveEvidenceEntry[];
   requestAttempts: Array<{
@@ -906,6 +908,7 @@ export function createCollectorLedger(
         prNumber: requireBoundPr(),
         prState: pr.state,
         headOid: pr.headOid,
+        ...(pr.createdAt === undefined ? {} : { prCreatedAt: pr.createdAt }),
         complete: true,
         evidenceIds: storedIds,
         pageDiagnostics,
@@ -1104,9 +1107,10 @@ export function createCollectorLedger(
       if (!sessionReady) {
         throw latchFatal("通进司等待需要激活");
       }
-      // Wait requires an open window; first wait may open at "now" when role skips explicit open.
-      if (activationTime === undefined) {
-        ledger.openWaitWindow(clock);
+      // #678: wait never invents a window start. Work-step open (create-success / trigger-end)
+      // must be explicit — silent "now" would break the new-PR create-success clock.
+      if (activationTime === undefined || deadlineTime === undefined) {
+        throw new CollectorWaitWindowClosedError("wait-before-open");
       }
       // durationMs shape authority = collectorWaitArgsSchema (host parameters).
       if (pastCutoff(clock)) {
@@ -1208,6 +1212,9 @@ function buildObserveModelView(input: {
     completedAt: input.snapshot.completedAt,
     prState: input.snapshot.prState,
     headOid: input.snapshot.headOid,
+    ...(input.snapshot.prCreatedAt === undefined
+      ? {}
+      : { prCreatedAt: input.snapshot.prCreatedAt }),
     complete: input.snapshot.complete,
     evidence: relevant.map((record): ObserveEvidenceEntry => projectEvidenceEntryView(record)),
     requestAttempts: input.attempts.map((attempt) => ({

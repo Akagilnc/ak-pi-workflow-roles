@@ -74,6 +74,8 @@ export type CollectorSnapshot = {
   prNumber: number;
   prState: string;
   headOid: string;
+  /** PR create success time when GitHub supplies it (#678 new-PR wait start). */
+  prCreatedAt?: string;
   complete: boolean;
   evidenceIds: string[];
   pageDiagnostics: GitHubPageDiagnostics[];
@@ -178,6 +180,7 @@ export function normalizePullRequestEvidence(
     number: pr.number,
     state: pr.state,
     headOid: pr.headOid,
+    createdAt: pr.createdAt ?? null,
     updatedAt: pr.updatedAt ?? null,
     htmlUrl: pr.url,
   });
@@ -191,7 +194,8 @@ export function normalizePullRequestEvidence(
     state: pr.state,
     commitOid: pr.headOid,
     htmlUrl: pr.url,
-    authoritativeTime: pr.updatedAt ?? null,
+    // Create time is the new-PR wait-window anchor; fall back to updatedAt only when absent.
+    authoritativeTime: pr.createdAt ?? pr.updatedAt ?? null,
     firstObservedAt: observedAt,
     raw: pr.raw,
   };

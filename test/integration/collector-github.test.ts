@@ -1242,4 +1242,47 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
     assert.equal(waited.cutoffReached, true);
     assert.equal(waited.remainingMsAfter, 0);
   }
+
+  // Wait without an explicit work-step open must not invent "now" as the start.
+  {
+    const clock = clockAt("2026-01-01T00:00:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 60_000 });
+    ledger.recordActivation(clock);
+    await assert.rejects(
+      () => ledger.wait({ durationMs: 1_000 }, clock),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.name === "CollectorWaitWindowClosedError" &&
+        error.message.includes("开启等待窗"),
+    );
+    assert.equal(ledger.activationTime, undefined);
+    assert.equal(ledger.deadlineTime, undefined);
+  }
+
+  // New-PR path through observe → open with prCreatedAt (create success), not wall-now after prep.
+  {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const transportWithCreate = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({
+        headOid: head,
+        state: "OPEN",
+        createdAt,
+        updatedAt: "2026-01-01T00:04:00.000Z",
+      }),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const clock = clockAt("2026-01-01T00:05:00.000Z");
+    const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 600_000 });
+    ledger.recordActivation(clock);
+    const observed = await ledger.observe(transportWithCreate, clock);
+    assert.equal(observed.snapshot.prCreatedAt, createdAt);
+    assert.equal(observed.contextView.prCreatedAt, createdAt);
+    // Role uses create-success time from observe, not current wall after prep/trigger.
+    ledger.openWaitWindow(clock, { startedAt: new Date(observed.snapshot.prCreatedAt!) });
+    assert.equal(ledger.activationTime?.toISOString(), createdAt);
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:10:00.000Z");
+  }
 });
