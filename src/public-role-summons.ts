@@ -420,17 +420,46 @@ export async function summonPublicRole(
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
-/** Read parent invocation host so nested officers inherit live --host only (#645). */
+/**
+ * Read parent invocation host so nested officers inherit live --host only (#645).
+ * Gate source runs necessarily own invocation.json — unexpected read/parse failures
+ * stay loud (failure-honesty). Missing host field is lawful (default seat host).
+ */
 async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
+  const { readFile } = await import("node:fs/promises");
+  const path = join(sourceRunDirectory, "invocation.json");
+  let text: string;
   try {
-    const { readFile } = await import("node:fs/promises");
-    const raw = JSON.parse(
-      await readFile(join(sourceRunDirectory, "invocation.json"), "utf8"),
-    ) as Record<string, unknown>;
-    return typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
-  } catch {
-    return undefined;
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      // Lawful absence only when the pointer path has no invocation page yet.
+      return undefined;
+    }
+    throw error;
   }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new Error(
+      `parent invocation.json unreadable at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`parent invocation.json has non-object shape at ${path}`);
+  }
+  const host = (raw as Record<string, unknown>).host;
+  if (host === undefined) return undefined;
+  if (typeof host !== "string" || host.trim() === "") {
+    throw new Error(`parent invocation.json host must be a non-empty string at ${path}`);
+  }
+  return host;
 }
 
 export async function summonGateOfficer(options: {
