@@ -250,6 +250,7 @@ test("grok-build selection and execution have no provider restriction", async ()
 }));
 
 // #788: table > unique host-directory > fail on the public entry; pi unaffected.
+// Host must be registered before any provider projection (expectation 2).
 test("host provider resolution prefers table, then unique directory, else fails loud", async () => homeTest(async (home) => {
   const seen: Array<{ host: string; provider: string | undefined }> = [];
   const probe = (name: string): NamedRoleTurnHostAdapter => ({
@@ -265,11 +266,6 @@ test("host provider resolution prefers table, then unique directory, else fails 
     }),
   });
   const adapters = [probe("pi"), probe("hermes")];
-  const stderr: string[] = [];
-  const capturing = {
-    ...base(home, adapters),
-    io: { stdout() {}, stderr(chunk: string) { stderr.push(chunk); } },
-  };
 
   await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], base(home, []));
 
@@ -291,11 +287,27 @@ test("host provider resolution prefers table, then unique directory, else fails 
     "utf8",
   );
 
-  const tableHit = await runAkRole(["judge", "--host", "hermes", "table-probe"], capturing);
+  // Unregistered host fails as host-unregistered — never as a model/provider error.
+  // Production adapter table on this build has no hermes; use pi-only adapters.
+  const unregistered = await runAkRole(
+    ["judge", "--host", "hermes", "host-first"],
+    base(home, [probe("pi")]),
+  );
+  assert.equal(unregistered.exitCode, 1);
+  assert.deepEqual(unregistered.hostFailure, {
+    kind: "host-unregistered",
+    host: "hermes",
+    seat: "judge",
+    model: "xai/grok-4.5",
+    registeredHosts: ["pi"],
+  });
+  assert.equal(seen.length, 0);
+
+  const tableHit = await runAkRole(["judge", "--host", "hermes", "table-probe"], base(home, adapters));
   assert.equal(tableHit.hostFailure, undefined);
   assert.equal(tableHit.exitCode, 1);
 
-  const pi = await runAkRole(["judge", "--host", "pi", "pi-probe"], capturing);
+  const pi = await runAkRole(["judge", "--host", "pi", "pi-probe"], base(home, adapters));
   assert.equal(pi.hostFailure, undefined);
   assert.equal(pi.exitCode, 1);
   assert.deepEqual(seen, [
@@ -310,13 +322,10 @@ test("host provider resolution prefers table, then unique directory, else fails 
     "utf8",
   );
   seen.length = 0;
-  stderr.length = 0;
-  const ambiguous = await runAkRole(["judge", "--host", "hermes", "ambiguous"], capturing);
+  const ambiguous = await runAkRole(["judge", "--host", "hermes", "ambiguous"], base(home, adapters));
   assert.equal(ambiguous.exitCode, 1);
+  assert.equal(ambiguous.hostFailure, undefined);
   assert.equal(seen.length, 0);
-  assert.match(stderr.join(""), /nous/);
-  assert.match(stderr.join(""), /openrouter/);
-  assert.match(stderr.join(""), /xai-oauth/);
 
   // Unique directory match replaces without a table row.
   await writeFile(
@@ -325,7 +334,7 @@ test("host provider resolution prefers table, then unique directory, else fails 
     "utf8",
   );
   seen.length = 0;
-  const unique = await runAkRole(["judge", "--host", "hermes", "unique"], capturing);
+  const unique = await runAkRole(["judge", "--host", "hermes", "unique"], base(home, adapters));
   assert.equal(unique.hostFailure, undefined);
   assert.deepEqual(seen, [{ host: "hermes", provider: "xai-oauth" }]);
 

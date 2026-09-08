@@ -8,10 +8,6 @@ import { assertRegisteredHostName, DEFAULT_ROLE_TURN_HOST } from "../host-descri
 import { assertLegalEngineName } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
-  projectHostFacingProvider,
-  type HostProvidersTable,
-} from "./host-providers.ts";
-import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
   isPublicCallableRole,
@@ -75,12 +71,6 @@ export type PublicCliConfig = {
    * effectiveSeatConfigurations — read consumption still skips them.
    */
   unknownSeats?: Record<string, unknown>;
-};
-
-/** #788: home + owner host-providers table for host-facing provider projection. */
-export type HostProviderContext = {
-  readonly home: string;
-  readonly hostProviders: HostProvidersTable;
 };
 
 export type EffectiveSource =
@@ -651,7 +641,6 @@ export function resolveEffectiveSeat(
   seat: PublicConfigurableSeat,
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
-  hostProviderContext?: HostProviderContext,
 ): EffectiveSeat {
   const hasModelInvocation =
     invocation !== undefined &&
@@ -689,38 +678,22 @@ export function resolveEffectiveSeat(
     }
   }
 
-  const withAxes = attachHostAxis(
+  // Seat axes only. Host-facing provider projection (#788) runs after the host
+  // is selected as registered — never before (bad host must not reach model).
+  return attachHostAxis(
     attachEngineAxis(modelSeat, config, invocation),
     config,
     invocation,
   );
-  // #788: host-facing provider = owner table > unique host directory > fail.
-  // Disk seats stay as written; only the effective selection is projected.
-  // Without a context (display / unit paths), leave the seat provider as-is.
-  const selection =
-    hostProviderContext === undefined
-      ? withAxes.selection
-      : projectHostFacingProvider(
-          withAxes.selection,
-          withAxes.host,
-          hostProviderContext.hostProviders,
-          hostProviderContext.home,
-        );
-  if (selection === undefined) {
-    const { selection: _dropped, ...rest } = withAxes;
-    return rest;
-  }
-  return { ...withAxes, selection };
 }
 
 export function effectiveSeatConfigurations(
   config: PublicCliConfig,
   credentials: CredentialProviders,
   invocation?: InvocationModelOverride,
-  hostProviderContext?: HostProviderContext,
 ): EffectiveSeat[] {
   return PUBLIC_CONFIGURABLE_SEATS.map((seat) =>
-    resolveEffectiveSeat(config, seat, credentials, invocation, hostProviderContext),
+    resolveEffectiveSeat(config, seat, credentials, invocation),
   );
 }
 
