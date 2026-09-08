@@ -4,6 +4,7 @@ import type { HostContext } from "./host-contracts.ts";
 import {
   auditorRunDirectory,
   persistGateSubmissionCandidate,
+  readLatestSubmissionArguments,
 } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -299,13 +300,11 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // Pointer-only summons need a resolvable leaf: Grok session.jsonl is header-only
-  // (#617 DK-4); write the in-memory tool-call candidate as a run artifact first (#632).
-  // Candidate path also rides same-parent officer resume as 人读材料 (#753 / #750).
-  const submissionCandidatePath = persistGateSubmissionCandidate(
-    runDirectory,
-    options.context,
-  );
+  // #632: Grok session.jsonl is header-only — freeze the in-memory tool-call leaf
+  // as a run artifact so dossier exploration still resolves. LLM→LLM resume does
+  // not ride this path: submission body goes verbatim on gateReviewInstruction (#786).
+  persistGateSubmissionCandidate(runDirectory, options.context);
+  const submission = readLatestSubmissionArguments(options.context);
   let summoned: PublicSummonResult;
   try {
     const summon =
@@ -318,9 +317,7 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
-          ...(submissionCandidatePath === undefined
-            ? {}
-            : { submissionCandidatePath }),
+          ...(submission === undefined ? {} : { submission }),
         });
       });
     summoned = await summon(officer, runDirectory, options.signal, options.reask);
