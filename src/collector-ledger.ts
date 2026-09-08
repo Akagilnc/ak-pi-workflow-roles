@@ -884,18 +884,26 @@ export function createCollectorLedger(
         throw latchFatal("通进司请求时存在未恢复的传输失败");
       }
 
-      const configured = config.manifest.requests.find((item) => item.id === input.requestId);
+      // Sole request identity seam: trim once, then use everywhere (lookup/marker/attemptKey).
+      // Schema pattern rejects leading/trailing whitespace at host; trim still collapses
+      // direct ledger callers and any residual padding into one stable id (#677 D2).
+      if (typeof input.requestId !== "string") {
+        throw new Error("通进司 requestId 须为字符串");
+      }
+      const requestId = input.requestId.trim();
+      if (requestId.length === 0) {
+        throw new Error("通进司 requestId 须为非空（首尾空白不构成身份）");
+      }
+      const configured = config.manifest.requests.find((item) => item.id === requestId);
       const roleBody = typeof input.body === "string" ? input.body : undefined;
       if (configured === undefined) {
         // #677: role-decided trigger from handbook/field activity — body required when not in manifest.
         if (roleBody === undefined || roleBody.trim().length === 0) {
           throw new Error(
-            `未知通进司 requestId "${input.requestId}" 且未提供 body；请提交角色判定的请求正文或使用 request-manifest`,
+            `未知通进司 requestId "${requestId}" 且未提供 body；请提交角色判定的请求正文或使用 request-manifest`,
           );
         }
       }
-      // requestId shape authority = collectorRequestArgsSchema (host parameters).
-      const requestId = configured?.id ?? input.requestId;
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
       if (snapshot === undefined) {
@@ -930,7 +938,7 @@ export function createCollectorLedger(
       });
       if (existingMarker) {
         throw new Error(
-          `通进司在此 HEAD 已有同 marker 的已认证请求 "${input.requestId}"`,
+          `通进司在此 HEAD 已有同 marker 的已认证请求 "${requestId}"`,
         );
       }
 

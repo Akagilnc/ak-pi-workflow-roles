@@ -1006,6 +1006,20 @@ test("#677 role-decided request body posts without caller request-manifest", asy
   );
   assert.equal(transport.calls.create, 1);
 
+  // Whitespace variants collapse to the same stable identity — no second POST.
+  await assert.rejects(
+    () => ledger.request(
+      {
+        requestId: "  coderabbit-review  ",
+        snapshotId: observed.snapshot.snapshotId,
+        body: "@coderabbitai review",
+      },
+      transport,
+      clock,
+    ),
+  );
+  assert.equal(transport.calls.create, 1);
+
   // Distinct task id under the same account remains independently requestable.
   const other = await ledger.request(
     {

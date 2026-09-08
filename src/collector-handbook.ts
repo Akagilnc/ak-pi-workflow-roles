@@ -7,7 +7,7 @@
  * session already sits under books/<bookKey>/ — no parallel persistence frame.
  */
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { writeFileAtomically } from "./atomic-write.ts";
 import {
@@ -16,6 +16,7 @@ import {
   ensureRealDirectoryTree,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
+import { COLLECTOR_HANDBOOK_MAX_BYTES } from "./collector-tool-schemas.ts";
 
 export type CollectorHandbookScope = "general" | "repo";
 
@@ -55,15 +56,25 @@ export function resolveCollectorHandbookRoot(sessionPath: string): CollectorHand
   if (typeof sessionPath !== "string" || sessionPath.trim().length === 0) {
     throw new Error("通进司手册要求非空 session 路径，且位于 books/<bookKey>/");
   }
-  const normalized = sessionPath.replaceAll("\\", "/");
-  const match = /(?:^|\/)\.ak-roles\/books\/([^/]+)\//.exec(normalized);
-  if (match === null) {
+  // Platform path segments only — never rewrite non-separator characters (POSIX `\\` is literal).
+  const segments = sessionPath.split(sep);
+  let bookKey: string | undefined;
+  for (let i = 0; i + 3 < segments.length; i += 1) {
+    if (segments[i] === ".ak-roles" && segments[i + 1] === "books") {
+      const candidate = segments[i + 2]!;
+      // Require a following segment so bookKey is a true path component under books/.
+      if (candidate.length > 0) {
+        bookKey = candidate;
+        break;
+      }
+    }
+  }
+  if (bookKey === undefined) {
     throw new Error(
       `通进司手册要求 session 位于 books/<bookKey>/；收到 ${sessionPath}`,
     );
   }
-  const bookKey = match[1]!;
-  if (bookKey.length === 0 || bookKey === "." || bookKey === ".." || bookKey.includes("\\")) {
+  if (bookKey === "." || bookKey === "..") {
     throw new Error(`通进司手册拒绝不安全 bookKey ${JSON.stringify(bookKey)}`);
   }
   const ledgerHome = resolveActivationLedgerHomeForPath(sessionPath);
@@ -144,6 +155,15 @@ export function createCollectorHandbookStore(input: {
     },
     async write(scope, body) {
       // scope/body shape authority = collectorHandbookWriteArgsSchema (call site host parameters).
+      if (typeof body !== "string") {
+        throw new Error("通进司手册正文须为字符串");
+      }
+      const byteLength = Buffer.byteLength(body, "utf8");
+      if (byteLength > COLLECTOR_HANDBOOK_MAX_BYTES) {
+        throw new Error(
+          `通进司手册正文 UTF-8 至多 ${COLLECTOR_HANDBOOK_MAX_BYTES} 字节，收到 ${byteLength}`,
+        );
+      }
       ensureRealDirectoryTree(input.ledgerHome, input.handbookRoot);
       const path = scope === "general" ? generalPath : repoPath;
       if (scope === "repo") {
@@ -154,7 +174,7 @@ export function createCollectorHandbookStore(input: {
       return {
         scope,
         path,
-        byteLength: Buffer.byteLength(body, "utf8"),
+        byteLength,
       };
     },
   };

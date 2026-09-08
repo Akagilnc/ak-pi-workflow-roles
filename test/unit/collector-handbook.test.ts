@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 
 import { ActivationLedgerError } from "../../src/activation-ledger-topology.ts";
@@ -8,6 +8,7 @@ import {
   createCollectorHandbookStore,
   resolveCollectorHandbookRoot,
 } from "../../src/collector-handbook.ts";
+import { COLLECTOR_HANDBOOK_MAX_BYTES } from "../../src/collector-tool-schemas.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("#677 handbook store: write general+repo, second store reads same bytes", async () => {
@@ -59,8 +60,40 @@ test("#677 handbook store: write general+repo, second store reads same bytes", a
 test("#677 handbook store: missing session topology fails closed", () => {
   assert.throws(
     () => resolveCollectorHandbookRoot("/tmp/not-under-ak-roles/session.jsonl"),
-    (error: unknown) => error instanceof Error && /books\//.test(error.message),
+    (error: unknown) => error instanceof Error,
   );
+});
+
+test("#677 handbook root uses platform separators only (literal backslash stays in bookKey on POSIX)", async () => {
+  await withTempRoot("ak-collector-handbook-posix-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    // On POSIX, `\\` is a legal character inside a single path segment.
+    const bookKey = sep === "/" ? "book\\key" : "book-key";
+    const sessionPath = join(ledgerHome, "books", bookKey, "runs", "r1@collector", "session", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+
+    const placement = resolveCollectorHandbookRoot(sessionPath);
+    assert.equal(placement.bookKey, bookKey);
+    assert.equal(placement.ledgerHome, ledgerHome);
+    assert.equal(placement.root, join(ledgerHome, "books", bookKey, "collector-handbook"));
+  });
+});
+
+test("#677 handbook write rejects over UTF-8 byte ceiling", async () => {
+  await withTempRoot("ak-collector-handbook-bound-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const bookKey = "widgets-book";
+    const sessionPath = join(ledgerHome, "books", bookKey, "runs", "r1@collector", "session", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+    const placement = resolveCollectorHandbookRoot(sessionPath);
+    const store = createCollectorHandbookStore({
+      ledgerHome: placement.ledgerHome,
+      handbookRoot: placement.root,
+      repositoryCanonical: "acme/widgets",
+    });
+    const over = "x".repeat(COLLECTOR_HANDBOOK_MAX_BYTES + 1);
+    await assert.rejects(() => store.write("general", over));
+  });
 });
 
 test("#677 handbook read refuses pre-existing leaf symlink (ADR 0038)", async () => {

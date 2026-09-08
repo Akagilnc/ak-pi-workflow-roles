@@ -190,16 +190,16 @@ function buildMethodContext(activation: CollectorActivation): string {
     "</collector_method>",
   ];
   // Opaque working memory only — no directional instructions (ADR 0073).
-  if (handbook.general.length > 0) {
-    lines.push("", "<collector_handbook scope=\"general\">", handbook.general, "</collector_handbook>");
-  }
-  if (handbook.repo.length > 0) {
-    lines.push(
-      "",
-      `<collector_handbook scope="repo" repository="${activation.repository.canonical}">`,
-      handbook.repo,
-      "</collector_handbook>",
-    );
+  // JSON + `<` → \u003c keeps bodies from forging the delivery close tag (#677).
+  if (handbook.general.length > 0 || handbook.repo.length > 0) {
+    const payload = JSON.stringify({
+      general: handbook.general,
+      repo: handbook.repo,
+      generalSource: handbook.generalSource,
+      repoSource: handbook.repoSource,
+      repository: activation.repository.canonical,
+    }).replaceAll("<", "\\u003c");
+    lines.push("", "<collector_handbook>", payload, "</collector_handbook>");
   }
   return lines.join("\n");
 }
