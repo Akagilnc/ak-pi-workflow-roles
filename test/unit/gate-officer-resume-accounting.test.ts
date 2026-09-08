@@ -20,6 +20,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import { parentInvocationHost } from "../../src/public-role-summons.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -224,6 +225,55 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
       resumePrompt,
       RESUME_TRANSPORT_ENVELOPE,
       "resume must not be bare envelope when submission body rides",
+    );
+  });
+});
+
+test("#645 parentInvocationHost inherits live host; damaged source invocation fails loud", async () => {
+  await withTempRoot("ak-gate-parent-host-", async (root) => {
+    const source = join(root, "parent-run");
+    await mkdir(source, { recursive: true });
+
+    // Missing invocation.json is evidence damage for a gate source run — not seat fallback.
+    await assert.rejects(
+      () => parentInvocationHost(source),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("parent invocation.json required"),
+    );
+
+    // Malformed JSON stays loud with its own identity.
+    await writeFile(join(source, "invocation.json"), "{not-json", "utf8");
+    await assert.rejects(
+      () => parentInvocationHost(source),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("parent invocation.json unreadable"),
+    );
+
+    // Live parent --host is the inheritance face; absent host field is lawful seat default.
+    await writeFile(
+      join(source, "invocation.json"),
+      `${JSON.stringify({ role: "countersign", host: "claude", model: "sonnet" })}\n`,
+      "utf8",
+    );
+    assert.equal(await parentInvocationHost(source), "claude");
+
+    await writeFile(
+      join(source, "invocation.json"),
+      `${JSON.stringify({ role: "countersign", model: "sonnet" })}\n`,
+      "utf8",
+    );
+    assert.equal(await parentInvocationHost(source), undefined);
+
+    // Empty host string is shape damage, not seat fallback.
+    await writeFile(
+      join(source, "invocation.json"),
+      `${JSON.stringify({ role: "countersign", host: "  " })}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => parentInvocationHost(source),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("host must be a non-empty string"),
     );
   });
 });

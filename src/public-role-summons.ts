@@ -422,25 +422,24 @@ export async function summonPublicRole(
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
 /**
  * Read parent invocation host so nested officers inherit live --host only (#645).
- * Gate source runs necessarily own invocation.json — unexpected read/parse failures
- * stay loud (failure-honesty). Missing host field is lawful (default seat host).
+ * Gate source runs necessarily own invocation.json — missing page, bad JSON, or
+ * bad shape stay loud (failure-honesty). Absent host field is lawful (seat default).
  */
-async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
+export async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
   const { readFile } = await import("node:fs/promises");
   const path = join(sourceRunDirectory, "invocation.json");
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (
-      error instanceof Error
-      && "code" in error
-      && (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      // Lawful absence only when the pointer path has no invocation page yet.
-      return undefined;
-    }
-    throw error;
+    const code =
+      error instanceof Error && "code" in error
+        ? (error as NodeJS.ErrnoException).code
+        : undefined;
+    throw new Error(
+      `parent invocation.json required for gate source run at ${path}: ${code ?? (error instanceof Error ? error.message : String(error))}`,
+      { cause: error },
+    );
   }
   let raw: unknown;
   try {
