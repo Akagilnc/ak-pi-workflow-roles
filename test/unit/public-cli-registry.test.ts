@@ -137,7 +137,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     role: "diarist",
     phases: [null],
     outputTool: "ak_diarist_output",
-    inputFlag: "ak-diarist-sources",
+    inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },
