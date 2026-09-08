@@ -28,14 +28,17 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   setPersistentSeatHost,
-  setProviderHostAlias,
-  unsetProviderHostAlias,
   validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
+  type HostProviderContext,
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import {
+  loadHostProvidersTable,
+  renderHostProvidersTable,
+} from "./host-providers.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -771,7 +774,7 @@ function renderHelp(): string {
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
-    "Provider host alias: ak-role config set-provider-alias <provider> <host> <alias> | unset-provider-alias <provider> <host>",
+    "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Effective seats: ak-role roles",
   );
@@ -900,7 +903,7 @@ function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
   return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
 }
 
-function renderConfig(config: PublicCliConfig): string {
+function renderConfig(config: PublicCliConfig, home: string): string {
   const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
   const rows = projectConfigDisplaySeats(config);
   if (rows.length === 0) {
@@ -912,17 +915,13 @@ function renderConfig(config: PublicCliConfig): string {
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
   lines.push(`autoResumeLimit\t${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
-  // #778: owner-registered provider→host aliases (disk face; seats stay as written).
-  const aliases = config.providerAliases;
-  if (aliases !== undefined) {
-    for (const provider of Object.keys(aliases).sort()) {
-      const byHost = aliases[provider]!;
-      for (const host of Object.keys(byHost).sort()) {
-        lines.push(`providerAlias\t${provider}\t${host}\t${byHost[host]}`);
-      }
-    }
-  }
-  return `${lines.join("\n")}\n`;
+  // #788: owner host-providers table as written on disk (separate file).
+  const hostProvidersBlock = renderHostProvidersTable(loadHostProvidersTable(home));
+  return `${lines.join("\n")}\n${hostProvidersBlock}`;
+}
+
+function hostProviderContextFor(home: string): HostProviderContext {
+  return { home, hostProviders: loadHostProvidersTable(home) };
 }
 
 async function runConfigCommand(
@@ -942,7 +941,7 @@ async function runConfigCommand(
       );
       return 0;
     }
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -971,7 +970,7 @@ async function runConfigCommand(
       config = setPersistentSeatConfig(config, seat, parseModelSpec(spec));
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -993,7 +992,7 @@ async function runConfigCommand(
       seat,
     );
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1011,7 +1010,7 @@ async function runConfigCommand(
       throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1035,7 +1034,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1057,7 +1056,7 @@ async function runConfigCommand(
       );
     }
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1090,48 +1089,7 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
     await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
-    return 0;
-  }
-
-  // #778: owner-registered provider→host alias (opaque strings; no host catalog).
-  if (args[0] === "set-provider-alias") {
-    if (args.length !== 4) {
-      throw new CliUsageError(
-        "usage: ak-role config set-provider-alias <provider> <host> <alias>",
-      );
-    }
-    let config = await loadAndValidateConfig(home, packageRoot);
-    try {
-      config = setProviderHostAlias(config, args[1]!, args[2]!, args[3]!);
-    } catch (error) {
-      throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
-    await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
-    return 0;
-  }
-
-  if (args[0] === "unset-provider-alias") {
-    if (args.length !== 3) {
-      throw new CliUsageError(
-        "usage: ak-role config unset-provider-alias <provider> <host>",
-      );
-    }
-    let config = await loadAndValidateConfig(home, packageRoot);
-    try {
-      config = unsetProviderHostAlias(config, args[1]!, args[2]!);
-    } catch (error) {
-      throw new CliUsageError(
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
-    await savePublicCliConfig(config, home);
-    io.stdout(renderConfig(config));
+    io.stdout(renderConfig(config, home));
     return 0;
   }
 
@@ -1219,6 +1177,7 @@ export async function runAkRole(
         config,
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       io.stdout(renderRoles(seats));
       return { exitCode: 0 };
@@ -1273,6 +1232,7 @@ export async function runAkRole(
         dispatch.seat,
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await dispatch.run(
         resumeRequest,
@@ -1309,6 +1269,7 @@ export async function runAkRole(
         "judge",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicJudge(
         parsed.args,
@@ -1334,6 +1295,7 @@ export async function runAkRole(
         "countersign",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicCountersign(
         parsed.args,
@@ -1359,6 +1321,7 @@ export async function runAkRole(
         "gleaner-left",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicGleanerLeft(
         parsed.args,
@@ -1384,6 +1347,7 @@ export async function runAkRole(
         "diarist",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicDiarist(
         parsed.args,
@@ -1409,6 +1373,7 @@ export async function runAkRole(
         "coder",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicCoder(
         parsed.args,
@@ -1434,6 +1399,7 @@ export async function runAkRole(
         "fixer",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicFixer(
         parsed.args,
@@ -1459,6 +1425,7 @@ export async function runAkRole(
         "collector",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicCollector(
         parsed.args,
@@ -1484,6 +1451,7 @@ export async function runAkRole(
         "reviewer",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicReviewer(
         parsed.args,
@@ -1509,6 +1477,7 @@ export async function runAkRole(
         "doctor",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicDoctor(
         parsed.args,
@@ -1534,6 +1503,7 @@ export async function runAkRole(
         "notary",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicNotary(
         parsed.args,
@@ -1558,6 +1528,7 @@ export async function runAkRole(
         "inspector",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicInspector(
         parsed.args,
@@ -1583,6 +1554,7 @@ export async function runAkRole(
         "merger",
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicMerger(
         parsed.args,
@@ -1612,6 +1584,7 @@ export async function runAkRole(
         parsed.command,
         credentials,
         invocationFromParsed(parsed),
+        hostProviderContextFor(home),
       );
       const result = await runPublicInstructionSeat(
         parsed.args,
