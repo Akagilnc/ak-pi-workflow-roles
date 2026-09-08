@@ -110,7 +110,7 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 # 游奕使——直调路线建议（有序的下一步角色候选）；自动出席不变
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
-# 给事中——票庭五问；票号经由 instruction 识别
+# 给事中——票庭五问；票号经由 instruction 识别；受理内先自动起居郎再本席（#742，调用者无感）
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction
@@ -137,14 +137,14 @@ ak-role resume <runId> "<裁定>"
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（交卷闸不再自动出席；可 `ak-role gatekeeper` 独立直调） | **审署诏敕与质量保证的省。** 交卷闸按受审物直接传召察院/符宝郎，本省不介入选席；调用者仍可独立传召本省作 dispatch/pass；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |
-| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。起居录由起居郎（独立角色）修，先后归调用者；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
+| **给事中** | countersign（无交卷闸派发；开工前由调用者传召） | **票庭审读五问。** 制度符合／授权真实（以起居录为据）／文书符意／退回重议／发布资格；读码取证是本职，实现细节不上票面。受理内自动先起居郎再本席（#742，调用者无感）；其余衙门前的起居郎由调用者传召；交卷闸出席符宝郎。署＝放行开工，封驳＝退票重议，上呈＝陛下裁决。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **左拾遗** | gleaner-left（无交卷闸派发；合并前由调用者传召） | **合并前无锚定风闻。** 对全幅合并候选作冷眼评审；只上弹章、不封驳不裁决。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md) 修正案。 |
 | **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
 | **游奕使** | navigator（自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
-| **起居郎** | diarist（`ak-role diarist` 单独传召） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 语义收集是它自己的 turn，机械保全带（来源枚举、逐字反验、幂等落盘、水印）为其工具门禁。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
+| **起居郎** | diarist（`ak-role diarist` 单独传召；给事中受理内自动先起，#742） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 自行搜集、整理、认票（#779 后无机械验真，机械只做 IO；起居录由符宝郎核）。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
 
 其余席位：
 
