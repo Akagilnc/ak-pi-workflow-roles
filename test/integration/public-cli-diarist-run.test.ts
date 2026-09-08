@@ -5,7 +5,7 @@
  * quality is judged by 大理寺 and real use. No quote/note/entry-count locks.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,11 +31,12 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import {
-  withTempRoot,
-} from "../helpers/primary-aware-cleanup.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 708;
+/** Structured source pointer the protocol payload and volume must share. */
+const ENTRY_SESSION_FILE = "/probe/session.jsonl";
+const ENTRY_ID = "probe-entry-1";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
@@ -101,11 +102,6 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    execFileSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
-      { cwd: project },
-    );
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
@@ -127,12 +123,18 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
               {
                 sourceKind: "cc-session",
                 sourceRef: {
-                  sessionFile: "/fake/session.jsonl",
-                  entryId: "owner-1",
+                  sessionFile: ENTRY_SESSION_FILE,
+                  entryId: ENTRY_ID,
                 },
-                transcript: "起居郎建制为角色。调用方无感。",
+                transcript: "owner decision block for diary commit probe",
                 timestamp: "2026-09-08T00:00:00.000Z",
-                note: "owner 原话",
+              },
+              // Passes transport projection; write-seam rejects unknown sourceKind.
+              {
+                sourceKind: "not-a-source-kind",
+                sourceRef: { sessionFile: "/probe/drop.jsonl" },
+                transcript: "dropped at write seam only",
+                timestamp: "2026-09-08T00:00:00.000Z",
               },
             ],
           }),
@@ -144,7 +146,6 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
 
-    // Run dossier is isomorphic with every other packaged seat.
     const coords = issuePiDurablePrincipalCoordinates({
       cwd: project,
       runId,
@@ -158,19 +159,20 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(state?.role, "diarist");
     assert.equal(state?.state, "terminal");
 
-    // 起居录 exists and is readable through the existing read entrypoints.
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
-    assert.equal(volume.entries.length >= 1, true);
-    assert.equal(
-      volume.entries.some((e) => e.transcript.includes("调用方无感")),
-      true,
+    // Structured pointer identity only — no free-text / entry-count locks.
+    const landed = volume.entries.find(
+      (e) =>
+        e.sourceKind === "cc-session" &&
+        e.sourceRef.sessionFile === ENTRY_SESSION_FILE &&
+        e.sourceRef.entryId === ENTRY_ID,
     );
+    assert.ok(landed, "volume missing entry with submitted sourceRef");
     const humanView = await readFile(paths.humanViewFile, "utf8");
     assert.equal(humanView.length > 0, true, "人读面必须有内容");
 
-    // 回执落账: the mechanical commit facts ride the accepted receipt.
     const facts = (
       result.terminal?.roleOutcome as { decisiveFacts?: { sitian?: DiaristCommitFacts } }
     ).decisiveFacts?.sitian;
@@ -178,7 +180,8 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(facts.ticketNumber, TICKET);
     assert.equal(facts.volumeRecordFile, paths.recordFile);
     assert.equal(facts.humanViewFile, paths.humanViewFile);
-    assert.equal(facts.appended >= 1, true);
+    assert.equal(facts.collectorStatus, "ok");
+    assert.equal(facts.dropped, 1);
   });
 });
 
@@ -213,9 +216,22 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
     assert.equal(result.exitCode, 0, stdout.join("") || "true-unbound failed");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     const facts = (
-      result.terminal?.roleOutcome as { decisiveFacts?: { ticketNumber?: unknown; sitian?: unknown } }
+      result.terminal?.roleOutcome as {
+        decisiveFacts?: { ticketNumber?: unknown; sitian?: unknown };
+      }
     ).decisiveFacts;
     assert.equal(facts?.ticketNumber ?? null, null);
     assert.equal(facts?.sitian, undefined);
+
+    // 真无票→无录: ticket-provenance category under this book must stay unminted.
+    const { resolveBookKeyFromGit } = await import("../../src/activation-ledger-git.ts");
+    const { activationBookDirectory } = await import("../../src/activation-ledger-topology.ts");
+    const bookDir = activationBookDirectory(home, resolveBookKeyFromGit(project));
+    const provenanceRoot = join(bookDir, "ticket-provenance");
+    assert.equal(
+      existsSync(provenanceRoot),
+      false,
+      `true-unbound must not mint ticket-provenance under ${provenanceRoot}`,
+    );
   });
 });
