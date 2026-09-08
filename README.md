@@ -76,7 +76,7 @@ Gate submission gate: on DONE-side submissions (`completed` / `partially_complet
 The examples below are usage sketches; option identity, aliases, requiredness, and mode faces are owned by `ak-role help <command>`, not by a second flag contract here.
 
 ```bash
-# countersign — ticket-court review before work starts; resume continues the exact session
+# countersign — ticket-court review before work starts; admission runs the ticket's diarist first (#742, caller-transparent); resume continues the exact session
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction
@@ -116,10 +116,10 @@ ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 # navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
-# diarist — gather and organize this case's decision basis into its per-ticket 起居录
+# diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)
 ak-role diarist "整理 #708 的本案依据。"
 
-# countersign — ticket-court five questions; ticket recognition via instruction
+# countersign — ticket-court five questions; ticket recognition via instruction; admission runs the ticket's diarist first (#742)
 ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # analyst — deterministic metrics; bare call = whole book
