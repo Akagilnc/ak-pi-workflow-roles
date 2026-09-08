@@ -28,6 +28,8 @@ import {
   setPersistentSeatConfig,
   setPersistentSeatEngine,
   setPersistentSeatHost,
+  setProviderHostAlias,
+  unsetProviderHostAlias,
   validatePublicCliConfigAxes,
   type CredentialProviders,
   type EffectiveSeat,
@@ -769,6 +771,7 @@ function renderHelp(): string {
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
+    "Provider host alias: ak-role config set-provider-alias <provider> <host> <alias> | unset-provider-alias <provider> <host>",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Effective seats: ak-role roles",
   );
@@ -909,6 +912,16 @@ function renderConfig(config: PublicCliConfig): string {
   }
   // #422: show the effective auto-resume ceiling (configured value or default).
   lines.push(`autoResumeLimit\t${config.autoResumeLimit ?? AUTO_RESUME_LIMIT}`);
+  // #778: owner-registered provider→host aliases (disk face; seats stay as written).
+  const aliases = config.providerAliases;
+  if (aliases !== undefined) {
+    for (const provider of Object.keys(aliases).sort()) {
+      const byHost = aliases[provider]!;
+      for (const host of Object.keys(byHost).sort()) {
+        lines.push(`providerAlias\t${provider}\t${host}\t${byHost[host]}`);
+      }
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -1076,6 +1089,47 @@ async function runConfigCommand(
     }
     let config = await loadAndValidateConfig(home, packageRoot);
     config = setAutoResumeLimit(config, converted);
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
+  // #778: owner-registered provider→host alias (opaque strings; no host catalog).
+  if (args[0] === "set-provider-alias") {
+    if (args.length !== 4) {
+      throw new CliUsageError(
+        "usage: ak-role config set-provider-alias <provider> <host> <alias>",
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setProviderHostAlias(config, args[1]!, args[2]!, args[3]!);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config));
+    return 0;
+  }
+
+  if (args[0] === "unset-provider-alias") {
+    if (args.length !== 3) {
+      throw new CliUsageError(
+        "usage: ak-role config unset-provider-alias <provider> <host>",
+      );
+    }
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = unsetProviderHostAlias(config, args[1]!, args[2]!);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
     await savePublicCliConfig(config, home);
     io.stdout(renderConfig(config));
     return 0;
