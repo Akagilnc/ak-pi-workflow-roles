@@ -66,12 +66,16 @@ export function acpStdioArgs(
 /**
  * The modelId the host addresses the seat model by.
  * "argv" hosts address by bare model name; "set_model" hosts address by the
- * `provider:model` modelId the ACP catalog exposes.
+ * `provider:model` modelId the ACP catalog exposes (seat provider after host
+ * alias projection, concatenated — never bare model, never a package map).
  */
 export function acpModelId(
   modelPassing: AcpHostDescription["modelPassing"],
   model?: { readonly model?: string; readonly provider?: string },
 ): string | undefined {
   if (model?.model === undefined) return undefined;
-  return modelPassing === "set_model" ? `${model.provider}:${model.model}` : model.model;
+  if (modelPassing !== "set_model") return model.model;
+  // set_model catalogs are provider-qualified; drop provider → wrong default route.
+  if (model.provider === undefined || model.provider.trim() === "") return undefined;
+  return `${model.provider}:${model.model}`;
 }
