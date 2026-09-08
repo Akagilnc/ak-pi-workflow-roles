@@ -90,6 +90,11 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
+  /**
+   * In-flight parent 交卷 body (tool-call arguments). Production default relays
+   * it verbatim on same-parent officer resume (#786).
+   */
+  submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -107,6 +112,14 @@ export type RunGatekeeperOptions = {
    * activation path (#675); inject only in offline tracers.
    */
   readonly summonOfficer?: GateOfficerSummon;
+  /**
+   * Offline test injects forwarded through the production default summonGateOfficer
+   * path (same faces as public CLI). Production leaves these unset.
+   */
+  readonly home?: string;
+  readonly packageRoot?: string;
+  readonly roleTurnHost?: import("./host-contracts.ts").RoleTurnHost;
+  readonly createRunId?: () => string;
 };
 
 export type GatekeeperPassHostActions = {
@@ -309,7 +322,7 @@ export async function projectGatekeeperRun(
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask, nextSubmission) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
@@ -317,10 +330,20 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
-          ...(submission === undefined ? {} : { submission }),
+          ...(nextSubmission === undefined ? {} : { submission: nextSubmission }),
+          ...(options.home === undefined ? {} : { home: options.home }),
+          ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+          ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+          ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
         });
       });
-    summoned = await summon(officer, runDirectory, options.signal, options.reask);
+    summoned = await summon(
+      officer,
+      runDirectory,
+      options.signal,
+      options.reask,
+      submission,
+    );
   } catch (error) {
     return {
       officer,

@@ -65,6 +65,13 @@ export type PublicSummonRequest = {
    * Never folded into argv / parent-run lookup keys (ADR 0079 卷宗指针 stays pure).
    */
   readonly gateReviewInstruction?: string;
+  /**
+   * Offline test inject — same face as public CLI env.roleTurnHost. Production
+   * summons leave this unset and use the seat-resolved host.
+   */
+  readonly roleTurnHost?: RoleTurnHost;
+  /** Offline test inject for deterministic run ids (same face as public CLI). */
+  readonly createRunId?: () => string;
 };
 
 export type PublicSummonResult = {
@@ -296,6 +303,9 @@ export async function summonPublicRole(
     ...(options.gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction: options.gateReviewInstruction }),
+    // Offline test injects — same faces as public CLI env (production leaves unset).
+    ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -415,6 +425,10 @@ export async function summonGateOfficer(options: {
    * when reask is absent (#786). Never a path pointer substitute.
    */
   readonly submission?: unknown;
+  /** Offline test inject — forwarded to summonPublicRole. */
+  readonly roleTurnHost?: RoleTurnHost;
+  /** Offline test inject — forwarded to summonPublicRole. */
+  readonly createRunId?: () => string;
 }): Promise<PublicSummonResult> {
   let home = options.home;
   if (home === undefined) {
@@ -441,6 +455,8 @@ export async function summonGateOfficer(options: {
     ...(gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction }),
+    ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
   if (options.officer === "notary") {
     // #753: reask rides summonPublicRole → runPublicNotary summons.instruction

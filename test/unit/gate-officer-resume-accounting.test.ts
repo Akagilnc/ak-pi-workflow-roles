@@ -12,10 +12,7 @@ import test from "node:test";
 
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
-import {
-  buildGateOfficerReviewInstruction,
-  readLatestSubmissionArguments,
-} from "../../src/auditor-dossier-tool.ts";
+import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -135,33 +132,29 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#786 buildGateOfficerReviewInstruction relays submission body verbatim", () => {
-  const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
-  const submission = { status: "completed", report: BODY_MARKER };
-  const leaf = {
-    type: "message",
-    message: {
-      role: "assistant",
-      content: [{ type: "toolCall", id: "c1", name: "ak_coder_output", arguments: submission }],
-    },
-  };
-  const extracted = readLatestSubmissionArguments({
-    sessionManager: { getEntries: () => [leaf] },
-  });
-  assert.deepEqual(extracted, submission);
-  // Contract: instruction IS the body relay (readableGateItem), not a path substitute.
-  assert.equal(
-    buildGateOfficerReviewInstruction({ submission: extracted }),
-    JSON.stringify(submission),
-  );
-});
-
-test("#786 notary same-parent resume delivers verbatim submission body via real seat entry", async () => {
+test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent submission body", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 786 });
+
+    const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
+    const submission = { status: "completed", report: BODY_MARKER };
+    const leaf = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-parent-1",
+            name: "ak_coder_output",
+            arguments: submission,
+          },
+        ],
+      },
+    };
 
     const prompts: string[] = [];
     const baseHost = roleTurnHostFromLegacyPiRunner({
@@ -179,50 +172,53 @@ test("#786 notary same-parent resume delivers verbatim submission body via real 
         return baseHost.executeTurn(request);
       },
     };
-    const envBase = {
-      home,
-      agentDir: join(home, ".pi"),
-      packageRoot,
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      sessionAppender: appendPiSessionCustomEntry,
-      roleTurnHost: host,
-    } as const;
     const io = captureIo().io;
 
-    // 1) Fresh mint establishes the same-parent notary run.
+    // 1) Fresh mint establishes the same-parent notary run (prior seat to resume).
     const first = await runPublicNotary(
       ["--source-run", sourceRunPath],
-      { ...envBase, createRunId: () => "01a078600-0000-7000-8000-0000000n001" },
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host,
+        createRunId: () => "01a078600-0000-7000-8000-0000000n001",
+      },
       io,
       parseNotaryArgv,
     );
     assert.equal(first.exitCode, 0);
     assert.equal(prompts.length, 1);
 
-    // 2) Real seat entry: gateReviewInstruction is the face summonGateOfficer writes.
-    // Contract: resume prompt carries the submission body bytes, not path pointers / bare envelope.
-    // Do not lock builder framing / template wording — only the body marker.
-    const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
-    const submission = { status: "completed", report: BODY_MARKER };
-    const gateReviewInstruction = JSON.stringify(submission);
-    const resumed = await runPublicNotary(
-      ["--source-run", sourceRunPath],
-      {
-        ...envBase,
-        gateReviewInstruction,
-        createRunId: () => "01a078600-0000-7000-8000-0000000n002",
-      },
-      io,
-      parseNotaryArgv,
-    );
-    assert.equal(resumed.exitCode, 0);
+    // 2) Production default path (no summonOfficer inject):
+    // parent leaf → projectGatekeeperRun → summonGateOfficer → resume prompt.
+    // Contract: officer resume user turn carries the parent 交卷 body marker.
+    // Offline host/createRunId ride the same faces public CLI already exposes.
+    const projected = await projectGatekeeperRun({
+      context: {
+        cwd: project,
+        sessionManager: {
+          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+          getEntries: () => [leaf],
+        },
+      } as never,
+      subject: { kind: "countersign_verdict" },
+      runDirectory: sourceRunPath,
+      home,
+      packageRoot,
+      roleTurnHost: host,
+      createRunId: () => "01a078600-0000-7000-8000-0000000n002",
+    });
+    assert.equal(projected.result.status, "bounce");
     assert.equal(prompts.length, 2);
     const resumePrompt = prompts[1]!;
     assert.equal(
       resumePrompt.includes(BODY_MARKER),
       true,
-      "resume prompt must carry verbatim submission body",
+      "officer resume prompt must carry parent submission body from production wire",
     );
     assert.notEqual(
       resumePrompt,
