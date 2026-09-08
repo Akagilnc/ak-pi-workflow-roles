@@ -286,14 +286,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             && request.model !== undefined
             && sessionId !== undefined
           ) {
-            const modelId = acpModelId(config.modelPassing, request.model);
-            if (modelId !== undefined) {
-              await connection.request("session/set_model", {
-                sessionId,
-                modelId,
-              });
-              sessionId = await loadSession(sessionId);
-            }
+            await connection.request("session/set_model", {
+              sessionId,
+              modelId: acpModelId(config.modelPassing, request.model),
+            });
+            sessionId = await loadSession(sessionId);
           }
 
           let prompt =
