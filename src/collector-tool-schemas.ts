@@ -4,9 +4,33 @@ import { openToolObject } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
+/**
+ * Stable request identity: non-empty after trim, no leading/trailing whitespace.
+ * Host schema + ledger identity seam share this contract (#677 / D2 dedup).
+ */
+export const COLLECTOR_REQUEST_ID_PATTERN = /^\S(?:.*\S)?$/;
 export const collectorRequestArgsSchema = Type.Object({
-  requestId: Type.String({ minLength: 1, description: "配置请求身份" }),
+  requestId: Type.String({
+    minLength: 1,
+    pattern: COLLECTOR_REQUEST_ID_PATTERN.source,
+    description: "请求身份（配置 id 或角色判定的稳定 id；首尾无空白）",
+  }),
   snapshotId: Type.String({ minLength: 1, description: "最新留存观察快照" }),
+  body: Type.Optional(Type.String({
+    minLength: 1,
+    description: "角色判定的请求正文；request-manifest 未收录该 requestId 时必填",
+  })),
+}, { additionalProperties: false });
+/** UTF-8 byte ceiling per handbook body — keeps next activation materials inside context budget. */
+export const COLLECTOR_HANDBOOK_MAX_BYTES = 64 * 1024;
+export const collectorHandbookWriteArgsSchema = Type.Object({
+  scope: Type.Union([
+    Type.Literal("general"),
+    Type.Literal("repo"),
+  ], { description: "general＝通用手册；repo＝当前仓库差异" }),
+  body: Type.String({
+    description: `手册全文（opaque 工作记忆；整份替换；UTF-8 至多 ${COLLECTOR_HANDBOOK_MAX_BYTES} 字节）`,
+  }),
 }, { additionalProperties: false });
 export const collectorReadArgsSchema = Type.Object({
   evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),

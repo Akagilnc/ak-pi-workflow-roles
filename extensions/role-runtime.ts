@@ -40,6 +40,7 @@ import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "..
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
+const collectorHandbookSeedPath = fileURLToPath(new URL("../resources/collector-bot-handbook.md", import.meta.url));
 // #675: nested public summons (gate/auditor) resolve root via env under jiti.
 if (process.env.AK_ROLE_PACKAGE_ROOT === undefined || process.env.AK_ROLE_PACKAGE_ROOT.trim() === "") {
   process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
@@ -122,6 +123,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
+    loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,

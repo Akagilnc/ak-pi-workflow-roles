@@ -611,6 +611,8 @@ export type RoleRuntimeDependencies = {
   /** Shared-seam issue-fetch capability for Reviewer Spec self-fetch (#343). */
   createReviewerIssueFetcher?(): ReviewerIssueFetcher;
   loadCollectorSoul?(): Promise<string>;
+  /** #677: optional packaged seed for first-use general bot handbook. */
+  loadCollectorHandbookSeed?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadNotarySoul?(): Promise<string>;
@@ -1717,6 +1719,9 @@ export function createRoleRuntimeExtension(
         ...(dependencies.createCollectorClock === undefined
           ? {}
           : { createClock: dependencies.createCollectorClock }),
+        ...(dependencies.loadCollectorHandbookSeed === undefined
+          ? {}
+          : { loadHandbookSeed: dependencies.loadCollectorHandbookSeed }),
       },
       hostActions,
     );

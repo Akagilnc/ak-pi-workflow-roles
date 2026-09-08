@@ -26,7 +26,13 @@ import {
   type CollectorGitHubTransport,
 } from "./collector-github.ts";
 import {
+  createCollectorHandbookStore,
+  resolveCollectorHandbookRoot,
+  type CollectorHandbookStore,
+} from "./collector-handbook.ts";
+import {
   COLLECTOR_BIND_TARGET_TOOL,
+  COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
@@ -42,6 +48,7 @@ import {
 } from "./collector-receipt.ts";
 import {
   collectorBindTargetArgsSchema,
+  collectorHandbookWriteArgsSchema,
   collectorObserveArgsSchema,
   collectorOutputArgsSchema,
   collectorReadArgsSchema,
@@ -76,6 +83,7 @@ export class CollectorTargetBindError extends CorrectableSubmissionError {
 
 export {
   COLLECTOR_BIND_TARGET_TOOL,
+  COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
@@ -89,6 +97,7 @@ export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
+  COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
@@ -125,12 +134,14 @@ const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
 const bindSchema = collectorBindTargetArgsSchema;
+const handbookWriteSchema = collectorHandbookWriteArgsSchema;
 const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
 type ReadParams = Static<typeof readSchema>;
 type WaitParams = Static<typeof waitSchema>;
 type BindParams = Static<typeof bindSchema>;
+type HandbookWriteParams = Static<typeof handbookWriteSchema>;
 type OutputParams = Static<typeof outputSchema>;
 
 export type CollectorRoleDependencies = {
@@ -138,6 +149,8 @@ export type CollectorRoleDependencies = {
   createTransport(): CollectorGitHubTransport;
   createClock?(): CollectorClock;
   createLedger(config: CollectorConfigState, clock: CollectorClock, ctx: HostContext): CollectorLedger;
+  /** Optional packaged seed for first-use general handbook (#677). */
+  loadHandbookSeed?(): Promise<string>;
 };
 
 export type CollectorRoleHostActions = {
@@ -151,25 +164,51 @@ export type CollectorActivation = {
   ledger: CollectorLedger;
   transport: CollectorGitHubTransport;
   clock: CollectorClock;
+  handbook: CollectorHandbookStore;
+  /** Loaded at activate; refreshed after handbook write for same-session materials. */
+  handbookView: {
+    general: string;
+    repo: string;
+    generalSource: "book" | "seed" | "empty";
+    repoSource: "book" | "empty";
+    generalPath: string;
+    repoPath: string;
+  };
 };
 
 function buildMethodContext(activation: CollectorActivation): string {
   const pr = activation.ledger.config.prNumber;
-  return [
+  const handbook = activation.handbookView;
+  const lines = [
     "<collector_method>",
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
-    `prNumber: ${pr === undefined ? "unbound — call ak_collector_bind_target with the role-decided issue/PR before observe" : String(pr)}`,
+    `prNumber: ${pr === undefined ? "未绑定" : String(pr)}`,
     `requests: ${JSON.stringify(activation.manifest.requests.map((request) => ({ id: request.id })))}`,
+    `handbookGeneralSource: ${handbook.generalSource}`,
+    `handbookRepoSource: ${handbook.repoSource}`,
     "</collector_method>",
-  ].join("\n");
+  ];
+  // Opaque working memory only — no directional instructions (ADR 0073).
+  // JSON + `<` → \u003c keeps bodies from forging the delivery close tag (#677).
+  if (handbook.general.length > 0 || handbook.repo.length > 0) {
+    const payload = JSON.stringify({
+      general: handbook.general,
+      repo: handbook.repo,
+      generalSource: handbook.generalSource,
+      repoSource: handbook.repoSource,
+      repository: activation.repository.canonical,
+    }).replaceAll("<", "\\u003c");
+    lines.push("", "<collector_handbook>", payload, "</collector_handbook>");
+  }
+  return lines.join("\n");
 }
 
 function parsePositiveTicket(raw: unknown, label: string): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) return raw;
   if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) return Number(raw.trim());
-  throw new CollectorTargetBindError(`ak_collector_bind_target ${label} must be a positive safe integer`);
+  throw new CollectorTargetBindError(`通进司绑定 ${label} 须为正安全整数`);
 }
 
 /**
@@ -228,6 +267,26 @@ export function createCollectorRoleRuntime(
         ctx,
       );
 
+      // #677: handbook under admitted book topology (session path → books/<key>/collector-handbook).
+      const sessionPath = ctx.sessionManager?.getSessionFile?.()
+        ?? ctx.sessionManager?.getSessionDir?.();
+      if (typeof sessionPath !== "string" || sessionPath.length === 0) {
+        throw new Error("通进司手册要求 session 路径位于 books/<bookKey>/");
+      }
+      const placement = resolveCollectorHandbookRoot(sessionPath);
+      const seedGeneral = dependencies.loadHandbookSeed === undefined
+        ? undefined
+        : (await dependencies.loadHandbookSeed()).trim();
+      const handbook = createCollectorHandbookStore({
+        ledgerHome: placement.ledgerHome,
+        handbookRoot: placement.root,
+        repositoryCanonical: repository.canonical,
+        ...(seedGeneral === undefined || seedGeneral.length === 0
+          ? {}
+          : { seedGeneral }),
+      });
+      const handbookView = await handbook.read();
+
       return {
         soul,
         repository,
@@ -235,6 +294,8 @@ export function createCollectorRoleRuntime(
         ledger,
         transport,
         clock,
+        handbook,
+        handbookView,
       };
     },
 
@@ -297,7 +358,7 @@ export function createCollectorRoleRuntime(
             const issueNumber = parsePositiveTicket(params.issueNumber, "issueNumber");
             if (prNumber === undefined && issueNumber === undefined) {
               throw new CollectorTargetBindError(
-                "ak_collector_bind_target requires role-decided prNumber and/or issueNumber",
+                "通进司绑定须由角色判定 prNumber 与/或 issueNumber",
               );
             }
 
@@ -310,18 +371,18 @@ export function createCollectorRoleRuntime(
               });
               if (associated.length === 0) {
                 throw new CollectorTargetBindError(
-                  `no PR associated with issue #${issueNumber} in ${activation.repository.canonical}; pass an explicit --pr or a different issueNumber`,
+                  `${activation.repository.canonical} 的 issue #${issueNumber} 无关联 PR；请改用明确 --pr 或其他 issueNumber`,
                 );
               }
               if (associated.length > 1) {
                 throw new CollectorTargetBindError(
-                  `multiple PRs associated with issue #${issueNumber}: ${associated.join(", ")}; pass an explicit prNumber or --pr`,
+                  `issue #${issueNumber} 关联多个 PR：${associated.join("、")}；请改用明确 prNumber 或 --pr`,
                 );
               }
               const fromIssue = associated[0]!;
               if (prNumber !== undefined && prNumber !== fromIssue) {
                 throw new CollectorTargetBindError(
-                  `prNumber ${prNumber} conflicts with issue #${issueNumber} association PR ${fromIssue}`,
+                  `prNumber ${prNumber} 与 issue #${issueNumber} 关联 PR ${fromIssue} 冲突`,
                 );
               }
               bound = fromIssue;
@@ -422,8 +483,8 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_REQUEST_TOOL,
         label: "通进司请求",
-        description: "按配置请求体与关联标记，在所引最新快照 HEAD 发一次请求。",
-        promptSnippet: "按配置发一次请求",
+        description: "在所引最新快照 HEAD 发一次请求。requestId 可取配置清单，或角色依手册/现场判定的稳定 id；后者须同时提供 body。",
+        promptSnippet: "发一次评审请求",
         parameters: requestSchema,
         async execute(toolCallId: string, params: RequestParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
           const activation = getActivation();
@@ -431,7 +492,11 @@ export function createCollectorRoleRuntime(
           try {
             activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
             const details = await activation.ledger.request(
-              params,
+              {
+                requestId: params.requestId,
+                snapshotId: params.snapshotId,
+                ...(typeof params.body === "string" ? { body: params.body } : {}),
+              },
               activation.transport,
               activation.clock,
               signal,
@@ -447,6 +512,47 @@ export function createCollectorRoleRuntime(
           } catch (error) {
             if (isCorrectableExecuteError(error)) throw error;
             hostActions.failInfrastructure(error, ctx, toolCallId);
+          }
+        },
+      });
+
+      pi.registerTool({
+        name: COLLECTOR_HANDBOOK_WRITE_TOOL,
+        label: "通进司手册写入",
+        description: "写入通用手册或当前仓库差异全文（整份替换）。",
+        promptSnippet: "更新 bot 手册",
+        parameters: handbookWriteSchema,
+        async execute(toolCallId: string, params: HandbookWriteParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_HANDBOOK_WRITE_TOOL, toolCallId);
+            // scope/body shape authority = collectorHandbookWriteArgsSchema (host parameters).
+            const details = await activation.handbook.write(params.scope, params.body);
+            activation.handbookView = await activation.handbook.read();
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `手册已写入：${details.scope}`,
+              }],
+              details: {
+                scope: details.scope,
+                path: details.path,
+                byteLength: details.byteLength,
+                generalSource: activation.handbookView.generalSource,
+                repoSource: activation.handbookView.repoSource,
+              },
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
+            hostActions.failInfrastructure(error, ctx, toolCallId);
+          } finally {
+            try {
+              activation.ledger.completeOperational(toolCallId);
+            } catch {
+              // already completed or not begun
+            }
           }
         },
       });

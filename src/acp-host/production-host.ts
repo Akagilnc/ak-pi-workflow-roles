@@ -39,6 +39,9 @@ export type ProductionAcpHostOptions = Readonly<{
 const navigatorRoutePlaybookPath = fileURLToPath(
   new URL("../../resources/navigator-route-playbook.md", import.meta.url),
 );
+const collectorHandbookSeedPath = fileURLToPath(
+  new URL("../../resources/collector-bot-handbook.md", import.meta.url),
+);
 
 /** Host-neutral packaged role runtime deps for the ACP parent-process envelope. */
 export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
@@ -55,6 +58,7 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
+    loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
