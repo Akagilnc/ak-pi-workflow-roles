@@ -425,7 +425,7 @@ export async function summonPublicRole(
  * Gate source runs necessarily own invocation.json — missing page, bad JSON, or
  * bad shape stay loud (failure-honesty). Absent host field is lawful (seat default).
  */
-export async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
+async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
   const { readFile } = await import("node:fs/promises");
   const path = join(sourceRunDirectory, "invocation.json");
   let text: string;

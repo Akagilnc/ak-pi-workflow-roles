@@ -20,7 +20,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
-import { parentInvocationHost } from "../../src/public-role-summons.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -229,51 +228,126 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
   });
 });
 
-test("#645 parentInvocationHost inherits live host; damaged source invocation fails loud", async () => {
-  await withTempRoot("ak-gate-parent-host-", async (root) => {
-    const source = join(root, "parent-run");
-    await mkdir(source, { recursive: true });
+test("#645 projectGatekeeperRun → summonGateOfficer inherits parent host; damaged invocation fails loud", async () => {
+  await withTempRoot("ak-gate-parent-host-", async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 645 });
 
-    // Missing invocation.json is evidence damage for a gate source run — not seat fallback.
-    await assert.rejects(
-      () => parentInvocationHost(source),
-      (error: unknown) =>
-        error instanceof Error && error.message.includes("parent invocation.json required"),
-    );
-
-    // Malformed JSON stays loud with its own identity.
-    await writeFile(join(source, "invocation.json"), "{not-json", "utf8");
-    await assert.rejects(
-      () => parentInvocationHost(source),
-      (error: unknown) =>
-        error instanceof Error && error.message.includes("parent invocation.json unreadable"),
-    );
-
-    // Live parent --host is the inheritance face; absent host field is lawful seat default.
+    // Parent live --host claude on the gate source invocation page.
     await writeFile(
-      join(source, "invocation.json"),
-      `${JSON.stringify({ role: "countersign", host: "claude", model: "sonnet" })}\n`,
+      join(sourceRunPath, "invocation.json"),
+      `${JSON.stringify({
+        role: "countersign",
+        runId: "01a064500-0000-7000-8000-0000000p001",
+        host: "claude",
+        model: "sonnet",
+      })}\n`,
       "utf8",
     );
-    assert.equal(await parentInvocationHost(source), "claude");
 
-    await writeFile(
-      join(source, "invocation.json"),
-      `${JSON.stringify({ role: "countersign", model: "sonnet" })}\n`,
-      "utf8",
-    );
-    assert.equal(await parentInvocationHost(source), undefined);
+    const leaf = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-parent-host",
+            name: "ak_countersign_output",
+            arguments: { countersignStatus: "converged", note: "host-inherit" },
+          },
+        ],
+      },
+    };
 
-    // Empty host string is shape damage, not seat fallback.
-    await writeFile(
-      join(source, "invocation.json"),
-      `${JSON.stringify({ role: "countersign", host: "  " })}\n`,
-      "utf8",
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const projected = await projectGatekeeperRun({
+      context: {
+        cwd: project,
+        sessionManager: {
+          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+          getEntries: () => [leaf],
+        },
+      } as never,
+      subject: { kind: "countersign_verdict" },
+      runDirectory: sourceRunPath,
+      home,
+      packageRoot,
+      roleTurnHost: host,
+      createRunId: () => "01a064500-0000-7000-8000-0000000n645",
+    });
+    assert.equal(projected.result.status, "pass");
+    assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
+    const nestedInvocation = JSON.parse(
+      await readFile(join(projected.summoned!.runDirectory!, "invocation.json"), "utf8"),
+    ) as { host?: string };
+    assert.equal(
+      nestedInvocation.host,
+      "claude",
+      "nested officer invocation must inherit parent live --host",
     );
-    await assert.rejects(
-      () => parentInvocationHost(source),
-      (error: unknown) =>
-        error instanceof Error && error.message.includes("host must be a non-empty string"),
+
+    // Damaged source invocation through the same production entry — loud rejection.
+    await writeFile(join(sourceRunPath, "invocation.json"), "{broken", "utf8");
+    const damaged = await projectGatekeeperRun({
+      context: {
+        cwd: project,
+        sessionManager: {
+          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+          getEntries: () => [leaf],
+        },
+      } as never,
+      subject: { kind: "countersign_verdict" },
+      runDirectory: sourceRunPath,
+      home,
+      packageRoot,
+      roleTurnHost: host,
+      createRunId: () => "01a064500-0000-7000-8000-0000000n646",
+    });
+    assert.equal(damaged.result.status, "transport_failure");
+    assert.match(
+      damaged.result.reason ?? "",
+      /parent invocation\.json unreadable/,
+    );
+
+    // Missing invocation.json is evidence damage through the same entry.
+    const { unlink } = await import("node:fs/promises");
+    await unlink(join(sourceRunPath, "invocation.json"));
+    const missing = await projectGatekeeperRun({
+      context: {
+        cwd: project,
+        sessionManager: {
+          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+          getEntries: () => [leaf],
+        },
+      } as never,
+      subject: { kind: "countersign_verdict" },
+      runDirectory: sourceRunPath,
+      home,
+      packageRoot,
+      roleTurnHost: host,
+      createRunId: () => "01a064500-0000-7000-8000-0000000n647",
+    });
+    assert.equal(missing.result.status, "transport_failure");
+    assert.match(
+      missing.result.reason ?? "",
+      /parent invocation\.json required/,
     );
   });
 });
