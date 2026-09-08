@@ -44,6 +44,7 @@ import {
 // COMPLIANCE_RESPONSE_ENTRY_TYPE remains for boundRetainedAuditResponse (call/result
 // interval binding on historical session bytes). Provider-stop retain authority is Sitian.
 import {
+  COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -1542,6 +1543,31 @@ function toolResultText(message: SessionMessage): string {
     })
     .join("")
     .trim();
+}
+
+/**
+ * #676 D1/J3: durable bind-target rejection on the current attempt → public no_receipt facts.
+ * Callers must learn they need explicit --pr without opening the session 正本.
+ */
+function extractCollectorTargetBindRejection(
+  entries: readonly SessionEntry[],
+): { readonly diagnostic: string; readonly code?: string } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COLLECTOR_BIND_TARGET_TOOL || message.isError !== true) continue;
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    const details = message.details;
+    const code =
+      isRecord(details) && typeof details.code === "string" && details.code.trim() !== ""
+        ? details.code
+        : undefined;
+    return code === undefined ? { diagnostic } : { diagnostic, code };
+  }
+  return undefined;
 }
 
 type BoundErroredToolCandidate = {
@@ -4204,7 +4230,19 @@ export async function settleFailureTerminalResult(
         try {
           const facts = parseNoReceiptLifecycleFacts(raw);
           if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
-            const decisiveFacts: NoReceiptLifecycleFacts = facts;
+            let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
+            // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
+            if (admitted.role === "collector") {
+              const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
+              if (bindRejection !== undefined) {
+                decisiveFacts = {
+                  ...facts,
+                  targetBindRejected: true,
+                  targetBindDiagnostic: bindRejection.diagnostic,
+                  ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
+                };
+              }
+            }
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
             return withOptionalGateProjection(
               {
@@ -4310,6 +4348,15 @@ export function presentFailureTerminal(
     io.stderr(formatFailureStderrDiagnostic({
       cause: terminal.roleOutcome.cause,
       diagnostic: terminal.roleOutcome.diagnostic,
+    }));
+    return;
+  }
+  // #676 D1/J3: no_receipt stays lawful exit 0; surface durable target-bind clarification on stderr.
+  const bindDiagnostic = terminal.roleOutcome.decisiveFacts.targetBindDiagnostic;
+  if (typeof bindDiagnostic === "string" && bindDiagnostic.trim() !== "") {
+    io.stderr(formatFailureStderrDiagnostic({
+      cause: "output",
+      diagnostic: bindDiagnostic,
     }));
   }
 }

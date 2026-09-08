@@ -1308,10 +1308,46 @@ export function createRoleRuntimeExtension(
           }),
         };
       }
+      // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
+      if (role === "collector" && activeCollector !== undefined) {
+        const options = event.systemPromptOptions;
+        if (options.skills && options.skills.length > 0) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 skills"),
+            ctx,
+          );
+        }
+        if (options.contextFiles && options.contextFiles.length > 0) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 context files"),
+            ctx,
+          );
+        }
+        if (
+          typeof options.appendSystemPrompt === "string"
+          && options.appendSystemPrompt.trim().length > 0
+        ) {
+          failInfrastructure(
+            activeCollector.ledger.latchFatal("通进司检测到 appendSystemPrompt 漂移"),
+            ctx,
+          );
+        }
+        if (!collectorFirstDispatchDone) {
+          collectorFirstDispatchDone = true;
+          activeCollector.ledger.recordActivation(activeCollector.clock);
+        }
+        return {
+          systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
+        };
+      }
     });
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
+      // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
+      if (role === "collector" && activeCollector !== undefined) {
+        collectorBusiness.onToolResult(activeCollector, event);
+      }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
       const isRoleInfrastructureFailure = pendingInfra !== undefined;
       if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
@@ -1441,6 +1477,16 @@ export function createRoleRuntimeExtension(
         globalThis.fetch = priorFetch;
         priorFetch = undefined;
         fetchWrapped = false;
+      }
+      // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
+      if (
+        selectedRole === "collector"
+        && activeCollector !== undefined
+        && activeCollector.ledger.fatal
+      ) {
+        if (process.exitCode === undefined || process.exitCode === 0) {
+          process.exitCode = 1;
+        }
       }
       // Flush any still-pending affirmative attendance before teardown. Accepted
       // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
@@ -1674,32 +1720,20 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
-    collectorBusiness.registerBusinessTools(() => activeCollector);
-    // Envelope-owned material assembly + business bookkeeping hooks (ADR 0018).
-    roleHost.on("before_agent_start", (event) => {
-      if (activeCollector === undefined || selectedRole !== "collector") return;
-      if (!collectorFirstDispatchDone) {
-        collectorFirstDispatchDone = true;
-        activeCollector.ledger.recordActivation(activeCollector.clock);
-      }
-      return {
-        systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
-      };
-    });
-    roleHost.on("tool_call", (event) => {
-      if (activeCollector === undefined || selectedRole !== "collector") return;
-      if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(event.toolName)) {
-        return {
-          block: true,
-          reason: `通进司禁用工具 ${event.toolName}`,
-        };
-      }
-      return collectorBusiness.onToolCall(activeCollector, event);
-    });
-    roleHost.on("tool_result", (event) => {
-      if (activeCollector === undefined || selectedRole !== "collector") return;
-      collectorBusiness.onToolResult(activeCollector, event);
-    });
+    // #676 J1: business tools + tool_call gate register only behind admission/activation.
+    // before_agent_start / tool_result collector branches live on the shared envelope hooks above.
+    //
+    // #676 J4 dispositions for guards removed from the role-private collector module:
+    // - skills/contextFiles/appendSystemPrompt fail-closed → shared before_agent_start (above).
+    // - ambient skill/prompt/template commands → activate (below).
+    // - session_shutdown fatal exitCode → shared session_shutdown (above).
+    // - subsequent-input latchFatal + fixed-kickoff rewrite → intentionally not migrated:
+    //   #676 materials-first multi-turn abolished the single-shot fixed kickoff; multi-turn
+    //   observe/request/wait requires later inputs. Judge r1: fixed-kickoff equality delete is authorized.
+    // - tool sourceInfo path override check → intentionally not migrated: depended on
+    //   packageExtensionPath deleted under ADR 0018 / #676 E envelope ownership; uniqueness
+    //   + setActiveTools inventory checks remain on activate.
+    let collectorToolCallRegistered = false;
     const collector = {
       async activate(context: HostContext, event: { reason: string }) {
         activeCollector = undefined;
@@ -1715,7 +1749,39 @@ export function createRoleRuntimeExtension(
             `Collector does not support session_start reason ${event.reason}`,
           );
         }
-        // Business tools registered once at envelope install; envelope verifies inventory.
+        // #676 J4: ambient skill/prompt/template commands fail closed at activation.
+        const commands = roleHost.getCommands?.() ?? [];
+        const ambientCommands = commands.filter((command) => {
+          const name = command.name.toLowerCase();
+          return (
+            name.includes("skill")
+            || name.includes("prompt")
+            || name.startsWith("template")
+          );
+        });
+        if (ambientCommands.length > 0) {
+          throw new Error(
+            `Collector detected ambient instruction commands: ${
+              ambientCommands.map((c) => c.name).join(", ")
+            }`,
+          );
+        }
+        // Business tools behind admission barrier (inert-without-role invariant).
+        // First activation: fail closed if a required name is already occupied.
+        // Later activations reuse the once-registered tools (registerBusinessTools is idempotent).
+        const preExisting = roleHost.getAllTools();
+        const alreadyRegistered = COLLECTOR_REQUIRED_TOOLS.every((required) =>
+          preExisting.some((tool) => tool.name === required),
+        );
+        if (!alreadyRegistered) {
+          for (const required of COLLECTOR_REQUIRED_TOOLS) {
+            const prior = preExisting.filter((tool) => tool.name === required);
+            if (prior.length > 0) {
+              throw new Error(`Collector required tool name collision: ${required}`);
+            }
+          }
+        }
+        collectorBusiness.registerBusinessTools(() => activeCollector);
         const allTools = roleHost.getAllTools();
         for (const required of COLLECTOR_REQUIRED_TOOLS) {
           const matches = allTools.filter((tool) => tool.name === required);
@@ -1737,6 +1803,20 @@ export function createRoleRuntimeExtension(
           if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
             throw new Error(`Collector active tool surface includes unexpected ${name}`);
           }
+        }
+        // Seat-scoped tool_call gate — registered only after collector admission (no install-time tool_call).
+        if (!collectorToolCallRegistered) {
+          collectorToolCallRegistered = true;
+          roleHost.on("tool_call", (toolEvent) => {
+            if (activeCollector === undefined || selectedRole !== "collector") return;
+            if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
+              return {
+                block: true,
+                reason: `通进司禁用工具 ${toolEvent.toolName}`,
+              };
+            }
+            return collectorBusiness.onToolCall(activeCollector, toolEvent);
+          });
         }
         const activation = await collectorBusiness.activate(context);
         if (activation.ledger.activationRecorded) {

@@ -32,3 +32,38 @@ export function isCorrectableExecuteError(error: unknown): boolean {
     || error instanceof WorkerUnfinishedReasonReminderError
   );
 }
+
+/** Durable projection shared by Pi adapter and Grok/ACP envelope tool catches. */
+export type CorrectableExecuteRejectionProjection = {
+  readonly diagnostic: string;
+  readonly details: Record<string, unknown>;
+};
+
+/**
+ * One authority for correctable execute → diagnostic text + structured details.
+ * Host adapters only wrap this into their transport shape.
+ */
+export function projectCorrectableExecuteRejection(
+  error: unknown,
+): CorrectableExecuteRejectionProjection {
+  const diagnostic = error instanceof Error ? error.message : String(error);
+  if (error instanceof GatekeeperDecisionError) {
+    return { diagnostic, details: { ...(error.result as Record<string, unknown>) } };
+  }
+  if (
+    error instanceof WorkerCommitReminderError
+    || error instanceof WorkerPrefixReminderError
+    || error instanceof WorkerUnfinishedReasonReminderError
+  ) {
+    return { diagnostic, details: { code: error.code } };
+  }
+  if (typeof (error as { code?: unknown }).code === "string") {
+    return { diagnostic, details: { code: (error as { code: string }).code } };
+  }
+  return {
+    diagnostic,
+    details: {
+      code: error instanceof Error && error.name ? error.name : "correctable-submission-error",
+    },
+  };
+}

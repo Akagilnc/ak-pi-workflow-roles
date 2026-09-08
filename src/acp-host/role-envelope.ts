@@ -27,12 +27,9 @@ import {
   type AcpRoleTurnHostConfig,
 } from "./role-turn-host.ts";
 import {
-  GatekeeperDecisionError,
-  WorkerCommitReminderError,
-  WorkerPrefixReminderError,
-  WorkerUnfinishedReasonReminderError,
-} from "../submission-errors.ts";
-import { isCorrectableExecuteError } from "../submission-correctable-error.ts";
+  isCorrectableExecuteError,
+  projectCorrectableExecuteRejection,
+} from "../submission-correctable-error.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
@@ -501,21 +498,9 @@ export async function prepareAcpRoleEnvelope(options: {
               let content: ContentPart[];
               let details: Record<string, unknown>;
               if (isCorrectableExecuteError(error)) {
-                const diagnostic = error instanceof Error ? error.message : String(error);
-                content = [{ type: "text", text: diagnostic }];
-                if (error instanceof GatekeeperDecisionError) {
-                  details = { ...error.result };
-                } else if (
-                  error instanceof WorkerCommitReminderError
-                  || error instanceof WorkerPrefixReminderError
-                  || error instanceof WorkerUnfinishedReasonReminderError
-                ) {
-                  details = { code: error.code };
-                } else if (typeof (error as unknown as { code?: unknown }).code === "string") {
-                  details = { code: (error as unknown as { code: string }).code };
-                } else {
-                  details = { code: error instanceof Error && error.name ? error.name : "correctable-submission-error" };
-                }
+                const projected = projectCorrectableExecuteRejection(error);
+                content = [{ type: "text", text: projected.diagnostic }];
+                details = projected.details;
               } else {
                 // Slot-before-abort; projectToolResult may still project durable details.
                 ({ content, details } = declareRoundInfrastructureFailure(error));
