@@ -24,12 +24,38 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       suffix: Object.freeze(["stdio"]),
       modelFlag: "--model",
     }),
+    modelPassing: "argv",
     boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
     childEnv: Object.freeze({
       ...PRIVATE_COMPAT_ENV,
       GROK_MEMORY: "0",
       GROK_SUBAGENTS: "0",
+    }),
+  }),
+  /**
+   * Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
+   * Model arrives as an ACP `session/set_model` RPC with modelId `provider:model`
+   * (seat table provider + model concatenated). Reasoning is the global
+   * `--reasoning` flag before `acp`. Soul is the seat profile SOUL.md symlink
+   * (`hermes -p ak-<role> …`); package `souls/<role>.md` is the sole source.
+   */
+  "hermes": Object.freeze({
+    binaryFromHome: Object.freeze([".local", "bin", "hermes"]),
+    argv: Object.freeze({
+      prefix: Object.freeze(["acp"]),
+      suffix: Object.freeze([]),
+      thinkingFlag: "--reasoning",
+    }),
+    modelPassing: "set_model",
+    boundResume: "session/load",
+    sessionBindingFile: "hermes-acp-session.json",
+    childEnv: Object.freeze({}),
+    seatProfileSoul: Object.freeze({
+      flag: "-p",
+      namePrefix: "ak-",
+      profilesRootFromHome: Object.freeze([".hermes", "profiles"]),
+      soulFileName: "SOUL.md",
     }),
   }),
 });
