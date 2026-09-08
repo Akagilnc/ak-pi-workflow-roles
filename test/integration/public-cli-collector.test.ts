@@ -354,7 +354,8 @@ test("#676 production envelope bind multi-PR → public no_receipt targetBind fa
         toolCallId: "call-bind-1",
       });
       assert.equal(bind.isError, true);
-      assert.match(bind.content.map((p) => p.text).join(""), /multiple PRs/);
+      // Contract is typed rejection code; diagnostic is role-visible Chinese prose.
+      assert.match(bind.content.map((p) => p.text).join(""), /关联多个 PR/);
 
       const terminal = await settleBindNoReceipt({
         home,
@@ -364,8 +365,9 @@ test("#676 production envelope bind multi-PR → public no_receipt targetBind fa
       assert.equal(terminal.roleOutcome.kind, "no_receipt");
       const facts = terminal.roleOutcome.decisiveFacts;
       assert.equal(facts.targetBindRejected, true);
-      assert.match(String(facts.targetBindDiagnostic), /multiple PRs/);
       assert.equal(facts.targetBindCode, "CollectorTargetBindError");
+      assert.equal(typeof facts.targetBindDiagnostic, "string");
+      assert.match(String(facts.targetBindDiagnostic), /关联多个 PR/);
 
       const stdout: string[] = [];
       const stderr: string[] = [];

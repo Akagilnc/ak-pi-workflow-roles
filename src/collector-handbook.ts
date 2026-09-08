@@ -53,18 +53,18 @@ export type CollectorHandbookPlacement = {
  */
 export function resolveCollectorHandbookRoot(sessionPath: string): CollectorHandbookPlacement {
   if (typeof sessionPath !== "string" || sessionPath.trim().length === 0) {
-    throw new Error("Collector handbook requires a non-empty session path under books/<bookKey>/");
+    throw new Error("通进司手册要求非空 session 路径，且位于 books/<bookKey>/");
   }
   const normalized = sessionPath.replaceAll("\\", "/");
   const match = /(?:^|\/)\.ak-roles\/books\/([^/]+)\//.exec(normalized);
   if (match === null) {
     throw new Error(
-      `Collector handbook requires session under books/<bookKey>/; got ${sessionPath}`,
+      `通进司手册要求 session 位于 books/<bookKey>/；收到 ${sessionPath}`,
     );
   }
   const bookKey = match[1]!;
   if (bookKey.length === 0 || bookKey === "." || bookKey === ".." || bookKey.includes("\\")) {
-    throw new Error(`Collector handbook rejects unsafe bookKey ${JSON.stringify(bookKey)}`);
+    throw new Error(`通进司手册拒绝不安全 bookKey ${JSON.stringify(bookKey)}`);
   }
   const ledgerHome = resolveActivationLedgerHomeForPath(sessionPath);
   const root = join(activationBookDirectory(ledgerHome, bookKey), "collector-handbook");
@@ -72,10 +72,10 @@ export function resolveCollectorHandbookRoot(sessionPath: string): CollectorHand
 }
 
 /** Flat repo file name under handbook/repos/ — avoids nested owner/repo dirs. */
-export function collectorHandbookRepoFileName(repositoryCanonical: string): string {
+function collectorHandbookRepoFileName(repositoryCanonical: string): string {
   if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(repositoryCanonical)) {
     throw new Error(
-      `Collector handbook repo file requires canonical owner/repo, got ${JSON.stringify(repositoryCanonical)}`,
+      `通进司手册仓库文件要求规范 owner/repo，收到 ${JSON.stringify(repositoryCanonical)}`,
     );
   }
   return `${repositoryCanonical.replaceAll("/", "__")}.md`;
@@ -143,12 +143,7 @@ export function createCollectorHandbookStore(input: {
       };
     },
     async write(scope, body) {
-      if (typeof body !== "string") {
-        throw new Error("Collector handbook write body must be a string");
-      }
-      if (scope !== "general" && scope !== "repo") {
-        throw new Error(`Collector handbook scope must be general|repo, got ${JSON.stringify(scope)}`);
-      }
+      // scope/body shape authority = collectorHandbookWriteArgsSchema (call site host parameters).
       ensureRealDirectoryTree(input.ledgerHome, input.handbookRoot);
       const path = scope === "general" ? generalPath : repoPath;
       if (scope === "repo") {

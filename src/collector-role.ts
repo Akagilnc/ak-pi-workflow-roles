@@ -183,7 +183,7 @@ function buildMethodContext(activation: CollectorActivation): string {
     "<collector_method>",
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
-    `prNumber: ${pr === undefined ? "unbound — call ak_collector_bind_target with the role-decided issue/PR before observe" : String(pr)}`,
+    `prNumber: ${pr === undefined ? "未绑定" : String(pr)}`,
     `requests: ${JSON.stringify(activation.manifest.requests.map((request) => ({ id: request.id })))}`,
     `handbookGeneralSource: ${handbook.generalSource}`,
     `handbookRepoSource: ${handbook.repoSource}`,
@@ -208,7 +208,7 @@ function parsePositiveTicket(raw: unknown, label: string): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) return raw;
   if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) return Number(raw.trim());
-  throw new CollectorTargetBindError(`ak_collector_bind_target ${label} must be a positive safe integer`);
+  throw new CollectorTargetBindError(`通进司绑定 ${label} 须为正安全整数`);
 }
 
 /**
@@ -271,7 +271,7 @@ export function createCollectorRoleRuntime(
       const sessionPath = ctx.sessionManager?.getSessionFile?.()
         ?? ctx.sessionManager?.getSessionDir?.();
       if (typeof sessionPath !== "string" || sessionPath.length === 0) {
-        throw new Error("Collector handbook requires a session path under books/<bookKey>/");
+        throw new Error("通进司手册要求 session 路径位于 books/<bookKey>/");
       }
       const placement = resolveCollectorHandbookRoot(sessionPath);
       const seedGeneral = dependencies.loadHandbookSeed === undefined
@@ -358,7 +358,7 @@ export function createCollectorRoleRuntime(
             const issueNumber = parsePositiveTicket(params.issueNumber, "issueNumber");
             if (prNumber === undefined && issueNumber === undefined) {
               throw new CollectorTargetBindError(
-                "ak_collector_bind_target requires role-decided prNumber and/or issueNumber",
+                "通进司绑定须由角色判定 prNumber 与/或 issueNumber",
               );
             }
 
@@ -371,18 +371,18 @@ export function createCollectorRoleRuntime(
               });
               if (associated.length === 0) {
                 throw new CollectorTargetBindError(
-                  `no PR associated with issue #${issueNumber} in ${activation.repository.canonical}; pass an explicit --pr or a different issueNumber`,
+                  `${activation.repository.canonical} 的 issue #${issueNumber} 无关联 PR；请改用明确 --pr 或其他 issueNumber`,
                 );
               }
               if (associated.length > 1) {
                 throw new CollectorTargetBindError(
-                  `multiple PRs associated with issue #${issueNumber}: ${associated.join(", ")}; pass an explicit prNumber or --pr`,
+                  `issue #${issueNumber} 关联多个 PR：${associated.join("、")}；请改用明确 prNumber 或 --pr`,
                 );
               }
               const fromIssue = associated[0]!;
               if (prNumber !== undefined && prNumber !== fromIssue) {
                 throw new CollectorTargetBindError(
-                  `prNumber ${prNumber} conflicts with issue #${issueNumber} association PR ${fromIssue}`,
+                  `prNumber ${prNumber} 与 issue #${issueNumber} 关联 PR ${fromIssue} 冲突`,
                 );
               }
               bound = fromIssue;
@@ -527,20 +527,14 @@ export function createCollectorRoleRuntime(
           if (activation === undefined) throw new Error("通进司未激活");
           try {
             activation.ledger.beginOperational(COLLECTOR_HANDBOOK_WRITE_TOOL, toolCallId);
-            const scope = params.scope;
-            if (scope !== "general" && scope !== "repo") {
-              throw new Error("ak_collector_handbook_write scope must be general or repo");
-            }
-            if (typeof params.body !== "string") {
-              throw new Error("ak_collector_handbook_write body must be a string");
-            }
-            const details = await activation.handbook.write(scope, params.body);
+            // scope/body shape authority = collectorHandbookWriteArgsSchema (host parameters).
+            const details = await activation.handbook.write(params.scope, params.body);
             activation.handbookView = await activation.handbook.read();
             activation.ledger.completeOperational(toolCallId);
             return {
               content: [{
                 type: "text" as const,
-                text: `手册已写入：${scope}`,
+                text: `手册已写入：${details.scope}`,
               }],
               details: {
                 scope: details.scope,

@@ -1,5 +1,3 @@
-import Value from "typebox/value";
-
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
   applyEvidenceVersionHistory,
@@ -26,14 +24,6 @@ import {
   type GitHubPullRequest,
 } from "./collector-github.ts";
 import { CollectorNonOpenRequestError } from "./collector-identity.ts";
-import {
-  collectorHandbookWriteArgsSchema,
-  collectorObserveArgsSchema,
-  collectorOutputArgsSchema,
-  collectorReadArgsSchema,
-  collectorRequestArgsSchema,
-  collectorWaitArgsSchema,
-} from "./collector-tool-schemas.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
 
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
@@ -61,7 +51,7 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
  * (evidenceId + htmlUrl) and is preserved in the volume, never unconditionally
  * transcribed into model context or receipt.
  */
-export const COLLECTOR_OBSERVE_BODY_HEAD_BYTES = 512;
+const COLLECTOR_OBSERVE_BODY_HEAD_BYTES = 512;
 
 function utf8SafePrefix(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
@@ -112,7 +102,7 @@ export type ObserveModelView = {
  * (collector-side; provider-visible observe details carry only this bounded
  * projection), never unconditionally transcribed into model context.
  */
-export function projectObserveContextView(modelView: ObserveModelView): ObserveModelView {
+function projectObserveContextView(modelView: ObserveModelView): ObserveModelView {
   return {
     ...modelView,
     evidence: modelView.evidence.map((entry) =>
@@ -125,9 +115,9 @@ export function projectObserveContextView(modelView: ObserveModelView): ObserveM
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
 
 export const COLLECTOR_ACTIVATION_ENTRY_TYPE = "ak-collector-activation" as const;
-export const COLLECTOR_SNAPSHOT_ENTRY_TYPE = "ak-collector-snapshot" as const;
-export const COLLECTOR_REQUEST_ENTRY_TYPE = "ak-collector-request" as const;
-export const COLLECTOR_WAIT_ENTRY_TYPE = "ak-collector-wait" as const;
+const COLLECTOR_SNAPSHOT_ENTRY_TYPE = "ak-collector-snapshot" as const;
+const COLLECTOR_REQUEST_ENTRY_TYPE = "ak-collector-request" as const;
+const COLLECTOR_WAIT_ENTRY_TYPE = "ak-collector-wait" as const;
 
 export type CollectorRequestAttempt = {
   attemptId: string;
@@ -247,31 +237,6 @@ function isOperationalTool(name: string): name is CollectorOperationalTool {
   return (COLLECTOR_OPERATIONAL_TOOLS as readonly string[]).includes(name);
 }
 
-/** Shared Check owner for Collector tool argument shapes (schema seam, not batch law). */
-export function collectorToolArgumentsValid(
-  name: string,
-  args: unknown,
-): boolean {
-  // Residual envelope: reject missing/null args before schema check.
-  if (args === undefined || args === null) return false;
-  switch (name) {
-    case COLLECTOR_OBSERVE_TOOL:
-      return Value.Check(collectorObserveArgsSchema, args);
-    case COLLECTOR_READ_TOOL:
-      return Value.Check(collectorReadArgsSchema, args);
-    case COLLECTOR_REQUEST_TOOL:
-      return Value.Check(collectorRequestArgsSchema, args);
-    case COLLECTOR_WAIT_TOOL:
-      return Value.Check(collectorWaitArgsSchema, args);
-    case COLLECTOR_HANDBOOK_WRITE_TOOL:
-      return Value.Check(collectorHandbookWriteArgsSchema, args);
-    case COLLECTOR_OUTPUT_TOOL:
-      return Value.Check(collectorOutputArgsSchema, args);
-    default:
-      return false;
-  }
-}
-
 export function createCollectorLedger(
   config: CollectorConfigState,
   options?: CollectorLedgerOptions,
@@ -341,9 +306,7 @@ export function createCollectorLedger(
 
   const requireBoundPr = (): number => {
     if (config.prNumber === undefined) {
-      throw new Error(
-        "Collector PR target is unbound; call ak_collector_bind_target with the role-decided issue/PR or pass --pr",
-      );
+      throw new Error("通进司 PR 目标未绑定");
     }
     return config.prNumber;
   };
@@ -681,11 +644,11 @@ export function createCollectorLedger(
         throw new Error("通进司已产出输出候选，本局不再受理目标绑定");
       }
       if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
-        throw new Error("Collector bind target requires a positive safe-integer PR number");
+        throw new Error("通进司绑定目标要求正安全整数 PR 号");
       }
       if (config.prNumber !== undefined && config.prNumber !== prNumber) {
         throw new Error(
-          `Collector target already bound to PR ${config.prNumber}; cannot rebind to ${prNumber}`,
+          `通进司目标已绑定 PR ${config.prNumber}，不可改绑为 ${prNumber}`,
         );
       }
       config.prNumber = prNumber;
@@ -931,10 +894,8 @@ export function createCollectorLedger(
           );
         }
       }
+      // requestId shape authority = collectorRequestArgsSchema (host parameters).
       const requestId = configured?.id ?? input.requestId;
-      if (typeof requestId !== "string" || requestId.trim().length === 0) {
-        throw new Error("通进司 requestId 须为非空字符串");
-      }
 
       const snapshot = snapshots.find((item) => item.snapshotId === input.snapshotId);
       if (snapshot === undefined) {
@@ -1069,14 +1030,7 @@ export function createCollectorLedger(
       if (activationTime === undefined) {
         throw latchFatal("通进司等待需要激活");
       }
-      if (!Number.isSafeInteger(input.durationMs) || input.durationMs < 1) {
-        throw new Error("通进司等待 durationMs 须为正安全整数");
-      }
-      if (input.durationMs > COLLECTOR_ELIGIBILITY_MS) {
-        throw new Error(
-          `通进司等待 durationMs 至多为 ${COLLECTOR_ELIGIBILITY_MS}`,
-        );
-      }
+      // durationMs shape authority = collectorWaitArgsSchema (host parameters).
       if (pastCutoff(clock)) {
         finalObservationRequired = true;
         throw latchFatal("通进司等待不在资格截止前");
