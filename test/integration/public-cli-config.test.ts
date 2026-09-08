@@ -20,6 +20,8 @@ import {
   savePublicCliConfig,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
+  setProviderHostAlias,
+  unsetProviderHostAlias,
   type CredentialProviders,
   type PublicCliConfig,
 } from "../../src/public-cli/config.ts";
@@ -640,6 +642,101 @@ test("unknown seat rows survive set→save without entering resolve/enum", async
       resolveEffectiveSeat(reloaded, "judge", credentials).source,
       "persistent",
     );
+  });
+});
+
+// #778: owner-registered provider→host alias in the seat table. Code carries
+// the map only — no built-in provider pairs. Unregistered pairs pass through.
+test("provider host alias round-trips and remaps only the registered host", async () => {
+  await withTempHome(async (home) => {
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+    let config: PublicCliConfig = { seats: {} };
+    config = setPersistentSeatConfig(config, "diarist", {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    config = setProviderHostAlias(config, "xai", "hermes", "xai-oauth");
+    await savePublicCliConfig(config, home);
+
+    const reloaded = await loadPublicCliConfig(home);
+    assert.deepEqual(reloaded.providerAliases, {
+      xai: { hermes: "xai-oauth" },
+    });
+    // Disk seats stay as owner wrote them (no rewrite of seat rows).
+    assert.deepEqual(reloaded.seats.diarist, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+
+    const hermes = resolveEffectiveSeat(reloaded, "diarist", credentials, {
+      host: "hermes",
+    });
+    assert.deepEqual(hermes.selection, {
+      provider: "xai-oauth",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    assert.equal(hermes.host, "hermes");
+
+    // Unregistered host pair: pass through the seat-table provider unchanged.
+    const pi = resolveEffectiveSeat(reloaded, "diarist", credentials);
+    assert.deepEqual(pi.selection, {
+      provider: "xai",
+      model: "grok-4.5",
+      thinking: "medium",
+    });
+    assert.equal(pi.host, "pi");
+
+    const cleared = unsetProviderHostAlias(reloaded, "xai", "hermes");
+    await savePublicCliConfig(cleared, home);
+    const afterClear = await loadPublicCliConfig(home);
+    assert.equal(afterClear.providerAliases, undefined);
+    assert.deepEqual(
+      resolveEffectiveSeat(afterClear, "diarist", credentials, { host: "hermes" })
+        .selection?.provider,
+      "xai",
+    );
+  });
+});
+
+test("provider host alias survives sibling seat writes without inventing pairs", async () => {
+  await withTempHome(async (home) => {
+    let config: PublicCliConfig = {
+      seats: {},
+      autoResumeLimit: 3,
+    };
+    config = setProviderHostAlias(config, "xai", "hermes", "xai-oauth");
+    config = setPersistentSeatConfig(config, "judge", {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+    await savePublicCliConfig(config, home);
+
+    const raw = JSON.parse(await readFile(publicCliConfigPath(home), "utf8")) as {
+      seats: Record<string, unknown>;
+      autoResumeLimit?: number;
+      providerAliases?: unknown;
+    };
+    assert.equal(raw.autoResumeLimit, 3);
+    assert.deepEqual(raw.providerAliases, { xai: { hermes: "xai-oauth" } });
+    assert.deepEqual(raw.seats.judge, {
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+      thinking: "high",
+    });
+
+    // No alias for openai-codex → host handoff keeps the seat provider.
+    const credentials: CredentialProviders = { "openai-codex": true, xai: true };
+    const effective = resolveEffectiveSeat(
+      await loadPublicCliConfig(home),
+      "judge",
+      credentials,
+      { host: "hermes" },
+    );
+    assert.equal(effective.selection?.provider, "openai-codex");
   });
 });
 
