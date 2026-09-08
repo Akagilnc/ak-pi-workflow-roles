@@ -830,6 +830,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-collector-repo",
     "ak-collector-pr",
     "ak-collector-request-manifest",
+    "ak-collector-wait-ms",
     "ak-gleaner-left-base",
   ]));
   for (const [name, options] of harness.flags) {

@@ -7,6 +7,8 @@ export type GitHubPullRequest = {
   number: number;
   state: string;
   headOid: string;
+  /** GitHub PR created_at — work-step start for new-PR auto-trigger rounds (#678 D4). */
+  createdAt?: string;
   updatedAt?: string;
   url: string;
   raw: unknown;
@@ -491,6 +493,7 @@ export function normalizePullRequest(raw: unknown): GitHubPullRequest {
     number,
     state,
     headOid: head["sha"],
+    ...(typeof raw["created_at"] === "string" ? { createdAt: raw["created_at"] } : {}),
     ...(typeof raw["updated_at"] === "string" ? { updatedAt: raw["updated_at"] } : {}),
     url: htmlUrl,
     raw,

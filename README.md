@@ -92,9 +92,11 @@ ak-role coder apply --attach ./plan.md "Implement the approved slice."
 # reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
 ak-role reviewer --base main "Review the branch."
 
-# collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, return materials)
+# collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, wait window, return materials)
 ak-role collector --pr 42 --repo owner/repository "Collect findings for the assigned issue."
 ak-role collector --repo owner/repository "Collect findings for #42"
+# optional: wait-window ms after the work step opens (default 600000 = 10 minutes)
+ak-role collector --pr 42 --repo owner/repository --wait-ms 120000 "Collect with a 2-minute window."
 
 # fixer — repair the assigned findings
 ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

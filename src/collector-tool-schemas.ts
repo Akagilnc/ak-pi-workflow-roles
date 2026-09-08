@@ -1,5 +1,4 @@
 import { Type, type Static } from "typebox";
-import { COLLECTOR_ELIGIBILITY_MS } from "./collector-evidence.ts";
 import { openToolObject } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
@@ -36,7 +35,22 @@ export const collectorReadArgsSchema = Type.Object({
   evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
 }, { additionalProperties: false });
 export const collectorWaitArgsSchema = Type.Object({
-  durationMs: Type.Integer({ minimum: 1, maximum: COLLECTOR_ELIGIBILITY_MS, description: "等待毫秒；单次上限五分钟且不超剩余资格" }),
+  durationMs: Type.Integer({
+    minimum: 1,
+    description: "等待毫秒；实际睡眠不超过剩余等待窗（#678；无包内单次任意上限）",
+  }),
+}, { additionalProperties: false });
+
+/**
+ * #678 D4: open the wait window at a work step.
+ * Omit startedAt for existing-PR trigger-phase end (= now).
+ * Pass PR creation success time for new-PR auto-trigger rounds.
+ */
+export const collectorOpenWaitWindowArgsSchema = Type.Object({
+  startedAt: Type.Optional(Type.String({
+    minLength: 1,
+    description: "等待窗起点 ISO 时间；新建 PR 用创建成功时刻；省略＝现在（触发阶段结束）",
+  })),
 }, { additionalProperties: false });
 
 /**
@@ -112,5 +126,6 @@ export type CollectorObserveArgs = Static<typeof collectorObserveArgsSchema>;
 export type CollectorRequestArgs = Static<typeof collectorRequestArgsSchema>;
 export type CollectorReadArgs = Static<typeof collectorReadArgsSchema>;
 export type CollectorWaitArgs = Static<typeof collectorWaitArgsSchema>;
+export type CollectorOpenWaitWindowArgs = Static<typeof collectorOpenWaitWindowArgsSchema>;
 export type CollectorBindTargetArgs = Static<typeof collectorBindTargetArgsSchema>;
 export type CollectorOutputArgs = Static<typeof collectorOutputArgsSchema>;

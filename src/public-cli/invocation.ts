@@ -178,6 +178,8 @@ export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
   readonly manifestDigest: string;
+  /** Wait-window ms (#678 D4); default applied at role activate when omitted. */
+  readonly waitWindowMs?: number;
 };
 
 export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
@@ -727,6 +729,8 @@ export type ParseCollectorArgvResult = {
   project?: string;
   repo?: string;
   requestManifestPath?: string;
+  /** Optional wait-window ms (#678 D4). */
+  waitWindowMs?: number;
 };
 
 export type ParseDoctorArgvResult = {
@@ -1722,6 +1726,7 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
   let repo: string | undefined;
   let prNumber: number | undefined;
   let requestManifestPath: string | undefined;
+  let waitWindowMs: number | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("collector");
@@ -1754,6 +1759,17 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
         requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "wait-ms") {
+        if (taken.value === undefined || !/^[1-9]\d*$/.test(taken.value.trim())) {
+          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+        }
+        const parsed = Number(taken.value.trim());
+        if (!Number.isSafeInteger(parsed) || parsed < 1) {
+          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+        }
+        waitWindowMs = parsed;
+        continue;
+      }
       throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
     }
     const token = tokens.shift()!;
@@ -1772,6 +1788,7 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
     ...(project === undefined ? {} : { project }),
     ...(repo === undefined ? {} : { repo }),
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+    ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
   };
 }
 
@@ -1845,6 +1862,8 @@ export type AdmitCollectorInvocationOptions = {
   repo?: string;
   /** Optional public request configuration; copied into the admitted run. */
   requestManifestPath?: string;
+  /** Optional wait-window ms (#678 D4). */
+  waitWindowMs?: number;
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
@@ -1947,6 +1966,7 @@ export async function admitCollectorInvocation(
     repository: repository.canonical,
     repositoryDisplay: repository.display,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+    ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
     manifestDigest,
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -1977,6 +1997,7 @@ export async function admitCollectorInvocation(
     ...(prNumber === undefined ? {} : { prNumber }),
     repository,
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+    ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
     manifestDigest,
   };
 }

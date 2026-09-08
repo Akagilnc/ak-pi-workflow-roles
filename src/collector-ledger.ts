@@ -2,7 +2,7 @@ import type { CollectorManifest, CollectorRepository } from "./collector-config.
 import {
   applyEvidenceVersionHistory,
   assignWindowRelations,
-  COLLECTOR_ELIGIBILITY_MS,
+  COLLECTOR_DEFAULT_WAIT_WINDOW_MS,
   measureNormalizedBytes,
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
@@ -23,13 +23,18 @@ import {
   type GitHubPageDiagnostics,
   type GitHubPullRequest,
 } from "./collector-github.ts";
-import { CollectorNonOpenRequestError } from "./collector-identity.ts";
+import {
+  CollectorNonOpenRequestError,
+  CollectorWaitWindowClosedError,
+} from "./collector-identity.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
 
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 export const COLLECTOR_READ_TOOL = "ak_collector_read";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+/** #678 D4: open wait window at a work step — business tool, ledger-booked. */
+export const COLLECTOR_OPEN_WAIT_WINDOW_TOOL = "ak_collector_open_wait_window";
 /** #676 A: role-decided target bind — business tool, ledger-booked. */
 export const COLLECTOR_BIND_TARGET_TOOL = "ak_collector_bind_target";
 /** #677: opaque handbook write — business tool, ledger-booked. */
@@ -41,6 +46,7 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_OPEN_WAIT_WINDOW_TOOL,
   COLLECTOR_WAIT_TOOL,
   COLLECTOR_HANDBOOK_WRITE_TOOL,
 ] as const;
@@ -83,6 +89,8 @@ export type ObserveModelView = {
   completedAt: string;
   prState: string;
   headOid: string;
+  /** PR create success time when known — new-PR wait-window startedAt (#678 D4). */
+  prCreatedAt?: string;
   complete: boolean;
   evidence: ObserveEvidenceEntry[];
   requestAttempts: Array<{
@@ -158,6 +166,15 @@ export type CollectorConfigState = {
   /** Bound PR target; undefined until explicit flag, admission bind, or role bind-target tool. */
   prNumber: number | undefined;
   manifest: CollectorManifest;
+  /**
+   * Wait window duration (#678 D4). Default 10 minutes; caller-configurable without code change.
+   * Window opens at a work step (PR create success / trigger-phase end), not session activation.
+   */
+  waitWindowMs: number;
+};
+
+export type CollectorLedgerConfigInput = Omit<CollectorConfigState, "waitWindowMs"> & {
+  waitWindowMs?: number;
 };
 
 /** Durable session journal sink owned by the shared execution seam. */
@@ -177,8 +194,11 @@ export type CollectorLedger = {
   readonly fatal: boolean;
   readonly fatalReason: string | undefined;
   readonly outputCandidate: boolean;
+  /** Session ready (before_agent_start); not the wait window. */
   readonly activationRecorded: boolean;
+  /** Wait-window start (receipt activationTime); undefined until openWaitWindow. */
   readonly activationTime: Date | undefined;
+  /** Wait-window end; undefined until openWaitWindow. */
   readonly deadlineTime: Date | undefined;
   readonly activationMono: number | undefined;
   readonly deadlineMono: number | undefined;
@@ -192,7 +212,13 @@ export type CollectorLedger = {
 
   latchFatal(reason: string, cause?: unknown): Error;
   assertNotFatal(): void;
+  /** Mark session ready for prep observe/request; does not open the wait window (#678). */
   recordActivation(clock: CollectorClock): void;
+  /**
+   * Open the wait window once at a work step. Optional startedAt covers new-PR create success;
+   * omit for existing-PR trigger-phase end (= now). Second call is a no-op (D6: updates do not reset).
+   */
+  openWaitWindow(clock: CollectorClock, options?: { startedAt?: Date }): void;
   recordOutputCandidate(): void;
   /** #676 A: role-decided unique PR bind (business fact on the ledger). */
   bindTarget(prNumber: number): void;
@@ -237,16 +263,31 @@ function isOperationalTool(name: string): name is CollectorOperationalTool {
   return (COLLECTOR_OPERATIONAL_TOOLS as readonly string[]).includes(name);
 }
 
+function resolveWaitWindowMs(raw: number | undefined): number {
+  if (raw === undefined) return COLLECTOR_DEFAULT_WAIT_WINDOW_MS;
+  if (!Number.isSafeInteger(raw) || raw < 1) {
+    throw new Error("通进司 waitWindowMs 须为正安全整数毫秒");
+  }
+  return raw;
+}
+
 export function createCollectorLedger(
-  config: CollectorConfigState,
+  input: CollectorLedgerConfigInput,
   options?: CollectorLedgerOptions,
 ): CollectorLedger {
+  const config: CollectorConfigState = {
+    repository: input.repository,
+    prNumber: input.prNumber,
+    manifest: input.manifest,
+    waitWindowMs: resolveWaitWindowMs(input.waitWindowMs),
+  };
   const clock = options?.clock;
   const journal = options?.journal;
   let fatal = false;
   let fatalReason: string | undefined;
   let outputCandidate = false;
   let pendingOutputCallId: string | undefined;
+  let sessionReady = false;
   let activationTime: Date | undefined;
   let deadlineTime: Date | undefined;
   let activationMono: number | undefined;
@@ -297,7 +338,7 @@ export function createCollectorLedger(
   };
 
   const remainingMs = (clock: CollectorClock): number => {
-    if (deadlineMono === undefined) return COLLECTOR_ELIGIBILITY_MS;
+    if (deadlineMono === undefined) return config.waitWindowMs;
     return Math.max(0, deadlineMono - monoNowOrThrow(clock));
   };
 
@@ -380,7 +421,9 @@ export function createCollectorLedger(
   };
 
   const commitActivationWindow = (nextActivation: Date, nextDeadline: Date): void => {
+    // D6: once open, PR updates / second open must not reset the window.
     if (activationTime !== undefined) return;
+    sessionReady = true;
     activationTime = nextActivation;
     deadlineTime = nextDeadline;
     bindDeadlineMonoFromWall();
@@ -520,6 +563,8 @@ export function createCollectorLedger(
       if (entry.customType === COLLECTOR_ACTIVATION_ENTRY_TYPE) {
         if (typeof data.activationTime === "string" && typeof data.deadlineTime === "string") {
           commitActivationWindow(new Date(data.activationTime), new Date(data.deadlineTime));
+        } else if (data.sessionReady === true) {
+          sessionReady = true;
         }
         continue;
       }
@@ -581,7 +626,7 @@ export function createCollectorLedger(
       return outputCandidate || pendingOutputCallId !== undefined;
     },
     get activationRecorded() {
-      return activationTime !== undefined;
+      return sessionReady;
     },
     get activationTime() {
       return activationTime;
@@ -620,16 +665,38 @@ export function createCollectorLedger(
     latchFatal,
     assertNotFatal,
 
-    recordActivation(clock) {
+    recordActivation(_clock) {
       assertNotFatal();
-      if (activationTime !== undefined) return;
-      activationTime = clock.wallNow();
-      activationMono = clock.monoNow();
-      deadlineTime = new Date(activationTime.getTime() + COLLECTOR_ELIGIBILITY_MS);
-      deadlineMono = activationMono + COLLECTOR_ELIGIBILITY_MS;
+      if (sessionReady) return;
+      sessionReady = true;
+      // Session ready only — wait window opens later at a work step (#678 D4).
+      appendJournal(COLLECTOR_ACTIVATION_ENTRY_TYPE, {
+        sessionReady: true,
+      });
+    },
+
+    openWaitWindow(clock, options) {
+      assertNotFatal();
+      if (!sessionReady) {
+        throw latchFatal("通进司开启等待窗需要先激活会话");
+      }
+      if (activationTime !== undefined) return; // D6: do not reset
+      const startedAt = options?.startedAt ?? clock.wallNow();
+      if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) {
+        throw new Error("通进司等待窗 startedAt 须为有效时间");
+      }
+      const nextDeadline = new Date(startedAt.getTime() + config.waitWindowMs);
+      // Bind mono relative to current clock so a past startedAt shortens remaining correctly.
+      activationTime = startedAt;
+      deadlineTime = nextDeadline;
+      const wallNow = clock.wallNow().getTime();
+      const monoNow = clock.monoNow();
+      activationMono = monoNow - (wallNow - startedAt.getTime());
+      deadlineMono = monoNow + (nextDeadline.getTime() - wallNow);
       appendJournal(COLLECTOR_ACTIVATION_ENTRY_TYPE, {
         activationTime: activationTime.toISOString(),
         deadlineTime: deadlineTime.toISOString(),
+        waitWindowMs: config.waitWindowMs,
       });
     },
 
@@ -733,7 +800,7 @@ export function createCollectorLedger(
 
     async observe(transport, clock, signal) {
       assertNotFatal();
-      if (activationTime === undefined) {
+      if (!sessionReady) {
         throw latchFatal("通进司观察需要激活");
       }
       if (signal?.aborted) {
@@ -841,6 +908,7 @@ export function createCollectorLedger(
         prNumber: requireBoundPr(),
         prState: pr.state,
         headOid: pr.headOid,
+        ...(pr.createdAt === undefined ? {} : { prCreatedAt: pr.createdAt }),
         complete: true,
         evidenceIds: storedIds,
         pageDiagnostics,
@@ -877,7 +945,7 @@ export function createCollectorLedger(
 
     async request(input, transport, clock, signal) {
       assertNotFatal();
-      if (activationTime === undefined || deadlineTime === undefined) {
+      if (!sessionReady) {
         throw latchFatal("通进司请求需要激活");
       }
       if (ledger.unresolvedTransportFailure) {
@@ -918,7 +986,8 @@ export function createCollectorLedger(
       }
       if (pastCutoff(clock)) {
         finalObservationRequired = true;
-        throw latchFatal("通进司请求不在资格截止前");
+        // #678: do not latch fatal — materials must still seal after the window ends.
+        throw new CollectorWaitWindowClosedError("request");
       }
 
       // Caller manifest body wins when requestId is configured; otherwise role body.
@@ -1035,23 +1104,23 @@ export function createCollectorLedger(
 
     async wait(input, clock, signal) {
       assertNotFatal();
-      if (activationTime === undefined) {
+      if (!sessionReady) {
         throw latchFatal("通进司等待需要激活");
+      }
+      // #678: wait never invents a window start. Work-step open (create-success / trigger-end)
+      // must be explicit — silent "now" would break the new-PR create-success clock.
+      if (activationTime === undefined || deadlineTime === undefined) {
+        throw new CollectorWaitWindowClosedError("wait-before-open");
       }
       // durationMs shape authority = collectorWaitArgsSchema (host parameters).
       if (pastCutoff(clock)) {
         finalObservationRequired = true;
-        throw latchFatal("通进司等待不在资格截止前");
+        throw new CollectorWaitWindowClosedError("wait");
       }
 
       const remaining = remainingMs(clock);
-      // Single-wait runtime cadence cap (v2 §6 / §9); schema max stays 15m.
-      const COLLECTOR_SINGLE_WAIT_MAX_MS = 300_000;
-      const effectiveMs = Math.min(
-        input.durationMs,
-        remaining,
-        COLLECTOR_SINGLE_WAIT_MAX_MS,
-      );
+      // Cap only by remaining window — no package-local single-wait ceiling (ADR 0035 / #678).
+      const effectiveMs = Math.min(input.durationMs, remaining);
       const startedAt = clock.wallNow().toISOString();
       const waitId = sha256Text(`wait:${startedAt}:${effectiveMs}`).slice(0, 16);
       await clock.sleep(effectiveMs, signal);
@@ -1143,6 +1212,9 @@ function buildObserveModelView(input: {
     completedAt: input.snapshot.completedAt,
     prState: input.snapshot.prState,
     headOid: input.snapshot.headOid,
+    ...(input.snapshot.prCreatedAt === undefined
+      ? {}
+      : { prCreatedAt: input.snapshot.prCreatedAt }),
     complete: input.snapshot.complete,
     evidence: relevant.map((record): ObserveEvidenceEntry => projectEvidenceEntryView(record)),
     requestAttempts: input.attempts.map((attempt) => ({

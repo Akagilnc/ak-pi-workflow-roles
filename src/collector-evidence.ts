@@ -11,7 +11,8 @@ import type {
   GitHubUser,
 } from "./collector-github.ts";
 
-export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
+/** Default collector wait window (D4): 10 minutes from the work-step open, not from session activation. */
+export const COLLECTOR_DEFAULT_WAIT_WINDOW_MS = 10 * 60 * 1000;
 
 export type WindowRelation = "before" | "within" | "after" | "uncertain";
 export type HeadRelation = "current" | "prior";
@@ -73,6 +74,8 @@ export type CollectorSnapshot = {
   prNumber: number;
   prState: string;
   headOid: string;
+  /** PR create success time when GitHub supplies it (#678 new-PR wait start). */
+  prCreatedAt?: string;
   complete: boolean;
   evidenceIds: string[];
   pageDiagnostics: GitHubPageDiagnostics[];
@@ -177,6 +180,7 @@ export function normalizePullRequestEvidence(
     number: pr.number,
     state: pr.state,
     headOid: pr.headOid,
+    createdAt: pr.createdAt ?? null,
     updatedAt: pr.updatedAt ?? null,
     htmlUrl: pr.url,
   });
@@ -190,6 +194,7 @@ export function normalizePullRequestEvidence(
     state: pr.state,
     commitOid: pr.headOid,
     htmlUrl: pr.url,
+    // Version clock stays updatedAt. Create success for the wait window is snapshot.prCreatedAt only (#678).
     authoritativeTime: pr.updatedAt ?? null,
     firstObservedAt: observedAt,
     raw: pr.raw,

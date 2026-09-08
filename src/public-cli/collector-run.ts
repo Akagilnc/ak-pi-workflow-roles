@@ -54,6 +54,7 @@ export function buildCollectorTurnRequest(
         // #676 A: omit pr when unbound — role binds via ak_collector_bind_target.
         ...(admitted.prNumber === undefined ? {} : { pr: String(admitted.prNumber) }),
         ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
+        ...(admitted.waitWindowMs === undefined ? {} : { waitMs: String(admitted.waitWindowMs) }),
       },
     },
     options,
@@ -83,6 +84,7 @@ export async function runPublicCollector(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
       ...(parsed.requestManifestPath === undefined ? {} : { requestManifestPath: parsed.requestManifestPath }),
+      ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
     });

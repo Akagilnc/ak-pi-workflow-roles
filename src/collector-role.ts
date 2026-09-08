@@ -17,6 +17,7 @@ import {
   type CollectorRepository,
 } from "./collector-config.ts";
 import {
+  COLLECTOR_DEFAULT_WAIT_WINDOW_MS,
   createSystemCollectorClock,
   type CollectorClock,
 } from "./collector-evidence.ts";
@@ -34,6 +35,7 @@ import {
   COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OPEN_WAIT_WINDOW_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -50,6 +52,7 @@ import {
   collectorBindTargetArgsSchema,
   collectorHandbookWriteArgsSchema,
   collectorObserveArgsSchema,
+  collectorOpenWaitWindowArgsSchema,
   collectorOutputArgsSchema,
   collectorReadArgsSchema,
   collectorRequestArgsSchema,
@@ -85,6 +88,7 @@ export {
   COLLECTOR_BIND_TARGET_TOOL,
   COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OPEN_WAIT_WINDOW_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -96,6 +100,7 @@ export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_READ_TOOL,
   COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_OPEN_WAIT_WINDOW_TOOL,
   COLLECTOR_WAIT_TOOL,
   COLLECTOR_HANDBOOK_WRITE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
@@ -127,11 +132,20 @@ export const COLLECTOR_TRANSPORT_FLAGS = Object.freeze([
       type: "string" as const,
     }),
   }),
+  Object.freeze({
+    name: "ak-collector-wait-ms",
+    definition: Object.freeze({
+      description:
+        `Collector wait-window duration in milliseconds (default ${COLLECTOR_DEFAULT_WAIT_WINDOW_MS}). Caller-configurable; opens at a work step, not session start (#678 D4).`,
+      type: "string" as const,
+    }),
+  }),
 ] as const);
 
 const observeSchema = collectorObserveArgsSchema;
 const readSchema = collectorReadArgsSchema;
 const requestSchema = collectorRequestArgsSchema;
+const openWaitWindowSchema = collectorOpenWaitWindowArgsSchema;
 const waitSchema = collectorWaitArgsSchema;
 const bindSchema = collectorBindTargetArgsSchema;
 const handbookWriteSchema = collectorHandbookWriteArgsSchema;
@@ -139,10 +153,21 @@ const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
 type ReadParams = Static<typeof readSchema>;
+type OpenWaitWindowParams = Static<typeof openWaitWindowSchema>;
 type WaitParams = Static<typeof waitSchema>;
 type BindParams = Static<typeof bindSchema>;
 type HandbookWriteParams = Static<typeof handbookWriteSchema>;
 type OutputParams = Static<typeof outputSchema>;
+
+function parseWaitWindowMsFlag(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === "") return COLLECTOR_DEFAULT_WAIT_WINDOW_MS;
+  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) return raw;
+  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) {
+    const value = Number(raw.trim());
+    if (Number.isSafeInteger(value) && value >= 1) return value;
+  }
+  throw new Error("Collector --ak-collector-wait-ms must be a positive safe-integer millisecond string");
+}
 
 export type CollectorRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -184,6 +209,7 @@ function buildMethodContext(activation: CollectorActivation): string {
     `host: github.com`,
     `repository: ${activation.repository.canonical}`,
     `prNumber: ${pr === undefined ? "未绑定" : String(pr)}`,
+    `waitWindowMs: ${String(activation.ledger.config.waitWindowMs)}`,
     `requests: ${JSON.stringify(activation.manifest.requests.map((request) => ({ id: request.id })))}`,
     `handbookGeneralSource: ${handbook.generalSource}`,
     `handbookRepoSource: ${handbook.repoSource}`,
@@ -244,6 +270,7 @@ export function createCollectorRoleRuntime(
       const repoFlag = pi.getFlag("ak-collector-repo");
       const prFlag = pi.getFlag("ak-collector-pr");
       const requestManifestFlag = pi.getFlag("ak-collector-request-manifest");
+      const waitMsFlag = pi.getFlag("ak-collector-wait-ms");
       if (typeof repoFlag !== "string" || repoFlag.trim().length === 0) {
         throw new Error("Collector requires --ak-collector-repo");
       }
@@ -258,11 +285,12 @@ export function createCollectorRoleRuntime(
       const manifest = typeof requestManifestFlag === "string" && requestManifestFlag.trim().length > 0
         ? await loadCollectorManifest(requestManifestFlag)
         : emptyCollectorManifest();
+      const waitWindowMs = parseWaitWindowMsFlag(waitMsFlag);
 
       const clock = dependencies.createClock?.() ?? createSystemCollectorClock();
       const transport = dependencies.createTransport();
       const ledger = dependencies.createLedger(
-        { repository, prNumber, manifest },
+        { repository, prNumber, manifest, waitWindowMs },
         clock,
         ctx,
       );
@@ -558,10 +586,59 @@ export function createCollectorRoleRuntime(
       });
 
       pi.registerTool({
+        name: COLLECTOR_OPEN_WAIT_WINDOW_TOOL,
+        label: "通进司开启等待窗",
+        description:
+          "在工作步骤上开启等待窗：新建并自动触发的 PR 传创建成功时刻；已有 PR 在触发阶段结束后省略 startedAt（=现在）。窗长由使用方配置，默认十分钟；开启后不因 PR 更新重置。",
+        promptSnippet: "按工作步骤开启等待窗",
+        parameters: openWaitWindowSchema,
+        async execute(toolCallId: string, params: OpenWaitWindowParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          const activation = getActivation();
+          if (activation === undefined) throw new Error("通进司未激活");
+          try {
+            activation.ledger.beginOperational(COLLECTOR_OPEN_WAIT_WINDOW_TOOL, toolCallId);
+            let startedAt: Date | undefined;
+            if (typeof params.startedAt === "string" && params.startedAt.trim().length > 0) {
+              const parsed = new Date(params.startedAt);
+              if (Number.isNaN(parsed.getTime())) {
+                throw new Error("通进司等待窗 startedAt 须为有效 ISO 时间");
+              }
+              startedAt = parsed;
+            }
+            activation.ledger.openWaitWindow(
+              activation.clock,
+              startedAt === undefined ? undefined : { startedAt },
+            );
+            activation.ledger.completeOperational(toolCallId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: "等待窗已开启",
+              }],
+              details: {
+                activationTime: activation.ledger.activationTime?.toISOString(),
+                deadlineTime: activation.ledger.deadlineTime?.toISOString(),
+                waitWindowMs: activation.ledger.config.waitWindowMs,
+              },
+            };
+          } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
+            hostActions.failInfrastructure(error, ctx, toolCallId);
+          } finally {
+            try {
+              activation.ledger.completeOperational(toolCallId);
+            } catch {
+              // already completed or not begun
+            }
+          }
+        },
+      });
+
+      pi.registerTool({
         name: COLLECTOR_WAIT_TOOL,
         label: "通进司等待",
-        description: "再观察前等待；单次上限五分钟且不超剩余资格。",
-        promptSnippet: "资格截止前等待",
+        description: "再观察前等待；实际睡眠不超过剩余等待窗。",
+        promptSnippet: "等待窗内等待",
         parameters: waitSchema,
         async execute(toolCallId: string, params: WaitParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
           const activation = getActivation();
@@ -582,6 +659,7 @@ export function createCollectorRoleRuntime(
               details,
             };
           } catch (error) {
+            if (isCorrectableExecuteError(error)) throw error;
             hostActions.failInfrastructure(error, ctx, toolCallId);
           }
         },
