@@ -4,6 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -115,6 +116,9 @@ export async function prepareRoleEnvelope(options: {
     throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
   const flags = projectActivationFlags(request);
+  // #818 P1: engine axis is request-scoped on this RoleHost — never process.env.
+  // Always project ("" = no engine) so ambient AK_ROLE_ENGINE cannot arm detour.
+  flags.set(ENGINE_FLAG_NAME, normalizeEngineName(request.engine) ?? "");
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
@@ -528,8 +532,9 @@ export async function prepareRoleEnvelope(options: {
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
   // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
-  // runIdentity and court-attempt identity correlate with settlement. Inject only
-  // after prepare succeeds (below); dispose must restore including unset.
+  // identity sees the same signals. Engine axis is request-scoped via RoleHost
+  // flag — never process.env (#818 P1). Run-dir may wait
+  // until prepare succeeds. Dispose restores including unset.
   let priorAkRoleRunDir: string | undefined;
   let priorAkRoleCourtAttempt: string | undefined;
   let runDirInjected = false;
@@ -622,7 +627,8 @@ export async function prepareRoleEnvelope(options: {
 
   // Shared envelope activation. systemPrompt must be ready before session/new
   // (delivered via _meta.systemPromptOverride where the host honors it), so
-  // activation runs during prepare.
+  // activation runs during prepare. Engine axis already on RoleHost flags
+  // (request-scoped); registerEngineDetourTool resolves via resolveEngineName.
   try {
     await emit("session_start", { reason: request.continuation.kind });
     const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
