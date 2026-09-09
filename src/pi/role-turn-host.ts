@@ -15,7 +15,6 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   MethodBinding,
-  RoleTurnActivation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnModelConfig,
@@ -24,6 +23,7 @@ import type {
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
+import { projectActivationFlags } from "../role-activation-flags.ts";
 
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
@@ -66,95 +66,18 @@ function buildSeatModelCliArgs(model: RoleTurnModelConfig | undefined): string[]
   ];
 }
 
-function buildActivationFlagArgs(activation: RoleTurnActivation): string[] {
-  switch (activation.role) {
-    case "judge":
-      return ["--ak-role", "judge"];
-    case "coder":
-      return [
-        "--ak-role",
-        "coder",
-        "--ak-coder-phase",
-        activation.phase,
-        "--ak-coder-task",
-        activation.taskPath,
-      ];
-    case "fixer":
-      return [
-        "--ak-role",
-        "fixer",
-        "--ak-fixer-phase",
-        activation.phase,
-        "--ak-fix-packet",
-        activation.packetPath,
-        ...(activation.prerequisitesPath === undefined
-          ? []
-          : ["--ak-fixer-prerequisites", activation.prerequisitesPath]),
-      ];
-    case "reviewer":
-      return [
-        "--ak-role",
-        "reviewer",
-        "--ak-review-base",
-        activation.baseRevision,
-        ...(activation.authorityRefs.length === 0
-          ? []
-          : ["--ak-review-authority-refs", JSON.stringify([...activation.authorityRefs])]),
-        ...(activation.ticketNumber === undefined
-          ? []
-          : ["--ak-review-ticket-number", String(activation.ticketNumber)]),
-      ];
-    case "merger":
-      return ["--ak-role", "merger", "--ak-merger-input", activation.inputPath];
-    case "collector":
-      return [
-        "--ak-role",
-        "collector",
-        "--ak-collector-repo",
-        activation.repo,
-        ...(activation.pr === undefined ? [] : ["--ak-collector-pr", activation.pr]),
-        ...(activation.requestManifestPath === undefined
-          ? []
-          : ["--ak-collector-request-manifest", activation.requestManifestPath]),
-        ...(activation.waitMs === undefined ? [] : ["--ak-collector-wait-ms", activation.waitMs]),
-      ];
-    case "doctor":
-      return ["--ak-role", "doctor", "--ak-doctor-case", activation.casePath];
-    case "notary":
-      return [
-        "--ak-role",
-        "notary",
-        "--ak-notary-source-run",
-        activation.sourceRun,
-        ...(activation.ticketNumber === undefined
-          ? []
-          : ["--ak-notary-ticket-number", String(activation.ticketNumber)]),
-      ];
-    case "countersign":
-      // ticketNumber rides activation/admission/invocation only (#632: no private flag).
-      return ["--ak-role", "countersign"];
-    case "gleaner-left":
-      return [
-        "--ak-role",
-        "gleaner-left",
-        "--ak-gleaner-left-base",
-        activation.baseRevision,
-      ];
-    case "inspector":
-      return ["--ak-role", "inspector"];
-    case "gatekeeper":
-      return ["--ak-role", "gatekeeper"];
-    case "navigator":
-      return ["--ak-role", "navigator"];
-    case "auditor":
-      return ["--ak-role", "auditor"];
-    case "diarist":
-      return ["--ak-role", "diarist"];
-    default: {
-      const _exhaustive: never = activation;
-      return _exhaustive;
-    }
+/**
+ * Pi last hop only: shared envelope flags → controlled-session argv pairs (#819).
+ * Flag membership/values stay in projectActivationFlags (middle layer).
+ */
+function activationFlagsToPiArgv(flags: ReadonlyMap<string, boolean | string>): string[] {
+  const args: string[] = [];
+  for (const [name, value] of flags) {
+    if (value === false) continue;
+    args.push(`--${name}`);
+    if (value !== true) args.push(String(value));
   }
+  return args;
 }
 
 function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
@@ -193,9 +116,10 @@ export function applyPiNativeSkillInvocation(
 }
 
 /**
- * Translate a closed RoleTurnRequest into Pi argv after `--no-extensions -e entry`.
- * Controlled session constants and session coordinates are adapter-internal.
- * Single forced method → Pi-native `/skill:` on the argv prompt (coder/reviewer/merger).
+ * Pi last-hop argv after `--no-extensions -e entry` (#819).
+ * Activation flag membership comes from middle-layer projectActivationFlags;
+ * this function only renders session coords, controlled constants, and pairs.
+ * Single forced method → Pi-native `/skill:` on the argv prompt (#822).
  */
 export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
@@ -222,7 +146,8 @@ export function buildPiTurnExtraArgs(
     "--session-dir",
     sessionDirectory,
     ...extraPiArgs,
-    ...buildActivationFlagArgs(request.activation),
+    // Envelope assembly = projectActivationFlags; pi only renders argv pairs.
+    ...activationFlagsToPiArgv(projectActivationFlags(request)),
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),

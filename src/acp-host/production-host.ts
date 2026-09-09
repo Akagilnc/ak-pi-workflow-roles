@@ -6,106 +6,44 @@
  * factory does not create a run-scoped agent home, does not rewrite HOME, and
  * does not copy or scrub credentials. Sitian records on the run are the dossier.
  */
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
-import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../canonical-skill-binding.ts";
-import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../collector-github.ts";
-import { createPiDoctorAuditor } from "../doctor-auditor.ts";
-import { loadDoctorCase } from "../doctor-evidence.ts";
-import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "../navigator-attendance.ts";
-import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
-import { loadNotarySourceRunLocator } from "../notary-source-run.ts";
-import { loadPackagedCanonicalSkillBinding } from "../package-resources/method-skill-binding.ts";
-import { createPerDispatchReviewerAgent } from "../reviewer-agent.ts";
-import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "../role-runtime.ts";
-import { createReviewerPinnedGitReader } from "../reviewer-pinned-git.ts";
-import { loadAuditorSoulFromSubjectInput } from "../auditor-soul.ts";
-import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../session-opening-materials.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { prepareRoleEnvelope } from "../role-envelope.ts";
+import type { RoleRuntimeDependencies } from "../role-runtime.ts";
+import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
+import { createSessionIdentityAuthority } from "../session-identity.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
-import { createComposedAcpRoleTurnHost } from "./role-envelope.ts";
-import { connectAcpStdio } from "./role-turn-host.ts";
+import {
+  connectAcpStdio,
+  createAcpRoleTurnHost,
+  type AcpRoleTurnHostConfig,
+} from "./role-turn-host.ts";
 import { ensureSeatProfileSoul } from "./seat-profile-soul.ts";
-import { createAcpSessionIdentityAuthority } from "./session-identity.ts";
 
 export type ProductionAcpHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: AcpHostDescription;
+  /** Seat-table host key (e.g. grok-build). */
+  hostName: string;
 }>;
 
-const navigatorRoutePlaybookPath = fileURLToPath(
-  new URL("../../resources/navigator-route-playbook.md", import.meta.url),
-);
-const collectorHandbookSeedPath = fileURLToPath(
-  new URL("../../resources/collector-bot-handbook.md", import.meta.url),
-);
-
-/** Host-neutral packaged role runtime deps for the ACP parent-process envelope. */
-export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
-  const doctorAuditor = createPiDoctorAuditor();
-  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
-  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  return {
-    loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
-    loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
-    loadFixPacket: (path) => readFile(path, "utf8"),
-    loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
-    loadCoderTask: (path) => readFile(path, "utf8"),
-    loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
-    createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
-    createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
-    loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
-    loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
-    createCollectorTransport: () => createGhCollectorGitHubTransport(),
-    loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
-    loadDoctorCase,
-    loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
-    loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
-    loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
-    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
-    loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
-    loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
-    loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
-    loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
-    loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
-    loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    async loadCanonicalSkillBinding(name) {
-      if (name === "tdd") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
-      }
-      if (name === "code-review") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
-      }
-      return loadHomeCanonicalSkillBinding(name);
-    },
-    // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
-    auditDoctorCompliance: (options) => doctorAuditor(options),
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
-    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
-      context: options.context,
-      role: options.role,
-      ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
+function createComposedAcpRoleTurnHost(
+  config: Omit<AcpRoleTurnHostConfig, "prepare"> & {
+    readonly roleRuntimeDependencies: RoleRuntimeDependencies;
+    readonly socketPath?: (request: RoleTurnRequest) => string;
+  },
+) {
+  return createAcpRoleTurnHost({
+    ...config,
+    prepare: (request) => prepareRoleEnvelope({
+      request,
+      dependencies: config.roleRuntimeDependencies,
+      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
+      socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
     }),
-    createNavigatorAttendance: (options) => createNavigatorAttendance({
-      context: options.context,
-      role: options.role,
-      phase: options.phase,
-      subjectKey: options.subjectKey,
-      subject: options.subject,
-      authority: options.authority,
-      invocationId: options.invocationId,
-      loadSoul: () => loadMainRoleSessionMaterials("navigator"),
-      loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
-      loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
-      createSession: navigatorSessionFactory,
-      ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
-      onEvent: options.onEvent,
-    }),
-  };
+  });
 }
 
 /**
@@ -114,7 +52,7 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
  * is sitian-only.
  */
 export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOptions): RoleTurnHost {
-  const { packageRoot, principalAuthority, description } = options;
+  const { packageRoot, principalAuthority, description, hostName } = options;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...description.childEnv,
@@ -122,10 +60,11 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
   };
 
   return createComposedAcpRoleTurnHost({
-    sessionIdentity: createAcpSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
+    hostName,
+    sessionIdentity: createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
     boundResume: description.boundResume,
     modelPassing: description.modelPassing,
-    roleRuntimeDependencies: createAcpRoleRuntimeDependencies(packageRoot),
+    roleRuntimeDependencies: createRoleRuntimeDependencies(packageRoot),
     async connect(request) {
       const seatProfile = description.seatProfileSoul;
       const profileName = seatProfile === undefined

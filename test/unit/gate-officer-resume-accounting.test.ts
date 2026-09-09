@@ -228,19 +228,19 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
   });
 });
 
-test("#645 projectGatekeeperRun → summonGateOfficer inherits parent host; damaged invocation fails loud", async () => {
-  await withTempRoot("ak-gate-parent-host-", async (home) => {
+test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, not parent invocation host", async () => {
+  await withTempRoot("ak-gate-officer-seat-host-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 645 });
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 821 });
 
-    // Parent live --host claude on the gate source invocation page.
+    // Parent live --host differs from the officer seat default (pi).
     await writeFile(
       join(sourceRunPath, "invocation.json"),
       `${JSON.stringify({
         role: "countersign",
-        runId: "01a064500-0000-7000-8000-0000000p001",
+        runId: "01a082100-0000-7000-8000-0000000p001",
         host: "claude",
         model: "sonnet",
       })}\n`,
@@ -256,7 +256,7 @@ test("#645 projectGatekeeperRun → summonGateOfficer inherits parent host; dama
             type: "toolCall",
             id: "call-parent-host",
             name: "ak_countersign_output",
-            arguments: { countersignStatus: "converged", note: "host-inherit" },
+            arguments: { countersignStatus: "converged", note: "seat-owned-host" },
           },
         ],
       },
@@ -290,7 +290,7 @@ test("#645 projectGatekeeperRun → summonGateOfficer inherits parent host; dama
       home,
       packageRoot,
       roleTurnHost: host,
-      createRunId: () => "01a064500-0000-7000-8000-0000000n645",
+      createRunId: () => "01a082100-0000-7000-8000-0000000n821",
     });
     assert.equal(projected.result.status, "pass");
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
@@ -299,55 +299,13 @@ test("#645 projectGatekeeperRun → summonGateOfficer inherits parent host; dama
     ) as { host?: string };
     assert.equal(
       nestedInvocation.host,
+      "pi",
+      "nested officer must start on own seat host (default pi), not parent invocation host",
+    );
+    assert.notEqual(
+      nestedInvocation.host,
       "claude",
-      "nested officer invocation must inherit parent live --host",
-    );
-
-    // Damaged source invocation through the same production entry — loud rejection.
-    await writeFile(join(sourceRunPath, "invocation.json"), "{broken", "utf8");
-    const damaged = await projectGatekeeperRun({
-      context: {
-        cwd: project,
-        sessionManager: {
-          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
-          getEntries: () => [leaf],
-        },
-      } as never,
-      subject: { kind: "countersign_verdict" },
-      runDirectory: sourceRunPath,
-      home,
-      packageRoot,
-      roleTurnHost: host,
-      createRunId: () => "01a064500-0000-7000-8000-0000000n646",
-    });
-    assert.equal(damaged.result.status, "transport_failure");
-    assert.match(
-      damaged.result.reason ?? "",
-      /parent invocation\.json unreadable/,
-    );
-
-    // Missing invocation.json is evidence damage through the same entry.
-    const { unlink } = await import("node:fs/promises");
-    await unlink(join(sourceRunPath, "invocation.json"));
-    const missing = await projectGatekeeperRun({
-      context: {
-        cwd: project,
-        sessionManager: {
-          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
-          getEntries: () => [leaf],
-        },
-      } as never,
-      subject: { kind: "countersign_verdict" },
-      runDirectory: sourceRunPath,
-      home,
-      packageRoot,
-      roleTurnHost: host,
-      createRunId: () => "01a064500-0000-7000-8000-0000000n647",
-    });
-    assert.equal(missing.result.status, "transport_failure");
-    assert.match(
-      missing.result.reason ?? "",
-      /parent invocation\.json required/,
+      "parent invocation host must not be forced onto the nested officer",
     );
   });
 });

@@ -12,9 +12,9 @@
 import { randomUUID } from "node:crypto";
 
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
-import { createAcpRoleRuntimeDependencies } from "../acp-host/production-host.ts";
-import { prepareAcpRoleEnvelope } from "../acp-host/role-envelope.ts";
-import { createAcpSessionIdentityAuthority } from "../acp-host/session-identity.ts";
+import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
+import { prepareRoleEnvelope } from "../role-envelope.ts";
+import { createSessionIdentityAuthority } from "../session-identity.ts";
 import { resolveHeadlessBinary, type HeadlessHostDescription } from "./description.ts";
 import { createHeadlessRoleTurnHost } from "./role-turn-host.ts";
 
@@ -22,6 +22,8 @@ export type ProductionHeadlessHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: HeadlessHostDescription;
+  /** Seat-table host key (e.g. claude). */
+  hostName: string;
 }>;
 
 /**
@@ -32,16 +34,17 @@ export type ProductionHeadlessHostOptions = Readonly<{
 export function createProductionHeadlessRoleTurnHost(
   options: ProductionHeadlessHostOptions,
 ): RoleTurnHost {
-  const { packageRoot, principalAuthority, description } = options;
-  const sessionIdentity = createAcpSessionIdentityAuthority(
+  const { packageRoot, principalAuthority, description, hostName } = options;
+  const sessionIdentity = createSessionIdentityAuthority(
     principalAuthority,
     description.sessionBindingFile,
   );
-  const roleRuntimeDependencies = createAcpRoleRuntimeDependencies(packageRoot);
+  const roleRuntimeDependencies = createRoleRuntimeDependencies(packageRoot);
 
   const innerFor = (operatorHome: string): RoleTurnHost =>
     createHeadlessRoleTurnHost({
       description,
+      hostName,
       sessionIdentity,
       binary: resolveHeadlessBinary(description, operatorHome),
       env: {
@@ -49,7 +52,7 @@ export function createProductionHeadlessRoleTurnHost(
         AK_PACKAGE_ROOT: packageRoot,
       },
       prepare: (request) =>
-        prepareAcpRoleEnvelope({
+        prepareRoleEnvelope({
           request,
           dependencies: roleRuntimeDependencies,
           sessionFile: sessionIdentity.resolveSessionFile(request.principal),

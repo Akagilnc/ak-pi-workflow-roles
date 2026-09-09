@@ -43,9 +43,9 @@ import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
-import type { RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import type { RoleTurnHost } from "../host-contracts.ts";
 import { packagedExternalHostNames } from "../host-descriptions.ts";
-import { loadProductionExternalHostFactory } from "./load-production-external-host.ts";
+import { createLazyProductionExternalHost } from "./load-production-external-host.ts";
 import {
   createPiRoleTurnHost,
   appendPiSessionCustomEntry,
@@ -335,29 +335,20 @@ function resolveRoleTurnHost(
     recordLaunchedRolePackageIdentity,
     observeLaunchedRolePackageIdentity,
   });
-  // Composition-root adapter table: pi (in-process default) + one ACP adapter per description-table key.
+  // Composition-root adapter table: pi (in-process default) + one lazy external host per description-table key (#820).
   const adapters: readonly NamedRoleTurnHostAdapter[] = env.hostAdapters ?? [
     { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
     ...packagedExternalHostNames().map((name) => ({
       name,
-      create: () => {
+      create: () => ({
+        ok: true as const,
         // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
-        let hostPromise: Promise<RoleTurnHost> | undefined;
-        return {
-          ok: true as const,
-          host: {
-            executeTurn: async (request: RoleTurnRequest) => {
-              hostPromise ??= loadProductionExternalHostFactory(env.packageRoot, name).then((create) =>
-                create({
-                  packageRoot: env.packageRoot,
-                  principalAuthority: options.principalAuthority,
-                }),
-              );
-              return (await hostPromise).executeTurn(request);
-            },
-          },
-        };
-      },
+        host: createLazyProductionExternalHost({
+          packageRoot: env.packageRoot,
+          hostName: name,
+          principalAuthority: options.principalAuthority,
+        }),
+      }),
     })),
   ];
   const hostName = options.seat.host;
