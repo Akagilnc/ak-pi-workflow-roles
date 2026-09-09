@@ -322,14 +322,11 @@ export type HostSkillExpansionEvidence = Readonly<{
 export type HostCapabilityDeclaration = Readonly<{
   skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
   /**
-   * Pi-only: project plain user text into a native skill invocation turn.
-   * Returns the host-facing text and the original-request value for expansion
-   * binding (ADR 0032). Absent on non-pi hosts (ADR 0082 `pi-no-privilege`).
+   * Pi-only: recover the plain original request from a native skill turn text
+   * (argv may already carry `/skill:<name>` from the Pi adapter). Absent on
+   * non-pi hosts so role body never parses Pi slash syntax (ADR 0082).
    */
-  nativeSkillInvocation?(name: string, text: string): {
-    readonly text: string;
-    readonly originalRequest: string;
-  };
+  skillOriginalRequest?(name: string, text: string): string;
 }>;
 
 /** Host-owned effects used by the shared activation envelope. */

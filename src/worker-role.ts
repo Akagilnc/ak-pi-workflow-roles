@@ -433,23 +433,13 @@ export function createCoderRoleRuntime(
           }
           tddInvocationInjected = true;
           expansionPending = true;
-          // Pi adapter projects native form + originalRequest; non-pi keeps plain text.
-          const native = binding === undefined
-            ? undefined
-            : pi.capabilities?.nativeSkillInvocation?.(binding.name, event.text);
-          if (native === undefined) {
-            originalRequest = event.text.trim();
-            return { action: "continue" as const };
-          }
-          originalRequest = native.originalRequest;
-          if (native.text === event.text) {
-            return { action: "continue" as const };
-          }
-          return {
-            action: "transform" as const,
-            text: native.text,
-            ...(event.images === undefined ? {} : { images: event.images }),
-          };
+          // Original request via host capability when Pi argv already carries native form;
+          // non-pi keeps plain text. Role never emits or parses `/skill:` (ADR 0082).
+          originalRequest = binding === undefined
+            ? event.text.trim()
+            : (pi.capabilities?.skillOriginalRequest?.(binding.name, event.text)
+              ?? event.text.trim());
+          return { action: "continue" as const };
         });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");

@@ -1,6 +1,6 @@
 /**
- * #822 — real-entry seam: non-pi envelope prompt stays free of Pi `/skill:`.
- * Pi-native form is covered by public-cli coder/merger argv tracers.
+ * #822 — non-pi envelope prompt free of Pi `/skill:`; Pi adapter forces single method.
+ * Coder / reviewer / merger share applyPiNativeSkillInvocation via RoleTurnRequest.methods.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -12,8 +12,56 @@ import { prepareAcpRoleEnvelope } from "../../src/acp-host/role-envelope.ts";
 import { headlessTurnArgs } from "../../src/headless-host/description.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { resolvePackagedMethodSkillPath } from "../../src/package-resources/method-skill.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import {
+  applyPiNativeSkillInvocation,
+  buildPiTurnExtraArgs,
+} from "../../src/pi/role-turn-host.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
+
+test("applyPiNativeSkillInvocation: single forced method for coder/reviewer/merger; fixer pair plain", () => {
+  const tdd = { kind: "skill" as const, path: "/x/resources/methods/tdd/SKILL.md" };
+  const review = { kind: "skill" as const, path: "/x/resources/methods/code-review/SKILL.md" };
+  const merge = {
+    kind: "skill" as const,
+    path: "/x/resources/methods/resolving-merge-conflicts/SKILL.md",
+  };
+  const bugs = {
+    kind: "skill" as const,
+    path: "/x/resources/methods/diagnosing-bugs/SKILL.md",
+  };
+  assert.equal(applyPiNativeSkillInvocation([tdd], "task"), "/skill:tdd task");
+  assert.equal(applyPiNativeSkillInvocation([review], "task"), "/skill:code-review task");
+  assert.equal(
+    applyPiNativeSkillInvocation([merge], "merge it"),
+    "/skill:resolving-merge-conflicts merge it",
+  );
+  assert.equal(applyPiNativeSkillInvocation([bugs, tdd], "fix"), "fix");
+  assert.equal(applyPiNativeSkillInvocation([], "plain"), "plain");
+});
+
+test("buildPiTurnExtraArgs: merger single method forces Pi-native slash on argv", () => {
+  const skillPath = resolvePackagedMethodSkillPath(packageRoot, "resolving-merge-conflicts");
+  const sessionDirectory = "/tmp/ak-822-merger-session";
+  const args = buildPiTurnExtraArgs(
+    {
+      principal: fixturePrincipal(sessionDirectory),
+      activation: { role: "merger", inputPath: "/input.json" },
+      methods: [{ kind: "skill", path: skillPath }],
+      continuation: { kind: "initial", prompt: "Complete the merge." },
+      cwd: "/tmp",
+      home: "/tmp",
+      agentDir: "/tmp/agent",
+      runDirectory: "/tmp/run",
+    },
+    piDurablePrincipalAuthority,
+  );
+  assert.equal(
+    args.some((a) => a.startsWith("/skill:resolving-merge-conflicts ")),
+    true,
+  );
+});
 
 test("prepareAcpRoleEnvelope: coder apply user prompt stays free of /skill:; method enters systemPrompt", async () => {
   const runDirectory = await mkdtemp(join(tmpdir(), "ak-822-envelope-"));
@@ -55,13 +103,11 @@ test("prepareAcpRoleEnvelope: coder apply user prompt stays free of /skill:; met
       socketPath,
     });
     try {
-      // Mutation target: restoring role-body `/skill:` transform turns this red.
       assert.equal(prepared.prompt.startsWith("/skill:"), false, prepared.prompt.slice(0, 80));
       assert.equal(prepared.prompt, assignment);
       assert.match(prepared.systemPrompt.body, /TDD|red|green|test/i);
       assert.match(prepared.systemPrompt.body, /coder_soul|CODER SOUL/);
 
-      // Headless family (claude): same prepared.prompt rides the host prompt flag — no Pi slash.
       const claude = lookupHeadlessHostDescription("claude");
       assert.ok(claude, "claude headless description must exist");
       const systemPromptPath = join(runDirectory, "headless-system-prompt.txt");

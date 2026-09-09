@@ -1227,30 +1227,19 @@ export function createRoleRuntimeExtension(
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
-      // Reviewer: Pi may project native form + originalRequest; non-pi keeps plain text.
+      // Reviewer: recover original request; Pi argv may already carry native form.
       if (
         role === "reviewer"
         && admitted
         && activeReviewerParent !== undefined
         && reviewerOriginalRequest === undefined
       ) {
-        const native = roleHost.capabilities?.nativeSkillInvocation?.(
-          activeReviewerParent.skillBinding.name,
-          event.text,
-        );
-        if (native === undefined) {
-          reviewerOriginalRequest = event.text;
-          return { action: "continue" as const };
-        }
-        reviewerOriginalRequest = native.originalRequest;
-        if (native.text === event.text) {
-          return { action: "continue" as const };
-        }
-        return {
-          action: "transform" as const,
-          text: native.text,
-          ...(event.images === undefined ? {} : { images: event.images }),
-        };
+        reviewerOriginalRequest =
+          roleHost.capabilities?.skillOriginalRequest?.(
+            activeReviewerParent.skillBinding.name,
+            event.text,
+          ) ?? event.text;
+        return { action: "continue" as const };
       }
       return { action: "continue" as const };
     });

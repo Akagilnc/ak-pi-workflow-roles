@@ -2064,7 +2064,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   };
 
   // M1.1 — completed binds to the immediately following canonical expansion.
-  // Pi adapter capability emits `/skill:tdd`; role keeps plain originalRequest (#822).
+  // Role captures originalRequest (via Pi skillOriginalRequest); no role-body transform (#822).
   {
     const harness = await start();
     assert.deepEqual(
@@ -2072,11 +2072,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
         {},
       ),
-      {
-        action: "transform",
-        text: `/skill:tdd ${request}`,
-        images: [{ type: "image", data: "fixture" }],
-      },
+      { action: "continue" },
     );
     assert.deepEqual(
       await harness.handlers.get("input")?.(
@@ -2219,15 +2215,12 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
   }
 
-  // Prefix-collision: capability prefixes forced tdd; originalRequest stays the raw text.
+  // Non-native slash text is plain originalRequest (Pi argv owns forced prefix, not role body).
   {
     const harness = await start();
     assert.deepEqual(
       await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
-      {
-        action: "transform",
-        text: "/skill:tdd /skill:tddfoo",
-      },
+      { action: "continue" },
     );
     await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },

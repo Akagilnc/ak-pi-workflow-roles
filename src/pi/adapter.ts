@@ -157,8 +157,8 @@ export function createPiRoleHostAdapter(
           userMessage,
         });
       },
-      /** Pi-native `/skill:` form — sole generation/recognition site (ADR 0082). */
-      nativeSkillInvocation(name, text) {
+      /** Recover plain original request from Pi-native `/skill:` turn text (ADR 0082). */
+      skillOriginalRequest(name, text) {
         const token = `/skill:${name}`;
         const trimmed = text.trimStart();
         if (
@@ -166,15 +166,9 @@ export function createPiRoleHostAdapter(
           || trimmed.startsWith(`${token} `)
           || trimmed.startsWith(`${token}\n`)
         ) {
-          return Object.freeze({
-            text,
-            originalRequest: text.slice(text.indexOf(token) + token.length).trim(),
-          });
+          return text.slice(text.indexOf(token) + token.length).trim();
         }
-        return Object.freeze({
-          text: text.length === 0 ? token : `${token} ${text}`,
-          originalRequest: text.trim(),
-        });
+        return text.trim();
       },
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),

@@ -618,10 +618,10 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
         ),
         true,
       );
-      // Argv prompt stays host-neutral; Pi native form is in-process only (#822).
+      // Pi adapter argv applies native `/skill:resolving-merge-conflicts` from typed methods (#822).
       assert.equal(
-        captured!.some((a) => a.startsWith("/skill:")),
-        false,
+        captured!.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
+        true,
       );
       assert.match(stdout.join(""), /merger\taccepted\t/);
       assert.match(stdout.join(""), /completed/);
@@ -713,10 +713,14 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+        // Pi adapter prefixes single method onto resume envelope (#822).
         assert.equal(
-          args.some((a) => a.startsWith("/skill:")),
-          false,
+          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
+          true,
+        );
+        assert.equal(
+          args.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
+          true,
         );
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\n${instruction}`;

@@ -494,10 +494,10 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         "apply",
       );
       assert.equal(captured!.includes("--skill"), true);
-      // Argv prompt stays host-neutral; Pi `/skill:` is applied in-process via capability (#822).
+      // Pi adapter argv applies native `/skill:tdd` from typed methods (#822).
       assert.equal(
-        captured!.some((a) => a.startsWith("/skill:")),
-        false,
+        captured!.some((a) => a.startsWith("/skill:tdd ") || a === "/skill:tdd"),
+        true,
       );
     }
   });
