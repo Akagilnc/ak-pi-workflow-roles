@@ -605,13 +605,16 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
  * Unique public resume request parser (#471).
  * One optional argv after runId is the opaque message; no further positionals.
  */
+const RESUME_USAGE_ERROR =
+  "usage: ak-role resume <runId> [message] (put --model/--thinking/--host/--engine before <runId>; the one argv after <runId> is the opaque message, #471)";
+
 function parseResumeRequest(args: readonly string[]): PublicResumeRequest {
   const runId = args[0];
   if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
-    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+    throw new CliUsageError(RESUME_USAGE_ERROR);
   }
   if (args.length > 2) {
-    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+    throw new CliUsageError(RESUME_USAGE_ERROR);
   }
   if (args.length === 2) {
     return { runId, message: args[1]! };

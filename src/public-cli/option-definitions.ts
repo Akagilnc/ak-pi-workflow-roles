@@ -276,8 +276,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Override the effective seat model for this invocation (before or after the command).",
-      zh: "覆盖本调用有效席位模型（可置于子命令前或后）。",
+      en: "Override the effective seat model for this invocation (before or after the command name; for `resume`, before <runId> only — anything after <runId> is the opaque message, #471).",
+      zh: "覆盖本调用有效席位模型（可置于子命令名前或后；对 `resume`，须置于 <runId> 之前——<runId> 之后是原样透传的 message，#471）。",
     },
   },
   {
@@ -1341,13 +1341,14 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding.",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
       "ak-role resume 01abc… \"owner ruling\"",
       "ak-role --host grok-build resume 01abc…",
       "ak-role --engine agy resume 01abc…",
+      "ak-role resume --model xai/grok-4.5 01abc… \"owner ruling\"",
     ],
   },
   new: {
