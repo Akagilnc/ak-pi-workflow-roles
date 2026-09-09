@@ -439,7 +439,7 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
     if (settled !== undefined && shouldPresent(settled)) {
-      // This court sealed — drop open-court pointer so bare resume is run-scoped idempotent.
+      // This court sealed — drop open-court pointer (bare resume no longer continues it).
       if (
         settled.roleOutcome.kind === "accepted" &&
         request.courtAttemptId !== undefined &&
@@ -658,7 +658,7 @@ export async function runPostAdmissionSeatResume<
     throw error;
   }
 
-  // Court recovery / open under lease. No courtAttemptId → sealed bare presentation.
+  // Court recovery / open under lease, then always dispatch (resume is pass-through).
   try {
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
@@ -738,7 +738,8 @@ export async function runPostAdmissionSeatResume<
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
 
-        // Open court continue, or new court for summons/message (#833). Bare: no id.
+        // Open court continue, or new court for summons / message re-review
+        // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.
         if (
           openCourtAttemptId !== undefined ||
           request.summons !== undefined ||
@@ -870,64 +871,10 @@ export async function runPostAdmissionResumable<
   });
 }
 
-/** Sealed presentation when no courtAttemptId (bare resume). */
-async function presentSealedAcceptedManualResumeIfAny<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult,
->(input: {
-  admitted: A;
-  env: PostAdmissionEnv;
-  io: CliIo;
-  adapters: PostAdmissionAdapters<A, T>;
-  shouldPresent: (terminal: T) => boolean;
-}): Promise<{ exitCode: number; admitted: A; terminal?: T } | undefined> {
-  const { admitted, env, io, adapters, shouldPresent } = input;
-  try {
-    const existing = await adapters.trySettle(admitted, env.principalAuthority);
-    if (
-      existing !== undefined &&
-      existing.roleOutcome.kind === "accepted" &&
-      shouldPresent(existing)
-    ) {
-      (existing as { autoResumeCount?: number }).autoResumeCount = 0;
-      io.stdout(formatTerminalResult(existing));
-      return {
-        exitCode: exitCodeForTerminalOutcome(existing.roleOutcome),
-        admitted,
-        terminal: existing,
-      };
-    }
-  } catch (error) {
-    // Settlement-owned sealed disposition: sealed accepted + publication/settle
-    // throw fail closed without redispatch; authority failure preserves cause.
-    const disposition = await sealedAcceptanceRedispatchDisposition(admitted);
-    if (disposition.kind === "block") {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown:
-            disposition.reason === "authority-failed"
-              ? disposition.cause
-              : error,
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
-    }
-    // Pre-dispatch settle failure without a sealed accepted projection is not
-    // proof of seal; fall through to dispatch so the attempt path can settle
-    // or fail honestly.
-  }
-  return undefined;
-}
-
 /**
- * Manual resume: lease + dispatch. No courtAttemptId → sealed bare presentation;
- * courtAttemptId (open court / summons / message #833) → dispatch.
+ * Manual resume: lease + dispatch. Pass-through to the host — no sealed-accepted
+ * short-circuit (#833 / #416). Court open (summons / message / open court) is
+ * built under lease when using buildRequestAfterLease; sole-final stays per-attempt.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -960,26 +907,6 @@ export async function runPostAdmissionManualResume<
   let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;
-  const shouldPresent =
-    adapters.shouldPresentSettled ??
-    ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
-  const sealedIdempotenceInput = {
-    admitted,
-    env,
-    io,
-    adapters,
-    shouldPresent,
-  } as const;
-
-  if (
-    request !== undefined &&
-    (request.courtAttemptId === undefined || request.courtAttemptId.length === 0)
-  ) {
-    const presented = await presentSealedAcceptedManualResumeIfAny(
-      sealedIdempotenceInput,
-    );
-    if (presented !== undefined) return presented;
-  }
 
   let lease: RunWriterLease;
   let staleWriterLeaseReclaimed: true | undefined;
@@ -1008,8 +935,8 @@ export async function runPostAdmissionManualResume<
   }
 
   // Court open/recovery under held lease until dispatch owns release (finally
-  // below). Builder, sealed presenter, and any throw on this seam must release
-  // here — dispatch's finally only runs after handoff.
+  // below). Builder and any throw on this seam must release here — dispatch's
+  // finally only runs after handoff.
   let handedOffToDispatch = false;
   try {
     if (request === undefined) {
@@ -1019,23 +946,6 @@ export async function runPostAdmissionManualResume<
         );
       }
       request = await buildRequestAfterLease();
-
-      if (
-        request.courtAttemptId === undefined ||
-        request.courtAttemptId.length === 0
-      ) {
-        const presented = await presentSealedAcceptedManualResumeIfAny(
-          sealedIdempotenceInput,
-        );
-        if (presented !== undefined) {
-          return {
-            ...presented,
-            ...(staleWriterLeaseReclaimed === true
-              ? { staleWriterLeaseReclaimed: true as const }
-              : {}),
-          };
-        }
-      }
     }
 
     handedOffToDispatch = true;

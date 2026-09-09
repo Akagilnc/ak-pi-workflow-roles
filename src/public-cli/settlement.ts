@@ -152,8 +152,7 @@ function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
  * When courtAttemptId is set, ledger reads only that attempt so a prior seal
- * cannot present as this turn's result. Omit for manual resume idempotent
- * run-scoped sealed reads (no new court).
+ * cannot present as this turn's result. Omit for run-scoped latest sealed read.
  */
 export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
@@ -186,7 +185,7 @@ async function sealedLedgerOutcome(
  * preserved cause; otherwise allow. Callers present entry-specific terminals;
  * they must not re-derive this judgment. Ledger projection remains the sole
  * seal truth — this is disposition over that read, not a second state.
- * Always run-scoped (no court attempt filter): any retained seal blocks bare resume.
+ * Always run-scoped (no court attempt filter): any retained seal blocks auto-resume redispatch.
  */
 export type SealedAcceptanceRedispatchDisposition =
   | { readonly kind: "allow" }

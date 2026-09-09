@@ -697,16 +697,17 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     assert.ok(sealed, "sealed accepted projection must survive publication failure");
     assert.equal(sealed.role, "judge");
 
-    // Real manual resume entry: sealed + publication miss must not redispatch (#648).
+    // #833: manual resume is pass-through even after sealed + publication miss.
+    // Host is reached; no re-seal keeps the prior sealed projection readable.
     let resumeDispatches = 0;
-    const noRedispatchHost = roleTurnHostFromLegacyPiRunner({
+    const passthroughHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args) => {
         resumeDispatches += 1;
         return {
-          code: 1,
-          stderr: "must not redispatch after sealed acceptance\n",
+          code: 0,
+          stderr: "",
           timedOut: false,
           args: [...args],
         };
@@ -719,16 +720,16 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io: resumeIo,
-      roleTurnHost: noRedispatchHost,
+      roleTurnHost: passthroughHost,
     });
-    assert.equal(resumeDispatches, 0);
+    assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
     assert.ok(
       await readSealedSubmission(project, runId, home),
       "sealed accepted projection must remain readable after manual resume",
     );
 
     // #672 US6: clear the test-planted report.json directory fault, then manual
-    // resume rebuilds the public report from sealed facts without redispatch.
+    // resume still reaches the host and rebuilds the public report from sealed facts.
     const reportPath = join(runDirectory, "artifacts", "report.json");
     assert.equal((await stat(reportPath)).isDirectory(), true);
     await rm(reportPath, { recursive: true, force: true });
@@ -739,9 +740,9 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io: rebuildIo,
-      roleTurnHost: noRedispatchHost,
+      roleTurnHost: passthroughHost,
     });
-    assert.equal(resumeDispatches, 0, "cleared publication fault must not redispatch");
+    assert.equal(resumeDispatches, 2, "cleared publication fault resume still reaches host");
     assert.equal(rebuilt.exitCode, 0);
     assert.ok(rebuilt.terminal);
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
@@ -878,6 +879,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
     }
 
+    // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
+    // Settlement after the turn still fails closed on the ledger authority error.
     let resumeDispatches = 0;
     const { io: resumeIo } = captureIo();
     const resumeResult = await runAkRole(["resume", runId], {
@@ -892,15 +895,15 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
         piRunner: async (args) => {
           resumeDispatches += 1;
           return {
-            code: 1,
-            stderr: "must not redispatch when ledger authority fails\n",
+            code: 0,
+            stderr: "",
             timedOut: false,
             args: [...args],
           };
         },
       }),
     });
-    assert.equal(resumeDispatches, 0);
+    assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
     assert.equal(resumeResult.exitCode, 1);
     assert.ok(resumeResult.terminal);
     const resumeOutcome = resumeResult.terminal!.roleOutcome;
