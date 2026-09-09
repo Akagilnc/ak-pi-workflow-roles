@@ -135,7 +135,9 @@ export function connectAcpStdio(options: {
   let nextId = 0;
   let closed = false;
   let terminalError: Error | undefined;
+  // Diagnostic tail only — not an unbounded transcript face (same class as headless).
   let stderr = "";
+  const STDERR_DIAGNOSTIC_CAP = 16 * 1024;
   const settleClosed = (error: Error): void => {
     if (closed) return;
     closed = true;
@@ -151,7 +153,13 @@ export function connectAcpStdio(options: {
     child.stdin.end();
     child.kill("SIGTERM");
   };
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    if (stderr.length >= STDERR_DIAGNOSTIC_CAP) return;
+    const next = stderr + chunk;
+    stderr = next.length <= STDERR_DIAGNOSTIC_CAP
+      ? next
+      : `${next.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
+  });
   child.on("error", (error) => settleClosed(acpError("acp-process-error", `ACP process error: ${error.message}`, error)));
   createInterface({ input: child.stdout }).on("line", (line) => {
     let message: RpcReply;

@@ -65,22 +65,30 @@ export type HeadlessCliResult = Readonly<{
 }>;
 
 /**
+ * True when a parsed stdout object is the typed result receipt (or a single-doc
+ * envelope without stream-json `type`). Intermediate stream-json events are not.
+ */
+function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as HeadlessCliResult & { type?: unknown };
+  return record.type === undefined
+    || record.type === "result"
+    || record.structured_output !== undefined;
+}
+
+/**
  * Parse host stdout into the result envelope.
  * Production uses `--output-format stream-json` (#811 live records); last-result
  * line is the typed receipt. A single-document `json` body still parses so a
  * misconfigured description yields a typed miss rather than a silent empty parse.
+ * Callers must not retain the full stream — only the rolling result candidate.
  */
 export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | undefined {
   const trimmed = stdout.trim();
   if (trimmed === "") return undefined;
   try {
     const single = JSON.parse(trimmed) as unknown;
-    if (typeof single === "object" && single !== null && !Array.isArray(single)) {
-      const record = single as HeadlessCliResult & { type?: unknown };
-      if (record.type === undefined || record.type === "result" || record.structured_output !== undefined) {
-        return record;
-      }
-    }
+    if (isHeadlessResultCandidate(single)) return single;
   } catch {
     // fall through
   }
@@ -93,6 +101,7 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
       const value = JSON.parse(text) as unknown;
       if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
       const record = value as HeadlessCliResult & { type?: unknown };
+      // Multi-line stream: only explicit result / structured_output lines (not bare objects).
       if (record.type === "result" || record.structured_output !== undefined) {
         last = record;
       }
@@ -109,6 +118,21 @@ const STDERR_DIAGNOSTIC_CAP = 16 * 1024;
 function clipDiagnostic(text: string): string {
   if (text.length <= STDERR_DIAGNOSTIC_CAP) return text;
   return `${text.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
+}
+
+/**
+ * If `line` is a result-candidate JSON object, return its trimmed text; else undefined.
+ * Used to roll the sole stdout retained for final parse (no full-stream copy).
+ */
+function resultCandidateText(line: string): string | undefined {
+  const text = line.trim();
+  if (text === "") return undefined;
+  try {
+    const value = JSON.parse(text) as unknown;
+    return isHeadlessResultCandidate(value) ? text : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function spawnHeadlessTurn(options: {
@@ -131,7 +155,9 @@ function spawnHeadlessTurn(options: {
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let stdout = "";
+    // Rolling retention only: last result-candidate line for final parse.
+    // Live events go to sitian via onStdoutLine — never accumulate the full stream.
+    let resultStdout = "";
     let stderr = "";
     let lineBuffer = "";
     let settled = false;
@@ -145,29 +171,28 @@ function spawnHeadlessTurn(options: {
       try { child.kill("SIGTERM"); } catch { /* already exiting */ }
       reject(error instanceof Error ? error : new Error(String(error)));
     };
-    const flushStdoutLines = (chunk: string, final: boolean): void => {
-      stdout += chunk;
+    const emitStdoutLine = (line: string): void => {
+      const candidate = resultCandidateText(line);
+      if (candidate !== undefined) resultStdout = candidate;
       if (options.onStdoutLine === undefined) return;
+      try {
+        options.onStdoutLine(line);
+      } catch (error) {
+        failLine(error);
+      }
+    };
+    const flushStdoutLines = (chunk: string, final: boolean): void => {
       lineBuffer += chunk;
       for (;;) {
         const end = lineBuffer.indexOf("\n");
         if (end < 0) break;
         const line = lineBuffer.slice(0, end);
         lineBuffer = lineBuffer.slice(end + 1);
-        try {
-          options.onStdoutLine(line);
-        } catch (error) {
-          failLine(error);
-          return;
-        }
+        emitStdoutLine(line);
+        if (settled) return;
       }
       if (final && lineBuffer.length > 0) {
-        try {
-          options.onStdoutLine(lineBuffer);
-        } catch (error) {
-          failLine(error);
-          return;
-        }
+        emitStdoutLine(lineBuffer);
         lineBuffer = "";
       }
     };
@@ -179,7 +204,7 @@ function spawnHeadlessTurn(options: {
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      resolve({ code, stdout, stderr, timedOut });
+      resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {
       child.kill("SIGTERM");
