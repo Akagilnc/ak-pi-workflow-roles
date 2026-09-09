@@ -140,18 +140,54 @@ export function codexTomlStringTable(entries: Readonly<Record<string, string>>):
 }
 
 /**
+ * Free-form JSON leaf for Type.Unknown under Codex strict transport.
+ * Strict rejects bare untyped nodes and root-level additionalProperties:true;
+ * a $defs anyOf of JSON values (with nested additionalProperties as $ref)
+ * is accepted and keeps array/object receipts expressible (navigator candidates).
+ * Package code still does not validate or reject the receipt against schema.
+ */
+const CODEX_JSON_VALUE_DEF = "codexJsonValue";
+const CODEX_JSON_VALUE_REF = `#/$defs/${CODEX_JSON_VALUE_DEF}`;
+const CODEX_JSON_VALUE_SCHEMA = Object.freeze({
+  anyOf: Object.freeze([
+    Object.freeze({ type: "string" }),
+    Object.freeze({ type: "number" }),
+    Object.freeze({ type: "boolean" }),
+    Object.freeze({ type: "null" }),
+    Object.freeze({ type: "array", items: Object.freeze({ $ref: CODEX_JSON_VALUE_REF }) }),
+    Object.freeze({
+      type: "object",
+      properties: Object.freeze({}),
+      required: Object.freeze([] as string[]),
+      additionalProperties: Object.freeze({ $ref: CODEX_JSON_VALUE_REF }),
+    }),
+  ]),
+});
+
+/**
  * Derive a Codex/OpenAI-strict transport schema from the package open schema.
  * Legal open schema is untouched; this is a host-only transmission projection
  * (#646 / 0057 法意 / 0054 strict): every object closes, every property is
  * required, optionality is expressed as a null union (official guidance).
  * Nested open-tool anyOf wrappers are flattened so every branch carries `type`
  * (strict rejects untyped intermediate anyOf nodes).
+ * Type.Unknown / description-only leaves become a free JSON $ref, not string.
  * Package code still does not validate or reject the receipt against schema.
  */
 export function closeJsonSchemaForCodex(
   schema: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
-  return closeSchemaNode(schema) as Record<string, unknown>;
+  const closed = closeSchemaNode(schema) as Record<string, unknown>;
+  const existingDefs = isPlainObject(closed.$defs)
+    ? (closed.$defs as Record<string, unknown>)
+    : {};
+  return {
+    ...closed,
+    $defs: {
+      ...existingDefs,
+      [CODEX_JSON_VALUE_DEF]: CODEX_JSON_VALUE_SCHEMA,
+    },
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -199,12 +235,13 @@ function closePropertySchema(schema: unknown): unknown {
 }
 
 /**
- * Strict generators require every schema node to declare `type`.
- * Type.Unknown / description-only leaves become `string` for transport only
- * (diagnostic fields are prose; package still does not shape-check receipts).
+ * Strict generators require every schema node to declare `type` (or a $ref).
+ * Type.Unknown / description-only leaves → free JSON $ref (not string): array
+ * and object receipts stay expressible under --output-schema.
  */
 function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknown> {
   if (schema.type !== undefined) return schema;
+  if (typeof schema.$ref === "string") return schema;
   if (isPlainObject(schema.properties) || schema.additionalProperties !== undefined) {
     return { ...schema, type: "object" };
   }
@@ -224,11 +261,15 @@ function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknow
       return { ...schema, type: typeof sample };
     }
   }
-  return { ...schema, type: "string" };
+  // Free JSON via $defs. $ref must stand alone (strict rejects sibling keys).
+  return { $ref: CODEX_JSON_VALUE_REF };
 }
 
 function closeSchemaNode(node: unknown): unknown {
   if (!isPlainObject(node)) return node;
+
+  // Already a ref (free-JSON leaf or pre-existing) — do not retype.
+  if (typeof node.$ref === "string") return node;
 
   // Union node: flatten then close each concrete leaf (do not keep untyped shells).
   if (Array.isArray(node.anyOf) || Array.isArray(node.oneOf)) {
@@ -415,8 +456,10 @@ export function codexTurnArgs(options: {
     args.push("--skip-git-repo-check");
   }
 
-  // Prompt last (positional).
-  args.push(options.prompt);
+  // Prompt last as positional. `--` stops option parsing so a leading `-`
+  // (markdown lists, pasted flags, rulings) is not eaten by clap (codex tip:
+  // "use '-- -s'"). Same for new and resume — both end here.
+  args.push("--", options.prompt);
   return args;
 }
 
@@ -451,3 +494,4 @@ export function headlessMcpConfigDocument(
   }
   return Object.freeze({ mcpServers: Object.freeze(servers) });
 }
+

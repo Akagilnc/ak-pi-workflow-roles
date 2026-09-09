@@ -147,6 +147,10 @@ process.exit(0);
     assert.ok(firstArgv.some((a) => a.startsWith("approval_policy=")));
     assert.ok(firstArgv.some((a) => a.startsWith("sandbox_mode=")));
     assert.ok(firstArgv.some((a) => a.startsWith("model_reasoning_effort=")));
+    // Option terminator before positional prompt (dash-prefixed prompts).
+    const firstPromptAt = firstArgv.lastIndexOf("do-work");
+    assert.ok(firstPromptAt > 0);
+    assert.equal(firstArgv[firstPromptAt - 1], "--");
     // Worktree git common dir is injected as an extra writable root when present.
     // (Temp dir here is not a git worktree — absence is lawful; presence asserted in true worktree runs.)
 

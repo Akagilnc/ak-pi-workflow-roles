@@ -140,13 +140,15 @@ function resultCandidateText(line: string): string | undefined {
 
 /**
  * Minimal consumer-driven parse of `codex exec --json` JSONL (ADR 0043).
- * Only takes thread_id, final agent_message text, and turn.failed/error.
+ * Only takes thread_id, final agent_message text, and terminal turn.failed.
+ * Top-level `error` events are non-terminal (reconnect notices, skill budget
+ * warnings); they must not poison a later turn.completed receipt.
  */
 export type CodexExecTurnObservation = Readonly<{
   threadId?: string;
   /** Last `item.completed` agent_message text (final message / structured receipt). */
   finalMessage?: string;
-  /** Present when the turn failed or emitted a top-level error event. */
+  /** Present only for terminal `turn.failed` (not recoverable `error` events). */
   failureDiagnostic?: string;
   turnCompleted: boolean;
 }>;
@@ -182,6 +184,8 @@ export function parseCodexExecJsonl(stdout: string): CodexExecTurnObservation {
     }
     if (type === "turn.completed") {
       turnCompleted = true;
+      // Successful terminal event wins over any earlier non-terminal noise.
+      failureDiagnostic = undefined;
       continue;
     }
     if (type === "turn.failed") {
@@ -189,9 +193,8 @@ export function parseCodexExecJsonl(stdout: string): CodexExecTurnObservation {
       failureDiagnostic = formatCodexFailurePayload(event.error ?? event);
       continue;
     }
-    if (type === "error") {
-      failureDiagnostic = formatCodexFailurePayload(event.error ?? event.message ?? event);
-    }
+    // Top-level `error` is non-terminal (e.g. "Reconnecting... 1/5"). Ignore for
+    // failureDiagnostic; nonzero exit / missing receipt still fail downstream.
   }
 
   return {

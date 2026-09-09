@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   closeJsonSchemaForCodex,
+  codexTurnArgs,
   headlessMcpConfigDocument,
 } from "../../src/headless-host/description.ts";
 import {
@@ -99,6 +100,56 @@ test("closeJsonSchemaForCodex closes objects and nulls every property", () => {
   assert.deepEqual(nestedObject.required, ["note"]);
 });
 
+test("closeJsonSchemaForCodex maps Type.Unknown leaves to free JSON ref, not string", () => {
+  // navigator-shaped open schema: candidates is description-only (Type.Unknown).
+  const open = {
+    type: "object",
+    properties: {
+      status: { description: "advice — shape guide" },
+      candidates: { description: "ordered route advice array" },
+    },
+    required: [],
+    additionalProperties: true,
+  };
+  const closed = closeJsonSchemaForCodex(open);
+  const props = closed.properties as Record<string, Record<string, unknown>>;
+  const candidates = props.candidates!;
+  assert.ok(Array.isArray(candidates.anyOf));
+  const branches = candidates.anyOf as Record<string, unknown>[];
+  assert.equal(branches.at(-1)?.type, "null");
+  // Must not coerce Unknown → string (lawful candidates are arrays).
+  assert.equal(branches[0]!.$ref, "#/$defs/codexJsonValue");
+  assert.notEqual(branches[0]!.type, "string");
+  const defs = closed.$defs as Record<string, Record<string, unknown>>;
+  assert.ok(defs.codexJsonValue);
+  assert.ok(Array.isArray(defs.codexJsonValue.anyOf));
+});
+
+test("codexTurnArgs terminates options before positional prompt", () => {
+  const args = codexTurnArgs({
+    prompt: "- 准奏",
+    systemPromptPath: "/tmp/sys.txt",
+    outputSchemaPath: "/tmp/schema.json",
+    mcpServers: [],
+    session: { kind: "new" },
+  });
+  const promptAt = args.lastIndexOf("- 准奏");
+  assert.ok(promptAt > 0);
+  assert.equal(args[promptAt - 1], "--");
+  // resume path also gets the terminator
+  const resume = codexTurnArgs({
+    prompt: "--sandbox none",
+    systemPromptPath: "/tmp/sys.txt",
+    outputSchemaPath: "/tmp/schema.json",
+    mcpServers: [],
+    session: { kind: "resume", id: "thread-1" },
+  });
+  assert.equal(resume[0], "exec");
+  assert.equal(resume[1], "resume");
+  const resumePromptAt = resume.lastIndexOf("--sandbox none");
+  assert.equal(resume[resumePromptAt - 1], "--");
+});
+
 test("parseCodexExecJsonl takes thread_id, final agent_message, turn.failed", () => {
   const stdout = [
     JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
@@ -126,4 +177,19 @@ test("parseCodexExecJsonl takes thread_id, final agent_message, turn.failed", ()
   assert.equal(failed.threadId, "thread-2");
   assert.equal(failed.turnCompleted, false);
   assert.equal(failed.failureDiagnostic, "boom");
+
+  // Non-terminal top-level error then turn.completed must not poison the receipt.
+  const recovered = parseCodexExecJsonl([
+    JSON.stringify({ type: "thread.started", thread_id: "thread-3" }),
+    JSON.stringify({ type: "error", message: "Reconnecting... 1/5" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: { id: "item_1", type: "agent_message", text: "{\"status\":\"completed\"}" },
+    }),
+    JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }),
+  ].join("\n"));
+  assert.equal(recovered.threadId, "thread-3");
+  assert.equal(recovered.turnCompleted, true);
+  assert.equal(recovered.failureDiagnostic, undefined);
+  assert.equal(recovered.finalMessage, "{\"status\":\"completed\"}");
 });
