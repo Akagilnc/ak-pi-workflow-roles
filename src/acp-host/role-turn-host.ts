@@ -248,10 +248,17 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           }
           connection = await config.connect(request);
           // Live host-session records: ACP session/update → sitian sole entry (#811).
-          // Register before initialize so early updates are not dropped.
-          // Write failure aborts the turn as typed session infrastructure failure.
+          // Write failure arms recordAbort so in-flight RPCs (prompt etc.) end promptly
+          // with typed session infrastructure failure — not a deferred boundary check only.
           const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+          const recordAbort = new AbortController();
           let hostSessionRecordFailure: RoleTurnKnownFailure | undefined;
+          const hostSessionRecordResult = (): RoleTurnResult => ({
+            code: null,
+            stderr: "",
+            timedOut: false,
+            knownFailure: hostSessionRecordFailure!,
+          });
           const noteHostSessionRecordFailure = (error: unknown): void => {
             if (hostSessionRecordFailure !== undefined) return;
             const diagnostic = error instanceof Error ? error.message : String(error);
@@ -260,11 +267,42 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               identity: { name: "HostSessionRecordFailure", code: "host-session-record-failed" },
               diagnostic,
             };
+            try { recordAbort.abort(); } catch { /* already aborted */ }
           };
           const failIfHostSessionRecordBroken = (): RoleTurnResult | undefined =>
-            hostSessionRecordFailure === undefined
-              ? undefined
-              : { code: null, stderr: "", timedOut: false, knownFailure: hostSessionRecordFailure };
+            hostSessionRecordFailure === undefined ? undefined : hostSessionRecordResult();
+          /** Race any ACP RPC against host-session record abort. */
+          const requestOrRecordAbort = async (
+            method: string,
+            params: Readonly<Record<string, unknown>>,
+          ): Promise<Readonly<Record<string, unknown>>> => {
+            if (recordAbort.signal.aborted) throw Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" });
+            const pending = connection!.request(method, params);
+            return new Promise((resolve, reject) => {
+              let settled = false;
+              const onAbort = (): void => {
+                if (settled) return;
+                settled = true;
+                pending.catch(() => {});
+                reject(Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" }));
+              };
+              recordAbort.signal.addEventListener("abort", onAbort, { once: true });
+              pending.then(
+                (value) => {
+                  if (settled) return;
+                  settled = true;
+                  recordAbort.signal.removeEventListener("abort", onAbort);
+                  resolve(value);
+                },
+                (error) => {
+                  if (settled) return;
+                  settled = true;
+                  recordAbort.signal.removeEventListener("abort", onAbort);
+                  reject(error);
+                },
+              );
+            });
+          };
           connection.onNotification?.((method, params) => {
             if (method !== "session/update") return;
             if (hostSessionRecordFailure !== undefined) return;
@@ -280,10 +318,16 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               noteHostSessionRecordFailure(error);
             }
           });
-          const initialized = await connection.request("initialize", {
-            protocolVersion: 1,
-            clientCapabilities: {},
-          });
+          let initialized: Readonly<Record<string, unknown>>;
+          try {
+            initialized = await requestOrRecordAbort("initialize", {
+              protocolVersion: 1,
+              clientCapabilities: {},
+            });
+          } catch (error) {
+            if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+            throw error;
+          }
           {
             const broken = failIfHostSessionRecordBroken();
             if (broken !== undefined) return broken;
@@ -308,7 +352,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             continuation.kind === "resume"
               ? request.hostTransition?.priorNativePaths
               : undefined;
-          const loadConnection = connection;
           // Shared session/new + session/load body (cwd/mcpServers/_meta).
           const sessionBindParams = {
             cwd: request.cwd,
@@ -316,7 +359,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             _meta: { systemPromptOverride, yoloMode: false },
           };
           const loadSession = async (bindSessionId: string): Promise<string> => {
-            const loaded = await loadConnection.request("session/load", {
+            const loaded = await requestOrRecordAbort("session/load", {
               sessionId: bindSessionId,
               ...sessionBindParams,
             });
@@ -324,22 +367,27 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               ? loaded.sessionId
               : bindSessionId;
           };
-          if (continuation.kind === "resume" && config.boundResume === "session/load") {
-            // Same-host resume reuses the native ACP session via session/load.
-            const boundSessionId = await config.sessionIdentity.load(request.principal);
-            if (boundSessionId !== undefined && boundSessionId !== "") {
-              sessionId = await loadSession(boundSessionId);
+          try {
+            if (continuation.kind === "resume" && config.boundResume === "session/load") {
+              // Same-host resume reuses the native ACP session via session/load.
+              const boundSessionId = await config.sessionIdentity.load(request.principal);
+              if (boundSessionId !== undefined && boundSessionId !== "") {
+                sessionId = await loadSession(boundSessionId);
+              }
             }
-          }
-          if (sessionId === undefined) {
-            // Initial run, unbound resume (cross-host / lost binding), or a host
-            // whose bound resume is session/new: mint the session and bind it.
-            const session = await connection.request("session/new", sessionBindParams);
-            sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
-            if (sessionId === undefined || sessionId === "") {
-              return failure("session", "AcpSessionFailure", "session-id-missing");
+            if (sessionId === undefined) {
+              // Initial run, unbound resume (cross-host / lost binding), or a host
+              // whose bound resume is session/new: mint the session and bind it.
+              const session = await requestOrRecordAbort("session/new", sessionBindParams);
+              sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
+              if (sessionId === undefined || sessionId === "") {
+                return failure("session", "AcpSessionFailure", "session-id-missing");
+              }
+              await config.sessionIdentity.bind(request.principal, sessionId);
             }
-            await config.sessionIdentity.bind(request.principal, sessionId);
+          } catch (error) {
+            if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+            throw error;
           }
           {
             const broken = failIfHostSessionRecordBroken();
@@ -357,44 +405,53 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             && request.model !== undefined
             && sessionId !== undefined
           ) {
-            await connection.request("session/set_model", {
-              sessionId,
-              modelId: acpModelId(config.modelPassing, request.model),
-            });
-            sessionId = await loadSession(sessionId);
+            try {
+              await requestOrRecordAbort("session/set_model", {
+                sessionId,
+                modelId: acpModelId(config.modelPassing, request.model),
+              });
+              sessionId = await loadSession(sessionId);
+            } catch (error) {
+              if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+              throw error;
+            }
           }
 
           let prompt =
             priorNativePaths !== undefined && priorNativePaths.length > 0
               ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
               : prepared.prompt;
-          // Envelope infra abort and parent cancellation (#675 nested summons) are
-          // the same race face here: either one ends the ACP round and the finally
-          // block cancels + closes the child session.
-          const abortSignal =
-            request.signal === undefined
-              ? prepared.abortSignal
-              : prepared.abortSignal === undefined
-                ? request.signal
-                : AbortSignal.any([prepared.abortSignal, request.signal]);
-          const activeConnection = connection;
+          // Envelope infra abort, parent cancellation (#675), and host-session record
+          // abort (#811) share one race face for in-flight RPCs.
+          const abortParts: AbortSignal[] = [recordAbort.signal];
+          if (prepared.abortSignal !== undefined) abortParts.push(prepared.abortSignal);
+          if (request.signal !== undefined) abortParts.push(request.signal);
+          const abortSignal = AbortSignal.any(abortParts);
 
-          /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
+          /** Race ACP prompt against envelope / record abort so hang cannot outlive failure. */
           const promptOrAbort = async (
             params: Readonly<Record<string, unknown>>,
           ): Promise<Readonly<Record<string, unknown>>> => {
-            if (abortSignal?.aborted) {
-              // Prefer closeRound's typed failure over a bare abort race winner.
+            if (hostSessionRecordFailure !== undefined) {
+              throw Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" });
+            }
+            if (abortSignal.aborted) {
+              if (hostSessionRecordFailure !== undefined) {
+                throw Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" });
+              }
               throw hostAbortedError();
             }
-            const promptRequest = activeConnection.request("session/prompt", params);
-            if (abortSignal === undefined) return promptRequest;
+            const promptRequest = connection!.request("session/prompt", params);
             return new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
               let settled = false;
               const onAbort = (): void => {
                 if (settled) return;
                 settled = true;
                 promptRequest.catch(() => {});
+                if (hostSessionRecordFailure !== undefined) {
+                  reject(Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" }));
+                  return;
+                }
                 reject(hostAbortedError());
               };
               abortSignal.addEventListener("abort", onAbort, { once: true });
@@ -422,6 +479,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 prompt: [{ type: "text", text: prompt }],
               });
             } catch (error) {
+              if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
               // Envelope abort (typed infra declaration): closeRound owns the failure record.
               if (
                 typeof error === "object"
@@ -451,7 +509,16 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               // process; Stop hooks and fire-and-forget cancellation are not closure.
               const broken = failIfHostSessionRecordBroken();
               if (broken !== undefined) return broken;
-              await connection.request("session/close", { sessionId });
+              try {
+                await requestOrRecordAbort("session/close", { sessionId });
+              } catch (error) {
+                if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+                throw error;
+              }
+              {
+                const afterClose = failIfHostSessionRecordBroken();
+                if (afterClose !== undefined) return afterClose;
+              }
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };
             }

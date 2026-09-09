@@ -1,14 +1,14 @@
 /**
  * #811: non-pi host turn events → sitian host-session, live and fail-closed.
- * One headless live-during-flight tracer + one record-failure path.
- * ACP session/update shares the same reportHostSessionEvent entry (class covered
- * by headless live + production ACP wiring; no parallel full-host fixture).
+ * Headless: mid-flight books read + write-failure path.
+ * ACP: write-failure while prompt still pending must abort turn (not hang).
  */
 import assert from "node:assert/strict";
 import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -190,6 +190,91 @@ process.stdout.write(JSON.stringify({
       typeof result.knownFailure?.diagnostic === "string"
         && result.knownFailure.diagnostic.length > 0,
       "diagnostic must carry the real write failure",
+    );
+  } finally {
+    try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
+    ledger.dispose();
+  }
+});
+
+test("ACP host-session write failure aborts pending prompt without waiting for it", async () => {
+  const ledger = createTempPackageHomeLedger({
+    prefix: "ak-811-acp-fail-",
+    runName: "run@judge",
+  });
+  try {
+    const sessionDir = join(ledger.runDirectory, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "{}\n", "utf8");
+    // Freeze session dir so sitian cannot create host-session/ on first update.
+    await chmod(sessionDir, 0o555);
+
+    const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
+    let resolvePrompt: ((value: Readonly<Record<string, unknown>>) => void) | undefined;
+    const promptNever = new Promise<Readonly<Record<string, unknown>>>((resolve) => {
+      resolvePrompt = resolve;
+    });
+
+    const connection: AcpConnection = {
+      async request(method) {
+        if (method === "initialize") return { protocolVersion: 1 };
+        if (method === "session/new") return { sessionId: "acp-sess" };
+        if (method === "session/prompt") {
+          // Fire session/update while prompt stays pending — write must fail + abort.
+          setTimeout(() => {
+            for (const handler of notificationHandlers) {
+              handler("session/update", {
+                sessionId: "acp-sess",
+                update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } },
+              });
+            }
+          }, 0);
+          return promptNever; // never resolves on its own
+        }
+        if (method === "session/close") return {};
+        return {};
+      },
+      notify() {},
+      onNotification(handler) {
+        notificationHandlers.push(handler);
+      },
+      async close() {
+        // Unblock any stray waiter so the process can exit cleanly.
+        resolvePrompt?.({ stopReason: "cancelled" });
+      },
+    };
+
+    const host = createAcpRoleTurnHost({
+      hostName: "grok-build",
+      modelPassing: "argv",
+      boundResume: "session/new",
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => sessionFile,
+      },
+      connect: async () => connection,
+      prepare: async () => ({
+        mcpServers: [{ name: "ak-probe", type: "stdio" }],
+        systemPrompt: { body: "p", materials: [] },
+        prompt: "probe",
+        jsonSchema: { type: "object" },
+        terminatingToolName: "ak_judge_output",
+        async ingestStructuredOutput() {},
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+
+    const started = Date.now();
+    const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 3000, `must not hang on pending prompt; elapsed=${elapsed}ms`);
+    assert.equal(result.knownFailure?.cause, "session", JSON.stringify(result));
+    assert.equal(result.knownFailure?.identity?.code, "host-session-record-failed");
+    assert.ok(
+      typeof result.knownFailure?.diagnostic === "string"
+        && result.knownFailure.diagnostic.length > 0,
     );
   } finally {
     try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
