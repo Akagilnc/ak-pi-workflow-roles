@@ -276,8 +276,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Override the effective seat model for this invocation (before or after the command name; for `resume`, before <runId> only — anything after <runId> is the opaque message, #471).",
-      zh: "覆盖本调用有效席位模型（可置于子命令名前或后；对 `resume`，须置于 <runId> 之前——<runId> 之后是原样透传的 message，#471）。",
+      en: "Override the effective seat model for this invocation (before or after the command name).",
+      zh: "覆盖本调用有效席位模型（可置于子命令名前或后）。",
     },
   },
   {
@@ -290,8 +290,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Override thinking level (opaque pass-through to Pi; e.g. off|minimal|low|medium|high|xhigh|max; for `resume`, before <runId> only — anything after <runId> is the opaque message, #471).",
-      zh: "覆盖 thinking 档位（原样透传给 Pi；例如 off|minimal|low|medium|high|xhigh|max；对 `resume`，须置于 <runId> 之前——<runId> 之后是原样透传的 message，#471）。",
+      en: "Override thinking level (opaque pass-through to Pi; e.g. off|minimal|low|medium|high|xhigh|max).",
+      zh: "覆盖 thinking 档位（原样透传给 Pi；例如 off|minimal|low|medium|high|xhigh|max）。",
     },
   },
   {
@@ -304,8 +304,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role; for `resume`, before <runId> only — anything after <runId> is the opaque message, #471).",
-      zh: "本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用；对 `resume`，须置于 <runId> 之前——<runId> 之后是原样透传的 message，#471）。",
+      en: "Labor engine for this invocation (owner pool-directive name; packaged notes attached when present; any role).",
+      zh: "本调用劳动引擎（池令名字；有包内调法笔记则附卷；全部角色可用）。",
     },
   },
   {
@@ -318,8 +318,8 @@ const GLOBAL_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Select the named main-session host adapter for this invocation (overrides persistent seat host; after config set-host the role command face is unchanged; for `resume`, before <runId> only — anything after <runId> is the opaque message, #471).",
-      zh: "为本调用选择具名主会话宿主适配器（覆盖席位持久 host；config set-host 后角色命令面不变；对 `resume`，须置于 <runId> 之前——<runId> 之后是原样透传的 message，#471）。",
+      en: "Select the named main-session host adapter for this invocation (overrides persistent seat host; after config set-host the role command face is unchanged).",
+      zh: "为本调用选择具名主会话宿主适配器（覆盖席位持久 host；config set-host 后角色命令面不变）。",
     },
   },
   {

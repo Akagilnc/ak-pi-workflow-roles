@@ -784,6 +784,7 @@ function renderHelp(): string {
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
+    "Resume flag position: --model/--thinking/--host/--engine go before <runId> (before `resume` or between `resume` and <runId>); the one argv after <runId> is always the opaque message, never a flag (#471)",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
