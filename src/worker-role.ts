@@ -433,19 +433,15 @@ export function createCoderRoleRuntime(
           }
           tddInvocationInjected = true;
           expansionPending = true;
+          // Capture original request only. Pi adapter may have prefixed `/skill:tdd`
+          // (adapter-internal, ADR 0082); role body never emits host slash syntax.
           const isNativeTdd =
             event.text === "/skill:tdd" ||
             event.text.startsWith("/skill:tdd ");
-          if (isNativeTdd) {
-            originalRequest = event.text.slice("/skill:tdd".length).trim();
-            return { action: "continue" as const };
-          }
-          originalRequest = event.text.trim();
-          return {
-            action: "transform" as const,
-            text: binding?.invocation(event.text) ?? `/skill:tdd ${event.text}`,
-            ...(event.images === undefined ? {} : { images: event.images }),
-          };
+          originalRequest = isNativeTdd
+            ? event.text.slice("/skill:tdd".length).trim()
+            : event.text.trim();
+          return { action: "continue" as const };
         });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");

@@ -3071,16 +3071,15 @@ export async function admitMergerInvocation(
 }
 
 /**
- * Build the Pi prompt transport for an admitted Merger request.
- * Every invocation forces package merge-only method expansion before conflict work.
+ * Build the host-neutral prompt transport for an admitted Merger request.
+ * Method material binds on RoleTurnRequest.methods; Pi-native `/skill:` form
+ * is adapter-internal only (ADR 0082).
  */
 export function buildMergerTransportPrompt(
   admitted: AdmittedMergerInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines: string[] = [
-    `/skill:resolving-merge-conflicts ${admitted.instruction}`,
-  ];
+  const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("已受理附件（冻结快照路径）：");

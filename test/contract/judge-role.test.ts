@@ -264,9 +264,6 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       body: tddBody,
       snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
-    invocation(originalRequest) {
-      return `/skill:tdd ${originalRequest}`;
-    },
     captureExpansion(evidence, originalRequest) {
       return evidence?.name === "tdd"
         && evidence.location === tddPath
@@ -2067,6 +2064,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   };
 
   // M1.1 — completed binds to the immediately following canonical expansion.
+  // Role body captures original request only; Pi `/skill:` is adapter-internal (#822).
   {
     const harness = await start();
     assert.deepEqual(
@@ -2074,11 +2072,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
         {},
       ),
-      {
-        action: "transform",
-        text: `/skill:tdd ${request}`,
-        images: [{ type: "image", data: "fixture" }],
-      },
+      { action: "continue" },
     );
     assert.deepEqual(
       await harness.handlers.get("input")?.(
@@ -2221,15 +2215,12 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
   }
 
-  // Prefix-collision transform binding (packaged seam owns real Pi expansion M1.5).
+  // Non-tdd slash text is plain original request (no role-body rewrite to /skill:tdd).
   {
     const harness = await start();
     assert.deepEqual(
       await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
-      {
-        action: "transform",
-        text: "/skill:tdd /skill:tddfoo",
-      },
+      { action: "continue" },
     );
     await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
@@ -2863,10 +2854,9 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "reviewer law",
             loadCanonicalSkillBinding: async () => ({
-              name: "code-review",
+              name: "code-review" as const,
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
-              invocation: (request: string) => request,
-              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill }),
+              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
             createPinnedGitReader: async () => ({
               pin,

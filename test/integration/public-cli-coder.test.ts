@@ -107,6 +107,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
         "apply must bind TDD method",
       );
       assert.equal(req.continuation.kind, "initial");
+      // Host-neutral transport: no Pi `/skill:` on the shared request face (#822).
+      assert.equal(req.continuation.prompt.startsWith("/skill:"), false);
     }
 
     // Plan phase: no method bindings.
@@ -492,6 +494,11 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         "apply",
       );
       assert.equal(captured!.includes("--skill"), true);
+      // Pi adapter alone emits `/skill:tdd` on the argv prompt (#822).
+      assert.equal(
+        captured!.some((a) => a.startsWith("/skill:tdd ") || a === "/skill:tdd"),
+        true,
+      );
     }
   });
 });

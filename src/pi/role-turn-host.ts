@@ -6,7 +6,7 @@
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, appendFile, readFile, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -168,6 +168,32 @@ function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
 }
 
 /**
+ * Pi-native `/skill:<name>` invocation form (ADR 0082 `pi-no-privilege`).
+ * Only the Pi adapter emits this host syntax. A single bound skill method is
+ * forced into the user prompt so Pi expands it; zero/many leave the prompt alone
+ * (Fixer optional methods stay available via `--skill` without a forced slash).
+ */
+export function applyPiNativeSkillInvocation(
+  methods: readonly MethodBinding[],
+  prompt: string,
+): string {
+  const skills = methods.filter((method) => method.kind === "skill");
+  if (skills.length !== 1) return prompt;
+  const name = basename(dirname(skills[0]!.path));
+  if (name.length === 0) return prompt;
+  const token = `/skill:${name}`;
+  const trimmed = prompt.trimStart();
+  if (
+    trimmed === token
+    || trimmed.startsWith(`${token} `)
+    || trimmed.startsWith(`${token}\n`)
+  ) {
+    return prompt;
+  }
+  return prompt.length === 0 ? token : `${token} ${prompt}`;
+}
+
+/**
  * Translate a closed RoleTurnRequest into Pi argv after `--no-extensions -e entry`.
  * Controlled session constants and session coordinates are adapter-internal.
  */
@@ -177,13 +203,14 @@ export function buildPiTurnExtraArgs(
   extraPiArgs: readonly string[] = [],
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
-  const prompt =
+  const rawPrompt =
     request.continuation.kind === "initial" || request.continuation.kind === "resume"
       ? request.continuation.prompt
       : (() => {
           const _exhaustive: never = request.continuation;
           return _exhaustive;
         })();
+  const prompt = applyPiNativeSkillInvocation(request.methods, rawPrompt);
   return [
     "--no-skills",
     ...buildMethodArgs(request.methods),
