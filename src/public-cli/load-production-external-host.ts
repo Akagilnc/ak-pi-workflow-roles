@@ -27,3 +27,20 @@ export async function loadProductionExternalHostFactory(
   }
   throw new Error(`unregistered host: ${host}`);
 }
+
+/** Lazy production external host — sole builder for CLI adapter table + public summons (#820). */
+export function createLazyProductionExternalHost(options: {
+  readonly packageRoot: string;
+  readonly hostName: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+}): RoleTurnHost {
+  let hostPromise: Promise<RoleTurnHost> | undefined;
+  return {
+    executeTurn: async (request) => {
+      hostPromise ??= loadProductionExternalHostFactory(options.packageRoot, options.hostName).then((create) =>
+        create({ packageRoot: options.packageRoot, principalAuthority: options.principalAuthority }),
+      );
+      return (await hostPromise).executeTurn(request);
+    },
+  };
+}

@@ -218,7 +218,7 @@ async function createSummonEnv(options: {
   let roleTurnHost = piHost;
   if (hostName !== "pi") {
     const { lookupHostFamily } = await import("./host-descriptions.ts");
-    const { loadProductionExternalHostFactory } = await import(
+    const { createLazyProductionExternalHost } = await import(
       "./public-cli/load-production-external-host.ts"
     );
     // #729 / #645: description tables are the sole host authority — family
@@ -228,19 +228,12 @@ async function createSummonEnv(options: {
         `public role summons host unregistered: host=${hostName} seat=${options.role}`,
       );
     }
-    let hostPromise: Promise<RoleTurnHost> | undefined;
-    roleTurnHost = {
-      executeTurn: async (request) => {
-        hostPromise ??= loadProductionExternalHostFactory(options.packageRoot, hostName).then(
-          (create) =>
-            create({
-              packageRoot: options.packageRoot,
-              principalAuthority,
-            }),
-        );
-        return (await hostPromise).executeTurn(request);
-      },
-    };
+    // Same lazy external host face as public CLI (#820) — one builder, two callers.
+    roleTurnHost = createLazyProductionExternalHost({
+      packageRoot: options.packageRoot,
+      hostName,
+      principalAuthority,
+    });
   }
   // #788: host is registered above; only then project host-facing provider.
   const { loadHostProvidersTable, projectHostFacingProvider } = await import(
