@@ -59,7 +59,8 @@ export function buildAcpSkillExpansion(
     name,
     location: method.path,
     content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
-    userMessage: prompt.trim(),
+    // Non-pi typed chain keeps original task bytes (ticket #822 r3); no consumer trim.
+    userMessage: prompt,
   });
 }
 

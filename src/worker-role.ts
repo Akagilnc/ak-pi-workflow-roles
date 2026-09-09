@@ -434,11 +434,12 @@ export function createCoderRoleRuntime(
           tddInvocationInjected = true;
           expansionPending = true;
           // Original request via host capability when Pi argv already carries native form;
-          // non-pi keeps plain text. Role never emits or parses `/skill:` (ADR 0082).
+          // non-pi keeps plain original bytes (no consumer trim; #822 r3 / reviewer-aligned).
+          // Role never emits or parses `/skill:` (ADR 0082).
           originalRequest = binding === undefined
-            ? event.text.trim()
+            ? event.text
             : (pi.capabilities?.skillOriginalRequest?.(binding.name, event.text)
-              ?? event.text.trim());
+              ?? event.text);
           return { action: "continue" as const };
         });
         pi.on("before_agent_start", (event, ctx) => {

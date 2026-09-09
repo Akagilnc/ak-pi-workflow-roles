@@ -511,3 +511,132 @@ test("bare resume follows live seat table host when it drifts from birth host", 
     assert.equal(after.host, "grok-build", "resume must record the live seat host on invocation");
   });
 });
+
+/**
+ * #822 — method Skill stays host-neutral on non-pi production path (graduated from
+ * deleted unit helper probe). Real entry: config set-host coder + fake host binary.
+ * Assert only external structured results: host prompt free of Pi `/skill:`, method
+ * material on the provider-visible systemPrompt channel (typed expansion delivery).
+ */
+test("#822 coder apply non-pi hosts: prompt free of /skill:; method on systemPrompt channel", async () => {
+  await homeTest(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const assignment = "#822 implement the approved slice without slash transport";
+    // One initial turn only — auto-resume would overwrite host dumps with the resume envelope.
+    await runAkRole(["config", "set-auto-resume-limit", "0"], productionBase(home));
+
+    // --- ACP family: grok-build fake agent records session/prompt + systemPromptOverride ---
+    {
+      const framesPath = join(home, "grok-frames.jsonl");
+      await mkdir(join(home, ".grok", "bin"), { recursive: true });
+      const binary = join(home, ".grok", "bin", "grok");
+      await writeFile(
+        binary,
+        `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const framesPath = ${JSON.stringify(framesPath)};
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  appendFileSync(framesPath, line + "\\n");
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (typeof msg.method !== "string" || typeof msg.id !== "number") return;
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+    return;
+  }
+  if (msg.method === "session/new" || msg.method === "session/load") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess-822-grok" } }) + "\\n");
+    return;
+  }
+  if (msg.method === "session/prompt") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+  }
+});
+`,
+        { encoding: "utf8" },
+      );
+      await chmod(binary, 0o755);
+
+      await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], productionBase(home));
+      await runAkRole(["config", "set-host", "coder", "grok-build"], productionBase(home));
+      const result = await runAkRole(
+        ["coder", "--project", project, assignment],
+        { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-grok" },
+      );
+      assert.equal(result.hostFailure, undefined, "grok host selection must succeed");
+
+      const frames = (await readFile(framesPath, "utf8"))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as {
+          method?: string;
+          params?: {
+            prompt?: Array<{ type?: string; text?: string }>;
+            _meta?: { systemPromptOverride?: unknown };
+          };
+        });
+      const promptFrame = frames.find((f) => f.method === "session/prompt");
+      assert.ok(promptFrame, "ACP session/prompt must reach the host");
+      const hostPrompt = (promptFrame.params?.prompt ?? [])
+        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .join("");
+      assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
+      assert.equal(hostPrompt.includes(assignment), true);
+
+      const sessionNew = frames.find((f) => f.method === "session/new");
+      assert.ok(sessionNew, "ACP session/new must carry systemPromptOverride");
+      const override = sessionNew.params?._meta?.systemPromptOverride;
+      const overrideText = typeof override === "string"
+        ? override
+        : JSON.stringify(override ?? "");
+      // Typed method expansion lands on provider-visible systemPrompt channel.
+      assert.match(overrideText, /TDD|red.?green|test-driven/i);
+      assert.match(overrideText, /coder_soul|将作监/);
+    }
+
+    // --- headless family: claude fake binary dumps argv; system-prompt-file on disk ---
+    {
+      const argvDump = join(home, "claude-argv.json");
+      await mkdir(join(home, ".local", "bin"), { recursive: true });
+      const binary = join(home, ".local", "bin", "claude");
+      await writeFile(
+        binary,
+        `#!/usr/bin/env node
+import { existsSync, writeFileSync } from "node:fs";
+// First-write wins so a later empty-stdout retry cannot replace the initial prompt dump.
+const dump = ${JSON.stringify(argvDump)};
+if (!existsSync(dump)) writeFileSync(dump, JSON.stringify(process.argv.slice(2)));
+process.exit(0);
+`,
+        { encoding: "utf8" },
+      );
+      await chmod(binary, 0o755);
+
+      await runAkRole(["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"], productionBase(home));
+      await runAkRole(["config", "set-host", "coder", "claude"], productionBase(home));
+      const result = await runAkRole(
+        ["coder", "--project", project, assignment],
+        { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-claude" },
+      );
+      assert.equal(result.hostFailure, undefined, "claude host selection must succeed");
+
+      const argv = JSON.parse(await readFile(argvDump, "utf8")) as string[];
+      const promptAt = argv.indexOf("-p");
+      assert.equal(promptAt >= 0, true, "headless prompt flag -p must be present");
+      const hostPrompt = argv[promptAt + 1]!;
+      assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
+      assert.equal(hostPrompt.includes(assignment), true);
+
+      const spAt = argv.indexOf("--system-prompt-file");
+      assert.equal(spAt >= 0, true, "headless system-prompt-file flag must be present");
+      const systemPromptPath = argv[spAt + 1]!;
+      const systemPrompt = await readFile(systemPromptPath, "utf8");
+      assert.match(systemPrompt, /TDD|red.?green|test-driven/i);
+      assert.match(systemPrompt, /coder_soul|将作监/);
+    }
+  });
+});
