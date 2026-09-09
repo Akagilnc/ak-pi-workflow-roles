@@ -13,20 +13,7 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 更新用 `pi update npm:@akagilnc/pi-workflow-roles`——勿另起全局 `npm install -g`。查看能力：`ak-role roles`、`ak-role help <role>`；席位与官席配置见下方「读结果」。
 
-### 测试通道（`next`）
-
-家族／dogfood 安装面复用同一包，经 dist-tag `next` 取得；Pi 安装面经 `PI_CODING_AGENT_DIR` 隔离（包配置、账本与 book 仍属于机器用户家目录，不随 `HOME` 漂移），不与宿主已装包共享。测试面不挂载、不复制宿主凭据；不以 book／worktree 冒充安装隔离。不装第二份全局 npm。
-
-```bash
-export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
-export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
-```
-
-- **首次装 next**：`pi install npm:@akagilnc/pi-workflow-roles@next` → `ak-role roles` 可跑；装到的版本形如 `0.1.<count>-next.<shortsha>`。
-- **推进到新 next**：`pi update npm:@akagilnc/pi-workflow-roles@next` → 版本号里的 `<shortsha>` 变为新 CI `head_sha` 的前 7 位。
-- **同版本重装／恢复**：重跑首次安装命令 → 幂等，版本不变（对应 stamp「版本已在 registry 则只移 dist-tag」路径）。
-
-发布路由（Actions 真入口，非本地 stamp）：`ci` 在 `main` 上成功 push → `latest`；`ci` 在 allowlist 非 main 分支上成功 push（见 `.github/workflows/ci.yml` 的 `push.branches`）→ `next`。PR completion 与失败 CI 不发布。
+发布路由（Actions 真入口，非本地 stamp）：`ci` 在仓库默认分支上成功 push → `latest`。非默认分支的 CI completion、PR completion 与失败 CI 不发布。
 
 ## 读结果
 

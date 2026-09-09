@@ -1,8 +1,9 @@
 name: ci
 on:
   push:
-    # Allowlist sole source of truth for publish eligibility (issue #555).
-    # Downstream publish-registry must not copy this list.
+    # CI green-light filter for push runs (issue #555). Publish eligibility is
+    # enforced downstream by publish-registry.yml via repository.default_branch
+    # (issue #798); do not treat this list as a publish allowlist to copy.
     branches: [main]
   pull_request:
 jobs:

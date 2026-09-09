@@ -13,20 +13,7 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 
 Update with `pi update npm:@akagilnc/pi-workflow-roles`—never a second global `npm install -g`. Inspect with `ak-role roles` and `ak-role help <role>`; seat and Gate-officer configuration lives under Reading results below.
 
-### Test channel (`next`)
-
-Family / dogfood installs use the same package under dist-tag `next`. Pi installation surface is isolated via `PI_CODING_AGENT_DIR` (package config, ledger, and books remain machine-scoped under user home, never following `HOME`). Do not mount or copy host credentials into the test surface; do not use a book/worktree as a stand-in for install isolation. No second global npm.
-
-```bash
-export PI_CODING_AGENT_DIR="/path/to/test-surface/.pi/agent"
-export PATH="$PI_CODING_AGENT_DIR/npm/node_modules/.bin:$PATH"
-```
-
-- **First install of next**: `pi install npm:@akagilnc/pi-workflow-roles@next` → `ak-role roles` runs; installed version looks like `0.1.<count>-next.<shortsha>`.
-- **Advance to a newer next**: `pi update npm:@akagilnc/pi-workflow-roles@next` → `<shortsha>` becomes the new CI `head_sha` prefix (7 chars).
-- **Same-version reinstall / restore**: rerun the first-install command → idempotent; version unchanged (stamp path that only moves the dist-tag when the version is already on the registry).
-
-Publish routing (Actions, not local stamp): successful `ci` push on `main` → `latest`; successful `ci` push on an allowlisted non-main branch (see `.github/workflows/ci.yml` `push.branches`) → `next`. PR completions and failed CI never publish.
+Publish routing (Actions, not local stamp): successful `ci` push on the repository default branch → `latest`. Non-default-branch CI completions, PR completions, and failed CI never publish.
 
 ## Reading results
 
