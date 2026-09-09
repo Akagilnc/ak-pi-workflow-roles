@@ -670,7 +670,7 @@ const NOTARY_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const MERGER_OPTIONS = [
-  // Merger project face differs: requires an in-progress ordinary merge root.
+  // Merger project face: worktree whose Git materials are handed to the role.
   {
     id: "project",
     owner: "merger",
@@ -681,8 +681,8 @@ const MERGER_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Project root with one ordinary in-progress merge (defaults to cwd).",
-      zh: "已有进行中 ordinary merge 的项目根（默认 cwd）。",
+      en: "Project root whose Git merge materials are read (defaults to cwd).",
+      zh: "读取 Git merge 材料的项目根（默认 cwd）。",
     },
   },
   bindOwner("merger", SHARED_ATTACH_SEMANTICS),
@@ -1231,10 +1231,10 @@ const ROLE_COMMAND_HELP = {
   },
   merger: {
     command: "merger",
-    summary: "Resolve one ordinary merge already in conflict.",
+    summary: "Reconcile merge materials in a worktree (escalate when nothing to merge).",
     usage: ["ak-role merger [options] <instruction>"],
     examples: [
-      'ak-role merger --project /path/to/worktree "Reconcile the active merge."',
+      'ak-role merger --project /path/to/worktree "Reconcile the merge."',
     ],
   },
   inspector: {

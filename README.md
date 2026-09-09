@@ -91,8 +91,8 @@ ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the 
 # doctor — diagnose one retained case
 ak-role doctor --issue 115 "Diagnose this retained case."
 
-# merger — resolve one merge already in conflict (start it with Git's ort first)
-ak-role merger --project /path/to/worktree "Reconcile the active merge."
+# merger — reconcile merge materials (role escalates when nothing is in progress)
+ak-role merger --project /path/to/worktree "Reconcile the merge."
 
 # notary — document-fidelity check on one retained source run; ticket key inherited from source-run admitted form
 ak-role notary --source-run <runId@role|path>

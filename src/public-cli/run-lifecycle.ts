@@ -1386,7 +1386,6 @@ async function loadResumableRunRecord(
         if (
           typeof d.targetObjectId === "string" &&
           typeof d.sourceObjectId === "string" &&
-          typeof d.automaticMergeTreeId === "string" &&
           Array.isArray(d.expectedConflictPaths) &&
           Array.isArray(d.resolutionScope) &&
           d.expectedConflictPaths.every((p) => typeof p === "string") &&
@@ -1395,7 +1394,6 @@ async function loadResumableRunRecord(
           derived = {
             targetObjectId: d.targetObjectId,
             sourceObjectId: d.sourceObjectId,
-            automaticMergeTreeId: d.automaticMergeTreeId,
             expectedConflictPaths: d.expectedConflictPaths as string[],
             resolutionScope: d.resolutionScope as string[],
           };

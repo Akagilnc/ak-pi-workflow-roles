@@ -85,8 +85,8 @@ ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the 
 # 太医署——单案诊断
 ak-role doctor --issue 115 "Diagnose this retained case."
 
-# 校书郎——调和已在冲突的 merge（先用 Git ort 起动）
-ak-role merger --project /path/to/worktree "Reconcile the active merge."
+# 校书郎——调和工作树中的 merge 材料（无进行中合并时由角色 escalate）
+ak-role merger --project /path/to/worktree "Reconcile the merge."
 
 # 符宝郎——文书核验一份留存 source run；票号从 source-run admitted form 继承
 ak-role notary --source-run <runId@role|path>
@@ -132,7 +132,7 @@ ak-role resume <runId> "<裁定>"
 | **察院** | inspector | **事后察举：复杂度与测试质量两轴。** 受审物是将作监／修内司完成侧交卷；封驳＝当场打回重写，不是本局失败。可被门下省派发，也可 `ak-role inspector` 单独调。原给事中，ADR 0074 分立。 |
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
-| **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；遇到无法自行决定之处，则留待重新裁量。 |
+| **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；无进行中合并、无活可干或遇到无法自行决定之处，则升级。 |
 | **游奕使** | navigator（自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
 | **起居郎** | diarist（`ak-role diarist` 单独传召；给事中受理内自动先起，#742） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 自行搜集、整理、认票（#779 后无机械验真，机械只做 IO；起居录供符宝郎读录核旨）。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
 

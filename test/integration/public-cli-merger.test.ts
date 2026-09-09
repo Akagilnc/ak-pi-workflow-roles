@@ -143,7 +143,7 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
   assert.throws(() => parseMergerArgv(["--ak-merger-input", "x.json"]), isUsage);
 });
 
-test("deriveMergerEnvelopeFromActiveMerge reads parents, AUTO_MERGE, conflicts, and scope", async () => {
+test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materials", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "conflicted");
     await mkdir(project, { recursive: true });
@@ -153,20 +153,15 @@ test("deriveMergerEnvelopeFromActiveMerge reads parents, AUTO_MERGE, conflicts, 
     assert.equal(derived.sourceObjectId, fixture.source);
     assert.deepEqual(derived.expectedConflictPaths, [fixture.conflictPath]);
     assert.deepEqual(derived.resolutionScope, [fixture.conflictPath]);
-    assert.equal(/^[0-9a-f]{40}$/.test(derived.automaticMergeTreeId), true);
-    assert.equal(
-      derived.automaticMergeTreeId.length,
-      derived.targetObjectId.length,
-    );
 
-    // No active merge fails honestly from the production git seam (not CLI parsing).
+    // No active merge still yields materials (empty source/conflicts) — not an admission gate (#827).
     const clean = join(home, "clean");
     await mkdir(clean, { recursive: true });
     seedGitProject(clean);
-    await assert.rejects(
-      () => deriveMergerEnvelopeFromActiveMerge(clean),
-      /in-progress merge/i,
-    );
+    const cleanDerived = await deriveMergerEnvelopeFromActiveMerge(clean);
+    assert.equal(cleanDerived.sourceObjectId, "");
+    assert.deepEqual(cleanDerived.expectedConflictPaths, []);
+    assert.equal(cleanDerived.targetObjectId.length > 0, true);
   });
 });
 
@@ -205,10 +200,6 @@ test("admitMergerInvocation derives envelope into internal input without public 
       fixture.conflictPath,
     ]);
     assert.deepEqual(admitted.derived.resolutionScope, [fixture.conflictPath]);
-    assert.equal(
-      admitted.derived.automaticMergeTreeId,
-      (await deriveMergerEnvelopeFromActiveMerge(project)).automaticMergeTreeId,
-    );
 
     const raw = JSON.parse(await readFile(admitted.mergerInputPath, "utf8"));
     const input = validateMergerInput(raw);
@@ -366,7 +357,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       derived: {
         targetObjectId: string;
         sourceObjectId: string;
-        automaticMergeTreeId: string;
         expectedConflictPaths: string[];
         resolutionScope: string[];
       };
@@ -386,10 +376,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       fixture.conflictPath,
     ]);
     assert.deepEqual(evidence.derived.resolutionScope, [fixture.conflictPath]);
-    assert.equal(
-      evidence.derived.automaticMergeTreeId,
-      admitted.derived.automaticMergeTreeId,
-    );
     assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
     // escalate leaf is also a lawful accepted Terminal status (own run ledger).
@@ -463,7 +449,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
   });
 });
 
-test("ak-role merger derives envelope, pins method, and fails activation honestly without merge", async () => {
+test("ak-role merger dispatches and settles escalate without active merge and completed with active merge under mocked host", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -488,10 +474,15 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
       assert.equal(stderr.join("").length > 0, true);
     }
 
-    // No active merge → activation-class controlled failure (not CLI semantic guess).
+    // No active merge → dispatches and settles escalate terminal leaf under mocked host (#827).
     {
       seedGitProject(project);
-      const { io, stdout, stderr } = captureIo();
+      const { io, stdout } = captureIo();
+      let dispatched = false;
+      const material = await loadPackagedMethodSkillMaterial(
+        packageRoot,
+        "resolving-merge-conflicts",
+      );
       const result = await runAkRole(
         ["merger", "Resolve whatever is open."],
         {
@@ -503,20 +494,35 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async () => {
-            throw new Error("must not dispatch without active merge");
+            piRunner: async (args) => {
+            dispatched = true;
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const inputPath = args[args.indexOf("--ak-merger-input") + 1]!;
+            const input = validateMergerInput(
+              JSON.parse(await readFile(inputPath, "utf8")),
+            );
+            assert.equal(input.sourceObjectId, "");
+            assert.deepEqual([...input.expectedConflictPaths], []);
+            const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\nResolve whatever is open.`;
+            const receipt = { status: "escalate", attemptId: input.attemptId, diagnosis: "no in-progress merge", report: "nothing to reconcile" };
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            await writeFile(sessionFile, [
+              JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: expansion }] } }),
+              JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "out", name: MERGER_OUTPUT_TOOL_NAME, arguments: receipt }] } }),
+              JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "out", toolName: MERGER_OUTPUT_TOOL_NAME, isError: false, details: receipt } }),
+            ].join("\n") + "\n", "utf8");
+            return { code: 0, sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" }, stderr: "", timedOut: false, args: [...args] };
           },
           }),
         },
       );
-      assert.equal(result.exitCode, 1);
-      const out = stdout.join("");
-      assert.match(out, /merger\tfailure\t/);
-      assert.match(out, /activation/);
-      assert.equal(stderr.join("").length > 0, true);
+      assert.equal(dispatched, true);
+      assert.equal(result.exitCode, 0, stdout.join(""));
+      assert.match(stdout.join(""), /merger\taccepted\t/);
+      assert.match(stdout.join(""), /escalate/);
     }
 
-    // Active merge → dispatch with package method + derived internal input.
+    // Active merge → derives materials from active merge and settles completed leaf under mocked host.
     {
       const conflicted = join(home, "conflicted-run");
       await mkdir(conflicted, { recursive: true });
@@ -541,7 +547,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
             captured = [...args];
-            // Simulate forced expansion + completed leaf without real model.
+            // Simulate packaged skill invocation and completed receipt under mocked host.
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             const inputIdx = args.indexOf("--ak-merger-input");
@@ -552,57 +558,14 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             assert.equal(input.targetObjectId, fixture.target);
             assert.equal(input.sourceObjectId, fixture.source);
             const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\nReconcile both intents.`;
-            const receipt = {
-              status: "completed",
-              attemptId: input.attemptId,
-              report: "resolved",
-              mergeCommitId: "b".repeat(40),
-            };
+            const receipt = { status: "completed", attemptId: input.attemptId, report: "resolved", mergeCommitId: "b".repeat(40) };
             await mkdir(join(sessionFile, ".."), { recursive: true });
-            await writeFile(
-              sessionFile,
-              [
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: expansion }],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "assistant",
-                    content: [
-                      {
-                        type: "toolCall",
-                        id: "out",
-                        name: MERGER_OUTPUT_TOOL_NAME,
-                        arguments: receipt,
-                      },
-                    ],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "toolResult",
-                    toolCallId: "out",
-                    toolName: MERGER_OUTPUT_TOOL_NAME,
-                    isError: false,
-                    details: receipt,
-                  },
-                }),
-              ].join("\n") + "\n",
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
+            await writeFile(sessionFile, [
+              JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: expansion }] } }),
+              JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "out", name: MERGER_OUTPUT_TOOL_NAME, arguments: receipt }] } }),
+              JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "out", toolName: MERGER_OUTPUT_TOOL_NAME, isError: false, details: receipt } }),
+            ].join("\n") + "\n", "utf8");
+            return { code: 0, sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" }, stderr: "", timedOut: false, args: [...args] };
           },
           }),
         },

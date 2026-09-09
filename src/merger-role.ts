@@ -1,58 +1,62 @@
-import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
-import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, mergerOutputSchema, validateMergerInput, validateMergerOutput, type MergerInput } from "./merger-contracts.ts";
-import type { MergerGitState } from "./merger-git-state.ts";
+import type { RoleHost, HostContext } from "./host-contracts.ts";
+import {
+  MERGER_ACCEPTED_TEXT,
+  MERGER_OUTPUT_TOOL_NAME,
+  mergerOutputSchema,
+  validateMergerInput,
+  type MergerInput,
+} from "./merger-contracts.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
-import { isFullGitObjectId } from "./git-object-id.ts";
 
 export { MERGER_OUTPUT_TOOL_NAME };
-export const MERGER_INPUT_FLAG = { name: "ak-merger-input", definition: { description: "Path to an immutable digest-bound Merger v1 input JSON file", type: "string" as const } } as const;
-export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(path: string): Promise<unknown>; gitState: MergerGitState };
-export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
+export const MERGER_INPUT_FLAG = { name: "ak-merger-input", definition: { description: "Path to Merger assignment materials JSON", type: "string" as const } } as const;
 
-function same(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && a.every((value, i) => value === b[i]); }
-function materialText(input: MergerInput, key: keyof MergerInput["materials"]): string { return exactUtf8(Buffer.from(input.materials[key].bytesBase64, "base64"), `Merger ${key}`); }
+export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(path: string): Promise<unknown>; };
 
-export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDependencies, host: MergerRoleHostActions) {
-  let activation: { soul: string; input: Readonly<MergerInput>; automaticMergeTreeId: string } | undefined;
+function materialText(input: MergerInput, key: keyof MergerInput["materials"]): string {
+  return exactUtf8(Buffer.from(input.materials[key].bytesBase64, "base64"), `Merger ${key}`);
+}
+
+/**
+ * Merger (校书郎) role runtime.
+ * Code admits one submission and terminates the round (第 0 条).
+ * Git state / completion verification are not attendance or rejection gates (#827).
+ */
+export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDependencies) {
+  let activation: { soul: string; input: Readonly<MergerInput> } | undefined;
   let registered = false;
   let accepted = false;
   pi.registerFlag(MERGER_INPUT_FLAG.name, MERGER_INPUT_FLAG.definition);
-  return { async activate() {
-    const path = pi.getFlag(MERGER_INPUT_FLAG.name);
-    if (typeof path !== "string" || path.trim().length === 0) throw new Error("Merger requires --ak-merger-input");
-    const soul = (await dependencies.loadSoul()).trim(); if (!soul) throw new Error("Merger soul is empty");
-    const input = validateMergerInput(await dependencies.loadInput(path));
-    const state = await dependencies.gitState.activeMerge();
-    if (state.targetObjectId !== input.targetObjectId || state.sourceObjectId !== input.sourceObjectId || !same(state.unmergedPaths, input.expectedConflictPaths) || state.unmergedPaths.length === 0 || !isFullGitObjectId(state.automaticMergeTreeId) || state.automaticMergeTreeId.length !== input.targetObjectId.length) throw new Error("Merger activation rejected repository parent, merge, automatic-result, or complete conflict-set drift");
-    activation = { soul, input, automaticMergeTreeId: state.automaticMergeTreeId }; accepted = false;
-    if (!registered) { registered = true;
-      pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate；基础设施及 Git 失败由 abort 通道承接。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
-        async execute(id: string, params: unknown, _signal: AbortSignal | undefined, _update: unknown, ctx: HostContext) {
+  return {
+    async activate() {
+      const path = pi.getFlag(MERGER_INPUT_FLAG.name);
+      if (typeof path !== "string" || path.trim().length === 0) throw new Error("Merger requires --ak-merger-input");
+      const soul = (await dependencies.loadSoul()).trim();
+      if (!soul) throw new Error("Merger soul is empty");
+      const input = validateMergerInput(await dependencies.loadInput(path));
+      activation = { soul, input };
+      accepted = false;
+      if (!registered) {
+        registered = true;
+        pi.registerTool({
+          name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
+          async execute(_id: string, params: unknown, _signal: AbortSignal | undefined, _update: unknown, _ctx: HostContext) {
+            if (!activation) throw new Error("校书郎未激活");
+            if (accepted) throw new Error("合并回执已受理");
+            accepted = true;
+            return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: params, terminate: true as const };
+          },
+        });
+        pi.on("before_agent_start", (event) => {
           if (!activation) throw new Error("校书郎未激活");
-          if (accepted) throw new Error("合并回执已受理");
-          let output;
-          try {
-            output = validateMergerOutput(params, activation.input.attemptId);
-          } catch (error) {
-            host.failInfrastructure(error, ctx, id);
-          }
-          if (output.status === "completed") {
-            let state;
-            try { state = await dependencies.gitState.completedMerge(output.mergeCommitId, activation.automaticMergeTreeId); }
-            catch (error) { host.failInfrastructure(error, ctx, id); }
-            const scope = new Set(activation.input.resolutionScope);
-            if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean || state.resolutionChangedPaths.some(path => !scope.has(path))) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx, id);
-          }
-          accepted = true;
-          const acceptedDetails = output;
-          return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: acceptedDetails, terminate: true as const };
-        } });
-      pi.on("before_agent_start", (event) => { if (!activation) throw new Error("校书郎未激活"); const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks }; return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` }; });
-    }
-    // Host-neutral AK output only (ADR 0018 fail-closed); no host-builtin name hard-require.
-    const all = pi.getAllTools().map(tool => tool.name);
-    if (all.filter(item => item === MERGER_OUTPUT_TOOL_NAME).length !== 1) {
-      throw new Error(`Merger required tool collision or missing: ${MERGER_OUTPUT_TOOL_NAME}`);
-    }
-  } };
+          const admitted = { attemptId: activation.input.attemptId, targetObjectId: activation.input.targetObjectId, sourceObjectId: activation.input.sourceObjectId, task: materialText(activation.input, "task"), authority: materialText(activation.input, "authority"), targetIntent: materialText(activation.input, "targetIntent"), sourceIntent: materialText(activation.input, "sourceIntent"), expectedConflictPaths: activation.input.expectedConflictPaths, resolutionScope: activation.input.resolutionScope, authorizedChecks: activation.input.authorizedChecks };
+          return { systemPrompt: `${event.systemPrompt}\n\n<merger_soul>\n${activation.soul}\n</merger_soul>\n\n<merger_assignment>\n${JSON.stringify(admitted)}\n</merger_assignment>` };
+        });
+      }
+      const all = pi.getAllTools().map((tool) => tool.name);
+      if (all.filter((item) => item === MERGER_OUTPUT_TOOL_NAME).length !== 1) {
+        throw new Error(`Merger required tool collision or missing: ${MERGER_OUTPUT_TOOL_NAME}`);
+      }
+    },
+  };
 }

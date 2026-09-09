@@ -32,7 +32,6 @@ import { loadPackagedCanonicalSkillBinding } from "../src/package-resources/meth
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
-  createProductionMergerGitState,
   formatNavigatorRoleHelp,
 } from "../src/role-runtime.ts";
 import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
@@ -160,8 +159,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     },
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    createMergerGitState: (repositoryRoot) =>
-      createProductionMergerGitState(repositoryRoot),
     async loadCanonicalSkillBinding(name) {
       // Coder TDD (#109) and Reviewer code-review (#111) are package-owned.
       // Optional Fixer diagnosing-bugs is available via --skill without this binding.

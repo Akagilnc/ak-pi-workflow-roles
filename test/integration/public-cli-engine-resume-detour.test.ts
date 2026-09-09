@@ -177,7 +177,7 @@ function baseArgs(seat: Seat, project: string): string[] {
   }
 }
 
-/** Merger requires an ordinary in-progress merge to derive its envelope. */
+/** Optional conflicted merge materials for merger seat (no longer an admission gate). */
 async function seedMergeProject(project: string): Promise<void> {
   seedGitProject(project);
   await writeFile(join(project, "shared.txt"), "base\n", "utf8");

@@ -207,7 +207,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       };
     case "merger": {
       const mergerInput = {
-        version: 1 as const,
         attemptId: "attempt-1",
         targetObjectId: oid("a"),
         sourceObjectId: oid("b"),
@@ -225,15 +224,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
         ...base,
         loadMergerSoul: law,
         loadMergerInput: async () => mergerInput,
-        createMergerGitState: () => ({
-          activeMerge: async () => ({
-            targetObjectId: oid("a"),
-            sourceObjectId: oid("b"),
-            unmergedPaths: ["conflict.txt"],
-            automaticMergeTreeId: oid("c"),
-          }),
-          completedMerge: async () => { throw new Error("unused"); },
-        }),
       };
     }
     case "notary":
