@@ -11,4 +11,4 @@ description: "Use when you need to resolve an in-progress ordinary two-parent gi
 
 4. Run **authorized checks** from the admitted assignment when present. When the assignment lists none, discover the project's automated checks within the role boundary — typically typecheck, then tests, then format — and run them. Fix anything the merge resolution broke that stays inside scope.
 
-5. **Finish the ordinary two-parent merge commit** within resolution scope. Stage in-scope resolutions and create the merge commit with the frozen target then source parents. Do **not** publish, push, or route another role. Do **not** broaden into rebase or general conflict cleanup outside the admitted merge.
+5. **Finish the ordinary two-parent merge commit** within resolution scope. Stage in-scope resolutions and create the merge commit with the frozen target then source parents. Title it `ak-roles: merge: …` (factory worker prefix first). Do **not** publish, push, or route another role. Do **not** broaden into rebase or general conflict cleanup outside the admitted merge.

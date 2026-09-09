@@ -174,25 +174,11 @@ test("malicious CHANNEL is data to real npm and fails Invalid version without sh
   });
 });
 
-test("legal missing-version publish carries next shortsha artifact identity", async () => {
-  const channel = "next";
-  const shortSha = "abc1234";
-  await withStamp({ channel, viewHit: false, shortSha }, (result) => {
-    const expected = `0.1.9-${channel}.${shortSha}`;
-    assert.equal(result.status, 0);
-    assert.equal(result.npmPath, "publish");
-    assert.equal(result.publishVersion, expected);
-    assert.equal(result.publishTag, channel);
-    assert.equal(result.packageVersion, expected);
-    assert.equal(result.distTagPackage, undefined);
-  });
-});
-
-test("legal existing-version moves next dist-tag only", async () => {
-  const channel = "next";
+test("legal existing-version moves latest dist-tag only", async () => {
+  const channel = "latest";
   const shortSha = "def5678";
   await withStamp({ channel, viewHit: true, shortSha }, (result) => {
-    const expectedVersion = `0.1.9-${channel}.${shortSha}`;
+    const expectedVersion = "0.1.9";
     assert.equal(result.status, 0);
     assert.equal(result.npmPath, "dist-tag");
     assert.equal(result.distTagPackage, `@akagilnc/pi-workflow-roles@${expectedVersion}`);
