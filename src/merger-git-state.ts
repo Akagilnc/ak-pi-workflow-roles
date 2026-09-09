@@ -46,8 +46,10 @@ async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, fsConstants.F_OK);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Only structured absence is empty material; EACCES/EIO/ELOOP/… stay loud.
+    if ((error as { code?: unknown }).code === "ENOENT") return false;
+    throw error;
   }
 }
 
