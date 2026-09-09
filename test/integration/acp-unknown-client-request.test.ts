@@ -32,15 +32,19 @@ async function waitForHostFrame(
   for (;;) {
     try {
       raw = await readFile(framesPath, "utf8");
-      const frame = raw
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as HostToAgentFrame)
-        .find(match);
-      if (frame !== undefined) return frame;
-    } catch {
-      // frames file may lag the first agent write
+    } catch (error) {
+      // Only missing file is a known lag state; every other I/O error keeps its cause.
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+      raw = "";
     }
+    // Full lines only: agent uses appendFileSync(line + "\n"), so a trailing
+    // partial line would mean torn write — surface parse errors instead of swallowing.
+    const frame = raw
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as HostToAgentFrame)
+      .find(match);
+    if (frame !== undefined) return frame;
     if (Date.now() - started > timeoutMs) {
       throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}; frames=${raw}`);
     }
