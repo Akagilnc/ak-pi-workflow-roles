@@ -15,13 +15,14 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "./host-contracts.ts";
-import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "./packaged-role-registry.ts";
+import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import { stripSkillFrontmatter } from "./package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
 } from "./role-runtime.ts";
 import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
+import { projectActivationFlags } from "./role-activation-flags.ts";
 import {
   isCorrectableExecuteError,
   mechanicalSubmissionRejectionResumeMessage,
@@ -31,6 +32,8 @@ import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
 } from "./navigator-invocation-identity.ts";
+
+export { projectActivationFlags };
 
 type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
@@ -59,45 +62,6 @@ export function buildSkillExpansion(
     content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
     userMessage: parsed.userMessage,
   });
-}
-
-export function projectActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
-  const activation = request.activation;
-  const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
-  const inputFlag = packagedRoleInputFlag(activation.role);
-  const phaseFlag = packagedRolePhaseFlag(activation.role);
-  if ("phase" in activation && phaseFlag !== undefined) flags.set(phaseFlag, activation.phase);
-  if (inputFlag !== undefined) {
-    const path = "taskPath" in activation ? activation.taskPath
-      : "packetPath" in activation ? activation.packetPath
-        : "casePath" in activation ? activation.casePath
-          : "inputPath" in activation ? activation.inputPath
-            : "sourceRun" in activation ? activation.sourceRun
-              : undefined;
-    if (path !== undefined) flags.set(inputFlag, path);
-  }
-  if (activation.role === "fixer" && activation.prerequisitesPath !== undefined) flags.set("ak-fixer-prerequisites", activation.prerequisitesPath);
-  if (activation.role === "reviewer") {
-    flags.set("ak-review-base", activation.baseRevision);
-    flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
-    if (activation.ticketNumber !== undefined) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
-  }
-  // countersign ticketNumber stays on activation/admission/invocation only —
-  // no private transport flag (inner-gate material path deleted in #632).
-  if (activation.role === "notary" && activation.ticketNumber !== undefined) {
-    flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
-  }
-  if (activation.role === "gleaner-left") {
-    flags.set("ak-gleaner-left-base", activation.baseRevision);
-  }
-  if (activation.role === "collector") {
-    flags.set("ak-collector-repo", activation.repo);
-    // #676 D1: pr optional at admission; omit flag when role binds from materials.
-    if (activation.pr !== undefined) flags.set("ak-collector-pr", activation.pr);
-    if (activation.requestManifestPath !== undefined) flags.set("ak-collector-request-manifest", activation.requestManifestPath);
-    if (activation.waitMs !== undefined) flags.set("ak-collector-wait-ms", activation.waitMs);
-  }
-  return flags;
 }
 
 async function listen(server: Server, path: string): Promise<void> {
