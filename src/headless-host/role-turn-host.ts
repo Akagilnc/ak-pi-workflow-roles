@@ -3,11 +3,11 @@
  * loop = external-host-turn-loop. Claude print-mode and codex exec share this
  * lifecycle; argv/parse are protocol-specific.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import {
@@ -244,6 +244,28 @@ export function cwdIsGitWorkTree(cwd: string): boolean {
   }
 }
 
+/**
+ * Absolute git common dir for workspace-write extra roots (worktree index.lock).
+ * Uses `git rev-parse --git-common-dir` once; empty when not a git work tree.
+ */
+export function resolveGitCommonDir(cwd: string): string | undefined {
+  if (!cwdIsGitWorkTree(cwd)) return undefined;
+  try {
+    const result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    if (result.status !== 0) return undefined;
+    const raw = (result.stdout ?? "").trim();
+    if (raw === "") return undefined;
+    const absolute = isAbsolute(raw) ? raw : resolve(cwd, raw);
+    return absolute;
+  } catch {
+    return undefined;
+  }
+}
+
 function spawnHeadlessTurn(options: {
   readonly binary: string;
   readonly args: readonly string[];
@@ -404,8 +426,13 @@ function buildTurnAttempt(options: {
   readonly sessionId: string | undefined;
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
+  readonly writableRoots?: readonly string[];
 }): TurnAttemptPlan {
   if (isCodexExecDescription(options.description)) {
+    const writable =
+      options.writableRoots === undefined || options.writableRoots.length === 0
+        ? {}
+        : { writableRoots: options.writableRoots };
     if (options.sessionKind === "resume") {
       if (options.sessionId === undefined || options.sessionId === "") {
         throw new Error("codex resume requires a bound thread_id");
@@ -421,6 +448,7 @@ function buildTurnAttempt(options: {
           ...(options.effort === undefined ? {} : { effort: options.effort }),
           session: { kind: "resume", id: options.sessionId },
           skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
+          ...writable,
         }),
       };
     }
@@ -435,6 +463,7 @@ function buildTurnAttempt(options: {
         ...(options.effort === undefined ? {} : { effort: options.effort }),
         session: { kind: "new" },
         skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
+        ...writable,
       }),
     };
   }
@@ -506,6 +535,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         async runRound({ prompt, abortSignal }) {
           let plan: TurnAttemptPlan;
           try {
+            const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
             plan = buildTurnAttempt({
               description: config.description,
               prompt,
@@ -519,6 +549,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               sessionId,
               sessionKind,
               cwd: request.cwd,
+              ...(gitCommonDir === undefined ? {} : { writableRoots: [gitCommonDir] }),
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

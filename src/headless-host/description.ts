@@ -307,7 +307,11 @@ export function codexMcpConfigArgs(
     const command = typeof row.command === "string" ? row.command : undefined;
     if (name === undefined || name === "" || command === undefined || command === "") continue;
     const prefix = `mcp_servers.${name}`;
+    // required=true: fail the exec if the AK relay cannot handshake (official:
+    // required MCP init failure exits with error). Without it, a silent drop
+    // would hide a broken intermediate-tool channel (#646 须真跑证②).
     args.push("-c", `${prefix}.command=${codexTomlString(command)}`);
+    args.push("-c", `${prefix}.required=true`);
     if (Array.isArray(row.args) && row.args.every((item): item is string => typeof item === "string")) {
       args.push("-c", `${prefix}.args=${codexTomlStringArray(row.args)}`);
     }
@@ -357,6 +361,12 @@ export function codexTurnArgs(options: {
   readonly session: { readonly kind: "new" } | { readonly kind: "resume"; readonly id: string };
   /** When cwd is not a git work tree, pass `--skip-git-repo-check`. */
   readonly skipGitRepoCheck?: boolean;
+  /**
+   * Extra writable roots under workspace-write (absolute paths).
+   * Git worktrees need the common dir writable for index.lock / commit
+   * (official `sandbox_workspace_write.writable_roots` / `--add-dir`).
+   */
+  readonly writableRoots?: readonly string[];
 }): string[] {
   const args: string[] = ["exec"];
   if (options.session.kind === "resume") {
@@ -375,6 +385,20 @@ export function codexTurnArgs(options: {
   // New turn also takes the explicit flag (document-preferred face).
   if (options.session.kind === "new") {
     args.push("--sandbox", "workspace-write");
+  }
+
+  const roots = (options.writableRoots ?? []).filter((root) => root !== "");
+  if (roots.length > 0) {
+    // Resume has no --add-dir; both paths use the config key so rights match.
+    args.push(
+      "-c",
+      `sandbox_workspace_write.writable_roots=${codexTomlStringArray(roots)}`,
+    );
+    if (options.session.kind === "new") {
+      for (const root of roots) {
+        args.push("--add-dir", root);
+      }
+    }
   }
 
   args.push("-c", `model_instructions_file=${codexTomlString(options.systemPromptPath)}`);
