@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { retainDiagnosticTail } from "../diagnostic-tail.ts";
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
@@ -135,9 +136,8 @@ export function connectAcpStdio(options: {
   let nextId = 0;
   let closed = false;
   let terminalError: Error | undefined;
-  // Diagnostic tail only — not an unbounded transcript face (same class as headless).
+  // Rolling diagnostic tail only — not an unbounded transcript face (same class as headless).
   let stderr = "";
-  const STDERR_DIAGNOSTIC_CAP = 16 * 1024;
   const settleClosed = (error: Error): void => {
     if (closed) return;
     closed = true;
@@ -154,11 +154,7 @@ export function connectAcpStdio(options: {
     child.kill("SIGTERM");
   };
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-    if (stderr.length >= STDERR_DIAGNOSTIC_CAP) return;
-    const next = stderr + chunk;
-    stderr = next.length <= STDERR_DIAGNOSTIC_CAP
-      ? next
-      : `${next.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
+    stderr = retainDiagnosticTail(stderr + chunk);
   });
   child.on("error", (error) => settleClosed(acpError("acp-process-error", `ACP process error: ${error.message}`, error)));
   createInterface({ input: child.stdout }).on("line", (line) => {

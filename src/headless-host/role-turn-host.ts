@@ -15,6 +15,7 @@ import {
   type AcpPreparedTurn,
   type AcpSessionIdentityAuthority,
 } from "../acp-host/role-turn-host.ts";
+import { retainDiagnosticTail } from "../diagnostic-tail.ts";
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   headlessMcpConfigDocument,
@@ -112,14 +113,6 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
   return last;
 }
 
-/** Bound stderr retained only for failure diagnostics (not a dossier copy). */
-const STDERR_DIAGNOSTIC_CAP = 16 * 1024;
-
-function clipDiagnostic(text: string): string {
-  if (text.length <= STDERR_DIAGNOSTIC_CAP) return text;
-  return `${text.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
-}
-
 /**
  * If `line` is a result-candidate JSON object, return its trimmed text; else undefined.
  * Used to roll the sole stdout retained for final parse (no full-stream copy).
@@ -215,10 +208,8 @@ function spawnHeadlessTurn(options: {
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      // Cap retained stderr: diagnostics only, not an unbounded transcript face.
-      if (stderr.length < STDERR_DIAGNOSTIC_CAP) {
-        stderr = clipDiagnostic(stderr + chunk);
-      }
+      // Rolling diagnostic tail only — not an unbounded transcript face.
+      stderr = retainDiagnosticTail(stderr + chunk);
     });
     child.on("error", (error) => {
       if (settled) return;
@@ -447,7 +438,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 knownFailure: {
                   cause: "output",
                   identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
-                  diagnostic: clipDiagnostic(spawned.stderr.trim() || "headless CLI produced no parseable result"),
+                  diagnostic: retainDiagnosticTail(spawned.stderr.trim() || "headless CLI produced no parseable result"),
                   details: { sessionId, exitCode: spawned.code },
                 },
               };
@@ -471,7 +462,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 ? envelope.result
                 : Array.isArray(envelope.errors)
                   ? envelope.errors.map(String).join("\n")
-                  : clipDiagnostic(spawned.stderr.trim() || "headless CLI reported is_error");
+                  : retainDiagnosticTail(spawned.stderr.trim() || "headless CLI reported is_error");
               outcome = {
                 code: spawned.code,
                 stderr: spawned.stderr,
