@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sole stamp+publish body for publish-registry workflow (and its contract tests).
 # CHANNEL arrives only via process env — never expanded into shell source.
-# Routing (main→latest / allowlist branch→next) belongs to publish-registry.yml;
+# Routing (default branch → latest only; #798) belongs to publish-registry.yml;
 # this script owns version stamping and idempotent dist-tag only.
 set -euo pipefail
 

@@ -2,14 +2,14 @@
 # distribution channel. Auth is npm Trusted Publishing (OIDC): no long-lived
 # token — the registry trusts this repository + workflow file via the package's
 # Trusted Publisher configuration. The version is stamped at publish time as
-# 0.1.<commit-count> on main (dist-tag latest), or
-# 0.1.<commit-count>-next.<shortsha> on allowlisted non-main branches
-# (dist-tag next) — monotonic per merge on main, unique per commit on next,
-# no write-back commit. Requires npm CLI >= 11.5.1 (Node 24 bundles it).
+# 0.1.<commit-count> on the repository default branch (dist-tag latest) —
+# monotonic per merge, no write-back commit. Requires npm CLI >= 11.5.1
+# (Node 24 bundles it). Non-default-branch CI completions never publish
+# (issue #798; #555 non-main→next path revoked).
 #
-# Trigger/order seam: only ci workflow_run completion. Routing reads
-# workflow_run.head_branch; checkout pins workflow_run.head_sha. Allowlist sole
-# source of truth is ci.yml push.branches (do not copy here). No workflow_dispatch.
+# Trigger/order seam: only ci workflow_run completion. Eligibility binds
+# success + push + head_branch == repository.default_branch (dynamic; no
+# branch name list). Checkout pins workflow_run.head_sha. No workflow_dispatch.
 name: publish-registry
 
 on:
@@ -23,11 +23,14 @@ permissions:
 
 jobs:
   publish:
-    # pull_request CI completions also fire workflow_run; bind event=push so only
-    # allowlisted branch pushes publish. Failure completions never publish.
+    # pull_request CI completions also fire workflow_run; bind event=push and
+    # default branch so only the repository default branch publishes. Failure
+    # completions never publish. Branch gate is dynamic (repository.default_branch),
+    # not a copied name list (issue #798).
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +49,6 @@ jobs:
       - name: Stamp version and publish (OIDC)
         env:
           # Expression → env value only; shell reads $CHANNEL (never expands into source).
-          # main → latest; every other push that reached this job (allowlisted by ci.yml) → next.
-          CHANNEL: ${{ github.event.workflow_run.head_branch == 'main' && 'latest' || 'next' }}
+          # Default-branch-only publish → latest (#798; next path revoked).
+          CHANNEL: latest
         run: bash scripts/publish-registry-stamp.sh
