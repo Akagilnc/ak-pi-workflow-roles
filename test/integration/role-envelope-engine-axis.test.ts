@@ -109,23 +109,32 @@ async function withEnvelopeHome<T>(
 
 test("shared envelope registers engine detour when request.engine is set", async () => {
   await withEnvelopeHome(async ({ socketPath, request }) => {
-    const prepared = await prepareRoleEnvelope({
-      request: request("agy"),
-      dependencies: createRoleRuntimeDependencies(packageRoot),
-      socketPath,
-    });
+    // Hermetic baseline: ambient AK_ROLE_ENGINE (e.g. engine-dispatched fixer) must
+    // not masquerade as request.engine residual after dispose restores prior.
+    const previous = process.env[AK_ROLE_ENGINE_ENV];
+    delete process.env[AK_ROLE_ENGINE_ENV];
     try {
-      assert.equal(process.env[AK_ROLE_ENGINE_ENV], "agy");
-      const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
-      assert.equal(
-        names.includes(ENGINE_DETOUR_TOOL_NAME),
-        true,
-        `expected ${ENGINE_DETOUR_TOOL_NAME} in ${JSON.stringify(names)}`,
-      );
+      const prepared = await prepareRoleEnvelope({
+        request: request("agy"),
+        dependencies: createRoleRuntimeDependencies(packageRoot),
+        socketPath,
+      });
+      try {
+        assert.equal(process.env[AK_ROLE_ENGINE_ENV], "agy");
+        const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
+        assert.equal(
+          names.includes(ENGINE_DETOUR_TOOL_NAME),
+          true,
+          `expected ${ENGINE_DETOUR_TOOL_NAME} in ${JSON.stringify(names)}`,
+        );
+      } finally {
+        await prepared.dispose?.();
+      }
+      assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
     } finally {
-      await prepared.dispose?.();
+      if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
+      else process.env[AK_ROLE_ENGINE_ENV] = previous;
     }
-    assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
   });
 });
 
