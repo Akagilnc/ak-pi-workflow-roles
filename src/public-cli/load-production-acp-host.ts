@@ -25,6 +25,7 @@ type GenericAcpHostFactory = (options: {
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: AcpHostDescription;
+  hostName: string;
 }) => RoleTurnHost;
 
 /**
@@ -48,5 +49,5 @@ export async function loadProductionAcpHostFactory(
     createProductionAcpRoleTurnHost: GenericAcpHostFactory;
   };
   const create = mod.createProductionAcpRoleTurnHost;
-  return (options) => create({ ...options, description });
+  return (options) => create({ ...options, description, hostName: host });
 }

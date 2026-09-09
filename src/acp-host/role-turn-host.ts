@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { reportHostSessionEvent } from "../host-session-record.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
@@ -82,6 +83,8 @@ export type AcpSessionIdentityAuthority = Readonly<{
 
 export type AcpRoleTurnHostConfig = Readonly<{
   sessionIdentity: AcpSessionIdentityAuthority;
+  /** Seat-table host key (e.g. grok-build) for sitian host field. */
+  hostName: string;
   /** Whether a bound resume reuses the native session or mints a fresh one. */
   boundResume: AcpHostDescription["boundResume"];
   /**
@@ -244,6 +247,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             return failure("activation", "UncontrolledAcpSession", "ak-config-missing");
           }
           connection = await config.connect(request);
+          // Live host-session records: ACP session/update → sitian sole entry (#811).
+          // Register before initialize so early updates are not dropped.
+          const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+          connection.onNotification?.((method, params) => {
+            if (method !== "session/update") return;
+            reportHostSessionEvent({
+              host: config.hostName,
+              cwd: request.cwd,
+              sessionParent,
+              source: "acp-host",
+              event: { method, params },
+            });
+          });
           const initialized = await connection.request("initialize", {
             protocolVersion: 1,
             clientCapabilities: {},

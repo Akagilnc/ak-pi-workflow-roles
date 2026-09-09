@@ -15,6 +15,7 @@ import {
   type AcpPreparedTurn,
   type AcpSessionIdentityAuthority,
 } from "../acp-host/role-turn-host.ts";
+import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   headlessMcpConfigDocument,
   headlessTurnArgs,
@@ -24,6 +25,8 @@ import {
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
   sessionIdentity: AcpSessionIdentityAuthority;
+  /** Seat-table host key (e.g. claude) for sitian host field. */
+  hostName: string;
   binary: string;
   prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
   env?: NodeJS.ProcessEnv;
@@ -49,7 +52,7 @@ function failure(
   };
 }
 
-/** One headless CLI result envelope (`--output-format json`). */
+/** One headless CLI result envelope (stream-json last line, or single json doc). */
 export type HeadlessCliResult = Readonly<{
   session_id?: string;
   is_error?: boolean;
@@ -63,9 +66,9 @@ export type HeadlessCliResult = Readonly<{
 
 /**
  * Parse host stdout into the result envelope.
- * Production uses `--output-format json` (one document). stream-json last-result
- * parsing remains so a misconfigured description still yields a typed miss rather
- * than a silent empty parse — not a permanent probe path.
+ * Production uses `--output-format stream-json` (#811 live records); last-result
+ * line is the typed receipt. A single-document `json` body still parses so a
+ * misconfigured description yields a typed miss rather than a silent empty parse.
  */
 export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | undefined {
   const trimmed = stdout.trim();
@@ -81,7 +84,7 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
   } catch {
     // fall through
   }
-  // Defensive: if a description still requests stream-json, keep only the result line.
+  // stream-json: keep the last result line (structured_output / is_error live here).
   let last: HeadlessCliResult | undefined;
   for (const line of trimmed.split("\n")) {
     const text = line.trim();
@@ -115,6 +118,8 @@ function spawnHeadlessTurn(options: {
   readonly env: NodeJS.ProcessEnv;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** Called for each complete stdout line as it arrives (live stream-json). */
+  readonly onStdoutLine?: (line: string) => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -128,14 +133,32 @@ function spawnHeadlessTurn(options: {
     });
     let stdout = "";
     let stderr = "";
+    let lineBuffer = "";
     let settled = false;
     let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
+    const flushStdoutLines = (chunk: string, final: boolean): void => {
+      stdout += chunk;
+      if (options.onStdoutLine === undefined) return;
+      lineBuffer += chunk;
+      for (;;) {
+        const end = lineBuffer.indexOf("\n");
+        if (end < 0) break;
+        const line = lineBuffer.slice(0, end);
+        lineBuffer = lineBuffer.slice(end + 1);
+        options.onStdoutLine(line);
+      }
+      if (final && lineBuffer.length > 0) {
+        options.onStdoutLine(lineBuffer);
+        lineBuffer = "";
+      }
+    };
     const settle = (code: number | null): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
+      flushStdoutLines("", true);
       resolve({ code, stdout, stderr, timedOut });
     };
     const onAbort = (): void => {
@@ -145,7 +168,7 @@ function spawnHeadlessTurn(options: {
       if (timer !== undefined) clearTimeout(timer);
       reject(Object.assign(new Error("headless host aborted"), { code: "host-aborted" }));
     };
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       // Cap retained stderr: diagnostics only, not an unbounded transcript face.
       if (stderr.length < STDERR_DIAGNOSTIC_CAP) {
@@ -289,6 +312,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             });
 
             let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+            const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
             try {
               spawned = await spawnHeadlessTurn({
                 binary: config.binary,
@@ -297,6 +321,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 env,
                 ...(abortSignal === undefined ? {} : { signal: abortSignal }),
                 ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+                onStdoutLine(line) {
+                  const trimmed = line.trim();
+                  if (trimmed === "") return;
+                  try {
+                    const event = JSON.parse(trimmed) as unknown;
+                    reportHostSessionEvent({
+                      host: config.hostName,
+                      cwd: request.cwd,
+                      sessionParent,
+                      source: "headless-host",
+                      event,
+                    });
+                  } catch {
+                    // Non-JSON noise on stdout is not a host structured event.
+                  }
+                },
               });
             } catch (error) {
               if (
