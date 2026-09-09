@@ -59,12 +59,7 @@ async function pathExists(path: string): Promise<boolean> {
  * any other outcome is infrastructure failure (rethrown as-is).
  */
 async function requireInsideWorkTree(cwd: string): Promise<void> {
-  let stdout: Uint8Array;
-  try {
-    stdout = await git(cwd, ["rev-parse", "--is-inside-work-tree"]);
-  } catch (error) {
-    throw error;
-  }
+  const stdout = await git(cwd, ["rev-parse", "--is-inside-work-tree"]);
   if (exactUtf8(stdout, "Git worktree check").trim() !== "true") {
     throw new Error("Assigned path is not inside a Git work tree");
   }
@@ -76,18 +71,19 @@ async function requireInsideWorkTree(cwd: string): Promise<void> {
  * any other exit/spawn failure rethrown.
  */
 async function tryResolveCommit(cwd: string, rev: string): Promise<string | undefined> {
+  let stdout: Uint8Array;
   try {
-    await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], {
+    const res = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], {
       cwd,
       encoding: "buffer",
       maxBuffer: 16 * 1024 * 1024,
     });
+    stdout = new Uint8Array(res.stdout);
   } catch (error) {
-    const code = (error as GitExecError).code;
-    if (code === 1) return undefined;
+    if ((error as GitExecError).code === 1) return undefined;
     throw error;
   }
-  const oid = line(await git(cwd, ["rev-parse", "--verify", `${rev}^{commit}`]), `Git ${rev}`);
+  const oid = line(stdout, `Git ${rev}`);
   if (!isFullGitObjectId(oid)) {
     throw new Error(`Git ${rev} identity is unavailable or invalid`);
   }
