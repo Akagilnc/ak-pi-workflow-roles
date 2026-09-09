@@ -3,20 +3,16 @@
  * One authority for host stderr retention (headless + ACP).
  */
 
-/** Default cap for retained diagnostic tails (bytes/chars). */
+/** Fixed cap for retained diagnostic tails. */
 export const DIAGNOSTIC_TAIL_CAP = 16 * 1024;
 
 const CLIP_MARK = "…[stderr clipped]\n";
 
 /**
- * Retain at most `cap` characters, keeping the newest bytes when over budget.
- * Clip mark is included inside the cap so the result never exceeds `cap`.
+ * Retain at most DIAGNOSTIC_TAIL_CAP characters, keeping the newest bytes
+ * when over budget. Clip mark is included inside the fixed cap.
  */
-export function retainDiagnosticTail(
-  text: string,
-  cap: number = DIAGNOSTIC_TAIL_CAP,
-): string {
-  if (text.length <= cap) return text;
-  const keep = Math.max(0, cap - CLIP_MARK.length);
-  return CLIP_MARK + text.slice(text.length - keep);
+export function retainDiagnosticTail(text: string): string {
+  if (text.length <= DIAGNOSTIC_TAIL_CAP) return text;
+  return CLIP_MARK + text.slice(text.length - (DIAGNOSTIC_TAIL_CAP - CLIP_MARK.length));
 }
