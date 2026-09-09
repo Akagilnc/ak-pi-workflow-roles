@@ -29,7 +29,8 @@ cursor-agent -p -f --output-format text --model <MODEL_ID> "YOUR_LABOR_PROMPT"
   `cursor-grok-4.6-high`, plus `-fast` variants); some models also accept a
   bracket override form (`'claude-opus-4-8[context=1m,effort=high]'` — see
   `cursor-agent --help`).
-- Owner pool directive 2026-08-28: default labor model = `cursor-grok-4.6-low`.
+- This note does not pin a model id. The dispatch order (owner pool
+  directive) names the model to pass verbatim via `--model`.
 - Always `--output-format text`; never `stream-json` (the event stream goes back
   into the seat's context as noise — see `opus.md`).
 
@@ -39,9 +40,10 @@ wrap this engine behind `ak-role` flags.
 ## Smoke test (run before first labor leg of a session)
 
 ```bash
-cursor-agent -p -f --output-format text --model cursor-grok-4.6-low "Reply with exactly one word: OK"
+cursor-agent -p -f --output-format text --model <MODEL_ID> "Reply with exactly one word: OK"
 ```
 
-Expected: stdout ends with exactly `OK`, exit code 0. Verified 2026-08-28 on
-this host (Cursor subscription login). If it asks about directory trust, the
+Expected: stdout ends with exactly `OK`, exit code 0. Mechanics verified
+2026-08-28 on this host (Cursor subscription login) with a dispatch-order
+model id substituted for `<MODEL_ID>`. If it asks about directory trust, the
 `-f` flag (or `--trust`) is missing.

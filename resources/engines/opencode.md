@@ -13,11 +13,13 @@ The machine entrypoint is `opencode`. Run from the role project root.
 Non-interactive labor uses `run` with an explicit model:
 
 ```bash
-opencode run -m opencode-go/glm-5.2 "YOUR_LABOR_PROMPT"
+opencode run -m <MODEL_ID> "YOUR_LABOR_PROMPT"
 ```
 
-- `-m provider/model` selects the model. **Always confirm the current id with
-  `opencode models` first** — provider prefixes migrate (verified 2026-08-21:
+- Model id is not pinned by this note; it comes from the dispatch order
+  (owner pool directive), passed verbatim as `provider/model`. **Always
+  confirm the current id with `opencode models` first** — provider prefixes
+  migrate (verified 2026-08-21:
   GLM lives under `opencode-go/`, e.g. `opencode-go/glm-5.2`; the older
   `zai/glm-5.2` id errors with "Unexpected server error").
 - Plain text output only (never `--format json` for labor — the returned body
