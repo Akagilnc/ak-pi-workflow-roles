@@ -23,8 +23,10 @@ export const AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE" as const;
 export const ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>" as const;
 
 /**
- * Sole AK_ROLE_ENGINE write seam for public role child env (#391 E2).
- * Delete ambient inheritance first; own-key undefined mask survives process.env re-merge.
+ * Sole AK_ROLE_ENGINE write seam (#391 E2 / #818).
+ * Delete ambient first. Child-env objects keep an own-key undefined mask so a
+ * later process.env re-merge cannot revive ambient; process.env itself only
+ * deletes (Node stringifies undefined assignments).
  */
 export function applyEngineChildEnv(
   childEnv: NodeJS.ProcessEnv,
@@ -33,7 +35,7 @@ export function applyEngineChildEnv(
   delete childEnv[AK_ROLE_ENGINE_ENV];
   if (engine !== undefined && engine.trim() !== "") {
     childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
-  } else {
+  } else if (childEnv !== process.env) {
     childEnv[AK_ROLE_ENGINE_ENV] = undefined;
   }
 }

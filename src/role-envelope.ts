@@ -4,6 +4,10 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  AK_ROLE_ENGINE_ENV,
+  applyEngineChildEnv,
+} from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -563,12 +567,15 @@ export async function prepareRoleEnvelope(options: {
   await listen(server, options.socketPath);
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
-  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
-  // runIdentity and court-attempt identity correlate with settlement. Inject only
-  // after prepare succeeds (below); dispose must restore including unset.
+  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT / AK_ROLE_ENGINE injection onto the
+  // parent so ledger identity and engine detour registration (engineNameFromEnv)
+  // see the same signals. Engine must be applied before session_start (registration
+  // gate); run-dir may wait until prepare succeeds. Dispose restores including unset.
   let priorAkRoleRunDir: string | undefined;
   let priorAkRoleCourtAttempt: string | undefined;
+  let priorAkRoleEngine: string | undefined;
   let runDirInjected = false;
+  let engineEnvInjected = false;
   const restoreAkRoleRunEnv = (): void => {
     if (!runDirInjected) return;
     runDirInjected = false;
@@ -576,6 +583,12 @@ export async function prepareRoleEnvelope(options: {
     else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
     if (priorAkRoleCourtAttempt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
     else process.env.AK_ROLE_COURT_ATTEMPT = priorAkRoleCourtAttempt;
+  };
+  const restoreAkRoleEngineEnv = (): void => {
+    if (!engineEnvInjected) return;
+    engineEnvInjected = false;
+    if (priorAkRoleEngine === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
+    else process.env[AK_ROLE_ENGINE_ENV] = priorAkRoleEngine;
   };
   const dispose = async (): Promise<void> => {
     if (disposed) return;
@@ -588,6 +601,11 @@ export async function prepareRoleEnvelope(options: {
     }
     try {
       restoreAkRoleRunEnv();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      restoreAkRoleEngineEnv();
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -660,6 +678,12 @@ export async function prepareRoleEnvelope(options: {
   // (delivered via _meta.systemPromptOverride where the host honors it), so
   // activation runs during prepare.
   try {
+    // #818: engine axis is a middle-layer step. registerEngineDetourTool reads
+    // engineNameFromEnv during session_start — apply before that emit. One write
+    // seam (applyEngineChildEnv); ambient cleared when request has no engine.
+    priorAkRoleEngine = process.env[AK_ROLE_ENGINE_ENV];
+    applyEngineChildEnv(process.env, request.engine);
+    engineEnvInjected = true;
     await emit("session_start", { reason: request.continuation.kind });
     const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
     let prompt = request.continuation.prompt;
