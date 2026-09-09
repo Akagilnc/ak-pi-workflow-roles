@@ -21,12 +21,24 @@ import {
   type HeadlessHostDescription,
 } from "./description.ts";
 
+/** One headless CLI process turn — production spawn or injected seam (#813). */
+export type HeadlessTurnSpawn = (options: {
+  readonly binary: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>;
+
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
   sessionIdentity: AcpSessionIdentityAuthority;
   binary: string;
   prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
   env?: NodeJS.ProcessEnv;
+  /** Defaults to process spawn; inject to observe argv without a child process. */
+  spawnTurn?: HeadlessTurnSpawn;
 }>;
 
 function failure(
@@ -108,14 +120,7 @@ function clipDiagnostic(text: string): string {
   return `${text.slice(0, STDERR_DIAGNOSTIC_CAP)}\n…[stderr clipped]`;
 }
 
-function spawnHeadlessTurn(options: {
-  readonly binary: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly signal?: AbortSignal;
-  readonly timeoutMs?: number;
-}): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+const spawnHeadlessTurn: HeadlessTurnSpawn = (options) => {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
       reject(Object.assign(new Error("headless host aborted"), { code: "host-aborted" }));
@@ -168,7 +173,7 @@ function spawnHeadlessTurn(options: {
       }, options.timeoutMs);
     }
   });
-}
+};
 
 function cleanupErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -207,6 +212,7 @@ function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): Rol
  */
 export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
   let serial = Promise.resolve();
+  const spawnTurn = config.spawnTurn ?? spawnHeadlessTurn;
   return {
     executeTurn(request) {
       const execution = serial.then(async (): Promise<RoleTurnResult> => {
@@ -290,7 +296,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
             let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
             try {
-              spawned = await spawnHeadlessTurn({
+              spawned = await spawnTurn({
                 binary: config.binary,
                 args,
                 cwd: request.cwd,

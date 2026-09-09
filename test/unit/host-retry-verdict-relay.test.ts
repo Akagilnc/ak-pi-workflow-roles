@@ -1,7 +1,6 @@
 /**
  * #813: non-pi last-mile adapters resume with shared-envelope retry.message.
- * No host-invented "Resubmit it" line; officer/correctable text is delivery-only.
- * Mechanical non-sole keeps the shared actionable resume text (not bare code).
+ * Transport only: opaque payload passthrough. No free-text presentation locks.
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -10,20 +9,26 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import {
-  mechanicalSubmissionRejectionResumeMessage,
-  NON_SOLE_ROUND_RESUME_MESSAGE,
-  projectCorrectableExecuteRejection,
-} from "../../src/submission-correctable-error.ts";
+  createHeadlessRoleTurnHost,
+  type HeadlessTurnSpawn,
+} from "../../src/headless-host/role-turn-host.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { mechanicalSubmissionRejectionResumeMessage } from "../../src/submission-correctable-error.ts";
+import { projectCorrectableExecuteRejection } from "../../src/submission-correctable-error.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 
+/** Opaque officer payload — not a production free-text template under test. */
 const OFFICER_VERDICT = JSON.stringify({
   status: "bounce",
   findings: ["missing commit evidence"],
   reason: "HEAD unchanged after claimed fix",
 });
+
+/** Opaque mechanical payload supplied by the shared envelope, observed as transport bytes. */
+const MECHANICAL_RETRY_TEXT = "mechanical-retry-payload";
 
 function baseRequest(runDirectory: string): RoleTurnRequest {
   return {
@@ -38,13 +43,16 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
   };
 }
 
+function promptFlagValue(args: readonly string[], flag: string): string {
+  const index = args.indexOf(flag);
+  assert.ok(index >= 0, `missing ${flag}`);
+  return args[index + 1] ?? "";
+}
+
 async function captureAcpResumePrompts(input: {
   readonly runDirectory: string;
-  readonly firstRetry: {
-    readonly code: string;
-    readonly toolCallIds: readonly string[];
-    readonly message: string;
-  };
+  readonly firstRetryMessage: string;
+  readonly firstRetryCode?: string;
 }): Promise<string[]> {
   const prompts: string[] = [];
   let closeRoundCalls = 0;
@@ -54,8 +62,7 @@ async function captureAcpResumePrompts(input: {
       if (method === "session/new") return { sessionId: "sess-813" };
       if (method === "session/prompt") {
         const parts = params.prompt as ReadonlyArray<{ type?: string; text?: string }> | undefined;
-        const text = parts?.map((part) => part.text ?? "").join("") ?? "";
-        prompts.push(text);
+        prompts.push(parts?.map((part) => part.text ?? "").join("") ?? "");
         return { stopReason: "end_turn" };
       }
       if (method === "session/close") return {};
@@ -85,7 +92,14 @@ async function captureAcpResumePrompts(input: {
       async closeRound() {
         closeRoundCalls += 1;
         if (closeRoundCalls === 1) {
-          return { accepted: false as const, retry: input.firstRetry };
+          return {
+            accepted: false as const,
+            retry: {
+              code: input.firstRetryCode ?? "bounce",
+              toolCallIds: ["call-1"],
+              message: input.firstRetryMessage,
+            },
+          };
         }
         return { accepted: true as const };
       },
@@ -97,16 +111,86 @@ async function captureAcpResumePrompts(input: {
   return prompts;
 }
 
-test("ACP resume prompt is shared officer retry.message (no host-invented resubmit line)", async () => {
+async function captureHeadlessResumePrompts(input: {
+  readonly runDirectory: string;
+  readonly firstRetryMessage: string;
+}): Promise<string[]> {
+  const prompts: string[] = [];
+  let closeRoundCalls = 0;
+  const description: HeadlessHostDescription = {
+    binaryFromHome: ["fake"],
+    sessionBindingFile: "binding.json",
+    fixedArgs: ["--output-format", "json"],
+    promptFlag: "-p",
+    modelFlag: "--model",
+    effortFlag: "--effort",
+    systemPromptFlag: "--system-prompt-file",
+    jsonSchemaFlag: "--json-schema",
+    mcpConfigFlag: "--mcp-config",
+    sessionIdFlag: "--session-id",
+    resumeFlag: "--resume",
+  };
+  const spawnTurn: HeadlessTurnSpawn = async (options) => {
+    prompts.push(promptFlagValue(options.args, "-p"));
+    return {
+      code: 0,
+      stdout: `${JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "headless-sess-813",
+        structured_output: { status: "completed", report: "ok" },
+      })}\n`,
+      stderr: "",
+      timedOut: false,
+    };
+  };
+  const host = createHeadlessRoleTurnHost({
+    description,
+    binary: "fake-binary",
+    spawnTurn,
+    sessionIdentity: {
+      async load() {
+        return undefined;
+      },
+      async bind() {},
+      resolveSessionFile: () => join(input.runDirectory, "session", "session.jsonl"),
+    },
+    prepare: async () => ({
+      mcpServers: [],
+      systemPrompt: { body: "probe", materials: [] },
+      prompt: "initial-assignment",
+      jsonSchema: { type: "object" },
+      terminatingToolName: "ak_judge_output",
+      async ingestStructuredOutput() {},
+      async closeRound() {
+        closeRoundCalls += 1;
+        if (closeRoundCalls === 1) {
+          return {
+            accepted: false as const,
+            retry: {
+              code: "bounce",
+              toolCallIds: ["call-1"],
+              message: input.firstRetryMessage,
+            },
+          };
+        }
+        return { accepted: true as const };
+      },
+    }),
+  });
+  const result = await host.executeTurn(baseRequest(input.runDirectory));
+  assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+  assert.equal(result.code, 0);
+  return prompts;
+}
+
+test("ACP resume delivers opaque officer retry.message unchanged", async () => {
   const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-officer-"));
   try {
     const prompts = await captureAcpResumePrompts({
       runDirectory,
-      firstRetry: {
-        code: "bounce",
-        toolCallIds: ["call-1"],
-        message: OFFICER_VERDICT,
-      },
+      firstRetryMessage: OFFICER_VERDICT,
     });
     assert.deepEqual(prompts, ["initial-assignment", OFFICER_VERDICT]);
   } finally {
@@ -114,34 +198,40 @@ test("ACP resume prompt is shared officer retry.message (no host-invented resubm
   }
 });
 
-test("ACP resume prompt keeps shared mechanical non-sole message", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-nonssole-"));
+test("ACP resume delivers opaque mechanical retry.message unchanged", async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-mech-"));
   try {
-    const message = mechanicalSubmissionRejectionResumeMessage("non-sole-round");
     const prompts = await captureAcpResumePrompts({
       runDirectory,
-      firstRetry: {
-        code: "non-sole-round",
-        toolCallIds: ["a", "b"],
-        message,
-      },
+      firstRetryCode: "non-sole-round",
+      firstRetryMessage: MECHANICAL_RETRY_TEXT,
     });
-    assert.deepEqual(prompts, ["initial-assignment", NON_SOLE_ROUND_RESUME_MESSAGE]);
-    assert.notEqual(message, "non-sole-round");
+    assert.deepEqual(prompts, ["initial-assignment", MECHANICAL_RETRY_TEXT]);
   } finally {
     await rm(runDirectory, { recursive: true, force: true });
   }
 });
 
-test("mechanical non-sole resume message stays actionable and shared", () => {
-  assert.equal(
-    mechanicalSubmissionRejectionResumeMessage("non-sole-round"),
-    NON_SOLE_ROUND_RESUME_MESSAGE,
-  );
-  // Not the bare internal code the bounce finding rejected.
-  assert.notEqual(NON_SOLE_ROUND_RESUME_MESSAGE, "non-sole-round");
-  assert.ok(NON_SOLE_ROUND_RESUME_MESSAGE.length > "non-sole-round".length);
-  assert.equal(mechanicalSubmissionRejectionResumeMessage("other-code"), "other-code");
+test("headless resume delivers opaque retry.message unchanged", async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-headless-"));
+  try {
+    const prompts = await captureHeadlessResumePrompts({
+      runDirectory,
+      firstRetryMessage: OFFICER_VERDICT,
+    });
+    assert.deepEqual(prompts, ["initial-assignment", OFFICER_VERDICT]);
+  } finally {
+    await rm(runDirectory, { recursive: true, force: true });
+  }
+});
+
+test("mechanical non-sole code selects a dedicated resume branch", () => {
+  // Structured branch only: non-sole is not the identity path used for unknown codes.
+  // Does not lock presentation bytes of the dedicated branch.
+  const unknown = mechanicalSubmissionRejectionResumeMessage("other-code");
+  assert.equal(unknown, "other-code");
+  const nonSole = mechanicalSubmissionRejectionResumeMessage("non-sole-round");
+  assert.notEqual(nonSole, "non-sole-round");
 });
 
 test("correctable bounce projection keeps officer receipt as diagnostic text", () => {
