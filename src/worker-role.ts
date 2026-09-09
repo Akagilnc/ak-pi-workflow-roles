@@ -329,6 +329,7 @@ export function createCoderRoleRuntime(
   let phase: WorkerPhase | undefined;
   let binding: CanonicalSkillBinding<"tdd"> | undefined;
   let tddInvocationInjected = false;
+  let originalRequest: string | undefined;
   let expansionPending = false;
   let expansionCaptured = false;
   let lifecycleRegistered = false;
@@ -426,15 +427,29 @@ export function createCoderRoleRuntime(
             };
           },
         });
-        pi.on("input", () => {
+        pi.on("input", (event) => {
           if (phase !== "apply" || tddInvocationInjected) {
             return { action: "continue" as const };
           }
-          // Arm expansion capture only. Host adapters own method delivery
-          // (Pi: native skill form inside src/pi; non-Pi: typed methods/systemPrompt).
           tddInvocationInjected = true;
           expansionPending = true;
-          return { action: "continue" as const };
+          // Pi adapter projects native form + originalRequest; non-pi keeps plain text.
+          const native = binding === undefined
+            ? undefined
+            : pi.capabilities?.nativeSkillInvocation?.(binding.name, event.text);
+          if (native === undefined) {
+            originalRequest = event.text.trim();
+            return { action: "continue" as const };
+          }
+          originalRequest = native.originalRequest;
+          if (native.text === event.text) {
+            return { action: "continue" as const };
+          }
+          return {
+            action: "transform" as const,
+            text: native.text,
+            ...(event.images === undefined ? {} : { images: event.images }),
+          };
         });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
@@ -447,9 +462,12 @@ export function createCoderRoleRuntime(
             }
             if (expansionPending) {
               expansionPending = false;
-              expansionCaptured = binding.captureExpansion(
-                pi.capabilities?.skillExpansion(event.prompt),
-              ) !== undefined;
+              if (originalRequest !== undefined) {
+                expansionCaptured = binding.captureExpansion(
+                  pi.capabilities?.skillExpansion(event.prompt),
+                  originalRequest,
+                ) !== undefined;
+              }
             }
           }
           return {

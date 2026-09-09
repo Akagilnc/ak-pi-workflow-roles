@@ -157,6 +157,25 @@ export function createPiRoleHostAdapter(
           userMessage,
         });
       },
+      /** Pi-native `/skill:` form — sole generation/recognition site (ADR 0082). */
+      nativeSkillInvocation(name, text) {
+        const token = `/skill:${name}`;
+        const trimmed = text.trimStart();
+        if (
+          trimmed === token
+          || trimmed.startsWith(`${token} `)
+          || trimmed.startsWith(`${token}\n`)
+        ) {
+          return Object.freeze({
+            text,
+            originalRequest: text.slice(text.indexOf(token) + token.length).trim(),
+          });
+        }
+        return Object.freeze({
+          text: text.length === 0 ? token : `${token} ${text}`,
+          originalRequest: text.trim(),
+        });
+      },
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),

@@ -882,14 +882,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        // Pi adapter prefixes single method as `/skill:… ${RESUME_TRANSPORT_ENVELOPE}` (#822).
+        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
         assert.equal(
-          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
-          true,
-        );
-        assert.equal(
-          args.some((a) => a.startsWith("/skill:code-review")),
-          true,
+          args.some((a) => a.startsWith("/skill:")),
+          false,
         );
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const material = await loadPackagedMethodSkillMaterial(

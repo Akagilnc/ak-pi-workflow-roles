@@ -264,12 +264,12 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       body: tddBody,
       snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
-    captureExpansion(evidence) {
+    captureExpansion(evidence, originalRequest) {
       return evidence?.name === "tdd"
         && evidence.location === tddPath
         && evidence.content === tddContent
-        && typeof evidence.userMessage === "string"
-        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: evidence.userMessage }
+        && evidence.userMessage === originalRequest
+        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
         : undefined;
     },
   };
@@ -2064,7 +2064,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   };
 
   // M1.1 — completed binds to the immediately following canonical expansion.
-  // Role body captures original request only; Pi `/skill:` is adapter-internal (#822).
+  // Pi adapter capability emits `/skill:tdd`; role keeps plain originalRequest (#822).
   {
     const harness = await start();
     assert.deepEqual(
@@ -2072,7 +2072,11 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
         {},
       ),
-      { action: "continue" },
+      {
+        action: "transform",
+        text: `/skill:tdd ${request}`,
+        images: [{ type: "image", data: "fixture" }],
+      },
     );
     assert.deepEqual(
       await harness.handlers.get("input")?.(
@@ -2215,12 +2219,15 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
   }
 
-  // Non-tdd slash text is plain original request (no role-body rewrite to /skill:tdd).
+  // Prefix-collision: capability prefixes forced tdd; originalRequest stays the raw text.
   {
     const harness = await start();
     assert.deepEqual(
       await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
-      { action: "continue" },
+      {
+        action: "transform",
+        text: "/skill:tdd /skill:tddfoo",
+      },
     );
     await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },

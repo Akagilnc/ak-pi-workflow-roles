@@ -26,12 +26,12 @@ export type CanonicalSkillBinding<Name extends CanonicalSkillName = CanonicalSki
   name: Name;
   snapshot: CanonicalSkillSnapshot;
   /**
-   * Accept host expansion evidence when name/location/content match the binding.
-   * `userMessage` is the host-reported preserved original task (ADR 0032);
-   * callers do not re-derive it by parsing host slash syntax.
+   * Accept host expansion evidence when name/location/content match the binding
+   * and userMessage equals the captured original request (ADR 0032).
    */
   captureExpansion(
     evidence: HostSkillExpansionEvidence | undefined,
+    originalRequest: string,
   ): CanonicalSkillEvidence<Name> | undefined;
 }>;
 
@@ -44,6 +44,7 @@ export function captureCanonicalSkillExpansion<Name extends CanonicalSkillName>(
   snapshot: CanonicalSkillSnapshot,
   configuredPath: string,
   evidence: HostSkillExpansionEvidence | undefined,
+  originalRequest: string,
 ): CanonicalSkillEvidence<Name> | undefined {
   const matchedPath =
     evidence?.location === configuredPath
@@ -58,7 +59,7 @@ export function captureCanonicalSkillExpansion<Name extends CanonicalSkillName>(
     evidence?.name !== name
     || matchedPath === undefined
     || evidence.content !== expectedContent
-    || typeof evidence.userMessage !== "string"
+    || evidence.userMessage !== originalRequest
   ) {
     return undefined;
   }
@@ -102,12 +103,13 @@ export async function loadCanonicalSkillBinding(
   const binding: CanonicalSkillBinding<typeof name> = {
     name,
     snapshot,
-    captureExpansion(evidence) {
+    captureExpansion(evidence, originalRequest) {
       return captureCanonicalSkillExpansion(
         name,
         snapshot,
         configuredPath,
         evidence,
+        originalRequest,
       );
     },
   };

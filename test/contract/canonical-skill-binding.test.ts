@@ -90,20 +90,20 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     const configuredEvidence = evidence("tdd", configuredPath, configuredContent, request);
     const resolvedEvidence = evidence("tdd", canonicalPath, resolvedContent, request);
 
-    assert.deepEqual(binding.captureExpansion(configuredEvidence), {
+    assert.deepEqual(binding.captureExpansion(configuredEvidence, request), {
       name: "tdd",
       location: configuredPath,
       content: configuredContent,
       userMessage: request,
     });
-    assert.deepEqual(binding.captureExpansion(resolvedEvidence), {
+    assert.deepEqual(binding.captureExpansion(resolvedEvidence, request), {
       name: "tdd",
       location: canonicalPath,
       content: resolvedContent,
       userMessage: request,
     });
     assert.deepEqual(
-      binding.captureExpansion(evidence("tdd", configuredPath, configuredContent, "")),
+      binding.captureExpansion(evidence("tdd", configuredPath, configuredContent, ""), ""),
       {
         name: "tdd",
         location: configuredPath,
@@ -114,12 +114,14 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     assert.equal(
       binding.captureExpansion(
         evidence("tdd", configuredPath, resolvedContent, request),
+        request,
       ),
       undefined,
     );
     assert.equal(
       binding.captureExpansion(
         evidence("tdd", canonicalPath, configuredContent, request),
+        request,
       ),
       undefined,
     );
@@ -131,10 +133,10 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     assert.match(reloaded.snapshot.body, /Changed after activation/);
 
     // Only complete typed evidence proves capture: frozen, freshly allocated, closed matrix.
-    const captured = binding.captureExpansion(configuredEvidence);
+    const captured = binding.captureExpansion(configuredEvidence, request);
     assert.ok(captured);
     assert.ok(Object.isFrozen(captured));
-    assert.notEqual(binding.captureExpansion(configuredEvidence), captured);
+    assert.notEqual(binding.captureExpansion(configuredEvidence, request), captured);
 
     const rejected: HostSkillExpansionEvidence[] = [
       evidence("tdd", "/copy/SKILL.md", resolvedContent, request),
@@ -156,11 +158,12 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
         ),
         request,
       ),
+      evidence("tdd", canonicalPath, resolvedContent, "Review a different point."),
     ];
     for (const row of rejected) {
-      assert.equal(binding.captureExpansion(row), undefined, JSON.stringify(row));
+      assert.equal(binding.captureExpansion(row, request), undefined, JSON.stringify(row));
     }
-    assert.equal(binding.captureExpansion(undefined), undefined);
+    assert.equal(binding.captureExpansion(undefined, request), undefined);
   });
 });
 

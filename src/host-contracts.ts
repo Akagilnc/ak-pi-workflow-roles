@@ -321,6 +321,15 @@ export type HostSkillExpansionEvidence = Readonly<{
 /** Host capability declaration (contract verb ④). */
 export type HostCapabilityDeclaration = Readonly<{
   skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
+  /**
+   * Pi-only: project plain user text into a native skill invocation turn.
+   * Returns the host-facing text and the original-request value for expansion
+   * binding (ADR 0032). Absent on non-pi hosts (ADR 0082 `pi-no-privilege`).
+   */
+  nativeSkillInvocation?(name: string, text: string): {
+    readonly text: string;
+    readonly originalRequest: string;
+  };
 }>;
 
 /** Host-owned effects used by the shared activation envelope. */
