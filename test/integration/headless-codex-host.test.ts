@@ -136,6 +136,9 @@ process.exit(0);
     assert.ok(firstArgv.includes("--json"));
     assert.ok(firstArgv.includes("--ignore-user-config"));
     assert.ok(firstArgv.includes("--ignore-rules"));
+    // --ignore-user-config/--ignore-rules do not stop AGENTS.md discovery
+    // (official codex exec --help); project_doc_max_bytes=0 is required too.
+    assert.ok(firstArgv.some((a) => a === "project_doc_max_bytes=0"));
     assert.ok(firstArgv.includes("--output-schema"));
     assert.ok(firstArgv.includes("--sandbox"));
     assert.ok(firstArgv.includes("-m"));
@@ -173,6 +176,7 @@ process.exit(0);
     assert.equal(resumeArgv[2], "thread-fake-1");
     assert.ok(resumeArgv.includes("--output-schema"));
     assert.ok(resumeArgv.includes("--ignore-user-config"));
+    assert.ok(resumeArgv.some((a) => a === "project_doc_max_bytes=0"));
     // resume has no --sandbox flag; permissions still via -c
     assert.equal(resumeArgv.includes("--sandbox"), false);
     assert.ok(resumeArgv.some((a) => a.startsWith("sandbox_mode=")));

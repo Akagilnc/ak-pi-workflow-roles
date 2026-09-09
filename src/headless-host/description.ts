@@ -418,6 +418,12 @@ export function codexTurnArgs(options: {
   args.push("--json");
   // Operator config/MCP off; auth still uses CODEX_HOME (official).
   args.push("--ignore-user-config", "--ignore-rules");
+  // --ignore-user-config/--ignore-rules do not stop AGENTS.md discovery
+  // (official codex exec --help: they cover config.toml / execpolicy .rules
+  // only). project_doc_max_bytes=0 is the documented config key that zeroes
+  // the project-doc byte budget, so no repository AGENTS.md/CLAUDE.md text
+  // is read into the turn alongside the package-owned role envelope.
+  args.push("-c", "project_doc_max_bytes=0");
   // Full workspace permissions; resume lacks --sandbox so both paths use -c.
   args.push(
     "-c", `approval_policy=${codexTomlString("never")}`,
