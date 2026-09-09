@@ -347,6 +347,12 @@ export function createCoderRoleRuntime(
 
   return {
     async activate(ctx) {
+      // Each activation owns its own Skill capture state; prior-session flags must
+      // not authorize a later apply completed (same RoleHost, sequential activate).
+      tddInvocationInjected = false;
+      originalRequest = undefined;
+      expansionPending = false;
+      expansionCaptured = false;
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
@@ -433,19 +439,14 @@ export function createCoderRoleRuntime(
           }
           tddInvocationInjected = true;
           expansionPending = true;
-          const isNativeTdd =
-            event.text === "/skill:tdd" ||
-            event.text.startsWith("/skill:tdd ");
-          if (isNativeTdd) {
-            originalRequest = event.text.slice("/skill:tdd".length).trim();
-            return { action: "continue" as const };
-          }
-          originalRequest = event.text.trim();
-          return {
-            action: "transform" as const,
-            text: binding?.invocation(event.text) ?? `/skill:tdd ${event.text}`,
-            ...(event.images === undefined ? {} : { images: event.images }),
-          };
+          // Original request via host capability when Pi argv already carries native form;
+          // non-pi keeps plain original bytes (no consumer trim; #822 r3 / reviewer-aligned).
+          // Role never emits or parses `/skill:` (ADR 0082).
+          originalRequest = binding === undefined
+            ? event.text
+            : (pi.capabilities?.skillOriginalRequest?.(binding.name, event.text)
+              ?? event.text);
+          return { action: "continue" as const };
         });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");

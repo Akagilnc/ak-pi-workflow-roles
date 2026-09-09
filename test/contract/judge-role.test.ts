@@ -264,9 +264,6 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       body: tddBody,
       snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
-    invocation(originalRequest) {
-      return `/skill:tdd ${originalRequest}`;
-    },
     captureExpansion(evidence, originalRequest) {
       return evidence?.name === "tdd"
         && evidence.location === tddPath
@@ -2065,6 +2062,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   };
 
   // M1.1 — completed binds to the immediately following canonical expansion.
+  // Role captures originalRequest (via Pi skillOriginalRequest); no role-body transform (#822).
   {
     const harness = await start();
     assert.deepEqual(
@@ -2072,11 +2070,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
         { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
         {},
       ),
-      {
-        action: "transform",
-        text: `/skill:tdd ${request}`,
-        images: [{ type: "image", data: "fixture" }],
-      },
+      { action: "continue" },
     );
     assert.deepEqual(
       await harness.handlers.get("input")?.(
@@ -2219,15 +2213,12 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
   }
 
-  // Prefix-collision transform binding (packaged seam owns real Pi expansion M1.5).
+  // Non-native slash text is plain originalRequest (Pi argv owns forced prefix, not role body).
   {
     const harness = await start();
     assert.deepEqual(
       await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
-      {
-        action: "transform",
-        text: "/skill:tdd /skill:tddfoo",
-      },
+      { action: "continue" },
     );
     await harness.handlers.get("before_agent_start")?.(
       { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
@@ -2235,6 +2226,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     );
     assert.deepEqual((await submitCompleted(harness, "collision")).details, completed);
   }
+
 
   // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
   // and settles without summoning the Inspector (skip-statuses).
@@ -2277,6 +2269,107 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       );
     });
   }
+});
+
+test("coder apply sequential session_start resets Skill capture state on the same host", async () => {
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+  });
+
+  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
+    const request = "Apply the approved plan.";
+    const completed = {
+      status: "completed" as const,
+      report: "TDD evidence and self-check three are recorded here.",
+    };
+    const agentCtx = { abort() {}, mode: "tui" };
+    const seatModel = fauxProvider({ provider: "coder-seats", api: "coder-seats" }).getModel();
+
+    // First: session_start → input(request) → before_agent_start(expandedTdd(request)) → completed ACCEPT
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      await assert.rejects(
+        tool.execute(
+          "first-bounce",
+          completed,
+          undefined,
+          undefined,
+          Object.assign(toolCallContext([{ id: "first-bounce", name: CODER_OUTPUT_TOOL_NAME }]), { cwd: home }),
+        ),
+        (error: unknown) =>
+          error instanceof WorkerCommitReminderError &&
+          error.code === "worker_commit_reminder",
+      );
+      const context = await withPassingGatekeeper(
+        toolCallContext([{ id: "first-accepted", name: CODER_OUTPUT_TOOL_NAME }]),
+      );
+      const { sealed } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "first-accepted",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        output: completed,
+        context,
+      });
+      assert.deepEqual(sealed.decisiveFacts, completed);
+    });
+
+    // Second session_start → completed WITHOUT new expansion MUST REJECT
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    await assert.rejects(
+      tool.execute(
+        "stale-second-activation",
+        completed,
+        undefined,
+        undefined,
+        Object.assign(toolCallContext([{ id: "stale-second-activation", name: CODER_OUTPUT_TOOL_NAME }]), { cwd: home }),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
+        assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+        assert.equal(error.result.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
+        return true;
+      },
+    );
+
+    // Then input + before_agent_start again → completed ACCEPT
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      const context = await withPassingGatekeeper(
+        toolCallContext([{ id: "second-accepted", name: CODER_OUTPUT_TOOL_NAME }]),
+      );
+      const { sealed } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "second-accepted",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        output: completed,
+        context,
+      });
+      assert.deepEqual(sealed.decisiveFacts, completed);
+    });
+  });
 });
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
@@ -2861,10 +2954,9 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "reviewer law",
             loadCanonicalSkillBinding: async () => ({
-              name: "code-review",
+              name: "code-review" as const,
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
-              invocation: (request: string) => request,
-              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill }),
+              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
             createPinnedGitReader: async () => ({
               pin,

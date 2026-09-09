@@ -6,7 +6,7 @@
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, appendFile, readFile, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -91,9 +91,35 @@ function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
 }
 
 /**
+ * Pi-native `/skill:<name>` for a single forced method (ADR 0082 `pi-no-privilege`).
+ * Driven by typed RoleTurnRequest.methods — middle-layer decision, Pi-only syntax.
+ * Zero/many methods leave the prompt alone (Fixer optional pair stays `--skill` only).
+ */
+export function applyPiNativeSkillInvocation(
+  methods: readonly MethodBinding[],
+  prompt: string,
+): string {
+  const skills = methods.filter((method) => method.kind === "skill");
+  if (skills.length !== 1) return prompt;
+  const name = basename(dirname(skills[0]!.path));
+  if (name.length === 0) return prompt;
+  const token = `/skill:${name}`;
+  const trimmed = prompt.trimStart();
+  if (
+    trimmed === token
+    || trimmed.startsWith(`${token} `)
+    || trimmed.startsWith(`${token}\n`)
+  ) {
+    return prompt;
+  }
+  return prompt.length === 0 ? token : `${token} ${prompt}`;
+}
+
+/**
  * Pi last-hop argv after `--no-extensions -e entry` (#819).
  * Activation flag membership comes from middle-layer projectActivationFlags;
  * this function only renders session coords, controlled constants, and pairs.
+ * Single forced method → Pi-native `/skill:` on the argv prompt (#822).
  */
 export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
@@ -101,13 +127,14 @@ export function buildPiTurnExtraArgs(
   extraPiArgs: readonly string[] = [],
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
-  const prompt =
+  const rawPrompt =
     request.continuation.kind === "initial" || request.continuation.kind === "resume"
       ? request.continuation.prompt
       : (() => {
           const _exhaustive: never = request.continuation;
           return _exhaustive;
         })();
+  const prompt = applyPiNativeSkillInvocation(request.methods, rawPrompt);
   return [
     "--no-skills",
     ...buildMethodArgs(request.methods),

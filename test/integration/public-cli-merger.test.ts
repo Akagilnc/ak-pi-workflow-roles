@@ -230,9 +230,9 @@ test("admitMergerInvocation derives envelope into internal input without public 
       join(home, ".ak-roles", "books", bookKey, "runs", "run-merger-admit-001@merger"),
     );
 
-    // Forced method expansion is the first transport act.
+    // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
     const prompt = buildMergerTransportPrompt(admitted);
-    assert.equal(prompt.startsWith("/skill:resolving-merge-conflicts "), true);
+    assert.equal(prompt.startsWith("/skill:"), false);
     assert.equal(prompt.includes(admitted.instruction), true);
   });
 });
@@ -618,6 +618,7 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
         ),
         true,
       );
+      // Pi adapter argv applies native `/skill:resolving-merge-conflicts` from typed methods (#822).
       assert.equal(
         captured!.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
         true,
@@ -712,7 +713,15 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+        // Pi adapter prefixes single method onto resume envelope (#822).
+        assert.equal(
+          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
+          true,
+        );
+        assert.equal(
+          args.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
+          true,
+        );
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\n${instruction}`;
         const receipt = {

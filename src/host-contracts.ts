@@ -321,6 +321,12 @@ export type HostSkillExpansionEvidence = Readonly<{
 /** Host capability declaration (contract verb ④). */
 export type HostCapabilityDeclaration = Readonly<{
   skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
+  /**
+   * Pi-only: recover the plain original request from a native skill turn text
+   * (argv may already carry `/skill:<name>` from the Pi adapter). Absent on
+   * non-pi hosts so role body never parses Pi slash syntax (ADR 0082).
+   */
+  skillOriginalRequest?(name: string, text: string): string;
 }>;
 
 /** Host-owned effects used by the shared activation envelope. */

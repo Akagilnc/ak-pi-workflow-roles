@@ -157,6 +157,19 @@ export function createPiRoleHostAdapter(
           userMessage,
         });
       },
+      /** Recover plain original request from Pi-native `/skill:` turn text (ADR 0082). */
+      skillOriginalRequest(name, text) {
+        const token = `/skill:${name}`;
+        const trimmed = text.trimStart();
+        if (
+          trimmed === token
+          || trimmed.startsWith(`${token} `)
+          || trimmed.startsWith(`${token}\n`)
+        ) {
+          return text.slice(text.indexOf(token) + token.length).trim();
+        }
+        return text.trim();
+      },
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),

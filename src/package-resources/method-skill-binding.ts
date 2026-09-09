@@ -46,9 +46,6 @@ export async function loadPackagedCanonicalSkillBinding<
   const binding: CanonicalSkillBinding<Name> = {
     name,
     snapshot,
-    invocation(originalRequest) {
-      return `/skill:${name} ${originalRequest}`;
-    },
     captureExpansion(evidence, originalRequest) {
       return captureCanonicalSkillExpansion(
         name,
