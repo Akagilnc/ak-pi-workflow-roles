@@ -12,7 +12,7 @@ import {
  * receipt text instead; this string is only the round-shape correction.
  */
 export const NON_SOLE_ROUND_RESUME_MESSAGE =
-  "终结交卷并非本轮唯一工具调用。";
+  "终局交卷并非本轮唯一工具调用。";
 
 /** Resume text for mechanical deliverSubmissionRejection codes (no officer receipt). */
 export function mechanicalSubmissionRejectionResumeMessage(code: string): string {
