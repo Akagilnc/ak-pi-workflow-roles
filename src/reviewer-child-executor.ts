@@ -149,9 +149,10 @@ export async function executeReviewerChild(
       });
     }
     const signal = options.signal;
-    // Engine arming is request-scoped and independent of parent model selection.
-    // Resolve before parentSelection so envelope legs arm from getFlag even when
-    // the subsequent pi open path is what fails (one gate with parent registration).
+    const selection = await parentSelection(context);
+    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
+    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    // One gate with parent registration (#818): request flag, else pi child env.
     const engineName = resolveEngineName(options.getFlag);
     const engineMaterial =
       engineName === undefined
@@ -173,9 +174,6 @@ export async function executeReviewerChild(
               throw engineDetourFailure;
             },
           });
-    const selection = await parentSelection(context);
-    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
-    const { createRecordSession } = await import("./archivist-record-entry.ts");
     let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
     try {
       // No agentDir: envelope owns scratch via credentialScratchParent (ADR 0018).
