@@ -21,6 +21,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { mechanicalSubmissionRejectionResumeMessage } from "../submission-correctable-error.ts";
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -139,7 +140,7 @@ export function createPiRoleHostAdapter(
     deliverSubmissionRejection(rejection) {
       pi.sendMessage({
         customType: "ak-role-submission-rejection",
-        content: "The terminal submission was rejected because it was not the sole tool call in its turn. Correct the call pattern and resubmit.",
+        content: mechanicalSubmissionRejectionResumeMessage(rejection.code),
         display: true,
         details: rejection,
       }, { triggerTurn: true, deliverAs: "followUp" });

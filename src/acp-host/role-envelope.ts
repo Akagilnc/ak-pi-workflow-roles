@@ -28,6 +28,7 @@ import {
 } from "./role-turn-host.ts";
 import {
   isCorrectableExecuteError,
+  mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
 } from "../submission-correctable-error.ts";
 import {
@@ -184,7 +185,9 @@ export async function prepareAcpRoleEnvelope(options: {
   const sessionEntries: Array<Record<string, unknown>> = [];
   const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
-  let rejection: { readonly code: string; readonly toolCallIds: readonly string[] } | undefined;
+  let rejection:
+    | { readonly code: string; readonly toolCallIds: readonly string[]; readonly message: string }
+    | undefined;
   /** Typed infrastructure failure for this ACP round; closeRound returns it as knownFailure (#593). */
   let infrastructureRoundFailure: RoleTurnKnownFailure | undefined;
   const hostAbort = new AbortController();
@@ -263,7 +266,14 @@ export async function prepareAcpRoleEnvelope(options: {
   };
 
   const host: RoleHost = {
-    deliverSubmissionRejection(value) { rejection = value; },
+    deliverSubmissionRejection(value) {
+      // Mechanical round rejection has no officer receipt; shared resume text is the fact (#813).
+      rejection = {
+        code: value.code,
+        toolCallIds: value.toolCallIds,
+        message: mechanicalSubmissionRejectionResumeMessage(value.code),
+      };
+    },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
         return buildAcpSkillExpansion(methodSkills, prompt);
@@ -321,7 +331,11 @@ export async function prepareAcpRoleEnvelope(options: {
   const token = randomUUID();
   const server = createServer((socket) => serveSocket(socket));
   /** Correctable non-pass must arm the existing rejection state so closeRound returns retry. */
-  function rememberProjectedRejection(details: unknown, toolCallId: string): void {
+  function rememberProjectedRejection(
+    details: unknown,
+    toolCallId: string,
+    content: ContentPart[],
+  ): void {
     if (typeof details !== "object" || details === null) return;
     const record = details as Record<string, unknown>;
     if (record.cause === "infrastructure") return;
@@ -332,14 +346,21 @@ export async function prepareAcpRoleEnvelope(options: {
         ? record.status
         : undefined;
     if (code === undefined) return;
-    rejection = { code, toolCallIds: [toolCallId] };
+    // Officer bounce/escalate text is already the tool_result content (GatekeeperDecisionError
+    // message = raw receipt). Adapters resume with this message — never a host-invented line (#813).
+    rejection = {
+      code,
+      toolCallIds: [toolCallId],
+      message: textDiagnostic(content) ?? code,
+    };
   }
   function textDiagnostic(content: ContentPart[]): string | undefined {
+    // Keep concatenated text bytes intact for resume relay (#813 online P2):
+    // only emptiness uses the trimmed form; do not alter Markdown/spacing.
     const text = content
       .map((part) => (part.type === "text" ? part.text : ""))
-      .join("")
-      .trim();
-    return text.length > 0 ? text : undefined;
+      .join("");
+    return text.trim().length > 0 ? text : undefined;
   }
   /** Arm closeRound + abort path with the durable infrastructure failure for this round. */
   function rememberInfrastructureFailure(
@@ -430,7 +451,7 @@ export async function prepareAcpRoleEnvelope(options: {
     sessionEntries.push(toolResultEntry);
     if (projected.isError) {
       rememberInfrastructureFailure(projected.details, projected.content);
-      rememberProjectedRejection(projected.details, toolCallId);
+      rememberProjectedRejection(projected.details, toolCallId, projected.content);
     }
     await emit("tool_execution_end", { toolCallId, toolName, isError: projected.isError });
     return projected;
@@ -646,7 +667,11 @@ export async function prepareAcpRoleEnvelope(options: {
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
-      const retry = { code: rejection.code, toolCallIds: rejection.toolCallIds };
+      const retry = {
+        code: rejection.code,
+        toolCallIds: rejection.toolCallIds,
+        message: rejection.message,
+      };
       rejection = undefined;
       return { accepted: false as const, retry };
     }
