@@ -4,10 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  AK_ROLE_ENGINE_ENV,
-  applyEngineChildEnv,
-} from "./engine-detour.ts";
+import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -101,6 +98,9 @@ export function projectActivationFlags(request: RoleTurnRequest): Map<string, bo
     if (activation.requestManifestPath !== undefined) flags.set("ak-collector-request-manifest", activation.requestManifestPath);
     if (activation.waitMs !== undefined) flags.set("ak-collector-wait-ms", activation.waitMs);
   }
+  // #818 P1: engine axis is request-scoped on this RoleHost — never process.env.
+  // Always project ("" = no engine) so ambient AK_ROLE_ENGINE cannot arm detour.
+  flags.set(ENGINE_FLAG_NAME, normalizeEngineName(request.engine) ?? "");
   return flags;
 }
 
@@ -567,15 +567,13 @@ export async function prepareRoleEnvelope(options: {
   await listen(server, options.socketPath);
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
-  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT / AK_ROLE_ENGINE injection onto the
-  // parent so ledger identity and engine detour registration (engineNameFromEnv)
-  // see the same signals. Engine must be applied before session_start (registration
-  // gate); run-dir may wait until prepare succeeds. Dispose restores including unset.
+  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
+  // identity sees the same signals. Engine axis is request-scoped via RoleHost
+  // flag (projectActivationFlags) — never process.env (#818 P1). Run-dir may wait
+  // until prepare succeeds. Dispose restores including unset.
   let priorAkRoleRunDir: string | undefined;
   let priorAkRoleCourtAttempt: string | undefined;
-  let priorAkRoleEngine: string | undefined;
   let runDirInjected = false;
-  let engineEnvInjected = false;
   const restoreAkRoleRunEnv = (): void => {
     if (!runDirInjected) return;
     runDirInjected = false;
@@ -583,12 +581,6 @@ export async function prepareRoleEnvelope(options: {
     else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
     if (priorAkRoleCourtAttempt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
     else process.env.AK_ROLE_COURT_ATTEMPT = priorAkRoleCourtAttempt;
-  };
-  const restoreAkRoleEngineEnv = (): void => {
-    if (!engineEnvInjected) return;
-    engineEnvInjected = false;
-    if (priorAkRoleEngine === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
-    else process.env[AK_ROLE_ENGINE_ENV] = priorAkRoleEngine;
   };
   const dispose = async (): Promise<void> => {
     if (disposed) return;
@@ -601,11 +593,6 @@ export async function prepareRoleEnvelope(options: {
     }
     try {
       restoreAkRoleRunEnv();
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
-    try {
-      restoreAkRoleEngineEnv();
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -676,14 +663,9 @@ export async function prepareRoleEnvelope(options: {
 
   // Shared envelope activation. systemPrompt must be ready before session/new
   // (delivered via _meta.systemPromptOverride where the host honors it), so
-  // activation runs during prepare.
+  // activation runs during prepare. Engine axis already on RoleHost flags
+  // (request-scoped); registerEngineDetourTool resolves via resolveEngineName.
   try {
-    // #818: engine axis is a middle-layer step. registerEngineDetourTool reads
-    // engineNameFromEnv during session_start — apply before that emit. One write
-    // seam (applyEngineChildEnv); ambient cleared when request has no engine.
-    priorAkRoleEngine = process.env[AK_ROLE_ENGINE_ENV];
-    applyEngineChildEnv(process.env, request.engine);
-    engineEnvInjected = true;
     await emit("session_start", { reason: request.continuation.kind });
     const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
     let prompt = request.continuation.prompt;

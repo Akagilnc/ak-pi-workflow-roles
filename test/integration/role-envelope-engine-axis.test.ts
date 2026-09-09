@@ -1,8 +1,7 @@
 /**
  * #818 — shared envelope consumes RoleTurnRequest.engine for non-pi hosts.
- * Gate remains engineNameFromEnv / registerEngineDetourTool (one logic).
- * Tools execute in the AK parent process; envelope mirrors the pi child-env
- * signal onto process.env for the envelope lifetime only.
+ * Gate remains resolveEngineName / registerEngineDetourTool (one logic).
+ * Engine signal is request-scoped on RoleHost flags — never process.env (#818 P1).
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -41,11 +40,13 @@ function mcpRelayToken(prepared: {
   assert.fail("AK_ACP_MCP_TOKEN missing from prepared MCP env");
 }
 
-async function listMcpToolNames(
+type McpToolListing = Readonly<{ name: string; description?: string }>;
+
+async function listMcpTools(
   socketPath: string,
   token: string,
-): Promise<string[]> {
-  const result = await new Promise<{ tools?: Array<{ name?: string }> }>((resolve, reject) => {
+): Promise<McpToolListing[]> {
+  const result = await new Promise<{ tools?: Array<{ name?: string; description?: string }> }>((resolve, reject) => {
     const conn = createConnection(socketPath);
     let buffer = "";
     conn.setEncoding("utf8");
@@ -56,7 +57,7 @@ async function listMcpToolNames(
       if (end < 0) return;
       try {
         const message = JSON.parse(buffer.slice(0, end)) as {
-          result?: { tools?: Array<{ name?: string }> };
+          result?: { tools?: Array<{ name?: string; description?: string }> };
           error?: unknown;
         };
         if (message.error !== undefined) {
@@ -73,8 +74,18 @@ async function listMcpToolNames(
     conn.write(`${JSON.stringify({ id: 1, token, method: "tools/list" })}\n`);
   });
   return (result.tools ?? [])
-    .map((tool) => tool.name)
-    .filter((name): name is string => typeof name === "string");
+    .filter((tool): tool is { name: string; description?: string } => typeof tool.name === "string")
+    .map((tool) => ({
+      name: tool.name,
+      ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+    }));
+}
+
+async function listMcpToolNames(
+  socketPath: string,
+  token: string,
+): Promise<string[]> {
+  return (await listMcpTools(socketPath, token)).map((tool) => tool.name);
 }
 
 async function withEnvelopeHome<T>(
@@ -109,8 +120,8 @@ async function withEnvelopeHome<T>(
 
 test("shared envelope registers engine detour when request.engine is set", async () => {
   await withEnvelopeHome(async ({ socketPath, request }) => {
-    // Hermetic baseline: ambient AK_ROLE_ENGINE (e.g. engine-dispatched fixer) must
-    // not masquerade as request.engine residual after dispose restores prior.
+    // Hermetic baseline: ambient AK_ROLE_ENGINE must not be required, mutated,
+    // or left as residual — engine is request-scoped on RoleHost flags.
     const previous = process.env[AK_ROLE_ENGINE_ENV];
     delete process.env[AK_ROLE_ENGINE_ENV];
     try {
@@ -120,7 +131,11 @@ test("shared envelope registers engine detour when request.engine is set", async
         socketPath,
       });
       try {
-        assert.equal(process.env[AK_ROLE_ENGINE_ENV], "agy");
+        assert.equal(
+          process.env[AK_ROLE_ENGINE_ENV],
+          undefined,
+          "envelope must not write AK_ROLE_ENGINE onto process.env",
+        );
         const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
         assert.equal(
           names.includes(ENGINE_DETOUR_TOOL_NAME),
@@ -138,7 +153,7 @@ test("shared envelope registers engine detour when request.engine is set", async
   });
 });
 
-test("shared envelope clears ambient AK_ROLE_ENGINE when request has no engine", async () => {
+test("shared envelope ignores ambient AK_ROLE_ENGINE when request has no engine", async () => {
   await withEnvelopeHome(async ({ socketPath, request }) => {
     const previous = process.env[AK_ROLE_ENGINE_ENV];
     process.env[AK_ROLE_ENGINE_ENV] = "ambient-should-not-arm";
@@ -149,7 +164,8 @@ test("shared envelope clears ambient AK_ROLE_ENGINE when request has no engine",
         socketPath,
       });
       try {
-        assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
+        // Ambient left untouched — request-scoped "" flag blocks env fallback.
+        assert.equal(process.env[AK_ROLE_ENGINE_ENV], "ambient-should-not-arm");
         const names = await listMcpToolNames(socketPath, mcpRelayToken(prepared));
         assert.equal(
           names.includes(ENGINE_DETOUR_TOOL_NAME),
@@ -165,4 +181,83 @@ test("shared envelope clears ambient AK_ROLE_ENGINE when request has no engine",
       else process.env[AK_ROLE_ENGINE_ENV] = previous;
     }
   });
+});
+
+test("concurrent envelopes keep request-scoped engines without process.env races", async () => {
+  const previous = process.env[AK_ROLE_ENGINE_ENV];
+  delete process.env[AK_ROLE_ENGINE_ENV];
+  const home = await mkdtemp(join(tmpdir(), "ak-818-envelope-concurrent-"));
+  try {
+    const mkRequest = async (
+      label: string,
+      engine?: string,
+    ): Promise<{ socketPath: string; request: RoleTurnRequest }> => {
+      const runDirectory = join(home, label, "run");
+      await mkdir(join(runDirectory, "session"), { recursive: true });
+      return {
+        socketPath: join(home, `${label}.sock`),
+        request: {
+          principal: fixturePrincipal(join(runDirectory, "session")),
+          activation: { role: "judge" },
+          methods: [],
+          continuation: { kind: "initial", prompt: `concurrent ${label}` },
+          cwd: packageRoot,
+          home,
+          agentDir: join(home, label, "agent"),
+          runDirectory,
+          ...(engine === undefined ? {} : { engine }),
+        },
+      };
+    };
+    const a = await mkRequest("a", "agy");
+    const b = await mkRequest("b", "cursor");
+    const free = await mkRequest("free");
+    const deps = createRoleRuntimeDependencies(packageRoot);
+    // Overlap prepares so any process.env write would race across hosts.
+    const [preparedA, preparedB, preparedFree] = await Promise.all([
+      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath }),
+      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath }),
+      prepareRoleEnvelope({ request: free.request, dependencies: deps, socketPath: free.socketPath }),
+    ]);
+    try {
+      assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
+      const [toolsA, toolsB, toolsFree] = await Promise.all([
+        listMcpTools(a.socketPath, mcpRelayToken(preparedA)),
+        listMcpTools(b.socketPath, mcpRelayToken(preparedB)),
+        listMcpTools(free.socketPath, mcpRelayToken(preparedFree)),
+      ]);
+      const detourA = toolsA.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
+      const detourB = toolsB.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
+      const detourFree = toolsFree.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
+      assert.ok(detourA !== undefined, `host A expected detour; tools=${JSON.stringify(toolsA)}`);
+      assert.ok(detourB !== undefined, `host B expected detour; tools=${JSON.stringify(toolsB)}`);
+      assert.equal(
+        detourFree,
+        undefined,
+        `engine-free host must not arm detour; tools=${JSON.stringify(toolsFree)}`,
+      );
+      assert.match(
+        detourA.description ?? "",
+        /engine=agy/,
+        `host A description must keep agy; got ${detourA.description}`,
+      );
+      assert.match(
+        detourB.description ?? "",
+        /engine=cursor/,
+        `host B description must keep cursor; got ${detourB.description}`,
+      );
+      assert.doesNotMatch(detourA.description ?? "", /engine=cursor/);
+      assert.doesNotMatch(detourB.description ?? "", /engine=agy/);
+    } finally {
+      await Promise.all([
+        preparedA.dispose?.(),
+        preparedB.dispose?.(),
+        preparedFree.dispose?.(),
+      ]);
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
+    else process.env[AK_ROLE_ENGINE_ENV] = previous;
+  }
 });

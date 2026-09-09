@@ -17,24 +17,40 @@ export const ENGINE_DETOUR_TOOL_NAME = "ak_engine_detour" as const;
 export const AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE" as const;
 
 /**
+ * Request-scoped engine flag on RoleHost (#818 P1).
+ * Envelope projects RoleTurnRequest.engine here so concurrent in-process hosts
+ * do not share process.env. Empty string = explicitly no engine (blocks ambient).
+ * Pi never sets this flag — resolve falls through to child-process env.
+ */
+export const ENGINE_FLAG_NAME = "ak-engine" as const;
+
+/**
  * Argv placeholder replaced by a seam-owned temp prompt file path when
  * `stagedPrompt` is set. Exactly one argv entry must equal this token.
  */
 export const ENGINE_DETOUR_STAGED_PROMPT_TOKEN = "<<ak-engine-staged-prompt>>" as const;
 
+/** Non-empty trimmed engine name, else undefined. */
+export function normalizeEngineName(engine: string | undefined): string | undefined {
+  if (engine === undefined) return undefined;
+  const trimmed = engine.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 /**
  * Sole AK_ROLE_ENGINE write seam (#391 E2 / #818).
- * Delete ambient first. Child-env objects keep an own-key undefined mask so a
- * later process.env re-merge cannot revive ambient; process.env itself only
- * deletes (Node stringifies undefined assignments).
+ * Child-process env only (pi adapter). Delete ambient first. Child-env objects
+ * keep an own-key undefined mask so a later process.env re-merge cannot revive
+ * ambient; process.env itself only deletes (Node stringifies undefined assignments).
  */
 export function applyEngineChildEnv(
   childEnv: NodeJS.ProcessEnv,
   engine?: string,
 ): void {
   delete childEnv[AK_ROLE_ENGINE_ENV];
-  if (engine !== undefined && engine.trim() !== "") {
-    childEnv[AK_ROLE_ENGINE_ENV] = engine.trim();
+  const normalized = normalizeEngineName(engine);
+  if (normalized !== undefined) {
+    childEnv[AK_ROLE_ENGINE_ENV] = normalized;
   } else if (childEnv !== process.env) {
     childEnv[AK_ROLE_ENGINE_ENV] = undefined;
   }
@@ -241,8 +257,25 @@ export function engineDetourFailureDiagnostic(result: {
 
 /** Non-empty trimmed engine name from process.env, else undefined. */
 export function engineNameFromEnv(): string | undefined {
-  const raw = process.env[AK_ROLE_ENGINE_ENV];
-  if (typeof raw !== "string") return undefined;
-  const trimmed = raw.trim();
-  return trimmed === "" ? undefined : trimmed;
+  return normalizeEngineName(
+    typeof process.env[AK_ROLE_ENGINE_ENV] === "string"
+      ? process.env[AK_ROLE_ENGINE_ENV]
+      : undefined,
+  );
+}
+
+/**
+ * One activation-signal resolver (#818 P1 / ADR 0069 one gate).
+ * Request-scoped RoleHost flag wins when present (envelope always projects it,
+ * including "" for no-engine so ambient env cannot arm). Flag absent → pi
+ * child-process env via engineNameFromEnv.
+ */
+export function resolveEngineName(
+  getFlag?: (name: string) => boolean | string | undefined,
+): string | undefined {
+  if (getFlag !== undefined) {
+    const flag = getFlag(ENGINE_FLAG_NAME);
+    if (typeof flag === "string") return normalizeEngineName(flag);
+  }
+  return engineNameFromEnv();
 }

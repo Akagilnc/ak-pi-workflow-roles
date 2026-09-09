@@ -2093,8 +2093,8 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
-        // #357 T2 / #378 / #380 / #391: any role+engine activation registers the package detour tool once.
-        // Gate is env presence only — no per-engine execute branch; no role-module spawn.
+        // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
+        // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {
           engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
         }
