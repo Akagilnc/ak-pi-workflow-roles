@@ -13,9 +13,9 @@
   "packageAdaptation": "merger-merge-only-escalate-new-intent",
   "files": {
     "SKILL.md": {
-      "sha256": "41b1552529eb8aa754e6ee86a7af223b014255440fe19edf4ff0bae949f46562",
-      "byteLength": 1952,
-      "gitBlob": "7f357f390c4a4514864e53b2cfe3dedcf65d5a0d"
+      "sha256": "a7be3300cd1457cb9b4065935271f37759531ebb366a352896a7a617d8d9c18a",
+      "byteLength": 2015,
+      "gitBlob": "b88102a6e903c2e60d3b4898552a0931a2fa4c91"
     },
     "agents/openai.yaml": {
       "sha256": "f283f1ac11525de29d2615163fc3239b979f67c8e88560644364ca6e1a3b8100",
