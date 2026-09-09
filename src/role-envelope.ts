@@ -4,7 +4,11 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
+import {
+  ENGINE_DETOUR_TOOL_NAME,
+  ENGINE_FLAG_NAME,
+  normalizeEngineName,
+} from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -539,7 +543,19 @@ export async function prepareRoleEnvelope(options: {
               const listed = [...tools.values()].filter((tool) =>
                 listTerminatingToolOnMcp || tool.name !== earlyTerminatingTool);
               reply(socket, rpc.id, { tools: listed.map((tool) => {
-                return { name: tool.name, description: tool.description, inputSchema: tool.parameters };
+                // Detour binding is a typed field on the tool def (#818 P1 observability).
+                const engine =
+                  tool.name === ENGINE_DETOUR_TOOL_NAME
+                  && "engineName" in tool
+                  && typeof (tool as { engineName?: unknown }).engineName === "string"
+                    ? (tool as { engineName: string }).engineName
+                    : undefined;
+                return {
+                  name: tool.name,
+                  description: tool.description,
+                  inputSchema: tool.parameters,
+                  ...(engine === undefined ? {} : { engine }),
+                };
               }) });
               return;
             }

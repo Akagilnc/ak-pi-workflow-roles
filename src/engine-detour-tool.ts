@@ -60,13 +60,24 @@ function isCallerCancellation(
  * Engine process failures (nonzero/empty/spawn) stop via `fail` with their cause.
  * Caller AbortSignal cancellation propagates unchanged.
  */
+/** Detour tool plus the bound engine name (structured; tools/list surfaces it). */
+export type EngineDetourToolDefinition = HostToolDefinition<
+  typeof engineDetourArgsSchema,
+  unknown,
+  EngineDetourContext
+> & {
+  readonly engineName: string;
+};
+
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
   fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
-}): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
+}): EngineDetourToolDefinition {
   const engineName = input.engineName;
   return {
     name: ENGINE_DETOUR_TOOL_NAME,
+    /** Structured binding observed by envelope tools/list (`engine` field). */
+    engineName,
     label: "劳务引擎",
     description:
       `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session。`,
