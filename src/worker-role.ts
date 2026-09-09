@@ -329,7 +329,6 @@ export function createCoderRoleRuntime(
   let phase: WorkerPhase | undefined;
   let binding: CanonicalSkillBinding<"tdd"> | undefined;
   let tddInvocationInjected = false;
-  let originalRequest: string | undefined;
   let expansionPending = false;
   let expansionCaptured = false;
   let lifecycleRegistered = false;
@@ -427,20 +426,14 @@ export function createCoderRoleRuntime(
             };
           },
         });
-        pi.on("input", (event) => {
+        pi.on("input", () => {
           if (phase !== "apply" || tddInvocationInjected) {
             return { action: "continue" as const };
           }
+          // Arm expansion capture only. Host adapters own method delivery
+          // (Pi: native skill form inside src/pi; non-Pi: typed methods/systemPrompt).
           tddInvocationInjected = true;
           expansionPending = true;
-          // Capture original request only. Pi adapter may have prefixed `/skill:tdd`
-          // (adapter-internal, ADR 0082); role body never emits host slash syntax.
-          const isNativeTdd =
-            event.text === "/skill:tdd" ||
-            event.text.startsWith("/skill:tdd ");
-          originalRequest = isNativeTdd
-            ? event.text.slice("/skill:tdd".length).trim()
-            : event.text.trim();
           return { action: "continue" as const };
         });
         pi.on("before_agent_start", (event, ctx) => {
@@ -454,12 +447,9 @@ export function createCoderRoleRuntime(
             }
             if (expansionPending) {
               expansionPending = false;
-              if (originalRequest !== undefined) {
-                expansionCaptured = binding.captureExpansion(
-                  pi.capabilities?.skillExpansion(event.prompt),
-                  originalRequest,
-                ) !== undefined;
-              }
+              expansionCaptured = binding.captureExpansion(
+                pi.capabilities?.skillExpansion(event.prompt),
+              ) !== undefined;
             }
           }
           return {

@@ -46,13 +46,12 @@ export async function loadPackagedCanonicalSkillBinding<
   const binding: CanonicalSkillBinding<Name> = {
     name,
     snapshot,
-    captureExpansion(evidence, originalRequest) {
+    captureExpansion(evidence) {
       return captureCanonicalSkillExpansion(
         name,
         snapshot,
         configuredPath,
         evidence,
-        originalRequest,
       );
     },
   };

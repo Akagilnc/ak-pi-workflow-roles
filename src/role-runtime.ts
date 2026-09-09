@@ -1227,20 +1227,15 @@ export function createRoleRuntimeExtension(
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
-      // Envelope owns Reviewer original-request capture. Pi adapter may prefix
-      // `/skill:code-review` (adapter-internal); role body never emits host slash syntax.
+      // Reviewer: arm expansion capture only. Host adapters own method delivery
+      // (Pi native form stays inside src/pi; non-Pi uses typed methods/systemPrompt).
       if (
         role === "reviewer"
         && admitted
         && activeReviewerParent !== undefined
         && reviewerOriginalRequest === undefined
       ) {
-        const token = `/skill:${activeReviewerParent.skillBinding.name}`;
-        const text = event.text;
-        reviewerOriginalRequest =
-          text === token || text.startsWith(`${token} `)
-            ? text.slice(token.length).trim()
-            : text;
+        reviewerOriginalRequest = event.text;
         return { action: "continue" as const };
       }
       return { action: "continue" as const };
@@ -1293,7 +1288,6 @@ export function createRoleRuntimeExtension(
             reviewerOriginalRequest === undefined
             || activeReviewerParent.skillBinding.captureExpansion(
               roleHost.capabilities?.skillExpansion(event.prompt),
-              reviewerOriginalRequest,
             ) === undefined
           ) {
             failInfrastructure(

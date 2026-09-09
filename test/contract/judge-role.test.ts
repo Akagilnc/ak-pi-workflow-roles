@@ -264,12 +264,12 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       body: tddBody,
       snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
     },
-    captureExpansion(evidence, originalRequest) {
+    captureExpansion(evidence) {
       return evidence?.name === "tdd"
         && evidence.location === tddPath
         && evidence.content === tddContent
-        && evidence.userMessage === originalRequest
-        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
+        && typeof evidence.userMessage === "string"
+        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: evidence.userMessage }
         : undefined;
     },
   };

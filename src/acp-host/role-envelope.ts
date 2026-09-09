@@ -41,47 +41,26 @@ type RpcRequest = { readonly id: number; readonly token: string; readonly method
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
 type ContentPart = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
-/** Parse a residual Pi-native `/skill:` form if a host still delivered one. */
-export function parseCanonicalSkillInvocation(prompt: string): { readonly name: string; readonly userMessage: string } | undefined {
-  const match = /^\/skill:([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/s.exec(prompt.trim());
-  if (match === null) return undefined;
-  return { name: match[1]!, userMessage: (match[2] ?? "").trim() };
-}
-
-function skillExpansionEvidence(
-  name: string,
-  method: { readonly path: string; readonly body: string },
-  userMessage: string,
-): HostSkillExpansionEvidence {
-  return Object.freeze({
-    name,
-    location: method.path,
-    content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
-    userMessage,
-  });
-}
-
 /**
  * Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods.
- * Non-pi hosts keep the user prompt free of Pi `/skill:` syntax (ADR 0082);
- * a single bound method treats the plain prompt as the original user message.
+ * Non-pi hosts never parse Pi `/skill:` syntax (ADR 0082 `pi-no-privilege`);
+ * a single bound method treats the plain prompt as the preserved user message.
+ * Pi-native slash forms stay inside `src/pi/` only.
  */
 export function buildAcpSkillExpansion(
   methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
   prompt: string,
 ): HostSkillExpansionEvidence | undefined {
-  const parsed = parseCanonicalSkillInvocation(prompt);
-  if (parsed !== undefined) {
-    const method = methodSkills.get(parsed.name);
-    if (method === undefined) return undefined;
-    return skillExpansionEvidence(parsed.name, method, parsed.userMessage);
-  }
-  // Host-neutral path: methods already ride systemPrompt/materials.
   if (methodSkills.size !== 1) return undefined;
   const entry = methodSkills.entries().next().value;
   if (entry === undefined) return undefined;
   const [name, method] = entry;
-  return skillExpansionEvidence(name, method, prompt.trim());
+  return Object.freeze({
+    name,
+    location: method.path,
+    content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
+    userMessage: prompt.trim(),
+  });
 }
 
 export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
