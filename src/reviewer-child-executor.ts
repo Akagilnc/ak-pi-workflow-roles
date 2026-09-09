@@ -9,7 +9,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 
 import type { HostContext, RoleTurnModelConfig } from "./host-contracts.ts";
 import { createEngineDetourToolDefinition } from "./engine-detour-tool.ts";
-import { engineNameFromEnv } from "./engine-detour.ts";
+import { resolveEngineName } from "./engine-detour.ts";
 import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
@@ -101,7 +101,26 @@ export type ReviewerChildExecuteOptions = Readonly<{
   credentialScratchParent?: string;
   /** Package root for optional engine method-material on legs (#378). */
   packageRoot?: string;
+  /**
+   * Request-scoped RoleHost flag reader (#818).
+   * Same single gate as registerEngineDetourTool / resolveEngineName:
+   * envelope projects request.engine here; absent → pi child-env fallback.
+   * Must not read ambient process.env as the primary signal on envelope legs.
+   */
+  getFlag?: (name: string) => boolean | string | undefined;
 }>;
+
+/**
+ * Axis sub-session engine name (#818).
+ * Sole production path for child engine arming — same resolveEngineName gate as
+ * parent registerEngineDetourTool. Envelope legs pass getFlag; pi legs omit it
+ * and fall through to child-process env.
+ */
+export function reviewerChildEngineName(
+  options: Pick<ReviewerChildExecuteOptions, "getFlag"> = {},
+): string | undefined {
+  return resolveEngineName(options.getFlag);
+}
 
 /**
  * Single conversion at the Reviewer adapter boundary: shared child classifications
@@ -145,7 +164,8 @@ export async function executeReviewerChild(
     const selection = await parentSelection(context);
     const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
     const { createRecordSession } = await import("./archivist-record-entry.ts");
-    const engineName = engineNameFromEnv();
+    // One gate with parent registration (#818): request flag, else pi child env.
+    const engineName = reviewerChildEngineName(options);
     const engineMaterial =
       engineName === undefined
         ? undefined

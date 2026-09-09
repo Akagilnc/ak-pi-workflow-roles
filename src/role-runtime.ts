@@ -638,7 +638,12 @@ export type RoleRuntimeDependencies = {
   ): Promise<AnyCanonicalSkillBinding>;
   runReviewerDispatch?(
     dispatch: AcceptedReviewerExecution,
-    options: { context: HostContext; signal?: AbortSignal },
+    options: {
+      context: HostContext;
+      signal?: AbortSignal;
+      /** Request-scoped RoleHost flag reader for engine axis (#818). */
+      getFlag?: (name: string) => boolean | string | undefined;
+    },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
   activationClock?(): string;
@@ -1598,7 +1603,12 @@ export function createRoleRuntimeExtension(
           : { fetchIssue: dependencies.createReviewerIssueFetcher() }),
         async runDispatch(dispatch, options) {
           if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.runReviewerDispatch(dispatch, options);
+          // #818: request-scoped engine flag reaches axis sub-session via same RoleHost
+          // that parent registerEngineDetourTool reads — never ambient process.env.
+          return dependencies.runReviewerDispatch(dispatch, {
+            ...options,
+            getFlag: (name) => roleHost.getFlag(name),
+          });
         },
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
