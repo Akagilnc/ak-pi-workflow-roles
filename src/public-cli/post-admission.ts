@@ -565,6 +565,7 @@ export function resumeTurnRequestProjectionOptions(
       kind: "resume",
       prompt,
     },
+    ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
   };
 }
 
@@ -657,10 +658,7 @@ export async function runPostAdmissionSeatResume<
     throw error;
   }
 
-  // Entire court recovery / open path runs after lease. forceContinuation skips
-  // the pre-lease sealed short-circuit; when the after-lease builder leaves no
-  // courtAttemptId, manual resume still presents run-scoped sealed idempotence
-  // under the same held lease.
+  // Court recovery / open under lease. No courtAttemptId → sealed bare presentation.
   try {
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
@@ -670,7 +668,6 @@ export async function runPostAdmissionSeatResume<
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),
-      forceContinuation: true,
       buildRequestAfterLease: async () => {
         let openCourtAttemptId: string | undefined;
         // Build uses the admitted judged under this lease (rehydrated when open
@@ -741,10 +738,12 @@ export async function runPostAdmissionSeatResume<
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
 
-        // Court path only when continuing an open court or opening a new summons court.
-        // Bare resume with no open court (or cleared sealed pointer) keeps no
-        // courtAttemptId so run-scoped sealed idempotence can present under lease.
-        if (openCourtAttemptId !== undefined || request.summons !== undefined) {
+        // Open court continue, or new court for summons/message (#833). Bare: no id.
+        if (
+          openCourtAttemptId !== undefined ||
+          request.summons !== undefined ||
+          request.message !== undefined
+        ) {
           const courtAttemptId =
             openCourtAttemptId ??
             (turnRequest.courtAttemptId !== undefined &&
@@ -871,12 +870,7 @@ export async function runPostAdmissionResumable<
   });
 }
 
-/**
- * Single authority for manual-resume run-scoped sealed-accepted presentation
- * (#599 / #648 / #672 / #637). Used both before lease (eager request path) and
- * after court-recovery builder under lease when no courtAttemptId remains.
- * Returns undefined to fall through to dispatch; never rebuilds the gate.
- */
+/** Sealed presentation when no courtAttemptId (bare resume). */
 async function presentSealedAcceptedManualResumeIfAny<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult,
@@ -932,13 +926,8 @@ async function presentSealedAcceptedManualResumeIfAny<
 }
 
 /**
- * Shared post-admission manual resume path: acquire writer lease and dispatch turn.
- * When the submission ledger is already sealed, project that accepted terminal
- * idempotently — do not dispatch a doomed turn that would append
- * post-seal-anomaly and erase the sealed read (#599; keep #416 open load).
- * Same-ticket re-summons (#637) pass forceContinuation + courtAttemptId so a new
- * court turn still runs with this summons' materials despite a prior sealed
- * acceptance, while submission-ledger sole-final stays per-attempt.
+ * Manual resume: lease + dispatch. No courtAttemptId → sealed bare presentation;
+ * courtAttemptId (open court / summons / message #833) → dispatch.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -949,17 +938,11 @@ export async function runPostAdmissionManualResume<
   io: CliIo;
   /** Eager turn request (non-court path / seats that build before lease). */
   request?: RoleTurnRequest;
-  /**
-   * Court-opening path (#637): build turn + freeze + record currentCourt only
-   * after the writer lease is held. Mutually exclusive with a prebuilt request
-   * when forceContinuation is set.
-   */
+  /** After-lease builder (#637). Mutually exclusive with a prebuilt request. */
   buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
-  /** Seat-table engine axis on resume (#600); written onto invocation.json when present. */
+  /** Seat-table engine axis on resume (#600). */
   effectiveEngine?: string;
-  /** Same-ticket re-summons: skip sealed-accepted short-circuit and dispatch. */
-  forceContinuation?: boolean;
 }): Promise<{
   exitCode: number;
   admitted?: A;
@@ -972,7 +955,6 @@ export async function runPostAdmissionManualResume<
     io,
     adapters,
     effectiveEngine,
-    forceContinuation,
     buildRequestAfterLease,
   } = input;
   let request = input.request;
@@ -989,11 +971,10 @@ export async function runPostAdmissionManualResume<
     shouldPresent,
   } as const;
 
-  // Sealed accepted receipt only — audit_escalation / residual failure must not
-  // short-circuit; those still need a real continuation turn.
-  // Same-ticket re-summons / court recovery forceContinuation skips the pre-lease
-  // face; post-builder reuses the same presenter when no courtAttemptId remains.
-  if (forceContinuation !== true && request !== undefined) {
+  if (
+    request !== undefined &&
+    (request.courtAttemptId === undefined || request.courtAttemptId.length === 0)
+  ) {
     const presented = await presentSealedAcceptedManualResumeIfAny(
       sealedIdempotenceInput,
     );

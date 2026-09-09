@@ -29,6 +29,8 @@ export type RoleTurnRequestProjectionOptions = {
   timeoutMs?: number;
   correlationId?: string;
   continuation: RoleTurnRequest["continuation"];
+  /** #833 resume-with-message court attempt. */
+  courtAttemptId?: string;
 };
 
 export type AdmittedTurnInvocation = {
@@ -69,5 +71,8 @@ export function projectRoleTurnRequest(
       ? {}
       : { correlationId: options.correlationId }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.courtAttemptId === undefined || options.courtAttemptId.length === 0
+      ? {}
+      : { courtAttemptId: options.courtAttemptId }),
   };
 }
