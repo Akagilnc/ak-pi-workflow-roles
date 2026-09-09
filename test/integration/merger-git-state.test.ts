@@ -102,7 +102,10 @@ test("production Merger Git seam keeps non-repository infrastructure failures lo
     // Temp roots live under the package worktree; a broken local gitfile blocks parent discovery.
     // Infrastructure failure must reject — not project as empty merge materials.
     await writeFile(resolve(cwd, ".git"), "gitdir: /nonexistent-git-dir-827\n");
-    await assert.rejects(() => createProductionMergerGitState(cwd).activeMerge());
+    await assert.rejects(
+      () => createProductionMergerGitState(cwd).activeMerge(),
+      /not a git repository/i,
+    );
   });
 });
 
@@ -117,7 +120,39 @@ test("production Merger Git seam keeps corrupt MERGE_HEAD loud", async () => {
       resolve(cwd, mergeHeadPath),
       "not-a-git-object-id\n",
     );
-    await assert.rejects(() => createProductionMergerGitState(cwd).activeMerge());
+    await assert.rejects(
+      () => createProductionMergerGitState(cwd).activeMerge(),
+      /MERGE_HEAD identity is unavailable or invalid/,
+    );
+  });
+});
+
+test("production Merger Git seam keeps corrupt detached HEAD loud", async () => {
+  await withTempRoot("ak-merger-corrupt-head-", async (cwd) => {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Merger Test");
+    git(cwd, "config", "user.email", "merger@test.local");
+    git(cwd, "commit", "--allow-empty", "-m", "seed");
+    await writeFile(
+      resolve(cwd, ".git", "HEAD"),
+      "0123456789abcdef0123456789abcdef01234567\n",
+    );
+    await assert.rejects(
+      () => createProductionMergerGitState(cwd).activeMerge(),
+      /HEAD identity is unavailable or invalid/,
+    );
+  });
+});
+
+test("production Merger Git seam returns empty materials for unborn repo", async () => {
+  await withTempRoot("ak-merger-unborn-", async (cwd) => {
+    git(cwd, "init", "-b", "main");
+    const active = await createProductionMergerGitState(cwd).activeMerge();
+    assert.deepEqual(active, {
+      targetObjectId: "",
+      sourceObjectId: "",
+      unmergedPaths: [],
+    });
   });
 });
 

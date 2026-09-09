@@ -67,11 +67,23 @@ async function unmerged(cwd: string): Promise<string[]> {
   return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 }
 
+async function resolveHeadMaterial(cwd: string): Promise<string> {
+  const commit = await tryResolveCommit(cwd, "HEAD");
+  if (commit !== undefined) return commit;
+  try {
+    await execFileAsync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  } catch (error) {
+    if ((error as GitExecError).code === 1) return "";
+    throw error;
+  }
+  throw new Error("Git HEAD identity is unavailable or invalid");
+}
+
 export function createProductionMergerGitState(repositoryRoot = process.cwd()): MergerGitState {
   return {
     async activeMerge() {
       await requireInsideWorkTree(repositoryRoot);
-      const targetObjectId = (await tryResolveCommit(repositoryRoot, "HEAD")) ?? "";
+      const targetObjectId = await resolveHeadMaterial(repositoryRoot);
       const mergeHeadReported = line(await git(repositoryRoot, ["rev-parse", "--git-path", "MERGE_HEAD"]), "Git MERGE_HEAD path");
       const mergeHeadPath = isAbsolute(mergeHeadReported) ? mergeHeadReported : resolve(repositoryRoot, mergeHeadReported);
       let sourceObjectId = "";
