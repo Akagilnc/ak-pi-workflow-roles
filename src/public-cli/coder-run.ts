@@ -39,8 +39,8 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
-  runPostAdmissionManualResume,
   runPostAdmissionResumable,
+  runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   resumeTurnRequestProjectionOptions,
@@ -82,10 +82,15 @@ function coderAdapters(
   methodProvenance?: PackagedMethodSkillProvenance,
 ): PostAdmissionAdapters<AdmittedCoderInvocation> {
   return {
-    trySettle: (admitted, authority) =>
-      trySettleCoderTerminalResult(admitted, authority, {
-        ...(methodProvenance === undefined ? {} : { methodProvenance }),
-      }),
+    trySettle: (admitted, authority, scope) =>
+      trySettleCoderTerminalResult(
+        admitted,
+        authority,
+        {
+          ...(methodProvenance === undefined ? {} : { methodProvenance }),
+        },
+        scope,
+      ),
   };
 }
 
@@ -216,55 +221,32 @@ export async function runPublicCoderResume(
   admitted?: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-
+  // Method provenance is package-root only; load before seat path. Phase-gated
+  // apply material is resolved after load inside adapters via optional provenance
+  // — seat resume owns court open under lease (#833).
   let methodProvenance: PackagedMethodSkillProvenance | undefined;
-  if (admitted.phase === "apply") {
-    try {
-      const material = await loadPackagedMethodSkillMaterial(
-        env.packageRoot,
-        "tdd",
-      );
-      methodProvenance = material.provenance;
-    } catch (error) {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation",
-        },
-        coderAdapters(),
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: AdmittedCoderInvocation; terminal: TerminalResult };
-    }
+  try {
+    const material = await loadPackagedMethodSkillMaterial(env.packageRoot, "tdd");
+    methodProvenance = material.provenance;
+  } catch {
+    // Leave undefined; plan-phase resume does not need it, apply settle stays closed.
   }
 
-  const turnRequest = buildCoderTurnRequest(
-    admitted,
-    resumeTurnRequestProjectionOptions(admitted, request, env),
-  );
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
-    adapters: coderAdapters(methodProvenance),
+    load: (effective) =>
+      loadResumableCoderRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
+      buildCoderTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
+    adapters: coderAdapters(
+      // Apply-only method; plan resume ignores provenance.
+      methodProvenance,
+    ),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

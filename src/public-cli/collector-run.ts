@@ -126,7 +126,8 @@ export async function runPublicCollector(
 
 function collectorAdapters(): PostAdmissionAdapters<AdmittedCollectorInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleCollectorTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) =>
+      trySettleCollectorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);

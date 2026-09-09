@@ -42,8 +42,8 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
-  runPostAdmissionManualResume,
   runPostAdmissionResumable,
+  runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   resumeTurnRequestProjectionOptions,
@@ -87,17 +87,22 @@ function fixerAdapters(
   methodMaterial?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedFixerInvocation> {
   return {
-    trySettle: (admitted, authority) =>
+    trySettle: (admitted, authority, scope) =>
       methodMaterial === undefined
         ? Promise.resolve(undefined)
-        : trySettleFixerTerminalResult(admitted, authority, {
-            methodProvenance: methodMaterial.provenance,
-            methodSkillPath: methodMaterial.skillPath,
-            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-              packageRoot,
-              "diagnosing-bugs",
-            ),
-          }),
+        : trySettleFixerTerminalResult(
+            admitted,
+            authority,
+            {
+              methodProvenance: methodMaterial.provenance,
+              methodSkillPath: methodMaterial.skillPath,
+              methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+                packageRoot,
+                "diagnosing-bugs",
+              ),
+            },
+            scope,
+          ),
   };
 }
 
@@ -231,47 +236,20 @@ export async function runPublicFixerResume(
   admitted?: AdmittedFixerInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableFixerRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
+  // Package-root method material; seat resume owns court open under lease (#833).
+  const methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
 
-  const { admitted } = loaded;
-
-  let methodMaterial: PackagedMethodSkillMaterial;
-  try {
-    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    return (await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      fixerAdapters(env.packageRoot),
-      env.principalAuthority,
-      io,
-    )) as { exitCode: number; admitted: AdmittedFixerInvocation; terminal: TerminalResult };
-  }
-
-  const turnRequest = buildFixerTurnRequest(
-    admitted,
-    resumeTurnRequestProjectionOptions(admitted, request, env),
-  );
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
+    load: (effective) =>
+      loadResumableFixerRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
+      buildFixerTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

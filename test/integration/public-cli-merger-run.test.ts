@@ -616,7 +616,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       process.exitCode = undefined;
     }
 
-    // post-seal action is observed by the same typed-turn adapter and blocks ordinary success.
+    // post-seal action is observed (anomaly on ledger) but must not erase the seal (#833).
     {
       const runId = "run-table-post-seal";
       const { io } = captureIo();
@@ -634,8 +634,8 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           postSealAction: true,
         }),
       });
-      assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(await readSealedSubmission(project, runId, home), undefined);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal((await readSealedSubmission(project, runId, home))?.role, "judge");
     }
   });
 });

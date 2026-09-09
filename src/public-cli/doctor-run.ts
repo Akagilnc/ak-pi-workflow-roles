@@ -120,7 +120,8 @@ export async function runPublicDoctor(
 
 function doctorAdapters(): PostAdmissionAdapters<AdmittedDoctorInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleDoctorTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) =>
+      trySettleDoctorTerminalResult(admitted, authority, scope),
     shouldPresentSettled: (terminal) =>
       isLawfulTypedTerminalOutcome(terminal.roleOutcome),
   };

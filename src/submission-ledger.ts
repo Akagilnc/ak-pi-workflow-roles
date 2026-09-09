@@ -150,7 +150,8 @@ function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
 
 /** Settlement read seam: typed sealed projection only, never host session JSONL.
  * Omit attemptId for run-scoped latest sealed.
- * Pass attemptId for the current court turn so a prior seal cannot wash this turn. */
+ * Pass attemptId for the current court turn so a prior seal cannot wash this turn.
+ * post-seal-anomaly is forensic only — later turns must not erase an earlier seal (#833). */
 export async function readSealedSubmission(
   cwd: string,
   runId: string,
@@ -161,7 +162,6 @@ export async function readSealedSubmission(
   const scoped = recordsForAttempt(owned, scope.attemptId);
   for (let index = scoped.length - 1; index >= 0; index -= 1) {
     const record = scoped[index];
-    if (record?.kind === "post-seal-anomaly") return undefined;
     if (record?.kind !== "sealed") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
     if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;

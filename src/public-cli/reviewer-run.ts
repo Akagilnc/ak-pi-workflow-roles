@@ -43,8 +43,8 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
-  runPostAdmissionManualResume,
   runPostAdmissionResumable,
+  runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   resumeTurnRequestProjectionOptions,
@@ -84,17 +84,22 @@ function reviewerAdapters(
 ): PostAdmissionAdapters<AdmittedReviewerInvocation> {
   return {
     beforeDispatch: (admitted) => clearReviewerDispatchRejection(admitted.runDirectory),
-    trySettle: (admitted, authority) =>
+    trySettle: (admitted, authority, scope) =>
       methodMaterial === undefined
         ? Promise.resolve(undefined)
-        : trySettleReviewerTerminalResult(admitted, authority, {
-            methodProvenance: methodMaterial.provenance,
-            methodSkillPath: methodMaterial.skillPath,
-            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-              packageRoot,
-              "code-review",
-            ),
-          }),
+        : trySettleReviewerTerminalResult(
+            admitted,
+            authority,
+            {
+              methodProvenance: methodMaterial.provenance,
+              methodSkillPath: methodMaterial.skillPath,
+              methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+                packageRoot,
+                "code-review",
+              ),
+            },
+            scope,
+          ),
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
       return infrastructureFailure === undefined
@@ -238,49 +243,22 @@ export async function runPublicReviewerResume(
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableReviewerRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
+  // Package-root method material; seat resume owns court open under lease (#833).
+  const methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
 
-  const { admitted } = loaded;
-
-  let methodMaterial: PackagedMethodSkillMaterial;
-  try {
-    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    return (await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      reviewerAdapters(env.packageRoot),
-      env.principalAuthority,
-      io,
-    )) as { exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult };
-  }
-
-  const turnRequest = buildReviewerTurnRequest(
-    admitted,
-    resumeTurnRequestProjectionOptions(admitted, request, env),
-  );
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    load: (effective) =>
+      loadResumableReviewerRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
+      buildReviewerTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
 

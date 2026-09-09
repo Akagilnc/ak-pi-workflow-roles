@@ -54,7 +54,8 @@ export function buildJudgeTurnRequest(
 
 function judgeAdapters(): PostAdmissionAdapters<AdmittedJudgeInvocation> {
   return {
-    trySettle: (admitted, authority) => trySettleJudgeTerminalResult(admitted, authority),
+    trySettle: (admitted, authority, scope) =>
+      trySettleJudgeTerminalResult(admitted, authority, scope),
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
       const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
       return (
