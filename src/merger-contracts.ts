@@ -175,7 +175,7 @@ export function validateMergerInput(value: unknown): MergerInput {
  * Discriminate completed|escalate leaves for settlement projection.
  * Does not authorize handler rejection (ADR 0003 / 第 0 条 / #827).
  */
-export function validateMergerOutput(value: unknown, _expectedAttemptId?: string): MergerOutput {
+export function validateMergerOutput(value: unknown): MergerOutput {
   if (!record(value)) throw new Error("合并回执无已识别的执行判别");
   const status = typeof value.status === "string" ? value.status : undefined;
   if (status === "completed" || status === "escalate") {
