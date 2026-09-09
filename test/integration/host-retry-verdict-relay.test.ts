@@ -76,6 +76,7 @@ test("headless executeTurn delivers opaque retry.message on resume", async () =>
     let closeRoundCalls = 0;
     const host = createHeadlessRoleTurnHost({
       description: HEADLESS_PROBE_DESCRIPTION,
+      hostName: "claude",
       binary,
       sessionIdentity: {
         async load() { return undefined; },

@@ -52,6 +52,7 @@ async function captureAcpResumePrompts(runDirectory: string, retryMessage: strin
     async close() {},
   };
   const host = createAcpRoleTurnHost({
+    hostName: "grok-build",
     modelPassing: "argv",
     boundResume: "session/new",
     sessionIdentity: {

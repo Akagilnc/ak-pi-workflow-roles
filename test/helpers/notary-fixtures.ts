@@ -50,7 +50,7 @@ export async function seedCanonicalSourceRun(
     })}\n`,
     "utf8",
   );
-  // Gate source runs necessarily own invocation.json (#645 parent host inherit).
+  // Realistic source-run identity page (production always writes invocation.json).
   await writeFile(
     join(coords.runDirectory, "invocation.json"),
     `${JSON.stringify({

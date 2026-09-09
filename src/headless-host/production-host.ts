@@ -22,6 +22,8 @@ export type ProductionHeadlessHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: HeadlessHostDescription;
+  /** Seat-table host key (e.g. claude). */
+  hostName: string;
 }>;
 
 /**
@@ -32,7 +34,7 @@ export type ProductionHeadlessHostOptions = Readonly<{
 export function createProductionHeadlessRoleTurnHost(
   options: ProductionHeadlessHostOptions,
 ): RoleTurnHost {
-  const { packageRoot, principalAuthority, description } = options;
+  const { packageRoot, principalAuthority, description, hostName } = options;
   const sessionIdentity = createAcpSessionIdentityAuthority(
     principalAuthority,
     description.sessionBindingFile,
@@ -42,6 +44,7 @@ export function createProductionHeadlessRoleTurnHost(
   const innerFor = (operatorHome: string): RoleTurnHost =>
     createHeadlessRoleTurnHost({
       description,
+      hostName,
       sessionIdentity,
       binary: resolveHeadlessBinary(description, operatorHome),
       env: {

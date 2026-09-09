@@ -22,6 +22,7 @@ type GenericHeadlessHostFactory = (options: {
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: HeadlessHostDescription;
+  hostName: string;
 }) => RoleTurnHost;
 
 /**
@@ -44,5 +45,5 @@ export async function loadProductionHeadlessHostFactory(
     createProductionHeadlessRoleTurnHost: GenericHeadlessHostFactory;
   };
   const create = mod.createProductionHeadlessRoleTurnHost;
-  return (options) => create({ ...options, description });
+  return (options) => create({ ...options, description, hostName: host });
 }

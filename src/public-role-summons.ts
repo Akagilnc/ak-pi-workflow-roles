@@ -66,12 +66,6 @@ export type PublicSummonRequest = {
    */
   readonly gateReviewInstruction?: string;
   /**
-   * Parent-invocation host axis (#617 / #645). Nested institutional legs inherit
-   * the live parent `--host` so a single public entry does not require mutating
-   * persistent seat host. Seat model/thinking stay on the officer seat table.
-   */
-  readonly host?: string;
-  /**
    * Offline test inject — same face as public CLI env.roleTurnHost. Production
    * summons leave this unset and use the seat-resolved host.
    */
@@ -284,10 +278,9 @@ export async function summonPublicRole(
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
-  // Nested legs inherit parent invocation host when provided (#645 review path).
-  // Model/thinking stay on the officer seat — host-only inherit (seat-table law).
-  const invocation = options.host === undefined ? undefined : { host: options.host };
-  const seat = resolveEffectiveSeat(config, options.role, credentials, invocation);
+  // Nested summons resolve host on the officer seat only (flag>seat>default pi).
+  // Parent run host is not an override channel (#821 / ADR 0082 host-flag-two-channels).
+  const seat = resolveEffectiveSeat(config, options.role, credentials);
   const env = {
     ...(await createSummonEnv({
       role: options.role,
@@ -413,47 +406,6 @@ export async function summonPublicRole(
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
-/**
- * Read parent invocation host so nested officers inherit live --host only (#645).
- * Gate source runs necessarily own invocation.json — missing page, bad JSON, or
- * bad shape stay loud (failure-honesty). Absent host field is lawful (seat default).
- */
-async function parentInvocationHost(sourceRunDirectory: string): Promise<string | undefined> {
-  const { readFile } = await import("node:fs/promises");
-  const path = join(sourceRunDirectory, "invocation.json");
-  let text: string;
-  try {
-    text = await readFile(path, "utf8");
-  } catch (error) {
-    const code =
-      error instanceof Error && "code" in error
-        ? (error as NodeJS.ErrnoException).code
-        : undefined;
-    throw new Error(
-      `parent invocation.json required for gate source run at ${path}: ${code ?? (error instanceof Error ? error.message : String(error))}`,
-      { cause: error },
-    );
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch (error) {
-    throw new Error(
-      `parent invocation.json unreadable at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`parent invocation.json has non-object shape at ${path}`);
-  }
-  const host = (raw as Record<string, unknown>).host;
-  if (host === undefined) return undefined;
-  if (typeof host !== "string" || host.trim() === "") {
-    throw new Error(`parent invocation.json host must be a non-empty string at ${path}`);
-  }
-  return host;
-}
-
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor";
   readonly sourceRunDirectory: string;
@@ -494,9 +446,8 @@ export async function summonGateOfficer(options: {
       submission: options.submission,
     });
   }
-  // Inherit parent live --host only so review roundtrip stays on one host without
-  // mutating persistent seat tables (#645). Officer model/thinking stay seat-owned.
-  const parentHost = await parentInvocationHost(options.sourceRunDirectory);
+  // Officer host is seat-owned only (#821). Parent invocation.json.host stays a
+  // hostTransition consumer in post-admission — not an officer override channel.
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -507,7 +458,6 @@ export async function summonGateOfficer(options: {
     ...(gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction }),
-    ...(parentHost === undefined ? {} : { host: parentHost }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
