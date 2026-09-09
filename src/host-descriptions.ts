@@ -68,6 +68,7 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
 /**
  * Headless CLI family (#645). Claude is the first row; codex (#646) adds another.
  * fixedArgs: print mode, isolation without `--bare` (OAuth stays), full permissions.
+ * stream-json + verbose: live host events for sitian records (#811); result is last line.
  * `--setting-sources` empty = load no user/project/local CLAUDE.md/hooks/skills
  * (role envelope is delivered via `--system-prompt` wholesale replace).
  * `--strict-mcp-config` with no `--mcp-config` drops operator MCP + claude.ai connectors.
@@ -77,8 +78,10 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
     binaryFromHome: Object.freeze([".local", "bin", "claude"]),
     sessionBindingFile: "claude-headless-session.json",
     fixedArgs: Object.freeze([
-      // One result envelope (not stream-json): typed receipt only; no event-stream copy.
-      "--output-format", "json",
+      // Live NDJSON events → sitian host-session records (#811); last line is the result receipt.
+      "--output-format", "stream-json",
+      // Intermediate assistant/tool/system events require verbose with stream-json.
+      "--verbose",
       "--permission-mode", "bypassPermissions",
       // Empty sources: no user/project/local operator surface (envelope owns materials).
       "--setting-sources", "",

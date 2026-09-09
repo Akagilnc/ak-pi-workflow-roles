@@ -11,8 +11,8 @@ import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "
 import {
   ENGINE_DETOUR_TOOL_NAME,
   engineDetourFailureDiagnostic,
-  engineNameFromEnv,
   isEngineDetourFailure,
+  resolveEngineName,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
 
@@ -125,14 +125,15 @@ export function createEngineDetourToolDefinition(input: {
 }
 
 /**
- * Register the engine-generic detour tool once for this process when any role has
- * an engine activation signal. Returns whether registration occurred.
+ * Register the engine-generic detour tool once when any role has an engine
+ * activation signal. Signal is request-scoped via RoleHost flag, with pi
+ * child-process env as fallback (resolveEngineName). Returns whether registration occurred.
  */
 export function registerEngineDetourTool(
   roleHost: RoleHost,
   hostActions: EngineDetourHostActions,
 ): boolean {
-  const engineName = engineNameFromEnv();
+  const engineName = resolveEngineName((name) => roleHost.getFlag(name));
   if (engineName === undefined) {
     return false;
   }

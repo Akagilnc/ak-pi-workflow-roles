@@ -1,14 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { DurablePrincipal, DurablePrincipalAuthority } from "../host-contracts.ts";
-import type { AcpSessionIdentityAuthority } from "./role-turn-host.ts";
+import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
+import type { SessionIdentityAuthority } from "./prepared-role-turn.ts";
 
-/** Durable ACP binding stored beside the host-owned session principal. */
-export function createAcpSessionIdentityAuthority(
+/** Durable session binding stored beside the host-owned session principal. */
+export function createSessionIdentityAuthority(
   authority: DurablePrincipalAuthority,
   sessionBindingFile: string,
-): AcpSessionIdentityAuthority {
+): SessionIdentityAuthority {
   const bindingPath = (principal: DurablePrincipal): string =>
     join(authority.decode(principal).sessionDirectory, sessionBindingFile);
   return {
@@ -19,7 +19,7 @@ export function createAcpSessionIdentityAuthority(
       try {
         const value: unknown = JSON.parse(await readFile(bindingPath(principal), "utf8"));
         if (typeof value !== "object" || value === null || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
-          throw new Error("durable ACP session binding is invalid");
+          throw new Error("durable session binding is invalid");
         }
         return (value as { sessionId: string }).sessionId;
       } catch (error) {

@@ -36,6 +36,7 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
       async close() {},
     };
     const host = createAcpRoleTurnHost({
+      hostName: "hermes",
       modelPassing: hermes.modelPassing,
       boundResume: hermes.boundResume,
       sessionIdentity: {

@@ -29,7 +29,17 @@ export class ReviewerDispatchExecutionError extends Error {
     this.name = "ReviewerDispatchExecutionError";
   }
 }
-export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
+export type ReviewerDispatchRunOptions = Readonly<{
+  context: HostContext;
+  signal?: AbortSignal;
+  /**
+   * Request-scoped RoleHost flag reader (#818).
+   * Forwards to axis sub-session so envelope legs arm engine from request.engine,
+   * not ambient process.env (same resolveEngineName gate as parent registration).
+   */
+  getFlag?: (name: string) => boolean | string | undefined;
+}>;
+export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: ReviewerDispatchRunOptions): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint;
 type Dependencies = Readonly<{
   fault?(operation: ReviewerAgentFaultPoint): void;
@@ -81,6 +91,7 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
             ...(dependencies.packageRoot === undefined
               ? {}
               : { packageRoot: dependencies.packageRoot }),
+            ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
           });
           const disposition = await workspaceOwner.dispose(workspace);
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition })] as const;

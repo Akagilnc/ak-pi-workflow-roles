@@ -4,7 +4,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
+import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
+import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -14,27 +15,26 @@ import type {
   RoleHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
-} from "../host-contracts.ts";
-import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
-import { stripSkillFrontmatter } from "../package-resources/method-skill.ts";
+} from "./host-contracts.ts";
+import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
+import { stripSkillFrontmatter } from "./package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
-} from "../role-runtime.ts";
-import {
-  createAcpRoleTurnHost,
-  type AcpPreparedTurn,
-  type AcpRoleTurnHostConfig,
-} from "./role-turn-host.ts";
+} from "./role-runtime.ts";
+import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
+import { projectActivationFlags } from "./role-activation-flags.ts";
 import {
   isCorrectableExecuteError,
   mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
-} from "../submission-correctable-error.ts";
+} from "./submission-correctable-error.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
-} from "../navigator-invocation-identity.ts";
+} from "./navigator-invocation-identity.ts";
+
+export { projectActivationFlags };
 
 type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
@@ -47,7 +47,7 @@ type ContentPart = { type: "text"; text: string } | { type: "image"; data: strin
  * a single bound method treats the plain prompt as the preserved user message.
  * Pi-native slash forms stay inside `src/pi/` only.
  */
-export function buildAcpSkillExpansion(
+export function buildSkillExpansion(
   methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
   prompt: string,
 ): HostSkillExpansionEvidence | undefined {
@@ -64,71 +64,10 @@ export function buildAcpSkillExpansion(
   });
 }
 
-export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
-  const activation = request.activation;
-  const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
-  const inputFlag = packagedRoleInputFlag(activation.role);
-  const phaseFlag = packagedRolePhaseFlag(activation.role);
-  if ("phase" in activation && phaseFlag !== undefined) flags.set(phaseFlag, activation.phase);
-  if (inputFlag !== undefined) {
-    const path = "taskPath" in activation ? activation.taskPath
-      : "packetPath" in activation ? activation.packetPath
-        : "casePath" in activation ? activation.casePath
-          : "inputPath" in activation ? activation.inputPath
-            : "sourceRun" in activation ? activation.sourceRun
-              : undefined;
-    if (path !== undefined) flags.set(inputFlag, path);
-  }
-  if (activation.role === "fixer" && activation.prerequisitesPath !== undefined) flags.set("ak-fixer-prerequisites", activation.prerequisitesPath);
-  if (activation.role === "reviewer") {
-    flags.set("ak-review-base", activation.baseRevision);
-    flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
-    if (activation.ticketNumber !== undefined) flags.set("ak-review-ticket-number", String(activation.ticketNumber));
-  }
-  // countersign ticketNumber stays on activation/admission/invocation only —
-  // no private transport flag (inner-gate material path deleted in #632).
-  if (activation.role === "notary" && activation.ticketNumber !== undefined) {
-    flags.set("ak-notary-ticket-number", String(activation.ticketNumber));
-  }
-  if (activation.role === "gleaner-left") {
-    flags.set("ak-gleaner-left-base", activation.baseRevision);
-  }
-  if (activation.role === "collector") {
-    flags.set("ak-collector-repo", activation.repo);
-    // #676 D1: pr optional at admission; omit flag when role binds from materials.
-    if (activation.pr !== undefined) flags.set("ak-collector-pr", activation.pr);
-    if (activation.requestManifestPath !== undefined) flags.set("ak-collector-request-manifest", activation.requestManifestPath);
-    if (activation.waitMs !== undefined) flags.set("ak-collector-wait-ms", activation.waitMs);
-  }
-  return flags;
-}
-
 async function listen(server: Server, path: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(path, () => { server.off("error", reject); resolve(); });
-  });
-}
-
-/**
- * Build one AK-owned MCP projection from the shared eight-seat envelope.
- * The child process is a protocol relay only; all tools execute in this process.
- */
-export function createComposedAcpRoleTurnHost(
-  config: Omit<AcpRoleTurnHostConfig, "prepare"> & {
-    readonly roleRuntimeDependencies: RoleRuntimeDependencies;
-    readonly socketPath?: (request: RoleTurnRequest) => string;
-  },
-) {
-  return createAcpRoleTurnHost({
-    ...config,
-    prepare: (request) => prepareAcpRoleEnvelope({
-      request,
-      dependencies: config.roleRuntimeDependencies,
-      // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
-      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
-      socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
-    }),
   });
 }
 
@@ -142,7 +81,7 @@ export function terminatingToolJsonSchema(parameters: unknown): Readonly<Record<
   });
 }
 
-export async function prepareAcpRoleEnvelope(options: {
+export async function prepareRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   /**
@@ -165,17 +104,20 @@ export async function prepareAcpRoleEnvelope(options: {
    * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
    */
   readonly sessionFile?: string;
-}): Promise<AcpPreparedTurn> {
+}): Promise<PreparedRoleTurn> {
   const { request } = options;
   if (options.socketPath === "") {
-    throw new Error("prepareAcpRoleEnvelope requires socketPath");
+    throw new Error("prepareRoleEnvelope requires socketPath");
   }
   const listTerminatingToolOnMcp = options.listTerminatingToolOnMcp !== false;
   const earlyTerminatingTool = packagedRoleOutputTool(request.activation.role);
   if (earlyTerminatingTool === undefined) {
     throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
-  const flags = projectAcpActivationFlags(request);
+  const flags = projectActivationFlags(request);
+  // #818 P1: engine axis is request-scoped on this RoleHost — never process.env.
+  // Always project ("" = no engine) so ambient AK_ROLE_ENGINE cannot arm detour.
+  flags.set(ENGINE_FLAG_NAME, normalizeEngineName(request.engine) ?? "");
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
@@ -275,7 +217,7 @@ export async function prepareAcpRoleEnvelope(options: {
     },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
-        return buildAcpSkillExpansion(methodSkills, prompt);
+        return buildSkillExpansion(methodSkills, prompt);
       },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
@@ -589,8 +531,9 @@ export async function prepareAcpRoleEnvelope(options: {
   let disposed = false;
   // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
   // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
-  // runIdentity and court-attempt identity correlate with settlement. Inject only
-  // after prepare succeeds (below); dispose must restore including unset.
+  // identity sees the same signals. Engine axis is request-scoped via RoleHost
+  // flag — never process.env (#818 P1). Run-dir may wait
+  // until prepare succeeds. Dispose restores including unset.
   let priorAkRoleRunDir: string | undefined;
   let priorAkRoleCourtAttempt: string | undefined;
   let runDirInjected = false;
@@ -641,7 +584,7 @@ export async function prepareAcpRoleEnvelope(options: {
     await invokeAkTool(terminatingToolName, params ?? {});
   }
 
-  const closeRound: AcpPreparedTurn["closeRound"] = async () => {
+  const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
       const roundCalls = [...calls];
@@ -683,7 +626,8 @@ export async function prepareAcpRoleEnvelope(options: {
 
   // Shared envelope activation. systemPrompt must be ready before session/new
   // (delivered via _meta.systemPromptOverride where the host honors it), so
-  // activation runs during prepare.
+  // activation runs during prepare. Engine axis already on RoleHost flags
+  // (request-scoped); registerEngineDetourTool resolves via resolveEngineName.
   try {
     await emit("session_start", { reason: request.continuation.kind });
     const inputResults = await emit("input", { text: request.continuation.prompt, source: "interactive" });
@@ -761,7 +705,7 @@ export async function prepareAcpRoleEnvelope(options: {
     } catch (cleanupFailure) {
       throw new AggregateError(
         [error, cleanupFailure],
-        "prepareAcpRoleEnvelope activation failed and its dispose cleanup also failed",
+        "prepareRoleEnvelope activation failed and its dispose cleanup also failed",
         { cause: error },
       );
     }
