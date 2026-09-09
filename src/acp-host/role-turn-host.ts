@@ -7,9 +7,13 @@ import {
   driveExternalRoleTurnRounds,
   raceAgainstHostAbort,
 } from "../external-host-turn-loop.ts";
-import { renderAgentStartMaterials } from "../agent-start-materials.ts";
 import { retainDiagnosticTail } from "../diagnostic-tail.ts";
 import { reportHostSessionEvent } from "../host-session-record.ts";
+import {
+  renderSystemPromptOverride,
+  type PreparedRoleTurn,
+  type SessionIdentityAuthority,
+} from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
@@ -21,74 +25,8 @@ export interface AcpConnection {
   close(): Promise<void>;
 }
 
-/** The shared envelope, prepared before session/new (systemPrompt delivery) and
- * able to observe the host's real builtin tool surface once it arrives post-session. */
-export type AcpPreparedTurn = Readonly<{
-  mcpServers: readonly Readonly<Record<string, unknown>>[];
-  /**
-   * Structured system-prompt authority. `body` is the provider-facing prompt
-   * bytes; `materials` are typed agent-start reading materials (e.g. Notary
-   * session bound) that the adapter folds into the override at the provider
-   * boundary. This structure is the authoritative production input of the
-   * send path — never a test-only parallel face.
-   */
-  systemPrompt: { readonly body: string; readonly materials: readonly unknown[] };
-  /** Effective user prompt after host-side input transform (canonical Skill invocation). */
-  prompt: string;
-  /**
-   * Host abort signal armed only by typed infrastructure failure (envelope
-   * rememberInfrastructureFailure / non-correctable MCP catch). Lawful
-   * context.abort() (seal / non-sole) does not arm it. executeTurn races
-   * session/prompt against this so infra declarations terminate even when
-   * ACP never resolves (#593).
-   */
-  abortSignal?: AbortSignal;
-  /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
-  closeRound(): Promise<
-    | { readonly accepted: true }
-    | {
-      readonly accepted: false;
-      /** Shared envelope provides officer/correctable text; adapters only deliver it (#813). */
-      readonly retry: {
-        readonly code: string;
-        readonly toolCallIds: readonly string[];
-        readonly message: string;
-      };
-    }
-    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
-  >;
-  dispose?(): Promise<void>;
-  /**
-   * Headless CLI family (#645): role terminating-tool schema for host-native
-   * `--json-schema`. Present for every prepared turn; ACP ignores it.
-   */
-  jsonSchema: Readonly<Record<string, unknown>>;
-  /** Terminating tool name whose schema is `jsonSchema`. */
-  terminatingToolName: string;
-  /**
-   * Headless CLI family: feed host-native `structured_output` through the same
-   * terminating-tool path the MCP relay uses (ledger + gates). ACP ignores it.
-   */
-  ingestStructuredOutput(params: unknown): Promise<void>;
-}>;
-
-/** Fold structured system-prompt authority into the provider-visible ACP override. */
-export function renderAcpSystemPromptOverride(authority: {
-  readonly body: string;
-  readonly materials: readonly unknown[];
-}): string {
-  return renderAgentStartMaterials(authority.body, authority.materials);
-}
-
-export type AcpSessionIdentityAuthority = Readonly<{
-  load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
-  bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
-  /** Durable principal session path for layout ownership / isAvailable — not a rebuild source (#617 DK-4). */
-  resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
-}>;
-
 export type AcpRoleTurnHostConfig = Readonly<{
-  sessionIdentity: AcpSessionIdentityAuthority;
+  sessionIdentity: SessionIdentityAuthority;
   /** Seat-table host key (e.g. grok-build) for sitian host field. */
   hostName: string;
   /** Whether a bound resume reuses the native session or mints a fresh one. */
@@ -100,7 +38,7 @@ export type AcpRoleTurnHostConfig = Readonly<{
    */
   modelPassing: AcpHostDescription["modelPassing"];
   connect(request: RoleTurnRequest): Promise<AcpConnection>;
-  prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
+  prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
 }>;
 
 function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
@@ -235,7 +173,7 @@ export function connectAcpStdio(options: {
 export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
-    const systemPromptOverride = renderAcpSystemPromptOverride(prepared.systemPrompt);
+    const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let accepted = false;

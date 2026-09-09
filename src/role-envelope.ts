@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
+import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -14,27 +14,23 @@ import type {
   RoleHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
-} from "../host-contracts.ts";
-import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "../packaged-role-registry.ts";
-import { stripSkillFrontmatter } from "../package-resources/method-skill.ts";
+} from "./host-contracts.ts";
+import { packagedRoleInputFlag, packagedRoleOutputTool, packagedRolePhaseFlag } from "./packaged-role-registry.ts";
+import { stripSkillFrontmatter } from "./package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
-} from "../role-runtime.ts";
-import {
-  createAcpRoleTurnHost,
-  type AcpPreparedTurn,
-  type AcpRoleTurnHostConfig,
-} from "./role-turn-host.ts";
+} from "./role-runtime.ts";
+import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import {
   isCorrectableExecuteError,
   mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
-} from "../submission-correctable-error.ts";
+} from "./submission-correctable-error.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
-} from "../navigator-invocation-identity.ts";
+} from "./navigator-invocation-identity.ts";
 
 type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
@@ -49,7 +45,7 @@ export function parseCanonicalSkillInvocation(prompt: string): { readonly name: 
 }
 
 /** Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods. */
-export function buildAcpSkillExpansion(
+export function buildSkillExpansion(
   methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
   prompt: string,
 ): HostSkillExpansionEvidence | undefined {
@@ -65,7 +61,7 @@ export function buildAcpSkillExpansion(
   });
 }
 
-export function projectAcpActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
+export function projectActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
   const activation = request.activation;
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
   const inputFlag = packagedRoleInputFlag(activation.role);
@@ -111,28 +107,6 @@ async function listen(server: Server, path: string): Promise<void> {
   });
 }
 
-/**
- * Build one AK-owned MCP projection from the shared eight-seat envelope.
- * The child process is a protocol relay only; all tools execute in this process.
- */
-export function createComposedAcpRoleTurnHost(
-  config: Omit<AcpRoleTurnHostConfig, "prepare"> & {
-    readonly roleRuntimeDependencies: RoleRuntimeDependencies;
-    readonly socketPath?: (request: RoleTurnRequest) => string;
-  },
-) {
-  return createAcpRoleTurnHost({
-    ...config,
-    prepare: (request) => prepareAcpRoleEnvelope({
-      request,
-      dependencies: config.roleRuntimeDependencies,
-      // Same durable-principal path settlement uses for isAvailable (#617 DK-4 layout).
-      sessionFile: config.sessionIdentity.resolveSessionFile(request.principal),
-      socketPath: config.socketPath?.(request) ?? `/tmp/ak-acp-mcp-${randomUUID()}.sock`,
-    }),
-  });
-}
-
 /** JSON Schema draft-07 document for host-native `--json-schema` (headless). */
 export function terminatingToolJsonSchema(parameters: unknown): Readonly<Record<string, unknown>> {
   const cloned = JSON.parse(JSON.stringify(parameters)) as Record<string, unknown>;
@@ -143,7 +117,7 @@ export function terminatingToolJsonSchema(parameters: unknown): Readonly<Record<
   });
 }
 
-export async function prepareAcpRoleEnvelope(options: {
+export async function prepareRoleEnvelope(options: {
   readonly request: RoleTurnRequest;
   readonly dependencies: RoleRuntimeDependencies;
   /**
@@ -166,17 +140,17 @@ export async function prepareAcpRoleEnvelope(options: {
    * isAvailable and envelope mint the same file. Tests may omit → runDirectory default.
    */
   readonly sessionFile?: string;
-}): Promise<AcpPreparedTurn> {
+}): Promise<PreparedRoleTurn> {
   const { request } = options;
   if (options.socketPath === "") {
-    throw new Error("prepareAcpRoleEnvelope requires socketPath");
+    throw new Error("prepareRoleEnvelope requires socketPath");
   }
   const listTerminatingToolOnMcp = options.listTerminatingToolOnMcp !== false;
   const earlyTerminatingTool = packagedRoleOutputTool(request.activation.role);
   if (earlyTerminatingTool === undefined) {
     throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
-  const flags = projectAcpActivationFlags(request);
+  const flags = projectActivationFlags(request);
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
@@ -276,7 +250,7 @@ export async function prepareAcpRoleEnvelope(options: {
     },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
-        return buildAcpSkillExpansion(methodSkills, prompt);
+        return buildSkillExpansion(methodSkills, prompt);
       },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
@@ -642,7 +616,7 @@ export async function prepareAcpRoleEnvelope(options: {
     await invokeAkTool(terminatingToolName, params ?? {});
   }
 
-  const closeRound: AcpPreparedTurn["closeRound"] = async () => {
+  const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
       const roundCalls = [...calls];
@@ -762,7 +736,7 @@ export async function prepareAcpRoleEnvelope(options: {
     } catch (cleanupFailure) {
       throw new AggregateError(
         [error, cleanupFailure],
-        "prepareAcpRoleEnvelope activation failed and its dispose cleanup also failed",
+        "prepareRoleEnvelope activation failed and its dispose cleanup also failed",
         { cause: error },
       );
     }

@@ -109,7 +109,7 @@ export async function buildAcpProductionHost(
   });
   // role-envelope resolves ./mcp-relay.mjs from import.meta.url — keep it beside the bundle.
   await copyFile(
-    resolve("src/acp-host/mcp-relay.mjs"),
+    resolve("src/mcp-relay.mjs"),
     join(dirname(outfile), "mcp-relay.mjs"),
   );
 }
@@ -136,7 +136,7 @@ export async function buildHeadlessProductionHost(
   // Shared envelope resolves ./mcp-relay.mjs from import.meta.url of the bundle
   // (#645 headless reuses the ACP relay for AK tools under --mcp-config).
   await copyFile(
-    resolve("src/acp-host/mcp-relay.mjs"),
+    resolve("src/mcp-relay.mjs"),
     join(dirname(outfile), "mcp-relay.mjs"),
   );
 }

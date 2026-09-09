@@ -12,10 +12,10 @@ import {
   isHostAbortedError,
 } from "../external-host-turn-loop.ts";
 import {
-  renderAcpSystemPromptOverride,
-  type AcpPreparedTurn,
-  type AcpSessionIdentityAuthority,
-} from "../acp-host/role-turn-host.ts";
+  renderSystemPromptOverride,
+  type PreparedRoleTurn,
+  type SessionIdentityAuthority,
+} from "../prepared-role-turn.ts";
 import { retainDiagnosticTail } from "../diagnostic-tail.ts";
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
@@ -26,11 +26,11 @@ import {
 
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
-  sessionIdentity: AcpSessionIdentityAuthority;
+  sessionIdentity: SessionIdentityAuthority;
   /** Seat-table host key (e.g. claude) for sitian host field. */
   hostName: string;
   binary: string;
-  prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
+  prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
   env?: NodeJS.ProcessEnv;
 }>;
 
@@ -264,7 +264,7 @@ function terminalFromSpawned(
 export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
-    const systemPrompt = renderAcpSystemPromptOverride(prepared.systemPrompt);
+    const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       let sessionId = await config.sessionIdentity.load(request.principal);
