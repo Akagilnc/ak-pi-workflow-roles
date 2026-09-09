@@ -2229,6 +2229,71 @@ test("coder apply binds completion to the immediately following canonical tdd ex
     assert.deepEqual((await submitCompleted(harness, "collision")).details, completed);
   }
 
+  // Sequential apply activations on the same RoleHost reset Skill capture state:
+  // prior expansionCaptured must not authorize a later completed (#822 CR).
+  {
+    const harness = extensionHarness(undefined, {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    const faux = fauxProvider({
+      provider: "coder-rebind-gatekeeper",
+      api: "coder-rebind-gatekeeper",
+    });
+    const model = faux.getModel();
+    defaultGateSummon = async (officer) => passingOfficerSummon(officer);
+    const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+    armGateSummonOnHost(piHostAdapter.host);
+    const runtime = createCoderRoleRuntime(
+      piHostAdapter.host,
+      {
+        loadSoul: async () => "CODER LAW",
+        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+        loadCanonicalSkillBinding: async () => tddBinding(),
+      },
+      testHostActions(),
+    );
+    const submit = async (id: string) => {
+      const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+      assert.ok(tool);
+      return withInstitutionalRunDir(parentInheritedSeats(model), () =>
+        tool.execute(
+          id,
+          completed,
+          undefined,
+          undefined,
+          Object.assign(toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]), {
+            cwd: process.cwd(),
+            model,
+            modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider, {
+              matchProvider: false,
+            }),
+            thinkingLevel: "off",
+          }),
+        ),
+      );
+    };
+
+    await runtime.activate();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+    assert.deepEqual((await submit("first-activation")).details, completed);
+
+    await runtime.activate();
+    // Stale first-activation evidence must not pass; re-capture is required.
+    await assertExpansionEvidenceMissing(submit("stale-second-activation"));
+
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      agentCtx,
+    );
+    assert.deepEqual((await submit("second-activation")).details, completed);
+  }
+
   // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
   // and settles without summoning the Inspector (skip-statuses).
   {

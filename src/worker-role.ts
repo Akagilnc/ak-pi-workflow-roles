@@ -347,6 +347,12 @@ export function createCoderRoleRuntime(
 
   return {
     async activate(ctx) {
+      // Each activation owns its own Skill capture state; prior-session flags must
+      // not authorize a later apply completed (same RoleHost, sequential activate).
+      tddInvocationInjected = false;
+      originalRequest = undefined;
+      expansionPending = false;
+      expansionCaptured = false;
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
