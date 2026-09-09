@@ -34,6 +34,8 @@ export type ProductionAcpHostOptions = Readonly<{
   packageRoot: string;
   principalAuthority: DurablePrincipalAuthority;
   description: AcpHostDescription;
+  /** Seat-table host key (e.g. grok-build). */
+  hostName: string;
 }>;
 
 const navigatorRoutePlaybookPath = fileURLToPath(
@@ -116,7 +118,7 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
  * is sitian-only.
  */
 export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOptions): RoleTurnHost {
-  const { packageRoot, principalAuthority, description } = options;
+  const { packageRoot, principalAuthority, description, hostName } = options;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...description.childEnv,
@@ -124,6 +126,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
   };
 
   return createComposedAcpRoleTurnHost({
+    hostName,
     sessionIdentity: createAcpSessionIdentityAuthority(principalAuthority, description.sessionBindingFile),
     boundResume: description.boundResume,
     modelPassing: description.modelPassing,

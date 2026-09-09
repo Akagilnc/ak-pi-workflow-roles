@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 
 import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { retainDiagnosticTail } from "../diagnostic-tail.ts";
+import { reportHostSessionEvent } from "../host-session-record.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
@@ -82,6 +84,8 @@ export type AcpSessionIdentityAuthority = Readonly<{
 
 export type AcpRoleTurnHostConfig = Readonly<{
   sessionIdentity: AcpSessionIdentityAuthority;
+  /** Seat-table host key (e.g. grok-build) for sitian host field. */
+  hostName: string;
   /** Whether a bound resume reuses the native session or mints a fresh one. */
   boundResume: AcpHostDescription["boundResume"];
   /**
@@ -132,6 +136,7 @@ export function connectAcpStdio(options: {
   let nextId = 0;
   let closed = false;
   let terminalError: Error | undefined;
+  // Rolling diagnostic tail only — not an unbounded transcript face (same class as headless).
   let stderr = "";
   const settleClosed = (error: Error): void => {
     if (closed) return;
@@ -148,7 +153,9 @@ export function connectAcpStdio(options: {
     child.stdin.end();
     child.kill("SIGTERM");
   };
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr = retainDiagnosticTail(stderr + chunk);
+  });
   child.on("error", (error) => settleClosed(acpError("acp-process-error", `ACP process error: ${error.message}`, error)));
   createInterface({ input: child.stdout }).on("line", (line) => {
     let message: RpcReply;
@@ -244,174 +251,218 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             return failure("activation", "UncontrolledAcpSession", "ak-config-missing");
           }
           connection = await config.connect(request);
-          const initialized = await connection.request("initialize", {
-            protocolVersion: 1,
-            clientCapabilities: {},
+          // Live host-session records: ACP session/update → sitian sole entry (#811).
+          // One abort + one race helper + one outer projection — write failure ends
+          // any in-flight RPC as typed session infrastructure failure.
+          const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+          const recordAbort = new AbortController();
+          let hostSessionRecordFailure: RoleTurnKnownFailure | undefined;
+          const hostSessionRecordResult = (): RoleTurnResult => ({
+            code: null,
+            stderr: "",
+            timedOut: false,
+            knownFailure: hostSessionRecordFailure!,
           });
-          const initializeMeta = initialized._meta as {
-            modelState?: { availableModels?: unknown };
-          } | undefined;
-          const modelState = initializeMeta?.modelState;
-          const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
-          if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
-            typeof entry === "object" && entry !== null
-            && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
-            return failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
-              provider: request.model.provider,
-              model: request.model.model,
-            });
-          }
-
-          // #617 DK-7 / #732: hand the projected prior-native session paths once,
-          // whichever record family they came from; the host reads the files itself.
-          const priorNativePaths =
-            continuation.kind === "resume"
-              ? request.hostTransition?.priorNativePaths
-              : undefined;
-          const loadConnection = connection;
-          // Shared session/new + session/load body (cwd/mcpServers/_meta).
-          const sessionBindParams = {
-            cwd: request.cwd,
-            mcpServers: prepared.mcpServers,
-            _meta: { systemPromptOverride, yoloMode: false },
+          const noteHostSessionRecordFailure = (error: unknown): void => {
+            if (hostSessionRecordFailure !== undefined) return;
+            hostSessionRecordFailure = {
+              cause: "session",
+              identity: { name: "HostSessionRecordFailure", code: "host-session-record-failed" },
+              diagnostic: error instanceof Error ? error.message : String(error),
+            };
+            try { recordAbort.abort(); } catch { /* already aborted */ }
           };
-          const loadSession = async (bindSessionId: string): Promise<string> => {
-            const loaded = await loadConnection.request("session/load", {
-              sessionId: bindSessionId,
-              ...sessionBindParams,
-            });
-            return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
-              ? loaded.sessionId
-              : bindSessionId;
-          };
-          if (continuation.kind === "resume" && config.boundResume === "session/load") {
-            // Same-host resume reuses the native ACP session via session/load.
-            const boundSessionId = await config.sessionIdentity.load(request.principal);
-            if (boundSessionId !== undefined && boundSessionId !== "") {
-              sessionId = await loadSession(boundSessionId);
-            }
-          }
-          if (sessionId === undefined) {
-            // Initial run, unbound resume (cross-host / lost binding), or a host
-            // whose bound resume is session/new: mint the session and bind it.
-            const session = await connection.request("session/new", sessionBindParams);
-            sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
-            if (sessionId === undefined || sessionId === "") {
-              return failure("session", "AcpSessionFailure", "session-id-missing");
-            }
-            await config.sessionIdentity.bind(request.principal, sessionId);
-          }
-
-          // set_model hosts address the seat model by `provider:model` once the
-          // session exists; argv hosts never reach this RPC. Provider is the seat
-          // table value after owner host-alias projection (#778) — concatenated
-          // here, never dropped, never remapped in package code. set_model may
-          // rebuild the session agent and drop ACP-injected mcpServers, so re-bind
-          // via the same loadSession authority (return value is the live session id).
-          if (
-            config.modelPassing === "set_model"
-            && request.model !== undefined
-            && sessionId !== undefined
-          ) {
-            await connection.request("session/set_model", {
-              sessionId,
-              modelId: acpModelId(config.modelPassing, request.model),
-            });
-            sessionId = await loadSession(sessionId);
-          }
-
-          let prompt =
-            priorNativePaths !== undefined && priorNativePaths.length > 0
-              ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
-              : prepared.prompt;
-          // Envelope infra abort and parent cancellation (#675 nested summons) are
-          // the same race face here: either one ends the ACP round and the finally
-          // block cancels + closes the child session.
-          const abortSignal =
-            request.signal === undefined
-              ? prepared.abortSignal
-              : prepared.abortSignal === undefined
-                ? request.signal
-                : AbortSignal.any([prepared.abortSignal, request.signal]);
-          const activeConnection = connection;
-
-          /** Race ACP prompt against envelope abort so infra failInfrastructure cannot hang (#593). */
-          const promptOrAbort = async (
-            params: Readonly<Record<string, unknown>>,
-          ): Promise<Readonly<Record<string, unknown>>> => {
-            if (abortSignal?.aborted) {
-              // Prefer closeRound's typed failure over a bare abort race winner.
-              throw hostAbortedError();
-            }
-            const promptRequest = activeConnection.request("session/prompt", params);
-            if (abortSignal === undefined) return promptRequest;
-            return new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
+          const raceRpc = <T,>(
+            pending: Promise<T>,
+            signal: AbortSignal,
+            onAbort: () => Error,
+          ): Promise<T> => {
+            if (signal.aborted) return Promise.reject(onAbort());
+            return new Promise<T>((resolve, reject) => {
               let settled = false;
-              const onAbort = (): void => {
+              const finishAbort = (): void => {
                 if (settled) return;
                 settled = true;
-                promptRequest.catch(() => {});
-                reject(hostAbortedError());
+                pending.catch(() => {});
+                reject(onAbort());
               };
-              abortSignal.addEventListener("abort", onAbort, { once: true });
-              promptRequest.then(
+              signal.addEventListener("abort", finishAbort, { once: true });
+              pending.then(
                 (value) => {
                   if (settled) return;
                   settled = true;
-                  abortSignal.removeEventListener("abort", onAbort);
+                  signal.removeEventListener("abort", finishAbort);
                   resolve(value);
                 },
                 (error) => {
                   if (settled) return;
                   settled = true;
-                  abortSignal.removeEventListener("abort", onAbort);
+                  signal.removeEventListener("abort", finishAbort);
                   reject(error);
                 },
               );
             });
           };
-          for (let attempt = 0; attempt < 8; attempt += 1) {
-            let result: Readonly<Record<string, unknown>>;
+          const recordFailError = (): Error & { readonly code: string } =>
+            Object.assign(new Error("host-session-record-failed"), { code: "host-session-record-failed" });
+          const rpc = (
+            method: string,
+            params: Readonly<Record<string, unknown>>,
+          ): Promise<Readonly<Record<string, unknown>>> =>
+            raceRpc(connection!.request(method, params), recordAbort.signal, recordFailError);
+
+          connection.onNotification?.((method, params) => {
+            if (method !== "session/update" || hostSessionRecordFailure !== undefined) return;
             try {
-              result = await promptOrAbort({
+              reportHostSessionEvent({
+                host: config.hostName,
+                cwd: request.cwd,
+                sessionParent,
+                source: "acp-host",
+                event: { method, params },
+              });
+            } catch (error) {
+              noteHostSessionRecordFailure(error);
+            }
+          });
+
+          try {
+            const initialized = await rpc("initialize", {
+              protocolVersion: 1,
+              clientCapabilities: {},
+            });
+            const initializeMeta = initialized._meta as {
+              modelState?: { availableModels?: unknown };
+            } | undefined;
+            const modelState = initializeMeta?.modelState;
+            const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : undefined;
+            if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
+              typeof entry === "object" && entry !== null
+              && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
+              return failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
+                provider: request.model.provider,
+                model: request.model.model,
+              });
+            }
+
+            // #617 DK-7 / #732: hand the projected prior-native session paths once,
+            // whichever record family they came from; the host reads the files itself.
+            const priorNativePaths =
+              continuation.kind === "resume"
+                ? request.hostTransition?.priorNativePaths
+                : undefined;
+            // Shared session/new + session/load body (cwd/mcpServers/_meta).
+            const sessionBindParams = {
+              cwd: request.cwd,
+              mcpServers: prepared.mcpServers,
+              _meta: { systemPromptOverride, yoloMode: false },
+            };
+            const loadSession = async (bindSessionId: string): Promise<string> => {
+              const loaded = await rpc("session/load", {
+                sessionId: bindSessionId,
+                ...sessionBindParams,
+              });
+              return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
+                ? loaded.sessionId
+                : bindSessionId;
+            };
+            if (continuation.kind === "resume" && config.boundResume === "session/load") {
+              // Same-host resume reuses the native ACP session via session/load.
+              const boundSessionId = await config.sessionIdentity.load(request.principal);
+              if (boundSessionId !== undefined && boundSessionId !== "") {
+                sessionId = await loadSession(boundSessionId);
+              }
+            }
+            if (sessionId === undefined) {
+              // Initial run, unbound resume (cross-host / lost binding), or a host
+              // whose bound resume is session/new: mint the session and bind it.
+              const session = await rpc("session/new", sessionBindParams);
+              sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
+              if (sessionId === undefined || sessionId === "") {
+                return failure("session", "AcpSessionFailure", "session-id-missing");
+              }
+              await config.sessionIdentity.bind(request.principal, sessionId);
+            }
+
+            // set_model hosts address the seat model by `provider:model` once the
+            // session exists; argv hosts never reach this RPC. Provider is the seat
+            // table value after owner host-alias projection (#778) — concatenated
+            // here, never dropped, never remapped in package code. set_model may
+            // rebuild the session agent and drop ACP-injected mcpServers, so re-bind
+            // via the same loadSession authority (return value is the live session id).
+            if (
+              config.modelPassing === "set_model"
+              && request.model !== undefined
+              && sessionId !== undefined
+            ) {
+              await rpc("session/set_model", {
+                sessionId,
+                modelId: acpModelId(config.modelPassing, request.model),
+              });
+              sessionId = await loadSession(sessionId);
+            }
+
+            let prompt =
+              priorNativePaths !== undefined && priorNativePaths.length > 0
+                ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
+                : prepared.prompt;
+            // Envelope infra abort, parent cancellation (#675), and host-session
+            // record abort (#811) share one race face for in-flight prompt.
+            const abortParts: AbortSignal[] = [recordAbort.signal];
+            if (prepared.abortSignal !== undefined) abortParts.push(prepared.abortSignal);
+            if (request.signal !== undefined) abortParts.push(request.signal);
+            const abortSignal = AbortSignal.any(abortParts);
+            const promptOrAbort = (
+              params: Readonly<Record<string, unknown>>,
+            ): Promise<Readonly<Record<string, unknown>>> =>
+              raceRpc(
+                connection!.request("session/prompt", params),
+                abortSignal,
+                () => (hostSessionRecordFailure !== undefined ? recordFailError() : hostAbortedError()),
+              );
+
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+              const result = await promptOrAbort({
                 sessionId,
                 prompt: [{ type: "text", text: prompt }],
               });
-            } catch (error) {
-              // Envelope abort (typed infra declaration): closeRound owns the failure record.
-              if (
-                typeof error === "object"
-                && error !== null
-                && (error as { code?: unknown }).code === "host-aborted"
-              ) {
-                const closure = await prepared.closeRound();
-                if ("failure" in closure) {
-                  return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
-                }
-                return failure("session", "HostAborted", "host-aborted", { sessionId });
+              if (result.stopReason === "refusal") {
+                return failure("output", "AcpRefusal", "refusal", { sessionId });
               }
-              throw error;
+              // session/prompt resolution is the sole typed round boundary before seal
+              // when the turn ends without host abort; abort path closes in catch.
+              const closure = await prepared.closeRound();
+              if (closure.accepted) {
+                // Wait for ACP's typed close acknowledgement before tearing down the
+                // process; Stop hooks and fire-and-forget cancellation are not closure.
+                await rpc("session/close", { sessionId });
+                if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+                accepted = true;
+                return { code: 0, stderr: "", timedOut: false };
+              }
+              if ("failure" in closure) {
+                return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+              }
+              // Shared envelope already owns the officer/correctable text (#813).
+              prompt = closure.retry.message;
             }
-            if (result.stopReason === "refusal") {
-              return failure("output", "AcpRefusal", "refusal", { sessionId });
+            return failure("output", "AcpRoundLimit", "round-retry-limit", { sessionId });
+          } catch (error) {
+            if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
+            // Envelope abort (typed infra declaration): closeRound owns the failure record.
+            if (
+              typeof error === "object"
+              && error !== null
+              && (error as { code?: unknown }).code === "host-aborted"
+            ) {
+              const closure = await prepared.closeRound();
+              if ("failure" in closure) {
+                return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
+              }
+              return failure("session", "HostAborted", "host-aborted", { sessionId });
             }
-            // session/prompt resolution is the sole typed round boundary before seal
-            // when the turn ends without host abort; abort path closes above.
-            const closure = await prepared.closeRound();
-            if (closure.accepted) {
-              // Wait for ACP's typed close acknowledgement before tearing down the
-              // process; Stop hooks and fire-and-forget cancellation are not closure.
-              await connection.request("session/close", { sessionId });
-              accepted = true;
-              return { code: 0, stderr: "", timedOut: false };
-            }
-            if ("failure" in closure) {
-              return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
-            }
-            // Shared envelope already owns the officer/correctable text (#813).
-            prompt = closure.retry.message;
+            throw error;
           }
-          return failure("output", "AcpRoundLimit", "round-retry-limit", { sessionId });
         } finally {
           if (connection !== undefined) {
             if (sessionId !== undefined && !accepted) {
