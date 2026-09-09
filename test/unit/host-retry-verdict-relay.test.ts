@@ -1,18 +1,21 @@
 /**
  * #813: non-pi last-mile adapters resume with shared-envelope retry.message.
  * No host-invented "Resubmit it" line; officer/correctable text is delivery-only.
+ * Mechanical non-sole keeps the shared actionable resume text (not bare code).
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
-import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
-import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { projectCorrectableExecuteRejection } from "../../src/submission-correctable-error.ts";
+import {
+  mechanicalSubmissionRejectionResumeMessage,
+  NON_SOLE_ROUND_RESUME_MESSAGE,
+  projectCorrectableExecuteRejection,
+} from "../../src/submission-correctable-error.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 
@@ -35,157 +38,110 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
   };
 }
 
-test("ACP resume prompt is shared retry.message (no host-invented resubmit line)", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-"));
+async function captureAcpResumePrompts(input: {
+  readonly runDirectory: string;
+  readonly firstRetry: {
+    readonly code: string;
+    readonly toolCallIds: readonly string[];
+    readonly message: string;
+  };
+}): Promise<string[]> {
   const prompts: string[] = [];
   let closeRoundCalls = 0;
-  try {
-    const connection: AcpConnection = {
-      async request(method, params) {
-        if (method === "initialize") return { protocolVersion: 1 };
-        if (method === "session/new") return { sessionId: "sess-813" };
-        if (method === "session/prompt") {
-          const parts = params.prompt as ReadonlyArray<{ type?: string; text?: string }> | undefined;
-          const text = parts?.map((part) => part.text ?? "").join("") ?? "";
-          prompts.push(text);
-          return { stopReason: "end_turn" };
+  const connection: AcpConnection = {
+    async request(method, params) {
+      if (method === "initialize") return { protocolVersion: 1 };
+      if (method === "session/new") return { sessionId: "sess-813" };
+      if (method === "session/prompt") {
+        const parts = params.prompt as ReadonlyArray<{ type?: string; text?: string }> | undefined;
+        const text = parts?.map((part) => part.text ?? "").join("") ?? "";
+        prompts.push(text);
+        return { stopReason: "end_turn" };
+      }
+      if (method === "session/close") return {};
+      return {};
+    },
+    notify() {},
+    async close() {},
+  };
+  const host = createAcpRoleTurnHost({
+    modelPassing: "argv",
+    boundResume: "session/new",
+    sessionIdentity: {
+      async load() {
+        return undefined;
+      },
+      async bind() {},
+      resolveSessionFile: () => join(input.runDirectory, "session", "session.jsonl"),
+    },
+    connect: async () => connection,
+    prepare: async () => ({
+      mcpServers: [{ name: "ak-probe", type: "stdio" }],
+      systemPrompt: { body: "probe", materials: [] },
+      prompt: "initial-assignment",
+      jsonSchema: { type: "object" },
+      terminatingToolName: "ak_judge_output",
+      async ingestStructuredOutput() {},
+      async closeRound() {
+        closeRoundCalls += 1;
+        if (closeRoundCalls === 1) {
+          return { accepted: false as const, retry: input.firstRetry };
         }
-        if (method === "session/close") return {};
-        return {};
+        return { accepted: true as const };
       },
-      notify() {},
-      async close() {},
-    };
-    const host = createAcpRoleTurnHost({
-      modelPassing: "argv",
-      boundResume: "session/new",
-      sessionIdentity: {
-        async load() {
-          return undefined;
-        },
-        async bind() {},
-        resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
-      },
-      connect: async () => connection,
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "probe", materials: [] },
-        prompt: "initial-assignment",
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput() {},
-        async closeRound() {
-          closeRoundCalls += 1;
-          if (closeRoundCalls === 1) {
-            return {
-              accepted: false as const,
-              retry: {
-                code: "bounce",
-                toolCallIds: ["call-1"],
-                message: OFFICER_VERDICT,
-              },
-            };
-          }
-          return { accepted: true as const };
-        },
-      }),
-    });
+    }),
+  });
+  const result = await host.executeTurn(baseRequest(input.runDirectory));
+  assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+  assert.equal(result.code, 0);
+  return prompts;
+}
 
-    const result = await host.executeTurn(baseRequest(runDirectory));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
+test("ACP resume prompt is shared officer retry.message (no host-invented resubmit line)", async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-officer-"));
+  try {
+    const prompts = await captureAcpResumePrompts({
+      runDirectory,
+      firstRetry: {
+        code: "bounce",
+        toolCallIds: ["call-1"],
+        message: OFFICER_VERDICT,
+      },
+    });
     assert.deepEqual(prompts, ["initial-assignment", OFFICER_VERDICT]);
-    assert.equal(prompts.some((text) => text.includes("Resubmit it")), false);
   } finally {
     await rm(runDirectory, { recursive: true, force: true });
   }
 });
 
-test("headless resume prompt is shared retry.message (no host-invented resubmit line)", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-headless-"));
-  const promptsPath = join(runDirectory, "prompts.jsonl");
-  const binaryPath = join(runDirectory, "fake-headless.sh");
-  let closeRoundCalls = 0;
+test("ACP resume prompt keeps shared mechanical non-sole message", async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-nonssole-"));
   try {
-    // Shell fake stays under unit budget; no second Node cold-start per turn.
-    await writeFile(
-      binaryPath,
-      `#!/bin/sh
-prompt=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "-p" ]; then
-    prompt="$arg"
-  fi
-  prev="$arg"
-done
-printf '%s\n' "$prompt" >> ${JSON.stringify(promptsPath)}
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"headless-sess-813","structured_output":{"status":"completed","report":"ok"}}'
-`,
-      "utf8",
-    );
-    await chmod(binaryPath, 0o755);
-
-    const description: HeadlessHostDescription = {
-      binaryFromHome: ["fake"],
-      sessionBindingFile: "binding.json",
-      fixedArgs: ["--output-format", "json"],
-      promptFlag: "-p",
-      modelFlag: "--model",
-      effortFlag: "--effort",
-      systemPromptFlag: "--system-prompt-file",
-      jsonSchemaFlag: "--json-schema",
-      mcpConfigFlag: "--mcp-config",
-      sessionIdFlag: "--session-id",
-      resumeFlag: "--resume",
-    };
-
-    const host = createHeadlessRoleTurnHost({
-      description,
-      binary: binaryPath,
-      sessionIdentity: {
-        async load() {
-          return undefined;
-        },
-        async bind() {},
-        resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+    const message = mechanicalSubmissionRejectionResumeMessage("non-sole-round");
+    const prompts = await captureAcpResumePrompts({
+      runDirectory,
+      firstRetry: {
+        code: "non-sole-round",
+        toolCallIds: ["a", "b"],
+        message,
       },
-      prepare: async () => ({
-        mcpServers: [],
-        systemPrompt: { body: "probe", materials: [] },
-        prompt: "initial-assignment",
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput() {},
-        async closeRound() {
-          closeRoundCalls += 1;
-          if (closeRoundCalls === 1) {
-            return {
-              accepted: false as const,
-              retry: {
-                code: "bounce",
-                toolCallIds: ["call-1"],
-                message: OFFICER_VERDICT,
-              },
-            };
-          }
-          return { accepted: true as const };
-        },
-      }),
     });
-
-    const result = await host.executeTurn(baseRequest(runDirectory));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
-
-    const lines = (await readFile(promptsPath, "utf8"))
-      .split("\n")
-      .filter((line) => line.trim() !== "");
-    assert.deepEqual(lines, ["initial-assignment", OFFICER_VERDICT]);
-    assert.equal(lines.some((text) => text.includes("Resubmit it")), false);
+    assert.deepEqual(prompts, ["initial-assignment", NON_SOLE_ROUND_RESUME_MESSAGE]);
+    assert.notEqual(message, "non-sole-round");
   } finally {
     await rm(runDirectory, { recursive: true, force: true });
   }
+});
+
+test("mechanical non-sole resume message stays actionable and shared", () => {
+  assert.equal(
+    mechanicalSubmissionRejectionResumeMessage("non-sole-round"),
+    NON_SOLE_ROUND_RESUME_MESSAGE,
+  );
+  // Not the bare internal code the bounce finding rejected.
+  assert.notEqual(NON_SOLE_ROUND_RESUME_MESSAGE, "non-sole-round");
+  assert.ok(NON_SOLE_ROUND_RESUME_MESSAGE.length > "non-sole-round".length);
+  assert.equal(mechanicalSubmissionRejectionResumeMessage("other-code"), "other-code");
 });
 
 test("correctable bounce projection keeps officer receipt as diagnostic text", () => {

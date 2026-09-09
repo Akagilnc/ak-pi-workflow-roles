@@ -28,6 +28,7 @@ import {
 } from "./role-turn-host.ts";
 import {
   isCorrectableExecuteError,
+  mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
 } from "../submission-correctable-error.ts";
 import {
@@ -266,11 +267,11 @@ export async function prepareAcpRoleEnvelope(options: {
 
   const host: RoleHost = {
     deliverSubmissionRejection(value) {
-      // Mechanical round rejection has no officer receipt; typed code is the fact (#813).
+      // Mechanical round rejection has no officer receipt; shared resume text is the fact (#813).
       rejection = {
         code: value.code,
         toolCallIds: value.toolCallIds,
-        message: value.code,
+        message: mechanicalSubmissionRejectionResumeMessage(value.code),
       };
     },
     capabilities: {
