@@ -111,6 +111,7 @@ import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, wit
 // scope writes the page and manages env + temp dir per test — no global
 // install registry in the shared helper, one page writer reused everywhere.
 const activeRunDirs: string[] = [];
+const activeLedgers = new Map<string, { dispose(): void }>();
 function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefined>): string {
   void seats; // seat page deleted (#675); argument retained for call-site shape only.
   // Publisher face is `<runId>@<role>` — sole runIdFromRunDirectory authority requires the @.
@@ -119,6 +120,7 @@ function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefi
   const ledger = createTempPackageHomeLedger({ prefix: "ak-judge-home-", runName });
   const runDirectory = ledger.runDirectory;
   activeRunDirs.push(runDirectory);
+  activeLedgers.set(runDirectory, ledger);
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   return runDirectory;
 }
@@ -126,7 +128,12 @@ function disposeInstitutionalRunDir(runDirectory: string): void {
   const index = activeRunDirs.indexOf(runDirectory);
   if (index !== -1) activeRunDirs.splice(index, 1);
   if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
-  // Owner 2026-09-05: leave hermetic home under tmpdir for OS cleanup (no directory delete).
+  // #685 / #612: creating seam owns create→use→cleanup; worktree temp roots must not linger.
+  const ledger = activeLedgers.get(runDirectory);
+  if (ledger) {
+    activeLedgers.delete(runDirectory);
+    ledger.dispose();
+  }
 }
 async function withInstitutionalRunDir<T>(
   seats: Record<string, SeatSelection | undefined>,
