@@ -163,11 +163,11 @@ test("Merger accepts one honest escalation without Git success verification", as
   );
 });
 
-test("Merger accepts completed receipt including paths outside the conflict materials", async () => {
+test("Merger accepts completed receipt without path-scope/completion Git verification gate", async () => {
   const args = {
     status: "completed",
     attemptId: "attempt",
-    report: "resolved with tracer outside conflict set",
+    report: "resolved",
     mergeCommitId: oid("c"),
   };
   const h = setup();
@@ -176,5 +176,6 @@ test("Merger accepts completed receipt including paths outside the conflict mate
     .get(MERGER_OUTPUT_TOOL_NAME)
     .execute("out", args, undefined, undefined, context("out", args));
   assert.equal(accepted.terminate, true);
+  assert.equal(accepted.details.status, "completed");
   assert.deepEqual(accepted.details, args);
 });

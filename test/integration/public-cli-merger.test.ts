@@ -449,7 +449,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
   });
 });
 
-test("ak-role merger dispatches without merge (escalate) and with merge (completed)", async () => {
+test("ak-role merger dispatches and settles escalate without active merge and completed with active merge under mocked host", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -474,7 +474,7 @@ test("ak-role merger dispatches without merge (escalate) and with merge (complet
       assert.equal(stderr.join("").length > 0, true);
     }
 
-    // No active merge → still dispatch; role escalate is the typed terminal (#827).
+    // No active merge → dispatches and settles escalate terminal leaf under mocked host (#827).
     {
       seedGitProject(project);
       const { io, stdout } = captureIo();
@@ -565,7 +565,7 @@ test("ak-role merger dispatches without merge (escalate) and with merge (complet
       assert.match(stdout.join(""), /escalate/);
     }
 
-    // Active merge → dispatch with package method + derived internal input.
+    // Active merge → derives materials from active merge and settles completed leaf under mocked host.
     {
       const conflicted = join(home, "conflicted-run");
       await mkdir(conflicted, { recursive: true });
@@ -590,7 +590,7 @@ test("ak-role merger dispatches without merge (escalate) and with merge (complet
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
             captured = [...args];
-            // Simulate forced expansion + completed leaf without real model.
+            // Simulate packaged skill invocation and completed receipt under mocked host.
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             const inputIdx = args.indexOf("--ak-merger-input");
