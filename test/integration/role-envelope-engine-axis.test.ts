@@ -13,9 +13,14 @@ import test from "node:test";
 import {
   AK_ROLE_ENGINE_ENV,
   ENGINE_DETOUR_TOOL_NAME,
+  ENGINE_FLAG_NAME,
+  resolveEngineName,
 } from "../../src/engine-detour.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import {
+  prepareRoleEnvelope,
+  projectActivationFlags,
+} from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -40,13 +45,11 @@ function mcpRelayToken(prepared: {
   assert.fail("AK_ACP_MCP_TOKEN missing from prepared MCP env");
 }
 
-type McpToolListing = Readonly<{ name: string; description?: string }>;
-
-async function listMcpTools(
+async function listMcpToolNames(
   socketPath: string,
   token: string,
-): Promise<McpToolListing[]> {
-  const result = await new Promise<{ tools?: Array<{ name?: string; description?: string }> }>((resolve, reject) => {
+): Promise<string[]> {
+  const result = await new Promise<{ tools?: Array<{ name?: string }> }>((resolve, reject) => {
     const conn = createConnection(socketPath);
     let buffer = "";
     conn.setEncoding("utf8");
@@ -57,7 +60,7 @@ async function listMcpTools(
       if (end < 0) return;
       try {
         const message = JSON.parse(buffer.slice(0, end)) as {
-          result?: { tools?: Array<{ name?: string; description?: string }> };
+          result?: { tools?: Array<{ name?: string }> };
           error?: unknown;
         };
         if (message.error !== undefined) {
@@ -74,18 +77,22 @@ async function listMcpTools(
     conn.write(`${JSON.stringify({ id: 1, token, method: "tools/list" })}\n`);
   });
   return (result.tools ?? [])
-    .filter((tool): tool is { name: string; description?: string } => typeof tool.name === "string")
-    .map((tool) => ({
-      name: tool.name,
-      ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-    }));
+    .map((tool) => tool.name)
+    .filter((name): name is string => typeof name === "string");
 }
 
-async function listMcpToolNames(
-  socketPath: string,
-  token: string,
-): Promise<string[]> {
-  return (await listMcpTools(socketPath, token)).map((tool) => tool.name);
+function baseRequest(home: string, runDirectory: string, engine?: string): RoleTurnRequest {
+  return {
+    principal: fixturePrincipal(join(runDirectory, "session")),
+    activation: { role: "judge" },
+    methods: [],
+    continuation: { kind: "initial", prompt: "engine-axis probe" },
+    cwd: packageRoot,
+    home,
+    agentDir: join(home, "agent"),
+    runDirectory,
+    ...(engine === undefined ? {} : { engine }),
+  };
 }
 
 async function withEnvelopeHome<T>(
@@ -101,22 +108,41 @@ async function withEnvelopeHome<T>(
     const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
-    const request = (engine?: string): RoleTurnRequest => ({
-      principal: fixturePrincipal(join(runDirectory, "session")),
-      activation: { role: "judge" },
-      methods: [],
-      continuation: { kind: "initial", prompt: "engine-axis probe" },
-      cwd: packageRoot,
-      home,
-      agentDir: join(home, "agent"),
-      runDirectory,
-      ...(engine === undefined ? {} : { engine }),
-    });
+    const request = (engine?: string): RoleTurnRequest => baseRequest(home, runDirectory, engine);
     return await run({ home, runDirectory, socketPath, request });
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 }
+
+test("projectActivationFlags scopes engine per request for resolveEngineName", () => {
+  const home = "/tmp/ak-818-flags";
+  const runDirectory = join(home, "run");
+  const flagsA = projectActivationFlags(baseRequest(home, runDirectory, "agy"));
+  const flagsB = projectActivationFlags(baseRequest(home, runDirectory, "cursor"));
+  const flagsFree = projectActivationFlags(baseRequest(home, runDirectory));
+  // Structured flag values — one map per request, no shared process.env.
+  assert.equal(flagsA.get(ENGINE_FLAG_NAME), "agy");
+  assert.equal(flagsB.get(ENGINE_FLAG_NAME), "cursor");
+  assert.equal(flagsFree.get(ENGINE_FLAG_NAME), "");
+  assert.equal(resolveEngineName((name) => flagsA.get(name)), "agy");
+  assert.equal(resolveEngineName((name) => flagsB.get(name)), "cursor");
+  assert.equal(resolveEngineName((name) => flagsFree.get(name)), undefined);
+});
+
+test("resolveEngineName empty flag blocks ambient process.env", () => {
+  const previous = process.env[AK_ROLE_ENGINE_ENV];
+  process.env[AK_ROLE_ENGINE_ENV] = "ambient-should-not-arm";
+  try {
+    const flags = new Map<string, boolean | string>([[ENGINE_FLAG_NAME, ""]]);
+    assert.equal(resolveEngineName((name) => flags.get(name)), undefined);
+    // Flag absent still reads env (pi child path).
+    assert.equal(resolveEngineName(), "ambient-should-not-arm");
+  } finally {
+    if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
+    else process.env[AK_ROLE_ENGINE_ENV] = previous;
+  }
+});
 
 test("shared envelope registers engine detour when request.engine is set", async () => {
   await withEnvelopeHome(async ({ socketPath, request }) => {
@@ -197,21 +223,31 @@ test("concurrent envelopes keep request-scoped engines without process.env races
       return {
         socketPath: join(home, `${label}.sock`),
         request: {
-          principal: fixturePrincipal(join(runDirectory, "session")),
-          activation: { role: "judge" },
-          methods: [],
-          continuation: { kind: "initial", prompt: `concurrent ${label}` },
-          cwd: packageRoot,
-          home,
+          ...baseRequest(home, runDirectory, engine),
           agentDir: join(home, label, "agent"),
-          runDirectory,
-          ...(engine === undefined ? {} : { engine }),
+          continuation: { kind: "initial", prompt: `concurrent ${label}` },
         },
       };
     };
     const a = await mkRequest("a", "agy");
     const b = await mkRequest("b", "cursor");
     const free = await mkRequest("free");
+    // Structured isolation of the activation signal itself (per-request maps).
+    assert.equal(projectActivationFlags(a.request).get(ENGINE_FLAG_NAME), "agy");
+    assert.equal(projectActivationFlags(b.request).get(ENGINE_FLAG_NAME), "cursor");
+    assert.equal(projectActivationFlags(free.request).get(ENGINE_FLAG_NAME), "");
+    assert.equal(
+      resolveEngineName((name) => projectActivationFlags(a.request).get(name)),
+      "agy",
+    );
+    assert.equal(
+      resolveEngineName((name) => projectActivationFlags(b.request).get(name)),
+      "cursor",
+    );
+    assert.equal(
+      resolveEngineName((name) => projectActivationFlags(free.request).get(name)),
+      undefined,
+    );
     const deps = createRoleRuntimeDependencies(packageRoot);
     // Overlap prepares so any process.env write would race across hosts.
     const [preparedA, preparedB, preparedFree] = await Promise.all([
@@ -221,33 +257,27 @@ test("concurrent envelopes keep request-scoped engines without process.env races
     ]);
     try {
       assert.equal(process.env[AK_ROLE_ENGINE_ENV], undefined);
-      const [toolsA, toolsB, toolsFree] = await Promise.all([
-        listMcpTools(a.socketPath, mcpRelayToken(preparedA)),
-        listMcpTools(b.socketPath, mcpRelayToken(preparedB)),
-        listMcpTools(free.socketPath, mcpRelayToken(preparedFree)),
+      const [namesA, namesB, namesFree] = await Promise.all([
+        listMcpToolNames(a.socketPath, mcpRelayToken(preparedA)),
+        listMcpToolNames(b.socketPath, mcpRelayToken(preparedB)),
+        listMcpToolNames(free.socketPath, mcpRelayToken(preparedFree)),
       ]);
-      const detourA = toolsA.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
-      const detourB = toolsB.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
-      const detourFree = toolsFree.find((tool) => tool.name === ENGINE_DETOUR_TOOL_NAME);
-      assert.ok(detourA !== undefined, `host A expected detour; tools=${JSON.stringify(toolsA)}`);
-      assert.ok(detourB !== undefined, `host B expected detour; tools=${JSON.stringify(toolsB)}`);
+      // External face: tool name presence only (structured), not description prose.
       assert.equal(
-        detourFree,
-        undefined,
-        `engine-free host must not arm detour; tools=${JSON.stringify(toolsFree)}`,
+        namesA.includes(ENGINE_DETOUR_TOOL_NAME),
+        true,
+        `host A expected detour; tools=${JSON.stringify(namesA)}`,
       );
-      assert.match(
-        detourA.description ?? "",
-        /engine=agy/,
-        `host A description must keep agy; got ${detourA.description}`,
+      assert.equal(
+        namesB.includes(ENGINE_DETOUR_TOOL_NAME),
+        true,
+        `host B expected detour; tools=${JSON.stringify(namesB)}`,
       );
-      assert.match(
-        detourB.description ?? "",
-        /engine=cursor/,
-        `host B description must keep cursor; got ${detourB.description}`,
+      assert.equal(
+        namesFree.includes(ENGINE_DETOUR_TOOL_NAME),
+        false,
+        `engine-free host must not arm detour; tools=${JSON.stringify(namesFree)}`,
       );
-      assert.doesNotMatch(detourA.description ?? "", /engine=cursor/);
-      assert.doesNotMatch(detourB.description ?? "", /engine=agy/);
     } finally {
       await Promise.all([
         preparedA.dispose?.(),
