@@ -1,8 +1,7 @@
 /**
- * #813: non-pi last-mile adapters resume with shared-envelope retry.message.
- * Transport only: opaque payload passthrough at the ACP host seam.
- * Headless last-mile is the same assignment (`prompt = closure.retry.message`);
- * class scan + delivery true-run cover it — no parallel production spawn inject.
+ * #813: ACP last-mile resumes with shared-envelope retry.message.
+ * Fake ACP connection only — single process, no spawn (unit size).
+ * Headless dual-entry proof: test/integration/host-retry-verdict-relay.test.ts (#820).
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";

@@ -1,20 +1,21 @@
-/**
- * Generic headless CLI RoleTurnHost (#645 / #752).
- * One process per turn: spawn → read result envelope/exit → structured_output / MCP → envelope.
- * No reads of the host's private home; session id is package-owned binding only.
- * No permanent stdout/stderr/init probe copies — sitian + binding are the dossier.
- */
+/** Headless CLI last hop (#645/#820): spawn/parse/bind. Shared loop = external-host-turn-loop. */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RoleTurnHost, RoleTurnKnownFailure, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
+import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import {
-  renderAcpSystemPromptOverride,
-  type AcpPreparedTurn,
-  type AcpSessionIdentityAuthority,
-} from "../acp-host/role-turn-host.ts";
+  createSerializedRoleTurnHost,
+  driveExternalRoleTurnRounds,
+  hostAbortedError,
+  isHostAbortedError,
+} from "../external-host-turn-loop.ts";
+import {
+  renderSystemPromptOverride,
+  type PreparedRoleTurn,
+  type SessionIdentityAuthority,
+} from "../prepared-role-turn.ts";
 import { retainDiagnosticTail } from "../diagnostic-tail.ts";
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
@@ -25,11 +26,11 @@ import {
 
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
-  sessionIdentity: AcpSessionIdentityAuthority;
+  sessionIdentity: SessionIdentityAuthority;
   /** Seat-table host key (e.g. claude) for sitian host field. */
   hostName: string;
   binary: string;
-  prepare(request: RoleTurnRequest): Promise<AcpPreparedTurn>;
+  prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
   env?: NodeJS.ProcessEnv;
 }>;
 
@@ -140,7 +141,7 @@ function spawnHeadlessTurn(options: {
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
-      reject(Object.assign(new Error("headless host aborted"), { code: "host-aborted" }));
+      reject(hostAbortedError("headless host aborted"));
       return;
     }
     const child = spawn(options.binary, [...options.args], {
@@ -204,7 +205,7 @@ function spawnHeadlessTurn(options: {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
-      reject(Object.assign(new Error("headless host aborted"), { code: "host-aborted" }));
+      reject(hostAbortedError("headless host aborted"));
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
@@ -229,291 +230,203 @@ function spawnHeadlessTurn(options: {
   });
 }
 
-function cleanupErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * If dispose/cleanup failed: success becomes typed failure; existing failure keeps
- * its primary cause and records the cleanup error in details (failure-honesty).
- */
+/** Success→dispose failure; existing failure keeps primary cause + cleanup detail. */
 function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
-  const message = cleanupErrorMessage(cleanupError);
+  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
   if (outcome.knownFailure === undefined) {
-    return failure(
-      "session",
-      "HeadlessDisposeFailure",
-      "dispose-failed",
-      { cleanupError: message },
-      message,
-    );
+    return failure("session", "HeadlessDisposeFailure", "dispose-failed", { cleanupError: message }, message);
   }
   return {
     ...outcome,
     knownFailure: {
       ...outcome.knownFailure,
-      details: {
-        ...(outcome.knownFailure.details ?? {}),
-        cleanupError: message,
-      },
+      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
     },
   };
 }
 
-/**
- * Main-session headless adapter. prepare() is the shared envelope boundary;
- * this module owns only CLI spawn / parse / session-id bind / resume loop.
- */
-export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
-  let serial = Promise.resolve();
+function terminalFromSpawned(
+  spawned: { code: number | null; stderr: string; timedOut: boolean },
+  knownFailure: NonNullable<RoleTurnResult["knownFailure"]>,
+): { readonly status: "terminal"; readonly result: RoleTurnResult } {
   return {
-    executeTurn(request) {
-      const execution = serial.then(async (): Promise<RoleTurnResult> => {
-        const prepared = await config.prepare(request);
-        const systemPrompt = renderAcpSystemPromptOverride(prepared.systemPrompt);
-        let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
-        try {
-          // Same-host resume reuses the bound native session id via --resume.
-          let sessionId = await config.sessionIdentity.load(request.principal);
-          let sessionKind: "new" | "resume" =
-            request.continuation.kind === "resume" && sessionId !== undefined && sessionId !== ""
-              ? "resume"
-              : "new";
-          if (sessionKind === "new") {
-            sessionId = randomUUID();
-            await config.sessionIdentity.bind(request.principal, sessionId);
-          }
+    status: "terminal",
+    result: {
+      code: spawned.code,
+      stderr: spawned.stderr,
+      timedOut: spawned.timedOut,
+      knownFailure,
+    },
+  };
+}
 
-          // Cross-host handoff: prior-native paths ride the user prompt (DK-7).
-          const priorNativePaths =
-            request.continuation.kind === "resume"
-              ? request.hostTransition?.priorNativePaths
-              : undefined;
-          let prompt =
-            priorNativePaths !== undefined && priorNativePaths.length > 0
-              ? `${prepared.prompt}\n${priorNativePaths.join("\n")}`
-              : prepared.prompt;
+/** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema mount. */
+export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
+  return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
+    const prepared = await config.prepare(request);
+    const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
+    let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
+    try {
+      let sessionId = await config.sessionIdentity.load(request.principal);
+      let sessionKind: "new" | "resume" =
+        request.continuation.kind === "resume" && sessionId !== undefined && sessionId !== ""
+          ? "resume"
+          : "new";
+      if (sessionKind === "new") {
+        sessionId = randomUUID();
+        await config.sessionIdentity.bind(request.principal, sessionId);
+      }
 
-          const abortSignal =
-            request.signal === undefined
-              ? prepared.abortSignal
-              : prepared.abortSignal === undefined
-                ? request.signal
-                : AbortSignal.any([prepared.abortSignal, request.signal]);
+      // config.env owns package-root/child env; do not re-spread process.env over it.
+      const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
+      const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
+      await writeFile(systemPromptPath, systemPrompt, "utf8");
+      const mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
+      await writeFile(
+        mcpConfigPath,
+        `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
+        "utf8",
+      );
 
-          // config.env is the production authority for package-root / host child env
-          // (see createProductionHeadlessRoleTurnHost). Do not re-override keys from
-          // process.env after the spread — that erased AK_PACKAGE_ROOT.
-          const env: NodeJS.ProcessEnv = {
-            ...process.env,
-            ...(config.env ?? {}),
-          };
-
-          // Materialize system prompt + MCP config once per prepare (stable across
-          // correctable retries). Paths live under the run directory we already own.
-          // Envelope always projects the AK MCP relay row; no empty-server branch.
-          const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
-          await writeFile(systemPromptPath, systemPrompt, "utf8");
-          const mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
-          await writeFile(
+      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+      outcome = await driveExternalRoleTurnRounds(prepared, request, {
+        roundLimitName: "HeadlessRoundLimit",
+        currentSessionId: () => sessionId,
+        afterRetry() { sessionKind = "resume"; },
+        async runRound({ prompt, abortSignal }) {
+          const args = headlessTurnArgs({
+            description: config.description,
+            prompt,
+            systemPromptPath,
+            jsonSchema: prepared.jsonSchema,
             mcpConfigPath,
-            `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-            "utf8",
-          );
+            ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
+            ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
+            session: sessionKind === "new"
+              ? { kind: "new", id: sessionId! }
+              : { kind: "resume", id: sessionId! },
+          });
 
-          // No round cap on content review (#750); this bound is only for
-          // correctable mechanical resubmit (non-sole etc.), matching ACP's 8.
-          for (let attempt = 0; attempt < 8; attempt += 1) {
-            if (abortSignal?.aborted) {
-              const closure = await prepared.closeRound();
-              if ("failure" in closure) {
-                outcome = { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
-                break;
-              }
-              outcome = failure("session", "HostAborted", "host-aborted", { sessionId });
-              break;
-            }
-
-            const args = headlessTurnArgs({
-              description: config.description,
-              prompt,
-              systemPromptPath,
-              jsonSchema: prepared.jsonSchema,
-              mcpConfigPath,
-              ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
-              ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
-              session: sessionKind === "new"
-                ? { kind: "new", id: sessionId! }
-                : { kind: "resume", id: sessionId! },
-            });
-
-            let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
-            const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
-            try {
-              spawned = await spawnHeadlessTurn({
-                binary: config.binary,
-                args,
-                cwd: request.cwd,
-                env,
-                ...(abortSignal === undefined ? {} : { signal: abortSignal }),
-                ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-                onStdoutLine(line) {
-                  const trimmed = line.trim();
-                  if (trimmed === "") return;
-                  let event: unknown;
-                  try {
-                    event = JSON.parse(trimmed) as unknown;
-                  } catch {
-                    // Non-JSON noise on stdout is not a host structured event.
-                    return;
-                  }
-                  // Sitian write failures propagate → spawn rejects → session failure.
-                  reportHostSessionEvent({
-                    host: config.hostName,
-                    cwd: request.cwd,
-                    sessionParent,
-                    source: "headless-host",
-                    event,
-                  });
-                },
-              });
-            } catch (error) {
-              if (
-                typeof error === "object"
-                && error !== null
-                && (error as { code?: unknown }).code === "host-aborted"
-              ) {
-                const closure = await prepared.closeRound();
-                if ("failure" in closure) {
-                  outcome = { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
-                  break;
+          let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+          try {
+            spawned = await spawnHeadlessTurn({
+              binary: config.binary,
+              args,
+              cwd: request.cwd,
+              env,
+              ...(abortSignal === undefined ? {} : { signal: abortSignal }),
+              ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+              onStdoutLine(line) {
+                const trimmed = line.trim();
+                if (trimmed === "") return;
+                let event: unknown;
+                try {
+                  event = JSON.parse(trimmed) as unknown;
+                } catch {
+                  // Non-JSON noise on stdout is not a host structured event.
+                  return;
                 }
-                outcome = failure("session", "HostAborted", "host-aborted", { sessionId });
-                break;
-              }
-              const message = error instanceof Error ? error.message : String(error);
-              // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
-              const isRecordFailure =
-                typeof error === "object"
-                && error !== null
-                && ((error as { knownCause?: unknown }).knownCause === "session"
-                  || (error as { name?: unknown }).name === "SitianInfrastructureError");
-              if (isRecordFailure) {
-                outcome = failure(
+                // Sitian write failures propagate → spawn rejects → session failure.
+                reportHostSessionEvent({
+                  host: config.hostName,
+                  cwd: request.cwd,
+                  sessionParent,
+                  source: "headless-host",
+                  event,
+                });
+              },
+            });
+          } catch (error) {
+            if (isHostAbortedError(error)) throw error;
+            const message = error instanceof Error ? error.message : String(error);
+            // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
+            const isRecordFailure =
+              typeof error === "object"
+              && error !== null
+              && ((error as { knownCause?: unknown }).knownCause === "session"
+                || (error as { name?: unknown }).name === "SitianInfrastructureError");
+            if (isRecordFailure) {
+              return {
+                status: "terminal",
+                result: failure(
                   "session",
                   "HostSessionRecordFailure",
                   "host-session-record-failed",
                   { diagnostic: message, sessionId },
                   message,
-                );
-                break;
-              }
-              outcome = failure("activation", "HeadlessSpawnFailure", "spawn-failed", {
+                ),
+              };
+            }
+            return {
+              status: "terminal",
+              result: failure("activation", "HeadlessSpawnFailure", "spawn-failed", {
                 diagnostic: message,
                 binary: config.binary,
-              }, message);
-              break;
-            }
-
-            if (spawned.timedOut) {
-              outcome = {
-                code: spawned.code,
-                stderr: spawned.stderr,
-                timedOut: true,
-                knownFailure: {
-                  cause: "timeout",
-                  identity: { name: "HeadlessTimeout", code: "timeout" },
-                  details: { sessionId },
-                },
-              };
-              break;
-            }
-
-            const envelope = parseHeadlessCliStdout(spawned.stdout);
-            if (envelope === undefined) {
-              outcome = {
-                code: spawned.code,
-                stderr: spawned.stderr,
-                timedOut: false,
-                knownFailure: {
-                  cause: "output",
-                  identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
-                  diagnostic: retainDiagnosticTail(spawned.stderr.trim() || "headless CLI produced no parseable result"),
-                  details: { sessionId, exitCode: spawned.code },
-                },
-              };
-              break;
-            }
-
-            // Bind the host-reported session id (authoritative for --resume).
-            if (typeof envelope.session_id === "string" && envelope.session_id !== "") {
-              sessionId = envelope.session_id;
-              await config.sessionIdentity.bind(request.principal, sessionId);
-            }
-
-            if (envelope.is_error === true || (typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_"))) {
-              const errorCode =
-                typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_")
-                  ? envelope.subtype
-                  : envelope.is_error === true
-                    ? "is_error"
-                    : "cli-error";
-              const diagnostic = typeof envelope.result === "string"
-                ? envelope.result
-                : Array.isArray(envelope.errors)
-                  ? envelope.errors.map(String).join("\n")
-                  : retainDiagnosticTail(spawned.stderr.trim() || "headless CLI reported is_error");
-              outcome = {
-                code: spawned.code,
-                stderr: spawned.stderr,
-                timedOut: false,
-                knownFailure: {
-                  cause: "output",
-                  identity: { name: "HeadlessCliError", code: errorCode },
-                  diagnostic,
-                  details: {
-                    sessionId,
-                    subtype: envelope.subtype,
-                    errors: envelope.errors,
-                    exitCode: spawned.code,
-                  },
-                },
-              };
-              break;
-            }
-
-            // Schema channel: host-native structured_output is the terminating receipt
-            // (#750). Intermediate tools may have already run via MCP during the process.
-            if (envelope.structured_output !== undefined) {
-              await prepared.ingestStructuredOutput(envelope.structured_output);
-            }
-            const closure = await prepared.closeRound();
-            if (closure.accepted) {
-              outcome = { code: 0, stderr: "", timedOut: false };
-              break;
-            }
-            if ("failure" in closure) {
-              outcome = { code: null, stderr: spawned.stderr, timedOut: false, knownFailure: closure.failure };
-              break;
-            }
-            // Shared envelope already owns the officer/correctable text (#813).
-            prompt = closure.retry.message;
-            sessionKind = "resume";
-            if (attempt === 7) {
-              outcome = failure("output", "HeadlessRoundLimit", "round-retry-limit", { sessionId });
-            }
+              }, message),
+            };
           }
-        } finally {
-          try {
-            await prepared.dispose?.();
-          } catch (cleanupError) {
-            outcome = withCleanupFailure(outcome, cleanupError);
+
+          if (spawned.timedOut) {
+            return terminalFromSpawned(spawned, {
+              cause: "timeout",
+              identity: { name: "HeadlessTimeout", code: "timeout" },
+              details: { sessionId },
+            });
           }
-        }
-        return outcome;
+
+          const envelope = parseHeadlessCliStdout(spawned.stdout);
+          if (envelope === undefined) {
+            return terminalFromSpawned(spawned, {
+              cause: "output",
+              identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
+              diagnostic: retainDiagnosticTail(spawned.stderr.trim() || "headless CLI produced no parseable result"),
+              details: { sessionId, exitCode: spawned.code },
+            });
+          }
+
+          if (typeof envelope.session_id === "string" && envelope.session_id !== "") {
+            sessionId = envelope.session_id;
+            await config.sessionIdentity.bind(request.principal, sessionId);
+          }
+
+          if (envelope.is_error === true || (typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_"))) {
+            const errorCode =
+              typeof envelope.subtype === "string" && envelope.subtype.startsWith("error_")
+                ? envelope.subtype
+                : envelope.is_error === true
+                  ? "is_error"
+                  : "cli-error";
+            const diagnostic = typeof envelope.result === "string"
+              ? envelope.result
+              : Array.isArray(envelope.errors)
+                ? envelope.errors.map(String).join("\n")
+                : retainDiagnosticTail(spawned.stderr.trim() || "headless CLI reported is_error");
+            return terminalFromSpawned(spawned, {
+              cause: "output",
+              identity: { name: "HeadlessCliError", code: errorCode },
+              diagnostic,
+              details: {
+                sessionId,
+                subtype: envelope.subtype,
+                errors: envelope.errors,
+                exitCode: spawned.code,
+              },
+            });
+          }
+
+          if (envelope.structured_output !== undefined) {
+            await prepared.ingestStructuredOutput(envelope.structured_output);
+          }
+          return { status: "delivered", stderr: spawned.stderr };
+        },
       });
-      serial = execution.then(() => undefined, () => undefined);
-      return execution;
-    },
-  };
+    } finally {
+      try {
+        await prepared.dispose?.();
+      } catch (cleanupError) {
+        outcome = withCleanupFailure(outcome, cleanupError);
+      }
+    }
+    return outcome;
+  });
 }
