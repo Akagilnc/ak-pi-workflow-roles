@@ -605,13 +605,16 @@ function parseArgv(argv: readonly string[]): ParsedGlobal {
  * Unique public resume request parser (#471).
  * One optional argv after runId is the opaque message; no further positionals.
  */
+const RESUME_USAGE_ERROR =
+  "usage: ak-role resume <runId> [message] (put --model/--thinking/--host/--engine before <runId>; the one argv after <runId> is the opaque message, #471)";
+
 function parseResumeRequest(args: readonly string[]): PublicResumeRequest {
   const runId = args[0];
   if (runId === undefined || runId.trim() === "" || runId.startsWith("-")) {
-    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+    throw new CliUsageError(RESUME_USAGE_ERROR);
   }
   if (args.length > 2) {
-    throw new CliUsageError("usage: ak-role resume <runId> [message]");
+    throw new CliUsageError(RESUME_USAGE_ERROR);
   }
   if (args.length === 2) {
     return { runId, message: args[1]! };
@@ -781,6 +784,7 @@ function renderHelp(): string {
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
+    "Resume flag position: --model/--thinking/--host/--engine go before <runId> (before `resume` or between `resume` and <runId>); the one argv after <runId> is always the opaque message, never a flag (#471)",
     "Effective seats: ak-role roles",
   );
   return `${lines.join("\n")}\n`;
