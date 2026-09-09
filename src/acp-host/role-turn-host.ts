@@ -249,21 +249,45 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           connection = await config.connect(request);
           // Live host-session records: ACP session/update → sitian sole entry (#811).
           // Register before initialize so early updates are not dropped.
+          // Write failure aborts the turn as typed session infrastructure failure.
           const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+          let hostSessionRecordFailure: RoleTurnKnownFailure | undefined;
+          const noteHostSessionRecordFailure = (error: unknown): void => {
+            if (hostSessionRecordFailure !== undefined) return;
+            const diagnostic = error instanceof Error ? error.message : String(error);
+            hostSessionRecordFailure = {
+              cause: "session",
+              identity: { name: "HostSessionRecordFailure", code: "host-session-record-failed" },
+              diagnostic,
+            };
+          };
+          const failIfHostSessionRecordBroken = (): RoleTurnResult | undefined =>
+            hostSessionRecordFailure === undefined
+              ? undefined
+              : { code: null, stderr: "", timedOut: false, knownFailure: hostSessionRecordFailure };
           connection.onNotification?.((method, params) => {
             if (method !== "session/update") return;
-            reportHostSessionEvent({
-              host: config.hostName,
-              cwd: request.cwd,
-              sessionParent,
-              source: "acp-host",
-              event: { method, params },
-            });
+            if (hostSessionRecordFailure !== undefined) return;
+            try {
+              reportHostSessionEvent({
+                host: config.hostName,
+                cwd: request.cwd,
+                sessionParent,
+                source: "acp-host",
+                event: { method, params },
+              });
+            } catch (error) {
+              noteHostSessionRecordFailure(error);
+            }
           });
           const initialized = await connection.request("initialize", {
             protocolVersion: 1,
             clientCapabilities: {},
           });
+          {
+            const broken = failIfHostSessionRecordBroken();
+            if (broken !== undefined) return broken;
+          }
           const initializeMeta = initialized._meta as {
             modelState?: { availableModels?: unknown };
           } | undefined;
@@ -316,6 +340,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               return failure("session", "AcpSessionFailure", "session-id-missing");
             }
             await config.sessionIdentity.bind(request.principal, sessionId);
+          }
+          {
+            const broken = failIfHostSessionRecordBroken();
+            if (broken !== undefined) return broken;
           }
 
           // set_model hosts address the seat model by `provider:model` once the
@@ -411,12 +439,18 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if (result.stopReason === "refusal") {
               return failure("output", "AcpRefusal", "refusal", { sessionId });
             }
+            {
+              const broken = failIfHostSessionRecordBroken();
+              if (broken !== undefined) return broken;
+            }
             // session/prompt resolution is the sole typed round boundary before seal
             // when the turn ends without host abort; abort path closes above.
             const closure = await prepared.closeRound();
             if (closure.accepted) {
               // Wait for ACP's typed close acknowledgement before tearing down the
               // process; Stop hooks and fire-and-forget cancellation are not closure.
+              const broken = failIfHostSessionRecordBroken();
+              if (broken !== undefined) return broken;
               await connection.request("session/close", { sessionId });
               accepted = true;
               return { code: 0, stderr: "", timedOut: false };

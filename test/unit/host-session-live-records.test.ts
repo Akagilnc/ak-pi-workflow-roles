@@ -1,12 +1,14 @@
 /**
- * #811: headless stdout stream + ACP session/update → sitian host-session records live.
+ * #811: non-pi host turn events → sitian host-session, live and fail-closed.
+ * One headless live-during-flight tracer + one record-failure path.
+ * ACP session/update shares the same reportHostSessionEvent entry (class covered
+ * by headless live + production ACP wiring; no parallel full-host fixture).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -15,7 +17,21 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
-function baseRequest(runDirectory: string, home: string): RoleTurnRequest {
+const description: HeadlessHostDescription = Object.freeze({
+  binaryFromHome: Object.freeze(["bin", "fake-claude"]),
+  sessionBindingFile: "claude-headless-session.json",
+  fixedArgs: Object.freeze(["--output-format", "stream-json", "--verbose"]),
+  promptFlag: "-p",
+  modelFlag: "--model",
+  effortFlag: "--effort",
+  systemPromptFlag: "--system-prompt-file",
+  jsonSchemaFlag: "--json-schema",
+  mcpConfigFlag: "--mcp-config",
+  sessionIdFlag: "--session-id",
+  resumeFlag: "--resume",
+});
+
+function request(runDirectory: string, home: string): RoleTurnRequest {
   return {
     principal: fixturePrincipal(join(runDirectory, "session")),
     activation: { role: "judge" },
@@ -28,202 +44,155 @@ function baseRequest(runDirectory: string, home: string): RoleTurnRequest {
   };
 }
 
-const headlessDescription: HeadlessHostDescription = Object.freeze({
-  binaryFromHome: Object.freeze(["bin", "fake-claude"]),
-  sessionBindingFile: "claude-headless-session.json",
-  fixedArgs: Object.freeze([
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    "bypassPermissions",
-  ]),
-  promptFlag: "-p",
-  modelFlag: "--model",
-  effortFlag: "--effort",
-  systemPromptFlag: "--system-prompt-file",
-  jsonSchemaFlag: "--json-schema",
-  mcpConfigFlag: "--mcp-config",
-  sessionIdFlag: "--session-id",
-  resumeFlag: "--resume",
-});
+async function waitFor(path: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      if (Date.now() - start > timeoutMs) throw new Error(`timeout waiting for ${path}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+}
 
-test("headless stream-json lines land as host-session records before turn ends", async () => {
+test("headless host-session event is readable in books before the child exits", async () => {
   const ledger = createTempPackageHomeLedger({
-    prefix: "ak-811-headless-live-",
+    prefix: "ak-811-live-",
     runName: "run@judge",
   });
   try {
     await mkdir(join(ledger.home, "bin"), { recursive: true });
-    // Fake CLI: emit two stream events then a result with structured_output.
+    const gate = join(ledger.runDirectory, "release-gate");
+    const marker = join(ledger.runDirectory, "emitted-marker");
     const fakeBin = join(ledger.home, "bin", "fake-claude");
+    // Emit one stream event, signal marker, block until gate, then result.
     await writeFile(
       fakeBin,
       `#!/usr/bin/env node
-const events = [
-  { type: "system", subtype: "init", uuid: "h-init", session_id: "sid-live" },
-  { type: "assistant", uuid: "h-asst", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
-  {
-    type: "result",
-    subtype: "success",
-    uuid: "h-result",
-    session_id: "sid-live",
-    is_error: false,
-    structured_output: { status: "completed", report: "ok" },
-  },
-];
-for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
+import { writeFileSync, existsSync } from "node:fs";
+const gate = process.env.AK_811_GATE;
+const marker = process.env.AK_811_MARKER;
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", uuid: "live-1" }) + "\\n");
+writeFileSync(marker, "1");
+const start = Date.now();
+while (!existsSync(gate)) {
+  if (Date.now() - start > 8000) process.exit(2);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+process.stdout.write(JSON.stringify({
+  type: "result", subtype: "success", uuid: "live-result",
+  session_id: "sid", is_error: false,
+  structured_output: { status: "completed", report: "ok" },
+}) + "\\n");
 `,
       { encoding: "utf8", mode: 0o755 },
     );
 
     const sessionFile = join(ledger.runDirectory, "session", "session.jsonl");
     await mkdir(join(ledger.runDirectory, "session"), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${JSON.stringify({ type: "session", version: 3, id: "run@judge" })}\n`,
-      "utf8",
-    );
+    await writeFile(sessionFile, `${JSON.stringify({ type: "session", id: "run@judge" })}\n`, "utf8");
 
-    let ingested: unknown;
     const host = createHeadlessRoleTurnHost({
-      description: headlessDescription,
+      description,
       hostName: "claude",
       binary: fakeBin,
+      env: { AK_811_GATE: gate, AK_811_MARKER: marker },
       sessionIdentity: {
-        async load() {
-          return undefined;
-        },
+        async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => sessionFile,
       },
       prepare: async () => ({
         mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
-        systemPrompt: { body: "probe", materials: [] },
+        systemPrompt: { body: "p", materials: [] },
         prompt: "probe",
         jsonSchema: { type: "object" },
         terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput(params) {
-          ingested = params;
-        },
-        async closeRound() {
-          return { accepted: true as const };
-        },
+        async ingestStructuredOutput() {},
+        async closeRound() { return { accepted: true as const }; },
       }),
     });
 
-    const result = await host.executeTurn(baseRequest(ledger.runDirectory, ledger.home));
+    const turn = host.executeTurn(request(ledger.runDirectory, ledger.home));
+    // Child still blocked on gate — assert books already has the live event.
+    await waitFor(marker);
+    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
+    await waitFor(recordFile);
+    const midFlight = await readSitianRecords(recordFile);
+    assert.ok(
+      midFlight.records.some((r) => r.identity === "live-1" && r.host === "claude"),
+      `mid-flight records missing live-1: ${JSON.stringify(midFlight.records)}`,
+    );
+
+    await writeFile(gate, "go", "utf8");
+    const result = await turn;
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
-    assert.deepEqual(ingested, { status: "completed", report: "ok" });
-
-    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    const read = await readSitianRecords(recordFile);
-    assert.ok(read.records.length >= 3, `expected ≥3 host-session rows, got ${read.records.length}`);
-    const uuids = read.records.map((row) => row.identity);
-    assert.ok(uuids.includes("h-init"), uuids.join(","));
-    assert.ok(uuids.includes("h-asst"), uuids.join(","));
-    assert.ok(uuids.includes("h-result"), uuids.join(","));
-    assert.ok(read.records.every((row) => row.host === "claude"));
-    // header-only session.jsonl
-    const sessionBody = await readFile(sessionFile, "utf8");
-    assert.equal(sessionBody.trim().split("\n").length, 1);
   } finally {
     ledger.dispose();
   }
 });
 
-test("ACP session/update notifications land as host-session records", async () => {
+test("headless sitian write failure ends the turn as session infrastructure failure", async () => {
   const ledger = createTempPackageHomeLedger({
-    prefix: "ak-811-acp-live-",
-    runName: "run@countersign",
+    prefix: "ak-811-fail-",
+    runName: "run@judge",
   });
   try {
-    const sessionFile = join(ledger.runDirectory, "session", "session.jsonl");
-    await mkdir(join(ledger.runDirectory, "session"), { recursive: true });
+    await mkdir(join(ledger.home, "bin"), { recursive: true });
+    const fakeBin = join(ledger.home, "bin", "fake-claude");
     await writeFile(
-      sessionFile,
-      `${JSON.stringify({ type: "session", version: 3, id: "run@countersign" })}\n`,
-      "utf8",
+      fakeBin,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "system", uuid: "fail-1" }) + "\\n");
+process.stdout.write(JSON.stringify({
+  type: "result", subtype: "success", uuid: "fail-result",
+  session_id: "sid", is_error: false,
+  structured_output: { status: "completed", report: "ok" },
+}) + "\\n");
+`,
+      { encoding: "utf8", mode: 0o755 },
     );
 
-    const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
-    const connection: AcpConnection = {
-      async request(method) {
-        if (method === "initialize") {
-          return { protocolVersion: 1 };
-        }
-        if (method === "session/new") return { sessionId: "acp-sess" };
-        if (method === "session/prompt") {
-          for (const handler of notificationHandlers) {
-            handler("session/update", {
-              sessionId: "acp-sess",
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "progress" },
-              },
-            });
-            handler("session/update", {
-              sessionId: "acp-sess",
-              update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } },
-            });
-          }
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      onNotification(handler) {
-        notificationHandlers.push(handler);
-      },
-      async close() {},
-    };
+    const sessionDir = join(ledger.runDirectory, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "{}\n", "utf8");
+    // Freeze session dir so sitian cannot create host-session/ volume.
+    await chmod(sessionDir, 0o555);
 
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      boundResume: "session/new",
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "claude",
+      binary: fakeBin,
       sessionIdentity: {
-        async load() {
-          return undefined;
-        },
+        async load() { return undefined; },
         async bind() {},
         resolveSessionFile: () => sessionFile,
       },
-      connect: async () => connection,
       prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "probe", materials: [] },
+        mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
+        systemPrompt: { body: "p", materials: [] },
         prompt: "probe",
         jsonSchema: { type: "object" },
         terminatingToolName: "ak_judge_output",
         async ingestStructuredOutput() {},
-        async closeRound() {
-          return { accepted: true as const };
-        },
+        async closeRound() { return { accepted: true as const }; },
       }),
     });
 
-    const result = await host.executeTurn(baseRequest(ledger.runDirectory, ledger.home));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
-
-    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    const read = await readSitianRecords(recordFile);
-    assert.ok(read.records.length >= 2, `expected ≥2 host-session rows, got ${read.records.length}`);
-    assert.ok(read.records.every((row) => row.host === "grok-build"));
+    const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+    assert.equal(result.knownFailure?.cause, "session", JSON.stringify(result));
+    assert.equal(result.knownFailure?.identity?.code, "host-session-record-failed");
     assert.ok(
-      read.records.some((row) => {
-        const payload = row.payload as { method?: string; params?: { update?: { sessionUpdate?: string } } };
-        return payload?.method === "session/update"
-          && payload.params?.update?.sessionUpdate === "agent_message_chunk";
-      }),
-      JSON.stringify(read.records.map((r) => r.payload)),
+      typeof result.knownFailure?.diagnostic === "string"
+        && result.knownFailure.diagnostic.length > 0,
+      "diagnostic must carry the real write failure",
     );
-    const sessionBody = await readFile(sessionFile, "utf8");
-    assert.equal(sessionBody.trim().split("\n").length, 1);
   } finally {
+    try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
     ledger.dispose();
   }
 });

@@ -137,6 +137,14 @@ function spawnHeadlessTurn(options: {
     let settled = false;
     let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
+    const failLine = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      try { child.kill("SIGTERM"); } catch { /* already exiting */ }
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
     const flushStdoutLines = (chunk: string, final: boolean): void => {
       stdout += chunk;
       if (options.onStdoutLine === undefined) return;
@@ -146,19 +154,31 @@ function spawnHeadlessTurn(options: {
         if (end < 0) break;
         const line = lineBuffer.slice(0, end);
         lineBuffer = lineBuffer.slice(end + 1);
-        options.onStdoutLine(line);
+        try {
+          options.onStdoutLine(line);
+        } catch (error) {
+          failLine(error);
+          return;
+        }
       }
       if (final && lineBuffer.length > 0) {
-        options.onStdoutLine(lineBuffer);
+        try {
+          options.onStdoutLine(lineBuffer);
+        } catch (error) {
+          failLine(error);
+          return;
+        }
         lineBuffer = "";
       }
     };
     const settle = (code: number | null): void => {
       if (settled) return;
+      // Final flush first: onStdoutLine may failLine (reject + settled=true).
+      flushStdoutLines("", true);
+      if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      flushStdoutLines("", true);
       resolve({ code, stdout, stderr, timedOut });
     };
     const onAbort = (): void => {
@@ -324,18 +344,21 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 onStdoutLine(line) {
                   const trimmed = line.trim();
                   if (trimmed === "") return;
+                  let event: unknown;
                   try {
-                    const event = JSON.parse(trimmed) as unknown;
-                    reportHostSessionEvent({
-                      host: config.hostName,
-                      cwd: request.cwd,
-                      sessionParent,
-                      source: "headless-host",
-                      event,
-                    });
+                    event = JSON.parse(trimmed) as unknown;
                   } catch {
                     // Non-JSON noise on stdout is not a host structured event.
+                    return;
                   }
+                  // Sitian write failures propagate → spawn rejects → session failure.
+                  reportHostSessionEvent({
+                    host: config.hostName,
+                    cwd: request.cwd,
+                    sessionParent,
+                    source: "headless-host",
+                    event,
+                  });
                 },
               });
             } catch (error) {
@@ -353,6 +376,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 break;
               }
               const message = error instanceof Error ? error.message : String(error);
+              // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
+              const isRecordFailure =
+                typeof error === "object"
+                && error !== null
+                && ((error as { knownCause?: unknown }).knownCause === "session"
+                  || (error as { name?: unknown }).name === "SitianInfrastructureError");
+              if (isRecordFailure) {
+                outcome = failure(
+                  "session",
+                  "HostSessionRecordFailure",
+                  "host-session-record-failed",
+                  { diagnostic: message, sessionId },
+                  message,
+                );
+                break;
+              }
               outcome = failure("activation", "HeadlessSpawnFailure", "spawn-failed", {
                 diagnostic: message,
                 binary: config.binary,
