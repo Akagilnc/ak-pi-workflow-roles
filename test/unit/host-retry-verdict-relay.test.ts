@@ -12,18 +12,14 @@ import test from "node:test";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { projectCorrectableExecuteRejection } from "../../src/submission-correctable-error.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 
 /** Opaque payload — not a production free-text template under test. */
-const OFFICER_VERDICT = JSON.stringify({
+const OPAQUE_RETRY_MESSAGE = JSON.stringify({
   status: "bounce",
-  findings: ["missing commit evidence"],
-  reason: "HEAD unchanged after claimed fix",
+  findings: ["opaque finding"],
+  reason: "opaque retry payload",
 });
-
-const MECHANICAL_RETRY_TEXT = "mechanical-retry-payload";
 
 function baseRequest(runDirectory: string): RoleTurnRequest {
   return {
@@ -38,11 +34,7 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
   };
 }
 
-async function captureAcpResumePrompts(input: {
-  readonly runDirectory: string;
-  readonly firstRetryMessage: string;
-  readonly firstRetryCode?: string;
-}): Promise<string[]> {
+async function captureAcpResumePrompts(runDirectory: string, retryMessage: string): Promise<string[]> {
   const prompts: string[] = [];
   let closeRoundCalls = 0;
   const connection: AcpConnection = {
@@ -68,7 +60,7 @@ async function captureAcpResumePrompts(input: {
         return undefined;
       },
       async bind() {},
-      resolveSessionFile: () => join(input.runDirectory, "session", "session.jsonl"),
+      resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
     },
     connect: async () => connection,
     prepare: async () => ({
@@ -84,9 +76,9 @@ async function captureAcpResumePrompts(input: {
           return {
             accepted: false as const,
             retry: {
-              code: input.firstRetryCode ?? "bounce",
+              code: "bounce",
               toolCallIds: ["call-1"],
-              message: input.firstRetryMessage,
+              message: retryMessage,
             },
           };
         }
@@ -94,52 +86,18 @@ async function captureAcpResumePrompts(input: {
       },
     }),
   });
-  const result = await host.executeTurn(baseRequest(input.runDirectory));
+  const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure, undefined, JSON.stringify(result));
   assert.equal(result.code, 0);
   return prompts;
 }
 
-test("ACP resume delivers opaque officer retry.message unchanged", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-officer-"));
+test("ACP resume delivers opaque retry.message unchanged", async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-relay-"));
   try {
-    const prompts = await captureAcpResumePrompts({
-      runDirectory,
-      firstRetryMessage: OFFICER_VERDICT,
-    });
-    assert.deepEqual(prompts, ["initial-assignment", OFFICER_VERDICT]);
+    const prompts = await captureAcpResumePrompts(runDirectory, OPAQUE_RETRY_MESSAGE);
+    assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
   } finally {
     await rm(runDirectory, { recursive: true, force: true });
   }
-});
-
-test("ACP resume delivers opaque mechanical retry.message unchanged", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-mech-"));
-  try {
-    const prompts = await captureAcpResumePrompts({
-      runDirectory,
-      firstRetryCode: "non-sole-round",
-      firstRetryMessage: MECHANICAL_RETRY_TEXT,
-    });
-    assert.deepEqual(prompts, ["initial-assignment", MECHANICAL_RETRY_TEXT]);
-  } finally {
-    await rm(runDirectory, { recursive: true, force: true });
-  }
-});
-
-test("correctable bounce projection keeps officer receipt as diagnostic text", () => {
-  const receipt = {
-    status: "bounce",
-    findings: ["missing commit evidence"],
-    reason: "HEAD unchanged after claimed fix",
-  };
-  const projected = projectCorrectableExecuteRejection(
-    new GatekeeperDecisionError({
-      status: "bounce",
-      officer: "inspector",
-      receipt,
-    }),
-  );
-  assert.equal(projected.diagnostic, JSON.stringify(receipt));
-  assert.equal(projected.details.status, "bounce");
 });

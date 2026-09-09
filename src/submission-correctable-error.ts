@@ -12,7 +12,7 @@ import {
  * receipt text instead; this string is only the round-shape correction.
  */
 export const NON_SOLE_ROUND_RESUME_MESSAGE =
-  "The terminal submission was rejected because it was not the sole tool call in its turn. Correct the call pattern and resubmit.";
+  "终结交卷并非本轮唯一工具调用。";
 
 /** Resume text for mechanical deliverSubmissionRejection codes (no officer receipt). */
 export function mechanicalSubmissionRejectionResumeMessage(code: string): string {
