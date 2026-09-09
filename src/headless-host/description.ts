@@ -1,16 +1,21 @@
 /**
- * One headless CLI host description (#645 / #752).
- * Every host-specific value the generic headless adapter needs — binary, argv
- * shape, session binding — is data here; lifecycle stays one copy so #646 codex
- * is another row, not a fork.
+ * Headless CLI host descriptions (#645 / #646 / #752).
+ * Shared lifecycle owns spawn/bind/close; each protocol owns argv + parse shape.
+ * Claude print-mode and codex exec differ enough that #752 host-specific
+ * assembly lives here as sibling helpers — not a third unified abstraction.
  */
 import { join } from "node:path";
 
-export type HeadlessHostDescription = Readonly<{
+type HeadlessHostBase = Readonly<{
   /** Binary path segments relative to the operator home. */
   binaryFromHome: readonly string[];
   /** Durable session-id binding filename beside the session principal. */
   sessionBindingFile: string;
+}>;
+
+/** Claude Code print-mode (#645). */
+export type ClaudePrintHostDescription = HeadlessHostBase & Readonly<{
+  protocol: "claude-print";
   /**
    * Host-native print-mode flags that never change per turn (no prompt).
    * Model / effort / system-prompt / schema / session / resume / mcp-config
@@ -38,6 +43,29 @@ export type HeadlessHostDescription = Readonly<{
   resumeFlag: string;
 }>;
 
+/**
+ * Codex `exec` / `exec resume` (#646).
+ * Protocol differences (JSONL, resume subcommand, schema file, `-c` MCP) stay
+ * in codex-specific helpers — description only carries identity + binary path.
+ */
+export type CodexExecHostDescription = HeadlessHostBase & Readonly<{
+  protocol: "codex-exec";
+}>;
+
+export type HeadlessHostDescription = ClaudePrintHostDescription | CodexExecHostDescription;
+
+export function isClaudePrintDescription(
+  description: HeadlessHostDescription,
+): description is ClaudePrintHostDescription {
+  return description.protocol === "claude-print";
+}
+
+export function isCodexExecDescription(
+  description: HeadlessHostDescription,
+): description is CodexExecHostDescription {
+  return description.protocol === "codex-exec";
+}
+
 /** Absolute agent binary for one operator home. */
 export function resolveHeadlessBinary(
   description: HeadlessHostDescription,
@@ -47,11 +75,11 @@ export function resolveHeadlessBinary(
 }
 
 /**
- * Build one headless CLI argv for a single process turn.
+ * Build one Claude print-mode argv for a single process turn.
  * Shape: `<promptFlag> <prompt> <fixedArgs…> <system/schema/mcp/model/effort/session…>`.
  */
 export function headlessTurnArgs(options: {
-  readonly description: HeadlessHostDescription;
+  readonly description: ClaudePrintHostDescription;
   readonly prompt: string;
   /** Absolute path written by the adapter; paired with `systemPromptFlag`. */
   readonly systemPromptPath: string;
@@ -87,6 +115,284 @@ export function headlessTurnArgs(options: {
   } else {
     args.push(description.resumeFlag, options.session.id);
   }
+  return args;
+}
+
+/**
+ * TOML string literal for `codex -c key=<value>` (values are TOML-parsed).
+ * Double-quoted form; escapes backslash and quote only.
+ */
+export function codexTomlString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** TOML array of strings for `-c key=["a","b"]`. */
+export function codexTomlStringArray(values: readonly string[]): string {
+  return `[${values.map(codexTomlString).join(",")}]`;
+}
+
+/** TOML inline table of string→string for `-c key={a="b"}`. */
+export function codexTomlStringTable(entries: Readonly<Record<string, string>>): string {
+  const parts = Object.entries(entries).map(
+    ([key, value]) => `${key}=${codexTomlString(value)}`,
+  );
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * Derive a Codex/OpenAI-strict transport schema from the package open schema.
+ * Legal open schema is untouched; this is a host-only transmission projection
+ * (#646 / 0057 法意 / 0054 strict): every object closes, every property is
+ * required, optionality is expressed as a null union (official guidance).
+ * Nested open-tool anyOf wrappers are flattened so every branch carries `type`
+ * (strict rejects untyped intermediate anyOf nodes).
+ * Package code still does not validate or reject the receipt against schema.
+ */
+export function closeJsonSchemaForCodex(
+  schema: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return closeSchemaNode(schema) as Record<string, unknown>;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullTypeSchema(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (value.type === "null") return true;
+  if (Array.isArray(value.type) && value.type.includes("null")) return true;
+  return false;
+}
+
+/**
+ * Flatten nested anyOf/oneOf wrappers into concrete leaf schemas.
+ * Open-tool unions often wrap leaves in description-only anyOf shells that
+ * lack `type`; strict structured output rejects those intermediate nodes.
+ */
+function flattenUnionLeaves(schema: unknown): unknown[] {
+  if (!isPlainObject(schema)) return [schema];
+  if (Array.isArray(schema.anyOf)) {
+    return schema.anyOf.flatMap(flattenUnionLeaves);
+  }
+  if (Array.isArray(schema.oneOf)) {
+    return schema.oneOf.flatMap(flattenUnionLeaves);
+  }
+  return [schema];
+}
+
+/** Drop null leaves; they are re-added once at the property edge. */
+function nonNullLeaves(schema: unknown): unknown[] {
+  return flattenUnionLeaves(schema).filter((leaf) => !isNullTypeSchema(leaf));
+}
+
+/**
+ * Property edge: closed leaf(s) + null, as a single anyOf.
+ * One leaf → anyOf:[leaf, null]; many leaves → anyOf:[...leaves, null].
+ */
+function closePropertySchema(schema: unknown): unknown {
+  const leaves = nonNullLeaves(schema).map(closeSchemaNode);
+  if (leaves.length === 0) {
+    return { type: "null" };
+  }
+  return { anyOf: [...leaves, { type: "null" }] };
+}
+
+/**
+ * Strict generators require every schema node to declare `type`.
+ * Type.Unknown / description-only leaves become `string` for transport only
+ * (diagnostic fields are prose; package still does not shape-check receipts).
+ */
+function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknown> {
+  if (schema.type !== undefined) return schema;
+  if (isPlainObject(schema.properties) || schema.additionalProperties !== undefined) {
+    return { ...schema, type: "object" };
+  }
+  if (schema.items !== undefined || Array.isArray(schema.prefixItems)) {
+    return { ...schema, type: "array" };
+  }
+  if (schema.const !== undefined) {
+    const value = schema.const;
+    if (value === null) return { ...schema, type: "null" };
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return { ...schema, type: typeof value };
+    }
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const sample = schema.enum.find((item) => item !== null);
+    if (typeof sample === "string" || typeof sample === "number" || typeof sample === "boolean") {
+      return { ...schema, type: typeof sample };
+    }
+  }
+  return { ...schema, type: "string" };
+}
+
+function closeSchemaNode(node: unknown): unknown {
+  if (!isPlainObject(node)) return node;
+
+  // Union node: flatten then close each concrete leaf (do not keep untyped shells).
+  if (Array.isArray(node.anyOf) || Array.isArray(node.oneOf)) {
+    const leaves = nonNullLeaves(node).map(closeSchemaNode);
+    if (leaves.length === 0) return { type: "null" };
+    if (leaves.length === 1) return leaves[0];
+    return { anyOf: leaves };
+  }
+
+  let out: Record<string, unknown> = { ...node };
+
+  if (Array.isArray(node.allOf)) {
+    // Strict generators often reject allOf; close members in place.
+    out.allOf = node.allOf.map(closeSchemaNode);
+  }
+  if (node.items !== undefined) {
+    out.items = closeSchemaNode(node.items);
+  }
+  if (Array.isArray(node.prefixItems)) {
+    out.prefixItems = node.prefixItems.map(closeSchemaNode);
+  }
+  if (isPlainObject(node.$defs)) {
+    out.$defs = Object.fromEntries(
+      Object.entries(node.$defs).map(([key, value]) => [key, closeSchemaNode(value)]),
+    );
+  }
+  if (isPlainObject(node.definitions)) {
+    out.definitions = Object.fromEntries(
+      Object.entries(node.definitions).map(([key, value]) => [key, closeSchemaNode(value)]),
+    );
+  }
+
+  const hasProperties = isPlainObject(node.properties);
+  const isObjectType =
+    node.type === "object"
+    || (Array.isArray(node.type) && node.type.includes("object"))
+    || hasProperties
+    || node.additionalProperties !== undefined;
+
+  if (hasProperties) {
+    const props = node.properties as Record<string, unknown>;
+    const closedProps: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [name, propSchema] of Object.entries(props)) {
+      required.push(name);
+      closedProps[name] = closePropertySchema(propSchema);
+    }
+    out.properties = closedProps;
+    out.required = required;
+    out.additionalProperties = false;
+    if (out.type === undefined) out.type = "object";
+    // Object nodes must not also carry residual anyOf from the open copy.
+    delete out.anyOf;
+    delete out.oneOf;
+  } else if (isObjectType) {
+    out.additionalProperties = false;
+    if (!Array.isArray(out.required)) out.required = [];
+    if (out.type === undefined) out.type = "object";
+  } else {
+    out = ensureTypedLeaf(out);
+  }
+
+  return out;
+}
+
+/**
+ * Project shared-envelope MCP rows into `codex -c mcp_servers.<name>.*` argv pairs.
+ * Dot-path + TOML values per official config-advanced; spawn argv (no shell).
+ */
+export function codexMcpConfigArgs(
+  mcpServers: readonly Readonly<Record<string, unknown>>[],
+): string[] {
+  const args: string[] = [];
+  for (const row of mcpServers) {
+    const name = typeof row.name === "string" ? row.name : undefined;
+    const command = typeof row.command === "string" ? row.command : undefined;
+    if (name === undefined || name === "" || command === undefined || command === "") continue;
+    const prefix = `mcp_servers.${name}`;
+    args.push("-c", `${prefix}.command=${codexTomlString(command)}`);
+    if (Array.isArray(row.args) && row.args.every((item): item is string => typeof item === "string")) {
+      args.push("-c", `${prefix}.args=${codexTomlStringArray(row.args)}`);
+    }
+    let env: Record<string, string> | undefined;
+    if (Array.isArray(row.env)) {
+      env = {};
+      for (const item of row.env) {
+        if (typeof item !== "object" || item === null) continue;
+        const record = item as { name?: unknown; value?: unknown };
+        if (typeof record.name === "string" && typeof record.value === "string") {
+          env[record.name] = record.value;
+        }
+      }
+      if (Object.keys(env).length === 0) env = undefined;
+    } else if (typeof row.env === "object" && row.env !== null && !Array.isArray(row.env)) {
+      env = {};
+      for (const [key, value] of Object.entries(row.env as Record<string, unknown>)) {
+        if (typeof value === "string") env[key] = value;
+      }
+      if (Object.keys(env).length === 0) env = undefined;
+    }
+    if (env !== undefined) {
+      args.push("-c", `${prefix}.env=${codexTomlStringTable(env)}`);
+    }
+  }
+  return args;
+}
+
+/**
+ * Build one `codex exec` / `codex exec resume` argv (#646).
+ * New: `exec … prompt`. Resume: `exec resume <thread_id> … prompt`.
+ * Resume has no `--sandbox`/`-C`; workspace-write + never-approval ride `-c`.
+ */
+export function codexTurnArgs(options: {
+  readonly prompt: string;
+  /** Absolute path for `-c model_instructions_file=…`. */
+  readonly systemPromptPath: string;
+  /** Absolute path for `--output-schema` (closed transport schema). */
+  readonly outputSchemaPath: string;
+  readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
+  readonly model?: string;
+  readonly effort?: string;
+  /**
+   * New turn: host mints thread_id (captured from JSONL).
+   * Resume: package-bound thread_id via `exec resume <id>`.
+   */
+  readonly session: { readonly kind: "new" } | { readonly kind: "resume"; readonly id: string };
+  /** When cwd is not a git work tree, pass `--skip-git-repo-check`. */
+  readonly skipGitRepoCheck?: boolean;
+}): string[] {
+  const args: string[] = ["exec"];
+  if (options.session.kind === "resume") {
+    args.push("resume", options.session.id);
+  }
+
+  // JSONL event stream: thread_id + final agent_message + turn.completed/failed.
+  args.push("--json");
+  // Operator config/MCP off; auth still uses CODEX_HOME (official).
+  args.push("--ignore-user-config", "--ignore-rules");
+  // Full workspace permissions; resume lacks --sandbox so both paths use -c.
+  args.push(
+    "-c", `approval_policy=${codexTomlString("never")}`,
+    "-c", `sandbox_mode=${codexTomlString("workspace-write")}`,
+  );
+  // New turn also takes the explicit flag (document-preferred face).
+  if (options.session.kind === "new") {
+    args.push("--sandbox", "workspace-write");
+  }
+
+  args.push("-c", `model_instructions_file=${codexTomlString(options.systemPromptPath)}`);
+  args.push("--output-schema", options.outputSchemaPath);
+  args.push(...codexMcpConfigArgs(options.mcpServers));
+
+  if (options.model !== undefined && options.model !== "") {
+    args.push("-m", options.model);
+  }
+  if (options.effort !== undefined && options.effort !== "") {
+    args.push("-c", `model_reasoning_effort=${codexTomlString(options.effort)}`);
+  }
+  if (options.skipGitRepoCheck === true) {
+    args.push("--skip-git-repo-check");
+  }
+
+  // Prompt last (positional).
+  args.push(options.prompt);
   return args;
 }
 

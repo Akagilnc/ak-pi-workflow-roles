@@ -35,6 +35,7 @@ function baseRequest(runDirectory: string): RoleTurnRequest {
 }
 
 const HEADLESS_PROBE_DESCRIPTION: HeadlessHostDescription = {
+  protocol: "claude-print",
   binaryFromHome: ["unused"],
   sessionBindingFile: "probe-headless-session.json",
   fixedArgs: [],
