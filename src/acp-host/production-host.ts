@@ -14,7 +14,6 @@ import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../c
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import { loadDoctorCase } from "../doctor-evidence.ts";
 import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
-import { createProductionMergerGitState } from "../merger-git-state.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "../navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "../navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "../notary-source-run.ts";
@@ -73,7 +72,6 @@ export function createAcpRoleRuntimeDependencies(packageRoot: string): RoleRunti
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    createMergerGitState: (repositoryRoot) => createProductionMergerGitState(repositoryRoot),
     async loadCanonicalSkillBinding(name) {
       if (name === "tdd") {
         return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");

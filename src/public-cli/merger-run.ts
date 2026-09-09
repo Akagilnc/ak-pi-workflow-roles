@@ -1,18 +1,13 @@
 /**
- * Public Merger Role run: derive active-merge envelope → force package
- * merge-only method → post-admission coordinator → settle Terminal result (#114 / #517).
+ * Public Merger Role run: read Git materials → force package merge-only method
+ * → post-admission coordinator → settle Terminal result (#114 / #517 / #827).
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
 import type {
-  DurablePrincipalAuthority,
   MethodBinding,
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-
-import { ensureRealDirectoryTree } from "../activation-ledger-topology.ts";
 import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
@@ -20,13 +15,10 @@ import {
   type PackagedMethodSkillMaterial,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitMergerInvocation,
   buildMergerTransportPrompt,
-  issueAdmissionPlacement,
-  MergerEnvelopeDerivationError,
   type AdmittedMergerInvocation,
 } from "./invocation.ts";
 import {
@@ -116,82 +108,6 @@ async function loadMergerMethodMaterial(
   );
 }
 
-/**
- * Structural admit shell when envelope derivation fails: keeps role-correct
- * Terminal identity for honest activation-class settlement without inventing
- * parents/conflicts (those stay empty; the gate never receives a guessed packet).
- */
-async function admitMergerShellForActivationFailure(options: {
-  home: string;
-  cwd: string;
-  instruction: string;
-  project?: string;
-  createRunId?: () => string;
-  principalAuthority: DurablePrincipalAuthority;
-}): Promise<AdmittedMergerInvocation> {
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "merger",
-    home: options.home,
-  });
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  await mkdir(runDirectory, { recursive: true });
-  const emptyDerived = {
-    targetObjectId: "",
-    sourceObjectId: "",
-    automaticMergeTreeId: "",
-    expectedConflictPaths: [] as string[],
-    resolutionScope: [] as string[],
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  const mergerInputPath = join(runDirectory, "merger-input.json");
-  await writeFile(
-    admittedRequestPath,
-    `${JSON.stringify(
-      {
-        role: "merger",
-        runId,
-        bookKey,
-        projectRoot,
-        instruction: options.instruction,
-        instructionEmpty: false,
-        mergerInputPath,
-        derived: emptyDerived,
-        attachments: [],
-        sessionDirectory,
-        sessionFile,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return {
-    role: "merger",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction: options.instruction,
-    instructionEmpty: false,
-    attachments: [],
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    mergerInputPath,
-    derived: emptyDerived,
-  };
-}
-
 function mergerTurnOptions(
   admitted: AdmittedMergerInvocation,
   env: MergerRunEnv,
@@ -262,33 +178,6 @@ export async function runPublicMerger(
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
       return { exitCode: 2 };
-    }
-    if (error instanceof MergerEnvelopeDerivationError) {
-      const shell = await admitMergerShellForActivationFailure({
-        home: env.home,
-        principalAuthority: env.principalAuthority,
-        cwd: env.cwd,
-        instruction: parsed.instruction,
-        ...(parsed.project === undefined ? {} : { project: parsed.project }),
-        ...(env.createRunId === undefined
-          ? {}
-          : { createRunId: env.createRunId }),
-      });
-      await markRunAdmitted(shell, env.principalAuthority);
-      return (await presentControlledFailure(
-        shell,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation",
-          knownDiagnostic: error.message,
-        },
-        mergerAdapters(env.packageRoot),
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
     }
     throw error;
   }

@@ -211,11 +211,10 @@ export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly authorityRefs: readonly string[];
 };
 
-/** Mechanical envelope derived from the active ordinary two-parent merge. */
+/** Mechanical materials read from current Git state (may be empty). */
 export type DerivedMergerEnvelope = {
   readonly targetObjectId: string;
   readonly sourceObjectId: string;
-  readonly automaticMergeTreeId: string;
   readonly expectedConflictPaths: readonly string[];
   readonly resolutionScope: readonly string[];
 };
@@ -809,17 +808,6 @@ export type ParseAnalystArgvResult =
   | ParseAnalystIssueArgv
   | ParseAnalystSweepArgv
   | ParseAnalystCohortArgv;
-
-/** Honest activation-class failure while deriving the active-merge envelope. */
-export class MergerEnvelopeDerivationError extends Error {
-  readonly code = "merger-envelope-derivation" as const;
-  /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
-  readonly knownCause = "activation" as const;
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "MergerEnvelopeDerivationError";
-  }
-}
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
@@ -2868,7 +2856,7 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
       token.startsWith("--resolutionScope=")
     ) {
       throw new CliUsageError(
-        "merger does not accept public packet fields; the adapter derives the active-merge envelope",
+        "merger does not accept public packet fields; the adapter reads Git merge materials",
       );
     }
     if (token.startsWith("-") && token !== "-") {
@@ -2894,36 +2882,20 @@ function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] 
 }
 
 /**
- * Derive the mechanical Merger envelope from an already-active ordinary merge.
- * Uses the production Git seam (HEAD, sole MERGE_HEAD, AUTO_MERGE, unmerged set).
- * Failures are activation-class facts — not CLI semantic guesses.
+ * Read merger materials from current Git state.
+ * No in-progress merge / empty conflict set still yields materials (possibly empty);
+ * code does not gate attendance on merge state (#827).
  */
 export async function deriveMergerEnvelopeFromActiveMerge(
   projectRoot: string,
   gitState: MergerGitState = createProductionMergerGitState(projectRoot),
 ): Promise<DerivedMergerEnvelope> {
-  let state;
-  try {
-    state = await gitState.activeMerge();
-  } catch (error) {
-    const message =
-      error instanceof Error && error.message.trim() !== ""
-        ? error.message
-        : "Assigned repository does not have one ordinary in-progress merge";
-    throw new MergerEnvelopeDerivationError(message, { cause: error });
-  }
-  if (state.unmergedPaths.length === 0) {
-    throw new MergerEnvelopeDerivationError(
-      "Assigned repository does not have one ordinary in-progress merge with a complete conflict set",
-    );
-  }
+  const state = await gitState.activeMerge();
   const expectedConflictPaths = Object.freeze([...state.unmergedPaths]);
-  // Scope is derived as the complete conflict set; the role may not broaden it.
   const resolutionScope = Object.freeze([...state.unmergedPaths]);
   return Object.freeze({
     targetObjectId: state.targetObjectId,
     sourceObjectId: state.sourceObjectId,
-    automaticMergeTreeId: state.automaticMergeTreeId,
     expectedConflictPaths,
     resolutionScope,
   });
@@ -2945,8 +2917,9 @@ export type AdmitMergerInvocationOptions = {
 
 /**
  * Admit a Merger Role run on the common Invocation request.
- * Mechanical envelope (parents, AUTO_MERGE, conflicts, scope) is derived from
- * the active merge — callers never supply public packet fields for those facts.
+ * Git materials (parents, conflicts, scope) are read from the worktree and
+ * handed to the role as assignment materials — including when empty (#827).
+ * Callers never supply public packet fields for those facts.
  */
 export async function admitMergerInvocation(
   options: AdmitMergerInvocationOptions,
@@ -2960,8 +2933,6 @@ export async function admitMergerInvocation(
   }
 
   const projectRoot = resolve(options.project ?? options.cwd);
-  // Derive mechanical envelope before placing a run identity so no-merge/drift
-  // fails honestly without orphan ledger rows or guessed packet fields.
   const derived = await deriveMergerEnvelopeFromActiveMerge(
     projectRoot,
     options.gitState ?? createProductionMergerGitState(projectRoot),
@@ -2988,18 +2959,18 @@ export async function admitMergerInvocation(
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
   // Intent materials seed primary-source investigation; the method owns the work.
+  const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
+  const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
   const targetIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for target parent ${derived.targetObjectId}. Do not invent intent.`,
+    `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
   );
   const sourceIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for source parent ${derived.sourceObjectId}. Do not invent intent.`,
+    `Investigate primary sources for source parent ${sourceLabel}. Do not invent intent.`,
   );
   const taskMaterial = mergerMaterialFromUtf8(instruction);
   const authorityMaterial = mergerMaterialFromUtf8(instruction);
 
-  // Validate merger envelope before placing admitted identity.
   const mergerInput = validateMergerInput({
-    version: 1,
     attemptId: runId,
     targetObjectId: derived.targetObjectId,
     sourceObjectId: derived.sourceObjectId,
@@ -3011,7 +2982,6 @@ export async function admitMergerInvocation(
     },
     expectedConflictPaths: [...derived.expectedConflictPaths],
     resolutionScope: [...derived.resolutionScope],
-    // Authorized checks remain available on the assignment; default none.
     authorizedChecks: [],
   });
 
@@ -3035,7 +3005,6 @@ export async function admitMergerInvocation(
     derived: {
       targetObjectId: derived.targetObjectId,
       sourceObjectId: derived.sourceObjectId,
-      automaticMergeTreeId: derived.automaticMergeTreeId,
       expectedConflictPaths: [...derived.expectedConflictPaths],
       resolutionScope: [...derived.resolutionScope],
     },

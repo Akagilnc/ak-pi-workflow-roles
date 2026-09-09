@@ -24,7 +24,6 @@ async function baseTemplate() {
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Merger Test");
     git(root, "config", "user.email", "merger@test.local");
-    // Allow cloning a repo with an in-progress nothing; bare-ish local clones need this for file:// sometimes.
     git(root, "config", "uploadpack.allowAnySHA1InWant", "true");
     await writeFile(resolve(root, "conflict.txt"), "base\n");
     await writeFile(resolve(root, "unrelated.txt"), "unchanged\n");
@@ -69,10 +68,10 @@ async function withConflictedRepo<T>(
       target: git(cwd, "rev-parse", "HEAD"),
       source: git(cwd, "rev-parse", "source"),
     });
-    });
+  });
 }
 
-test("production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit", async () => {
+test("production Merger Git seam reads conflicted merge materials without gating", async () => {
   await withConflictedRepo(async (fixture) => {
     const state = createProductionMergerGitState(fixture.cwd);
     const active = await state.activeMerge();
@@ -80,92 +79,25 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
       targetObjectId: fixture.target,
       sourceObjectId: fixture.source,
       unmergedPaths: ["conflict.txt"],
-      automaticMergeTreeId: active.automaticMergeTreeId,
     });
-    assert.match(active.automaticMergeTreeId, /^[0-9a-f]{40,64}$/);
-    await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-    await writeFile(resolve(fixture.cwd, "unrelated.txt"), "tampered\n");
-    git(fixture.cwd, "add", ".");
-    git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-    const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual(await state.completedMerge(mergeCommitId, active.automaticMergeTreeId), {
-      mergeCommitId,
-      parentObjectIds: [fixture.target, fixture.source],
-      unmergedPaths: [],
-      worktreeClean: true,
-      resolutionChangedPaths: ["conflict.txt", "unrelated.txt"],
-    });
-    await writeFile(resolve(fixture.cwd, "untracked.txt"), "dirty\n");
-    assert.equal(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean,
-      false,
-    );
   });
 });
 
-test("production Merger Git seam rejects pre-existing tracked and untracked dirt", async () => {
-  for (const dirt of ["tracked", "untracked"] as const) {
-    await withConflictedRepo(async (fixture) => {
-      if (dirt === "tracked") await writeFile(resolve(fixture.cwd, "unrelated.txt"), "opening tracked dirt\n");
-      else await writeFile(resolve(fixture.cwd, "untracked.txt"), "opening untracked dirt\n");
-      const state = createProductionMergerGitState(fixture.cwd);
-      const active = await state.activeMerge();
-      await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-      git(fixture.cwd, "add", "conflict.txt");
-      git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-      const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-      assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false, dirt);
-    });
-  }
-});
-
-// resolutionChangedPaths matrix (#420 整改并一)：clean source-only first-parent
-// change 与 tampered source-side path 同根「merge commit 的解析改动计算」，
-// 收成一条两场景案。
-test("production Merger Git seam computes resolutionChangedPaths across clean and tampered merge commits", async () => {
-  // Scenario 1: clean resolve — only the conflict path counts; a source-only
-  // first-parent change stays out of resolutionChangedPaths.
-  await withConflictedRepo(async (fixture) => {
-    const state = createProductionMergerGitState(fixture.cwd);
-    const active = await state.activeMerge();
-    await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-    git(fixture.cwd, "add", "conflict.txt");
-    git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-    const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
-      ["conflict.txt"],
-    );
-    // source-only.txt is in first-parent diff but not in resolutionChangedPaths.
-    assert.match(
-      git(fixture.cwd, "diff", "--name-only", `${mergeCommitId}^1`, mergeCommitId),
-      /source-only\.txt/,
-    );
-    assert.equal(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths.includes(
-        "source-only.txt",
-      ),
-      false,
-    );
-  });
-
-  // Scenario 2: tampering with a clean source-side path pulls it into the set.
-  await withConflictedRepo(async (fixture) => {
-    const state = createProductionMergerGitState(fixture.cwd);
-    const active = await state.activeMerge();
-    await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
-    await writeFile(resolve(fixture.cwd, "source-only.txt"), "tampered\n");
-    git(fixture.cwd, "add", ".");
-    git(fixture.cwd, "commit", "-m", "resolve assigned merge");
-    const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual(
-      (await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths,
-      ["conflict.txt", "source-only.txt"],
-    );
+test("production Merger Git seam returns empty materials when no merge is in progress", async () => {
+  await withTempRoot("ak-merger-clean-head-", async (cwd) => {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Merger Test");
+    git(cwd, "config", "user.email", "merger@test.local");
+    git(cwd, "commit", "--allow-empty", "-m", "seed");
+    const head = git(cwd, "rev-parse", "HEAD");
+    const active = await createProductionMergerGitState(cwd).activeMerge();
+    assert.equal(active.targetObjectId, head);
+    assert.equal(active.sourceObjectId, "");
+    assert.deepEqual(active.unmergedPaths, []);
   });
 });
 
-test("production Merger Git seam reports no conflict set after a non-conflicting merge", async () => {
+test("production Merger Git seam reports no conflict set after a non-conflicting merge start", async () => {
   const template = await baseTemplate();
   await withTempRoot("ak-merger-clean-", async (cwd) => {
     execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], {
@@ -179,6 +111,8 @@ test("production Merger Git seam reports no conflict set after a non-conflicting
     git(cwd, "commit", "-m", "clean source");
     git(cwd, "checkout", "main");
     git(cwd, "merge", "--no-commit", "--no-ff", "clean-source");
-    assert.deepEqual((await createProductionMergerGitState(cwd).activeMerge()).unmergedPaths, []);
-    });
+    const active = await createProductionMergerGitState(cwd).activeMerge();
+    assert.deepEqual(active.unmergedPaths, []);
+    assert.equal(active.sourceObjectId.length > 0, true);
+  });
 });

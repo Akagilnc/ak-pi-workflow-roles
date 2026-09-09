@@ -423,7 +423,7 @@ export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
 export { createProductionMergerGitState } from "./merger-git-state.ts";
-export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
+export type { MergerGitState, ActiveMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
 type WorkerArmable = {
@@ -627,8 +627,6 @@ export type RoleRuntimeDependencies = {
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
-  mergerGitState?: MergerRoleDependencies["gitState"];
-  createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
@@ -1672,15 +1670,10 @@ export function createRoleRuntimeExtension(
         },
       },
     );
-    let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
-      gitState: {
-        activeMerge() { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.activeMerge(); },
-        completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
-      },
-    }, hostActions);
+    });
     // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
     // event gates). Role module supplies business activate/tools/materials only.
     let activeCollector: CollectorActivation | undefined;
@@ -1987,10 +1980,6 @@ export function createRoleRuntimeExtension(
         auditor,
         diarist,
         merger: async () => {
-          if (dependencies.mergerGitState === undefined) {
-            sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
-          }
-          if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
           await merger.activate();
         },
       };
