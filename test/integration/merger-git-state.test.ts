@@ -97,6 +97,18 @@ test("production Merger Git seam returns empty materials when no merge is in pro
   });
 });
 
+test("production Merger Git seam keeps non-repository infrastructure failures loud", async () => {
+  await withTempRoot("ak-merger-not-git-", async (cwd) => {
+    // Temp roots live under the package worktree; a broken local gitfile blocks parent discovery
+    // so Git reports a non-repository infrastructure failure instead of empty materials.
+    await writeFile(resolve(cwd, ".git"), "gitdir: /nonexistent-git-dir-827\n");
+    await assert.rejects(
+      () => createProductionMergerGitState(cwd).activeMerge(),
+      /not a git repository/i,
+    );
+  });
+});
+
 test("production Merger Git seam reports no conflict set after a non-conflicting merge start", async () => {
   const template = await baseTemplate();
   await withTempRoot("ak-merger-clean-", async (cwd) => {
