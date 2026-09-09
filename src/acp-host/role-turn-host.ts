@@ -39,7 +39,15 @@ export type AcpPreparedTurn = Readonly<{
   /** Shared ledger consumes the complete ACP round after session/prompt resolves. */
   closeRound(): Promise<
     | { readonly accepted: true }
-    | { readonly accepted: false; readonly retry: { readonly code: string; readonly toolCallIds: readonly string[] } }
+    | {
+      readonly accepted: false;
+      /** Shared envelope provides officer/correctable text; adapters only deliver it (#813). */
+      readonly retry: {
+        readonly code: string;
+        readonly toolCallIds: readonly string[];
+        readonly message: string;
+      };
+    }
     | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
   >;
   dispose?(): Promise<void>;
@@ -400,7 +408,8 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if ("failure" in closure) {
               return { code: null, stderr: "", timedOut: false, knownFailure: closure.failure };
             }
-            prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal tool call. Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
+            // Shared envelope already owns the officer/correctable text (#813).
+            prompt = closure.retry.message;
           }
           return failure("output", "AcpRoundLimit", "round-retry-limit", { sessionId });
         } finally {

@@ -401,8 +401,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               outcome = { code: null, stderr: spawned.stderr, timedOut: false, knownFailure: closure.failure };
               break;
             }
-            // Correctable rejection → resume same session with plain resubmit prompt.
-            prompt = `The prior terminal submission was rejected (${closure.retry.code}). Resubmit it as the sole terminal structured output (or the sole terminating tool call). Rejected call ids: ${closure.retry.toolCallIds.join(", ") || "none"}.`;
+            // Shared envelope already owns the officer/correctable text (#813).
+            prompt = closure.retry.message;
             sessionKind = "resume";
             if (attempt === 7) {
               outcome = failure("output", "HeadlessRoundLimit", "round-retry-limit", { sessionId });
