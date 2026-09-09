@@ -110,7 +110,6 @@ import { createMockProviderServer, createTempPackageHomeLedger, packageRoot, wit
 // tool.execute seam carries no explicit runDirectory option), so this local
 // scope writes the page and manages env + temp dir per test — no global
 // install registry in the shared helper, one page writer reused everywhere.
-const activeRunDirs: string[] = [];
 const activeLedgers = new Map<string, { dispose(): void }>();
 function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefined>): string {
   void seats; // seat page deleted (#675); argument retained for call-site shape only.
@@ -119,14 +118,11 @@ function installInstitutionalRunDir(seats: Record<string, SeatSelection | undefi
   const runName = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@judge`;
   const ledger = createTempPackageHomeLedger({ prefix: "ak-judge-home-", runName });
   const runDirectory = ledger.runDirectory;
-  activeRunDirs.push(runDirectory);
   activeLedgers.set(runDirectory, ledger);
   process.env.AK_ROLE_RUN_DIR = runDirectory;
   return runDirectory;
 }
 function disposeInstitutionalRunDir(runDirectory: string): void {
-  const index = activeRunDirs.indexOf(runDirectory);
-  if (index !== -1) activeRunDirs.splice(index, 1);
   if (process.env.AK_ROLE_RUN_DIR === runDirectory) delete process.env.AK_ROLE_RUN_DIR;
   // #685 / #612: creating seam owns create→use→cleanup; worktree temp roots must not linger.
   const ledger = activeLedgers.get(runDirectory);
@@ -157,10 +153,7 @@ afterEach(async () => {
   // Snapshot then independent cleanups: one run-dir dispose must not skip others
   // or provider teardowns, and cleanup failure must not erase a prior primary.
   // Provider teardown is async (mock.close()) — awaited, never discarded (#685 C4).
-  const runDirs: string[] = [];
-  while (activeRunDirs.length > 0) {
-    runDirs.push(activeRunDirs.pop()!);
-  }
+  const runDirs = [...activeLedgers.keys()];
   // Reverse-order teardown of institutional provider fixtures so PI_CODING_AGENT_DIR
   // is restored to its original value after nested registrations.
   const providerCleanups: Array<() => Promise<void>> = [];
@@ -399,11 +392,9 @@ function toolCallContext(
   abort: () => void = () => {},
 ): ExtensionContext {
   const sessionManager = SessionManager.inMemory();
-  if (activeRunDirs.length > 0) {
-    const runDir = activeRunDirs[activeRunDirs.length - 1];
-    if (runDir !== undefined) {
-      (sessionManager as any).getSessionFile = () => join(runDir, "session", "session.jsonl");
-    }
+  const runDir = [...activeLedgers.keys()].pop();
+  if (runDir !== undefined) {
+    (sessionManager as any).getSessionFile = () => join(runDir, "session", "session.jsonl");
   }
   const message: AssistantMessage = {
     role: "assistant",
@@ -450,7 +441,7 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   const ownedExisting =
     typeof existingRun === "string" &&
     existingRun.length > 0 &&
-    activeRunDirs.includes(existingRun)
+    activeLedgers.has(existingRun)
       ? existingRun
       : undefined;
   const runDirectory =
