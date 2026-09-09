@@ -10,6 +10,44 @@ import test from "node:test";
 
 import { connectAcpStdio } from "../../src/acp-host/role-turn-host.ts";
 
+type HostToAgentFrame = {
+  id?: unknown;
+  error?: { code?: unknown; message?: unknown };
+  method?: unknown;
+};
+
+/**
+ * Drain setImmediate until the agent-recorded host→agent frames satisfy `match`.
+ * Condition-based (not fixed turn count); same shape as waitForEventLoopCondition
+ * but kept local so this seam does not import the full harness graph.
+ */
+async function waitForHostFrame(
+  framesPath: string,
+  match: (frame: HostToAgentFrame) => boolean,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<HostToAgentFrame> {
+  const started = Date.now();
+  let raw = "";
+  for (;;) {
+    try {
+      raw = await readFile(framesPath, "utf8");
+      const frame = raw
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as HostToAgentFrame)
+        .find(match);
+      if (frame !== undefined) return frame;
+    } catch {
+      // frames file may lag the first agent write
+    }
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}; frames=${raw}`);
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 test("unknown ACP client request gets JSON-RPC method-not-found and the connection stays live", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ak-acp-unknown-"));
   const agentPath = join(dir, "fake-acp-agent.mjs");
@@ -52,10 +90,15 @@ rl.on("line", (line) => {
       });
       assert.equal(initialized.protocolVersion, 1);
 
-      // One event-loop turn so the reader handles the vendor client request that
-      // arrived on the same stdout burst as the initialize result.
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      // Causal: host must answer id 9001 with -32601 and the agent must record it
+      // before we assert or tear down. Fixed setImmediate turns do not establish this.
+      const methodNotFound = await waitForHostFrame(
+        framesPath,
+        (frame) => frame.id === 9001 && frame.error !== undefined,
+        "error reply for id 9001",
+      );
+      assert.equal(methodNotFound.error?.code, -32601);
+      assert.equal(typeof methodNotFound.error?.message, "string");
 
       const prompt = await connection.request("session/prompt", {
         sessionId: "s1",
@@ -65,23 +108,6 @@ rl.on("line", (line) => {
     } finally {
       try { await connection.close(); } catch { /* child may already be gone */ }
     }
-
-    const framesRaw = await readFile(framesPath, "utf8");
-    const frames = framesRaw
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as {
-        id?: unknown;
-        error?: { code?: unknown; message?: unknown };
-        method?: unknown;
-      });
-
-    const methodNotFound = frames.find(
-      (frame) => frame.id === 9001 && frame.error !== undefined,
-    );
-    assert.ok(methodNotFound, `expected error reply for id 9001, frames=${framesRaw}`);
-    assert.equal(methodNotFound.error?.code, -32601);
-    assert.equal(typeof methodNotFound.error?.message, "string");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
