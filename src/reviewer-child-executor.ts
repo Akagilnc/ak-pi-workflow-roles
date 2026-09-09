@@ -111,18 +111,6 @@ export type ReviewerChildExecuteOptions = Readonly<{
 }>;
 
 /**
- * Axis sub-session engine name (#818).
- * Sole production path for child engine arming — same resolveEngineName gate as
- * parent registerEngineDetourTool. Envelope legs pass getFlag; pi legs omit it
- * and fall through to child-process env.
- */
-export function reviewerChildEngineName(
-  options: Pick<ReviewerChildExecuteOptions, "getFlag"> = {},
-): string | undefined {
-  return resolveEngineName(options.getFlag);
-}
-
-/**
  * Single conversion at the Reviewer adapter boundary: shared child classifications
  * become Reviewer failure classifications without a second error taxonomy.
  */
@@ -161,11 +149,10 @@ export async function executeReviewerChild(
       });
     }
     const signal = options.signal;
-    const selection = await parentSelection(context);
-    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
-    const { createRecordSession } = await import("./archivist-record-entry.ts");
-    // One gate with parent registration (#818): request flag, else pi child env.
-    const engineName = reviewerChildEngineName(options);
+    // Engine arming is request-scoped and independent of parent model selection.
+    // Resolve before parentSelection so envelope legs arm from getFlag even when
+    // the subsequent pi open path is what fails (one gate with parent registration).
+    const engineName = resolveEngineName(options.getFlag);
     const engineMaterial =
       engineName === undefined
         ? undefined
@@ -186,6 +173,9 @@ export async function executeReviewerChild(
               throw engineDetourFailure;
             },
           });
+    const selection = await parentSelection(context);
+    const { openPiInProcessSession } = await import("./pi/in-process-session.ts");
+    const { createRecordSession } = await import("./archivist-record-entry.ts");
     let opened: Awaited<ReturnType<typeof openPiInProcessSession>>;
     try {
       // No agentDir: envelope owns scratch via credentialScratchParent (ADR 0018).
