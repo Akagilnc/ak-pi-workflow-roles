@@ -1227,19 +1227,19 @@ export function createRoleRuntimeExtension(
     roleHost.on("input", (event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
-      // Envelope exclusively owns Reviewer Skill invocation transform + original-request capture.
+      // Reviewer: recover original request; Pi argv may already carry native form.
       if (
         role === "reviewer"
         && admitted
         && activeReviewerParent !== undefined
         && reviewerOriginalRequest === undefined
       ) {
-        reviewerOriginalRequest = event.text;
-        return {
-          action: "transform" as const,
-          text: activeReviewerParent.skillBinding.invocation(event.text),
-          ...(event.images === undefined ? {} : { images: event.images }),
-        };
+        reviewerOriginalRequest =
+          roleHost.capabilities?.skillOriginalRequest?.(
+            activeReviewerParent.skillBinding.name,
+            event.text,
+          ) ?? event.text;
+        return { action: "continue" as const };
       }
       return { action: "continue" as const };
     });

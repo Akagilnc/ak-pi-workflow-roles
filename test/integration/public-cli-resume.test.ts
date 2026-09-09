@@ -2435,10 +2435,17 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
-      assert.equal(
-        seen.at(-1),
-        c.message === undefined ? RESUME_TRANSPORT_ENVELOPE : c.message,
-      );
+      // Pi adapter prefixes single forced method onto resume argv (#822); judge/coder-plan/fixer plain.
+      const rawPrompt = c.message === undefined ? RESUME_TRANSPORT_ENVELOPE : c.message;
+      const expectedLast =
+        c.role === "reviewer"
+          ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)
+          : c.role === "merger"
+            ? (rawPrompt.length === 0
+              ? "/skill:resolving-merge-conflicts"
+              : `/skill:resolving-merge-conflicts ${rawPrompt}`)
+            : rawPrompt;
+      assert.equal(seen.at(-1), expectedLast);
     }
 
     // extras → usage reject, dispatch=0 (including `-- extra`)

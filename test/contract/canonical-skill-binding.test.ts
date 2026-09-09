@@ -81,7 +81,6 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
       body,
       snapshotIdentity: Object.freeze({ text: raw }),
     });
-    assert.equal(binding.invocation("Implement the approved slice."), "/skill:tdd Implement the approved slice.");
     assert.ok(Object.isFrozen(binding));
     assert.ok(Object.isFrozen(binding.snapshot));
 

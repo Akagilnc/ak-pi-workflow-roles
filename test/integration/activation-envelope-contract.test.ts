@@ -143,7 +143,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
               body: raw,
               snapshotIdentity: Object.freeze({ text: raw }),
             },
-            invocation: (original: string) => `/skill:${name} ${original}`,
             captureExpansion: () => undefined,
           };
         },

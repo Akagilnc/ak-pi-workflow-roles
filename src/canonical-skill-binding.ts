@@ -25,7 +25,10 @@ export type CanonicalSkillEvidence<Name extends CanonicalSkillName = CanonicalSk
 export type CanonicalSkillBinding<Name extends CanonicalSkillName = CanonicalSkillName> = Readonly<{
   name: Name;
   snapshot: CanonicalSkillSnapshot;
-  invocation(originalRequest: string): string;
+  /**
+   * Accept host expansion evidence when name/location/content match the binding
+   * and userMessage equals the captured original request (ADR 0032).
+   */
   captureExpansion(
     evidence: HostSkillExpansionEvidence | undefined,
     originalRequest: string,
@@ -100,9 +103,6 @@ export async function loadCanonicalSkillBinding(
   const binding: CanonicalSkillBinding<typeof name> = {
     name,
     snapshot,
-    invocation(originalRequest) {
-      return `/skill:${name} ${originalRequest}`;
-    },
     captureExpansion(evidence, originalRequest) {
       return captureCanonicalSkillExpansion(
         name,

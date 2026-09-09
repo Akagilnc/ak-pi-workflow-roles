@@ -26,7 +26,7 @@ export type AcpPreparedTurn = Readonly<{
    * send path — never a test-only parallel face.
    */
   systemPrompt: { readonly body: string; readonly materials: readonly unknown[] };
-  /** Effective user prompt after host-side input transform (canonical Skill invocation). */
+  /** Effective user prompt after host-side input handling (host-neutral; no Pi `/skill:` syntax). */
   prompt: string;
   /**
    * Host abort signal armed only by typed infrastructure failure (envelope
