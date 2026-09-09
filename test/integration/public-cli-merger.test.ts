@@ -504,57 +504,14 @@ test("ak-role merger dispatches and settles escalate without active merge and co
             assert.equal(input.sourceObjectId, "");
             assert.deepEqual([...input.expectedConflictPaths], []);
             const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\nResolve whatever is open.`;
-            const receipt = {
-              status: "escalate",
-              attemptId: input.attemptId,
-              diagnosis: "no in-progress merge",
-              report: "nothing to reconcile",
-            };
+            const receipt = { status: "escalate", attemptId: input.attemptId, diagnosis: "no in-progress merge", report: "nothing to reconcile" };
             await mkdir(join(sessionFile, ".."), { recursive: true });
-            await writeFile(
-              sessionFile,
-              [
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: expansion }],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "assistant",
-                    content: [
-                      {
-                        type: "toolCall",
-                        id: "out",
-                        name: MERGER_OUTPUT_TOOL_NAME,
-                        arguments: receipt,
-                      },
-                    ],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "toolResult",
-                    toolCallId: "out",
-                    toolName: MERGER_OUTPUT_TOOL_NAME,
-                    isError: false,
-                    details: receipt,
-                  },
-                }),
-              ].join("\n") + "\n",
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
+            await writeFile(sessionFile, [
+              JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: expansion }] } }),
+              JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "out", name: MERGER_OUTPUT_TOOL_NAME, arguments: receipt }] } }),
+              JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "out", toolName: MERGER_OUTPUT_TOOL_NAME, isError: false, details: receipt } }),
+            ].join("\n") + "\n", "utf8");
+            return { code: 0, sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" }, stderr: "", timedOut: false, args: [...args] };
           },
           }),
         },
@@ -601,57 +558,14 @@ test("ak-role merger dispatches and settles escalate without active merge and co
             assert.equal(input.targetObjectId, fixture.target);
             assert.equal(input.sourceObjectId, fixture.source);
             const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\nReconcile both intents.`;
-            const receipt = {
-              status: "completed",
-              attemptId: input.attemptId,
-              report: "resolved",
-              mergeCommitId: "b".repeat(40),
-            };
+            const receipt = { status: "completed", attemptId: input.attemptId, report: "resolved", mergeCommitId: "b".repeat(40) };
             await mkdir(join(sessionFile, ".."), { recursive: true });
-            await writeFile(
-              sessionFile,
-              [
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: expansion }],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "assistant",
-                    content: [
-                      {
-                        type: "toolCall",
-                        id: "out",
-                        name: MERGER_OUTPUT_TOOL_NAME,
-                        arguments: receipt,
-                      },
-                    ],
-                  },
-                }),
-                JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "toolResult",
-                    toolCallId: "out",
-                    toolName: MERGER_OUTPUT_TOOL_NAME,
-                    isError: false,
-                    details: receipt,
-                  },
-                }),
-              ].join("\n") + "\n",
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
+            await writeFile(sessionFile, [
+              JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: expansion }] } }),
+              JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "out", name: MERGER_OUTPUT_TOOL_NAME, arguments: receipt }] } }),
+              JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "out", toolName: MERGER_OUTPUT_TOOL_NAME, isError: false, details: receipt } }),
+            ].join("\n") + "\n", "utf8");
+            return { code: 0, sealedAcceptance: { role: "merger" as const, details: receipt, toolCallId: "out" }, stderr: "", timedOut: false, args: [...args] };
           },
           }),
         },

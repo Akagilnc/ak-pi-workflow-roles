@@ -8,7 +8,6 @@ import { isFullGitObjectId } from "./git-object-id.ts";
 
 const execFileAsync = promisify(execFile);
 
-/** Live Git materials for the merger assignment — empty fields mean absent facts. */
 export type ActiveMergerGitState = {
   targetObjectId: string;
   sourceObjectId: string;
@@ -16,23 +15,13 @@ export type ActiveMergerGitState = {
 };
 
 export interface MergerGitState {
-  /**
-   * Read current merge materials.
-   * Missing HEAD / MERGE_HEAD surface as empty strings; real Git infrastructure
-   * and corruption failures still throw (ADR 0018 / 失败诚实 / #827).
-   * Discrimination uses process exit codes and path existence — not stderr text.
-   */
   activeMerge(): Promise<ActiveMergerGitState>;
 }
 
 type GitExecError = { code?: unknown };
 
 async function git(cwd: string, args: string[]): Promise<Uint8Array> {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    encoding: "buffer",
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
   return new Uint8Array(stdout);
 }
 
@@ -43,50 +32,26 @@ function line(bytes: Uint8Array, label: string): string {
 }
 
 async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path, fsConstants.F_OK);
-    return true;
-  } catch (error) {
-    // Only structured absence is empty material; EACCES/EIO/ELOOP/… stay loud.
-    if ((error as { code?: unknown }).code === "ENOENT") return false;
-    throw error;
-  }
+  try { await access(path, fsConstants.F_OK); return true; }
+  catch (error) { if ((error as { code?: unknown }).code === "ENOENT") return false; throw error; }
 }
 
-/**
- * Confirm cwd is inside a usable Git work tree via structured exit status.
- * `rev-parse --is-inside-work-tree` exits 0 and prints the token `true` in-repo;
- * any other outcome is infrastructure failure (rethrown as-is).
- */
 async function requireInsideWorkTree(cwd: string): Promise<void> {
   const stdout = await git(cwd, ["rev-parse", "--is-inside-work-tree"]);
-  if (exactUtf8(stdout, "Git worktree check").trim() !== "true") {
-    throw new Error("Assigned path is not inside a Git work tree");
-  }
+  if (exactUtf8(stdout, "Git worktree check").trim() !== "true") throw new Error("Assigned path is not inside a Git work tree");
 }
 
-/**
- * Resolve an optional commit-ish.
- * Exit 0 → full OID; exit 1 (git --quiet missing/invalid) → undefined;
- * any other exit/spawn failure rethrown.
- */
 async function tryResolveCommit(cwd: string, rev: string): Promise<string | undefined> {
   let stdout: Uint8Array;
   try {
-    const res = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], {
-      cwd,
-      encoding: "buffer",
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    const res = await execFileAsync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
     stdout = new Uint8Array(res.stdout);
   } catch (error) {
     if ((error as GitExecError).code === 1) return undefined;
     throw error;
   }
   const oid = line(stdout, `Git ${rev}`);
-  if (!isFullGitObjectId(oid)) {
-    throw new Error(`Git ${rev} identity is unavailable or invalid`);
-  }
+  if (!isFullGitObjectId(oid)) throw new Error(`Git ${rev} identity is unavailable or invalid`);
   return oid;
 }
 
@@ -96,64 +61,34 @@ async function unmerged(cwd: string): Promise<string[]> {
   for (const row of raw.split("\0")) {
     if (!row) continue;
     const tab = row.indexOf("\t");
-    if (tab < 0 || tab === row.length - 1) {
-      throw new Error("Git returned a malformed unmerged index row");
-    }
+    if (tab < 0 || tab === row.length - 1) throw new Error("Git returned a malformed unmerged index row");
     paths.add(row.slice(tab + 1));
   }
   return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 }
 
-/**
- * Production Git materials seam for merger admission.
- * Absent HEAD/MERGE_HEAD become empty materials; unknown Git failures stay loud.
- */
 export function createProductionMergerGitState(repositoryRoot = process.cwd()): MergerGitState {
   return {
     async activeMerge() {
       await requireInsideWorkTree(repositoryRoot);
-
       const targetObjectId = (await tryResolveCommit(repositoryRoot, "HEAD")) ?? "";
-
-      // MERGE_HEAD presence is a path fact under the git dir — not stderr prose.
-      const mergeHeadReported = line(
-        await git(repositoryRoot, ["rev-parse", "--git-path", "MERGE_HEAD"]),
-        "Git MERGE_HEAD path",
-      );
-      const mergeHeadPath = isAbsolute(mergeHeadReported)
-        ? mergeHeadReported
-        : resolve(repositoryRoot, mergeHeadReported);
+      const mergeHeadReported = line(await git(repositoryRoot, ["rev-parse", "--git-path", "MERGE_HEAD"]), "Git MERGE_HEAD path");
+      const mergeHeadPath = isAbsolute(mergeHeadReported) ? mergeHeadReported : resolve(repositoryRoot, mergeHeadReported);
       let sourceObjectId = "";
       if (await pathExists(mergeHeadPath)) {
         const raw = exactUtf8(await readFile(mergeHeadPath), "Git MERGE_HEAD");
-        const mergeHeads = raw
-          .trim()
-          .split(/\r?\n/)
-          .map((row) => row.trim())
-          .filter(Boolean);
-        if (mergeHeads.length === 0) {
-          throw new Error("Git MERGE_HEAD is empty");
-        }
-        if (mergeHeads.length !== 1) {
-          throw new Error("Assigned repository does not have one ordinary in-progress merge");
-        }
+        const mergeHeads = raw.trim().split(/\r?\n/).map((row) => row.trim()).filter(Boolean);
+        if (mergeHeads.length === 0) throw new Error("Git MERGE_HEAD is empty");
+        if (mergeHeads.length !== 1) throw new Error("Assigned repository does not have one ordinary in-progress merge");
         const source = mergeHeads[0]!;
-        if (!isFullGitObjectId(source)) {
-          throw new Error("Git MERGE_HEAD identity is unavailable or invalid");
-        }
-        // Resolve through git so peeled/abbreviated forms and missing objects fail closed.
+        if (!isFullGitObjectId(source)) throw new Error("Git MERGE_HEAD identity is unavailable or invalid");
         const resolved = await tryResolveCommit(repositoryRoot, source);
-        if (resolved === undefined) {
-          throw new Error("Git MERGE_HEAD identity is unavailable or invalid");
-        }
-        if (targetObjectId !== "" && resolved.length !== targetObjectId.length) {
+        if (resolved === undefined || (targetObjectId !== "" && resolved.length !== targetObjectId.length)) {
           throw new Error("Git MERGE_HEAD identity is unavailable or invalid");
         }
         sourceObjectId = resolved;
       }
-
-      const unmergedPaths = await unmerged(repositoryRoot);
-      return { targetObjectId, sourceObjectId, unmergedPaths };
+      return { targetObjectId, sourceObjectId, unmergedPaths: await unmerged(repositoryRoot) };
     },
   };
 }
