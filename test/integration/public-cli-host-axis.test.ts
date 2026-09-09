@@ -547,10 +547,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
       assert.equal(evidence.methodProvenance?.kind, "role-method-skill", label);
     }
 
-    // --- ACP family: grok-build fake agent records structured prompt + systemPrompt channel ---
-    // Full MCP seal on ACP hangs parent dispose in this fixture; receipt provenance is proven
-    // on the headless family below (same public entry, same envelope prepare). ACP asserts the
-    // host-visible structured prompt/params face only.
+    // --- ACP family: grok-build fake agent seals planned via MCP, answers session/close ---
     {
       const framesPath = join(home, "grok-frames.jsonl");
       await mkdir(join(home, ".grok", "bin"), { recursive: true });
@@ -559,25 +556,86 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
         binary,
         `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
+import { connect } from "node:net";
 import { createInterface } from "node:readline";
 const framesPath = ${JSON.stringify(framesPath)};
+let mcpInfo = null;
+function callPlanned(socketPath, token) {
+  return new Promise((resolve, reject) => {
+    const sock = connect(socketPath);
+    let buf = "";
+    let nextId = 1;
+    const waiters = new Map();
+    sock.setEncoding("utf8");
+    sock.on("data", (chunk) => {
+      buf += chunk;
+      for (;;) {
+        const i = buf.indexOf("\\n"); if (i < 0) break;
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        let msg; try { msg = JSON.parse(line); } catch { continue; }
+        const w = waiters.get(msg.id); if (!w) continue;
+        waiters.delete(msg.id);
+        if (msg.error) w.reject(new Error(JSON.stringify(msg.error)));
+        else w.resolve(msg.result);
+      }
+    });
+    sock.on("error", reject);
+    function req(method, params) {
+      const id = nextId++;
+      return new Promise((res, rej) => {
+        waiters.set(id, { resolve: res, reject: rej });
+        sock.write(JSON.stringify({ id, token, method, params }) + "\\n");
+      });
+    }
+    sock.on("connect", async () => {
+      try {
+        await req("tools/call", {
+          name: "ak_coder_output",
+          arguments: { status: "planned", report: "Plan only; no edits." },
+        });
+        sock.destroy();
+        resolve();
+      } catch (e) { sock.destroy(); reject(e); }
+    });
+  });
+}
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   appendFileSync(framesPath, line + "\\n");
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
   if (typeof msg.method !== "string" || typeof msg.id !== "number") return;
-  if (msg.method === "initialize") {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
-    return;
-  }
-  if (msg.method === "session/new" || msg.method === "session/load") {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess-822-grok" } }) + "\\n");
-    return;
-  }
-  if (msg.method === "session/prompt") {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
-  }
+  void (async () => {
+    try {
+      if (msg.method === "initialize") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+        return;
+      }
+      if (msg.method === "session/new" || msg.method === "session/load") {
+        const servers = msg.params?.mcpServers ?? [];
+        const envRows = servers[0]?.env ?? [];
+        mcpInfo = {
+          socketPath: envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value,
+          token: envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value,
+        };
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess-822-grok" } }) + "\\n");
+        return;
+      }
+      if (msg.method === "session/prompt") {
+        if (mcpInfo?.socketPath && mcpInfo?.token) {
+          await callPlanned(mcpInfo.socketPath, mcpInfo.token);
+        }
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+        return;
+      }
+      // Accepted path awaits session/close before teardown (role-turn-host).
+      if (msg.method === "session/close") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+      }
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { message: String(e) } }) + "\\n");
+    }
+  })();
 });
 `,
         { encoding: "utf8" },
@@ -590,18 +648,13 @@ rl.on("line", (line) => {
         ["coder", "--project", project, assignment],
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-grok" },
       );
-      assert.equal(result.hostFailure, undefined, "grok host selection must succeed");
 
       const frames = (await readFile(framesPath, "utf8"))
         .split("\n")
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line) as {
           method?: string;
-          params?: {
-            prompt?: Array<{ type?: string; text?: string }>;
-            _meta?: { systemPromptOverride?: unknown };
-            mcpServers?: unknown[];
-          };
+          params?: { prompt?: Array<{ type?: string; text?: string }> };
         });
       const promptFrame = frames.find((f) => f.method === "session/prompt");
       assert.ok(promptFrame, "ACP session/prompt must reach the host");
@@ -610,17 +663,7 @@ rl.on("line", (line) => {
         .join("");
       assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
       assert.equal(hostPrompt.includes(assignment), true);
-
-      const sessionNew = frames.find((f) => f.method === "session/new");
-      assert.ok(sessionNew, "ACP session/new must carry systemPrompt channel");
-      // Structured channel presence — not free-text content (quality law).
-      assert.equal(typeof sessionNew.params?._meta?.systemPromptOverride, "string");
-      assert.equal(
-        (sessionNew.params?._meta?.systemPromptOverride as string).length > 0,
-        true,
-      );
-      assert.equal(Array.isArray(sessionNew.params?.mcpServers), true);
-      assert.equal((sessionNew.params?.mcpServers?.length ?? 0) > 0, true);
+      await assertMethodProvenanceReceipt(result, "grok-build");
     }
 
     // --- headless family: claude fake returns planned structured_output ---
