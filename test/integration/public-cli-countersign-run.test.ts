@@ -414,7 +414,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
   });
 });
 
-test("ak-role resume after sealed countersign presents the sealed verdict without dispatch", async () => {
+test("ak-role resume with message after sealed countersign dispatches a new court (#833)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -450,6 +450,7 @@ test("ak-role resume after sealed countersign presents the sealed verdict withou
     );
 
     let resumeDispatches = 0;
+    let resumeArgs: string[] | undefined;
     const { io: resumeIo, stdout } = captureIo();
     const resumed = await runAkRole(["resume", runId, "再裁一次"], {
       home,
@@ -461,27 +462,28 @@ test("ak-role resume after sealed countersign presents the sealed verdict withou
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args, options) => {
           resumeDispatches += 1;
+          resumeArgs = [...args];
           return scriptedCountersignSession({
             countersignStatus: "continue",
-            fix: { summary: "RESUMED-封驳-must-not-land" },
+            fix: { summary: "RESUMED-再审" },
           })(args, options);
         },
       }),
     });
-    assert.equal(resumeDispatches, 0, "sealed resume must not dispatch a doomed turn");
+    assert.equal(resumeDispatches, 1, "sealed resume with message must reach the host");
+    assert.equal(resumeArgs!.includes("再裁一次"), true);
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? resumed.terminal.roleOutcome.status
         : undefined,
-      "converged",
+      "continue",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
       ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
       : undefined;
-    assert.equal(facts?.note, "FIRST-署");
-    assert.notEqual(facts?.fixSummary, "RESUMED-封驳-must-not-land");
+    assert.equal((facts?.fix as { summary?: string } | undefined)?.summary, "RESUMED-再审");
   });
 });
 

@@ -152,8 +152,7 @@ function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
  * When courtAttemptId is set, ledger reads only that attempt so a prior seal
- * cannot present as this turn's result. Omit for manual resume idempotent
- * run-scoped sealed reads (no new court).
+ * cannot present as this turn's result. Omit for run-scoped latest sealed read.
  */
 export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
@@ -186,7 +185,7 @@ async function sealedLedgerOutcome(
  * preserved cause; otherwise allow. Callers present entry-specific terminals;
  * they must not re-derive this judgment. Ledger projection remains the sole
  * seal truth — this is disposition over that read, not a second state.
- * Always run-scoped (no court attempt filter): any retained seal blocks bare resume.
+ * Always run-scoped (no court attempt filter): any retained seal blocks auto-resume redispatch.
  */
 export type SealedAcceptanceRedispatchDisposition =
   | { readonly kind: "allow" }
@@ -2476,8 +2475,9 @@ async function readLawfulSettlementEntries(
 export async function readLawfulJudgeRoleOutcome(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
+  const sealed = await sealedLedgerOutcome(admitted, scope);
   if (sealed?.role === "judge") {
     const details = sealed.decisiveFacts as Record<string, unknown>;
     // sealed.status is the sole authority (written by acceptedFacts at seal).
@@ -2490,7 +2490,7 @@ export async function readLawfulJudgeRoleOutcome(
     };
   }
   // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
-  return auditEscalationLedgerOutcome(admitted, "judge");
+  return auditEscalationLedgerOutcome(admitted, "judge", scope);
 }
 
 /**
@@ -2507,8 +2507,9 @@ export async function readLawfulJudgeRoleOutcome(
 async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority);
+  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority, scope);
   if (roleOutcome === undefined) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
@@ -2538,8 +2539,9 @@ async function settleLawfulJudgeTerminalResult(
 export async function settleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulJudgeTerminalResult(admitted, authority);
+  const settled = await settleLawfulJudgeTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Judge Role run completed without a lawful typed terminal result",
@@ -2556,8 +2558,9 @@ export async function settleJudgeTerminalResult(
 export async function trySettleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulJudgeTerminalResult(admitted, authority);
+  return settleLawfulJudgeTerminalResult(admitted, authority, scope);
 }
 
 async function settleLawfulCoderTerminalResult(
@@ -2566,8 +2569,9 @@ async function settleLawfulCoderTerminalResult(
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder");
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
   if (ledgerOutcome === undefined) return undefined;
   // #757: sealed facts pass through — no shape re-project / field drop.
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
@@ -2607,8 +2611,9 @@ export async function settleCoderTerminalResult(
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options);
+  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options, scope);
   if (settled === undefined) {
     throw new Error(
       "Coder Role run completed without a lawful typed terminal result",
@@ -2749,8 +2754,9 @@ async function settleLawfulFixerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer");
+  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
   if (ledgerOutcome === undefined) return undefined;
   // #757: sealed facts pass through — no shape re-project / field drop.
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
@@ -2798,8 +2804,9 @@ export async function settleFixerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options);
+  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options, scope);
   if (settled === undefined) {
     throw new Error(
       "Fixer Role run completed without a lawful typed terminal result",
@@ -2877,11 +2884,12 @@ export type LawfulCollectorRoleOutcome = {
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
+  const roleOutcome = await sealedLedgerOutcome(admitted, scope);
   if (roleOutcome?.role !== "collector") {
     // Bounded to the current attempt so multi-attempt resume timeout/no-output
     // is not masked by a prior wait-tool residual (#633).
@@ -2941,8 +2949,9 @@ async function settleLawfulCollectorTerminalResult(
 export async function settleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCollectorTerminalResult(admitted, authority);
+  const settled = await settleLawfulCollectorTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Collector Role run completed without a lawful typed terminal result",
@@ -2955,8 +2964,9 @@ export async function settleCollectorTerminalResult(
 export async function trySettleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCollectorTerminalResult(admitted, authority);
+  return settleLawfulCollectorTerminalResult(admitted, authority, scope);
 }
 
 export async function publishDoctorArtifacts(
@@ -3034,13 +3044,14 @@ export type LawfulDoctorRoleOutcome =
 async function settleLawfulDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
+  const sealed = await sealedLedgerOutcome(admitted, scope);
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   if (sealed?.role !== "doctor") {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor");
+    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor", scope);
     if (escalation === undefined) return undefined;
     const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
     return withOptionalGateProjection(
@@ -3102,8 +3113,9 @@ async function settleLawfulDoctorTerminalResult(
 export async function settleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulDoctorTerminalResult(admitted, authority);
+  const settled = await settleLawfulDoctorTerminalResult(admitted, authority, scope);
   if (settled === undefined) {
     throw new Error(
       "Doctor Role run completed without a lawful typed terminal result",
@@ -3116,8 +3128,9 @@ export async function settleDoctorTerminalResult(
 export async function trySettleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulDoctorTerminalResult(admitted, authority);
+  return settleLawfulDoctorTerminalResult(admitted, authority, scope);
 }
 
 /**
@@ -3498,8 +3511,9 @@ export async function trySettleCoderTerminalResult(
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCoderTerminalResult(admitted, authority, options);
+  return settleLawfulCoderTerminalResult(admitted, authority, options, scope);
 }
 
 /** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
@@ -3511,8 +3525,9 @@ export async function trySettleFixerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulFixerTerminalResult(admitted, authority, options);
+  return settleLawfulFixerTerminalResult(admitted, authority, options, scope);
 }
 
 /**
@@ -3631,8 +3646,9 @@ async function settleLawfulReviewerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted);
+  const sealed = await sealedLedgerOutcome(admitted, scope);
   if (sealed?.role !== "reviewer") return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
@@ -3682,8 +3698,9 @@ export async function settleReviewerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options);
+  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
   if (settled === undefined) {
     throw new Error(
       "Reviewer Role run completed without a lawful typed terminal result",
@@ -3701,8 +3718,9 @@ export async function trySettleReviewerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulReviewerTerminalResult(admitted, authority, options);
+  return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
 }
 
 
@@ -3814,17 +3832,18 @@ async function settleLawfulMergerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted);
+  const roleOutcome = await sealedLedgerOutcome(admitted, scope);
   if (roleOutcome?.role !== "merger") {
     // Ledger owns 0041: a non-sole closed round is not residual-incomplete material.
     const latestOutcome = await readLatestSubmissionOutcome(
       admitted.projectRoot,
       admitted.runId,
-      sealedLedgerHome(admitted),
+      ledgerReadScope(admitted, scope),
     );
     if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
       return undefined;
@@ -3902,8 +3921,9 @@ export async function settleMergerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options);
+  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options, scope);
   if (settled === undefined) {
     throw new Error(
       "Merger Role run completed without a lawful typed terminal result",
@@ -3921,8 +3941,9 @@ export async function trySettleMergerTerminalResult(
     readonly methodSkillPath: string;
     readonly methodSkillConfiguredPath: string;
   },
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulMergerTerminalResult(admitted, authority, options);
+  return settleLawfulMergerTerminalResult(admitted, authority, options, scope);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */

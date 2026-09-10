@@ -4,7 +4,7 @@
  * resume that run under the live seat-table model with a new court attempt and
  * different source-run material (second court does not seal) → bare resume
  * continues the open court and seals a lawful non-pass status → further bare
- * resume is sealed-idempotent on that same non-pass status.
+ * resume after seal still reaches the host (pass-through #833).
  * Temp home is worktree-owned and always cleaned.
  *
  * Observation face is RoleTurnRequest (continuation / activation / model /
@@ -205,11 +205,20 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
             seal: false,
           })(extraArgs, options);
         }
-        // Bare resume of open court: seal this court turn with lawful non-pass.
+        if (turn === 4) {
+          // Bare resume of open court: seal this court turn with lawful non-pass.
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: secondCourtSeal,
+          })(extraArgs, options);
+        }
+        // Bare resume after sealed court: pass-through, no re-seal (#833).
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
           details: secondCourtSeal,
+          seal: false,
         })(extraArgs, options);
       },
     });
@@ -399,10 +408,10 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "open-court seal status must be the lawful non-pass, not first-court pass",
     );
 
-    // 6) After open court seals non-pass, further bare resume is run-scoped
-    // sealed-idempotent on that same status (not the first-court pass).
-    const turnsBeforeIdempotent = turn;
-    const idempotent = await runAkRole(["resume", runId], {
+    // 6) After open court seals non-pass, further bare resume still reaches the
+    // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
+    const turnsBeforeBare = turn;
+    const bareAfterSeal = await runAkRole(["resume", runId], {
       home,
       packageRoot,
       cwd: project,
@@ -412,17 +421,17 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     });
     assert.equal(
       turn,
-      turnsBeforeIdempotent,
-      "sealed bare resume must not dispatch another turn",
+      turnsBeforeBare + 1,
+      "sealed bare resume must reach the host",
     );
-    assert.equal(idempotent.exitCode, 0);
-    assert.equal(idempotent.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(bareAfterSeal.exitCode, 0);
+    assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
-      idempotent.terminal?.roleOutcome.kind === "accepted"
-        ? idempotent.terminal.roleOutcome.status
+      bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
+        ? bareAfterSeal.terminal.roleOutcome.status
         : undefined,
       secondCourtSeal.status,
-      "idempotent bare resume must present the open-court non-pass status",
+      "bare resume after seal keeps the open-court non-pass status",
     );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });

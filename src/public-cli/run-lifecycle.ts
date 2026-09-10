@@ -675,9 +675,9 @@ export async function recordCurrentCourt(
 
 /**
  * Clear open court after this courtAttemptId seals, or when the open court is
- * already sealed and bare resume returns to run-scoped idempotence (#637).
- * When expectedCourtAttemptId is set, clear only if it still matches — never
- * drop a different court recorded under the writer lease after our judgment.
+ * already sealed (#637). When expectedCourtAttemptId is set, clear only if it
+ * still matches — never drop a different court recorded under the writer lease
+ * after our judgment.
  */
 export async function clearCurrentCourt(
   runDirectory: string,

@@ -68,7 +68,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
   });
 });
 
-test("S5: terminal with accepted receipt stays loadable; sealed resume projects without dispatch", async()=>{
+test("S5: terminal with accepted receipt stays loadable; bare sealed resume reaches host (#416/#833)", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-accepted-resumable-001";
@@ -82,8 +82,8 @@ test("S5: terminal with accepted receipt stays loadable; sealed resume projects 
       })});
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");
-    // #416: load stays open (no terminal/resumable gate). #599: sealed ledger is
-    // projected idempotently — do not dispatch a doomed turn that post-seal-anomalies.
+    // #416: load stays open (no terminal/resumable gate). #833: sealed bare resume
+    // is pass-through — host is reached; no re-seal so prior acceptance still settles.
     const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let calls=0;
@@ -92,9 +92,9 @@ test("S5: terminal with accepted receipt stays loadable; sealed resume projects 
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async(args)=>{calls+=1;const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({judgeStatus:"converged",note:"resumed ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
+        piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
       })});
-    assert.equal(calls,0,"sealed resume must not dispatch");
+    assert.equal(calls,1,"sealed bare resume must reach the host");
     assert.equal(resumed.exitCode,0);
     assert.equal(resumed.terminal?.roleOutcome.kind,"accepted");
     assert.equal(

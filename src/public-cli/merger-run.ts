@@ -40,8 +40,9 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
-  runPostAdmissionManualResume,
+  resolveResumeMethodMaterialAdapters,
   runPostAdmissionResumable,
+  runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   resumeTurnRequestProjectionOptions,
@@ -83,17 +84,22 @@ function mergerAdapters(
   methodMaterial?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedMergerInvocation> {
   return {
-    trySettle: (admitted, authority) =>
+    trySettle: (admitted, authority, scope) =>
       methodMaterial === undefined
         ? Promise.resolve(undefined)
-        : trySettleMergerTerminalResult(admitted, authority, {
-            methodProvenance: methodMaterial.provenance,
-            methodSkillPath: methodMaterial.skillPath,
-            methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-              packageRoot,
-              "resolving-merge-conflicts",
-            ),
-          }),
+        : trySettleMergerTerminalResult(
+            admitted,
+            authority,
+            {
+              methodProvenance: methodMaterial.provenance,
+              methodSkillPath: methodMaterial.skillPath,
+              methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+                packageRoot,
+                "resolving-merge-conflicts",
+              ),
+            },
+            scope,
+          ),
     shouldPresentSettled: (t) =>
       isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
   };
@@ -258,49 +264,28 @@ export async function runPublicMergerResume(
   admitted?: AdmittedMergerInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableMergerRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-
-  let methodMaterial: PackagedMethodSkillMaterial;
-  try {
-    methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    return (await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-        knownCause: "activation",
-      },
-      mergerAdapters(env.packageRoot),
-      env.principalAuthority,
-      io,
-    )) as { exitCode: number; admitted: AdmittedMergerInvocation; terminal: TerminalResult };
-  }
-
-  const turnRequest = buildMergerTurnRequest(
-    admitted,
-    resumeTurnRequestProjectionOptions(admitted, request, env),
-  );
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
-    adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    load: (effective) =>
+      loadResumableMergerRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
+      buildMergerTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
+    adapters: mergerAdapters(env.packageRoot),
+    afterAdmittedLoad: (admitted) =>
+      resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
+        io,
+        loadMaterial: () => loadMergerMethodMaterial(env.packageRoot),
+        adaptersWith: (material) => mergerAdapters(env.packageRoot, material),
+        emptyAdapters: mergerAdapters(env.packageRoot),
+        knownCause: "activation",
+      }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

@@ -39,8 +39,9 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
-  runPostAdmissionManualResume,
+  resolveResumeMethodMaterialAdapters,
   runPostAdmissionResumable,
+  runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
   resumeTurnRequestProjectionOptions,
@@ -82,10 +83,15 @@ function coderAdapters(
   methodProvenance?: PackagedMethodSkillProvenance,
 ): PostAdmissionAdapters<AdmittedCoderInvocation> {
   return {
-    trySettle: (admitted, authority) =>
-      trySettleCoderTerminalResult(admitted, authority, {
-        ...(methodProvenance === undefined ? {} : { methodProvenance }),
-      }),
+    trySettle: (admitted, authority, scope) =>
+      trySettleCoderTerminalResult(
+        admitted,
+        authority,
+        {
+          ...(methodProvenance === undefined ? {} : { methodProvenance }),
+        },
+        scope,
+      ),
   };
 }
 
@@ -216,55 +222,31 @@ export async function runPublicCoderResume(
   admitted?: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  let loaded;
-  try {
-    loaded = await loadResumableCoderRun(env.home, request.runId, env.principalAuthority);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  const { admitted } = loaded;
-
-  let methodProvenance: PackagedMethodSkillProvenance | undefined;
-  if (admitted.phase === "apply") {
-    try {
-      const material = await loadPackagedMethodSkillMaterial(
-        env.packageRoot,
-        "tdd",
-      );
-      methodProvenance = material.provenance;
-    } catch (error) {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation",
-        },
-        coderAdapters(),
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: AdmittedCoderInvocation; terminal: TerminalResult };
-    }
-  }
-
-  const turnRequest = buildCoderTurnRequest(
-    admitted,
-    resumeTurnRequestProjectionOptions(admitted, request, env),
-  );
-
-  return await runPostAdmissionManualResume({
-    admitted,
+  return await runPostAdmissionSeatResume({
+    request,
     env,
     io,
-    request: turnRequest,
-    adapters: coderAdapters(methodProvenance),
+    load: (effective) =>
+      loadResumableCoderRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) =>
+      buildCoderTurnRequest(
+        admitted,
+        resumeTurnRequestProjectionOptions(admitted, effective, env),
+      ),
+    adapters: coderAdapters(),
+    // Apply-only method; plan resume keeps empty provenance (same as initial).
+    afterAdmittedLoad: (admitted) =>
+      resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
+        io,
+        shouldLoad: admitted.phase === "apply",
+        loadMaterial: () =>
+          loadPackagedMethodSkillMaterial(env.packageRoot, "tdd"),
+        adaptersWith: (material) => coderAdapters(material.provenance),
+        emptyAdapters: coderAdapters(),
+        knownCause: "activation",
+      }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
