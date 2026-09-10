@@ -18,7 +18,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import { join, dirname } from "node:path";
 import test from "node:test";
 
-import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE, TurnDispatchedFailure } from "../../src/public-cli/auto-resume.ts";
+import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -134,44 +134,8 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
   });
 });
 
-test("#840 r9 判词 class 1: a TurnDispatchedFailure throw still switches the next attempt to a resume payload", async()=>{
-  await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","turn-dispatched-failure-resume");
-    await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");
-    await writeFile(sessionFile,"{}\n","utf8");
-    const seenPayloads:string[][]=[];
-    const {io}=captureIo();
-    // Attempt 1 throws a plain pre-turn error (must retry the INITIAL payload,
-    // same as the existing dispatch-throw contract above). Attempt 2 throws
-    // TurnDispatchedFailure — dispatchPostAdmissionTurn's own shape for "the
-    // host turn genuinely started, then its own settlement authority failed"
-    // (#840 r9 判词 class 1 boundary, presentControlledFailure's own reads) —
-    // so attempt 3 must receive the RESUME payload, not a replay of attempt 1.
-    let calls=0;
-    const result=await runWithAutoResumeLoop({
-      principalAuthority: piDurablePrincipalAuthority,
-      sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"turn-dispatched-failure-resume"},
-      io,
-      autoResumeLimit:2,
-      buildInitialPayload: ()=>["--initial"],
-      buildResumePayload: ()=>["--resume"],
-      dispatch: async(payload,lease):Promise<LoopDispatchResult>=>
-        withPrimaryAwareCleanup(
-          async () => {
-            seenPayloads.push(payload);
-            calls+=1;
-            if(calls===1) throw new Error("pre-turn boom (test-injected)");
-            if(calls===2) throw new TurnDispatchedFailure(new Error("settlement boom (test-injected)"));
-            throw new Error("boom-final");
-          },
-          async () => { await lease.release(); },
-        ),
-    });
-    assert.equal(calls,3);
-    assert.deepEqual(seenPayloads,[["--initial"],["--initial"],["--resume"]]);
-    assert.equal(result.exitCode,1);
-    assert.equal(result.terminal?.roleOutcome.kind,"failure");
-  });
-});
+// #840 r9 判词 class 1 (TurnDispatchedFailure switching the retry payload to
+// resume) is proven at test/integration/public-cli-dispatch-post-admission-turn-boundary.test.ts
+// through the real dispatchPostAdmissionTurn → settleAfterTurnStarted →
+// presentControlledFailure chain, not a test-constructed marker thrown
+// directly into this loop.
