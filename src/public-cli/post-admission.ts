@@ -618,9 +618,10 @@ export async function prepareSummonsResumeMaterials(
 
 /**
  * Shared manual-resume orchestration for seats whose continuation is the
- * package resume envelope (#599 / #633): load → structural rejection → seat
- * turn projection → runPostAdmissionManualResume. Seat-owned loader validation,
- * turn builder, and adapters stay on the seat.
+ * package resume envelope (#599 / #633): load once → structural rejection →
+ * optional seat afterAdmittedLoad (method material / controlled failure) →
+ * seat turn projection → runPostAdmissionManualResume. Seat-owned loader
+ * validation, turn builder, and adapters stay on the seat.
  *
  * Court open/recovery transaction (#637): under the existing writer lease,
  * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
@@ -641,12 +642,29 @@ export async function runPostAdmissionSeatResume<
     request: PublicResumeRequest,
   ) => RoleTurnRequest | Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
+  /**
+   * After the single pre-lease load. Factory seats resolve method-material
+   * adapters here (or short-circuit with the same controlled-failure face as
+   * initial). Must not re-load the same admitted; under-lease summons
+   * rehydrate remains the only second load, and only when materials change.
+   */
+  afterAdmittedLoad?: (
+    admitted: A,
+  ) => Promise<
+    | { kind: "continue"; adapters: PostAdmissionAdapters<A, T> }
+    | {
+        kind: "terminal";
+        exitCode: number;
+        admitted: A;
+        terminal: TerminalResult;
+      }
+  >;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
 
-  // Load once for runDirectory / structural rejection; court identity is judged
-  // only after the writer lease is held (below).
+  // Load once for runDirectory / structural rejection / afterAdmittedLoad;
+  // court identity is judged only after the writer lease is held (below).
   let loaded;
   try {
     loaded = await input.load(request);
@@ -658,13 +676,26 @@ export async function runPostAdmissionSeatResume<
     throw error;
   }
 
+  let adapters = input.adapters;
+  if (input.afterAdmittedLoad !== undefined) {
+    const prepared = await input.afterAdmittedLoad(loaded.admitted);
+    if (prepared.kind === "terminal") {
+      return {
+        exitCode: prepared.exitCode,
+        admitted: prepared.admitted,
+        terminal: prepared.terminal as T,
+      };
+    }
+    adapters = prepared.adapters;
+  }
+
   // Court recovery / open under lease, then always dispatch (resume is pass-through).
   try {
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
       env: input.env,
       io: input.io,
-      adapters: input.adapters,
+      adapters,
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),

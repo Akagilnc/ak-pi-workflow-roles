@@ -221,52 +221,6 @@ export async function runPublicCoderResume(
   admitted?: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  // Method material failure face needs admitted (same shape as initial).
-  // Seat resume still owns court open under lease (#833).
-  let loaded;
-  try {
-    loaded = await loadResumableCoderRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  let methodProvenance: PackagedMethodSkillProvenance | undefined;
-  if (loaded.admitted.phase === "apply") {
-    try {
-      const material = await loadPackagedMethodSkillMaterial(
-        env.packageRoot,
-        "tdd",
-      );
-      methodProvenance = material.provenance;
-    } catch (error) {
-      return (await presentControlledFailure(
-        loaded.admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-          knownCause: "activation",
-        },
-        coderAdapters(),
-        env.principalAuthority,
-        io,
-      )) as {
-        exitCode: number;
-        admitted: AdmittedCoderInvocation;
-        terminal: TerminalResult;
-      };
-    }
-  }
-
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -278,7 +232,39 @@ export async function runPublicCoderResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    adapters: coderAdapters(methodProvenance),
+    // Default adapters; afterAdmittedLoad replaces with apply method material.
+    adapters: coderAdapters(),
+    afterAdmittedLoad: async (admitted) => {
+      // Apply-only method; plan resume keeps empty provenance (same as initial).
+      if (admitted.phase !== "apply") {
+        return { kind: "continue", adapters: coderAdapters() };
+      }
+      try {
+        const material = await loadPackagedMethodSkillMaterial(
+          env.packageRoot,
+          "tdd",
+        );
+        return {
+          kind: "continue",
+          adapters: coderAdapters(material.provenance),
+        };
+      } catch (error) {
+        const terminal = await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+            knownCause: "activation",
+          },
+          coderAdapters(),
+          env.principalAuthority,
+          io,
+        );
+        return { kind: "terminal", ...terminal };
+      }
+    },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

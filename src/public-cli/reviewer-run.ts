@@ -243,45 +243,6 @@ export async function runPublicReviewerResume(
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 }> {
-  // Method material failure face needs admitted (same shape as initial).
-  // Seat resume still owns court open under lease (#833).
-  let loaded;
-  try {
-    loaded = await loadResumableReviewerRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  let methodMaterial: PackagedMethodSkillMaterial;
-  try {
-    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    return (await presentControlledFailure(
-      loaded.admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      reviewerAdapters(env.packageRoot),
-      env.principalAuthority,
-      io,
-    )) as {
-      exitCode: number;
-      admitted: AdmittedReviewerInvocation;
-      terminal: TerminalResult;
-    };
-  }
-
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -293,7 +254,31 @@ export async function runPublicReviewerResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    adapters: reviewerAdapters(env.packageRoot, methodMaterial),
+    // Default adapters; afterAdmittedLoad replaces with method material.
+    adapters: reviewerAdapters(env.packageRoot),
+    afterAdmittedLoad: async (admitted) => {
+      try {
+        const methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+        return {
+          kind: "continue",
+          adapters: reviewerAdapters(env.packageRoot, methodMaterial),
+        };
+      } catch (error) {
+        const terminal = await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          reviewerAdapters(env.packageRoot),
+          env.principalAuthority,
+          io,
+        );
+        return { kind: "terminal", ...terminal };
+      }
+    },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

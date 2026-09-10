@@ -263,46 +263,6 @@ export async function runPublicMergerResume(
   admitted?: AdmittedMergerInvocation;
   terminal?: TerminalResult;
 }> {
-  // Method material failure face needs admitted (same shape as initial).
-  // Seat resume still owns court open under lease (#833).
-  let loaded;
-  try {
-    loaded = await loadResumableMergerRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  let methodMaterial: PackagedMethodSkillMaterial;
-  try {
-    methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
-  } catch (error) {
-    return (await presentControlledFailure(
-      loaded.admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-        knownCause: "activation",
-      },
-      mergerAdapters(env.packageRoot),
-      env.principalAuthority,
-      io,
-    )) as {
-      exitCode: number;
-      admitted: AdmittedMergerInvocation;
-      terminal: TerminalResult;
-    };
-  }
-
   return await runPostAdmissionSeatResume({
     request,
     env,
@@ -314,7 +274,32 @@ export async function runPublicMergerResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    adapters: mergerAdapters(env.packageRoot, methodMaterial),
+    // Default adapters; afterAdmittedLoad replaces with method material.
+    adapters: mergerAdapters(env.packageRoot),
+    afterAdmittedLoad: async (admitted) => {
+      try {
+        const methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
+        return {
+          kind: "continue",
+          adapters: mergerAdapters(env.packageRoot, methodMaterial),
+        };
+      } catch (error) {
+        const terminal = await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+            knownCause: "activation",
+          },
+          mergerAdapters(env.packageRoot),
+          env.principalAuthority,
+          io,
+        );
+        return { kind: "terminal", ...terminal };
+      }
+    },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
