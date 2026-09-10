@@ -340,6 +340,23 @@ async function retainDispatchError(
 }
 
 /**
+ * Unwrap TurnDispatchedFailure before this loop's own final presentation
+ * (#840 r9 判词 class 1 — the auto-resume.ts final presentation boundary).
+ * The wrapper only carries the "turn already genuinely started" signal
+ * across the throw boundary so the loop above selects a resume payload; the
+ * typed decisiveFacts and diagnostic text below must name the real cause it
+ * wraps (接住可以，洗白不行 — 未识别异常不得冒用具体标签，真因必须落痕), not
+ * the internal signal's own identity.
+ */
+function unwrapTurnDispatchedFailure(error: unknown): unknown {
+  let current = error;
+  while (current instanceof TurnDispatchedFailure) {
+    current = current.cause;
+  }
+  return current;
+}
+
+/**
  * Typed failure terminal for a retry path that ended with only exceptions:
  * loud, non-lawful, carrying the last true cause and the pointers to the
  * full per-attempt error files. Never rethrows the raw exception at callers.
@@ -354,12 +371,13 @@ function dispatchExceptionFailureTerminal(input: {
   /** True only when every attempt threw; otherwise describe just the final attempt. */
   everyAttemptThrew: boolean;
 }): TerminalResult {
+  const causeError = unwrapTurnDispatchedFailure(input.causeError);
   // #426 review: this terminal fires whenever the FINAL dispatch throws, not
   // only when every attempt threw — do not misrepresent a mixed retry history.
   const history = input.everyAttemptThrew
     ? "dispatch threw an exception on every attempt"
     : "the final dispatch threw an exception";
-  const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(input.causeError)}`;
+  const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(causeError)}`;
   const decisiveFacts: Record<string, unknown> = {
     cause: "unrecognized",
     diagnostic,
@@ -369,7 +387,7 @@ function dispatchExceptionFailureTerminal(input: {
   if (input.errorFiles.length > 0) {
     decisiveFacts.lastDispatchErrorFile = input.errorFiles[input.errorFiles.length - 1];
   }
-  const candidate = input.causeError as { name?: unknown; code?: unknown };
+  const candidate = causeError as { name?: unknown; code?: unknown };
   if (typeof candidate?.name === "string") decisiveFacts.errorName = candidate.name;
   if (typeof candidate?.code === "string" || typeof candidate?.code === "number") {
     decisiveFacts.errorCode = candidate.code;

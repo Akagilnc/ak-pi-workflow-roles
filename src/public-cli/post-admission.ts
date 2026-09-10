@@ -120,6 +120,45 @@ function withOnceSuccessfulBeforeDispatch<
   };
 }
 
+/**
+ * Session custom-entry type for a best-effort post-dispatch cleanup
+ * diagnostic (#840 r9 判词 class 1). Every auto-resume attempt dispatches
+ * with dummyIo (src/public-cli/auto-resume.ts), so an io.stderr-only
+ * diagnostic never reaches a real caller — the dossier is the durable trace
+ * that does (失败诚实宪法 真因必须落痕).
+ */
+export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
+  "ak_post_admission_cleanup_diagnostic" as const;
+
+/**
+ * Best-effort post-dispatch diagnostic that must still leave a real trace
+ * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1):
+ * durable in the dossier via sessionAppender, in addition to io.stderr for
+ * direct/manual callers whose io is real. The dossier append is itself
+ * best-effort and must never mask or replace the io diagnostic already sent.
+ */
+async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvocation>(
+  admitted: A,
+  env: PostAdmissionEnv,
+  diagnostic: string,
+  io: CliIo,
+): Promise<void> {
+  io.stderr(formatCliDiagnostic(diagnostic));
+  if (admitted.principal === undefined) return;
+  try {
+    await env.sessionAppender(
+      env.principalAuthority,
+      admitted.principal,
+      POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
+      { diagnostic, recordedAt: new Date().toISOString() },
+    );
+  } catch {
+    // Truly best-effort — the append failing must not mask the io
+    // diagnostic already emitted above or interrupt the caller's already-
+    // settled flow.
+  }
+}
+
 /** Previous main-session host recorded on invocation.json, if any. */
 async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
   try {
@@ -593,11 +632,13 @@ export async function dispatchPostAdmissionTurn<
     } catch (error) {
       // Best-effort: the turn's own stderr capture is secondary to lawful /
       // controlled-failure settlement below, but the failure itself must
-      // still leave a trace (失败诚实宪法 真因必须落痕), not a silent catch.
-      io.stderr(
-        formatCliDiagnostic(
-          `stderr.log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
-        ),
+      // still leave a real trace (失败诚实宪法 真因必须落痕) — durably, since
+      // every auto-resume attempt's io is dummyIo (#840 r9 判词 class 1).
+      await recordBestEffortPostDispatchDiagnostic(
+        admitted,
+        env,
+        `stderr.log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
+        io,
       );
     }
 
@@ -608,10 +649,54 @@ export async function dispatchPostAdmissionTurn<
       request.courtAttemptId === undefined || request.courtAttemptId.length === 0
         ? undefined
         : { courtAttemptId: request.courtAttemptId };
+    // Single complete boundary (#840 r9 判词 class 1): trySettle, its
+    // shouldPresent gate, and the accepted-settlement cleanup all settle
+    // through this one catch. shouldPresent used to sit outside every
+    // TurnDispatchedFailure wrap, so a throw from it looked like an ordinary
+    // pre-turn throw to the caller (turnStartedBeforeThrow stayed false) and
+    // replayed the initial payload even though the host turn had already
+    // genuinely run.
+    let settledOutcome:
+      | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
+      | undefined;
     try {
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
+      if (settled !== undefined && shouldPresent(settled)) {
+        // This court sealed — drop open-court pointer (bare resume no longer continues it).
+        if (
+          settled.roleOutcome.kind === "accepted" &&
+          request.courtAttemptId !== undefined &&
+          request.courtAttemptId.length > 0
+        ) {
+          try {
+            await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+          } catch (error) {
+            // Settlement already sealed accepted — a cleanup failure here must
+            // not erase that fact or make the caller replay this court's
+            // summons over already-delivered work (#840 已交劳动只整理终局不重做).
+            // A later bare resume self-heals: buildRequestAfterLease finds the
+            // open court already sealed and clears it then (documented
+            // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
+            // 必须落痕) — durably, since every auto-resume attempt's io here is
+            // dummyIo (#840 r9 判词 class 1).
+            await recordBestEffortPostDispatchDiagnostic(
+              admitted,
+              env,
+              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+              io,
+            );
+          }
+        }
+        settledOutcome = {
+          exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+          admitted,
+          terminal: settled,
+          turnDispatched: true as const,
+        };
+      }
     } catch (error) {
-      // Settle throw is a real failure fact — never swallow into undefined.
+      // Settle (or its shouldPresent gate) throw is a real failure fact —
+      // never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
         admitted,
         {
@@ -627,39 +712,10 @@ export async function dispatchPostAdmissionTurn<
       );
       return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
     }
-    if (settled !== undefined && shouldPresent(settled)) {
-      // This court sealed — drop open-court pointer (bare resume no longer continues it).
-      if (
-        settled.roleOutcome.kind === "accepted" &&
-        request.courtAttemptId !== undefined &&
-        request.courtAttemptId.length > 0
-      ) {
-        try {
-          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-        } catch (error) {
-          // Settlement already sealed accepted — a cleanup failure here must
-          // not erase that fact or make the caller replay this court's
-          // summons over already-delivered work (#840 r9 判词 class 1 已交劳动
-          // 只整理终局不重做). A later bare resume self-heals: buildRequestAfterLease
-          // finds the open court already sealed and clears it then (documented
-          // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
-          // 必须落痕).
-          io.stderr(
-            formatCliDiagnostic(
-              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
-            ),
-          );
-        }
-      }
+    if (settledOutcome !== undefined) {
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
-      return {
-        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
-        admitted,
-        terminal: settled,
-        turnDispatched: true as const,
-        ...deferredPersist,
-      };
+      return { ...settledOutcome, ...deferredPersist };
     }
 
     // Any exception while resolving the failure facts below — including the

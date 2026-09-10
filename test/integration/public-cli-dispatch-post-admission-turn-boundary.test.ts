@@ -1,16 +1,23 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #840 r9 判词 (大理寺 r6 送修, 2 classes), compressed to the two external
+ * #840 r9 判词 (大理寺 r7 送修, class 1), compressed to the two external
  * contracts dispatchPostAdmissionTurn (src/public-cli/post-admission.ts)
- * owes its caller — mutation evidence for the individual internal exception
- * points visited while building these fixes was gathered during development
- * and is not kept as separate permanent cases (probe lifecycle):
+ * owes its caller:
  *
  * ① An accepted settlement is never redone or lost to an unrelated failure
  *    that happens after it (post-settlement cleanup, e.g. clearCurrentCourt).
+ *    Dispatched with the same no-op io shape every real auto-resume attempt
+ *    actually receives (src/public-cli/auto-resume.ts's dummyIo — only the
+ *    loop's own final presentation reaches a real caller's io), so the
+ *    cleanup failure's true cause must be recovered from the dossier, not
+ *    from an attempt-scoped stderr line no real caller ever sees.
  * ② A pre-turn failure (anywhere before the authoritative host write, or
  *    inside that write's own non-atomic steps) never leaves the caller's
- *    prior invocation host overwritten.
+ *    prior invocation host overwritten. One shortest tracer bullet for this
+ *    contract; mutation evidence for the specific alternative trigger point
+ *    (markRunRunning's own internal write ordering) was gathered during
+ *    development and is not kept as a second permanent case for the same
+ *    external behavior (probe lifecycle, CLAUDE.md).
  *
  * The companion contract — a settlement-authority failure after the turn
  * started still switches the caller's next real retry to a resume payload —
@@ -24,8 +31,10 @@ import test from "node:test";
 
 import { ActivationLedgerError } from "../../src/activation-ledger-topology.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   dispatchPostAdmissionTurn,
+  POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
   type PostAdmissionAdapters,
 } from "../../src/public-cli/post-admission.ts";
 import { acquireRunWriterLease } from "../../src/public-cli/run-lifecycle.ts";
@@ -47,19 +56,22 @@ function captureIo() {
   return { stdout, stderr, io: { stdout: (t: string) => stdout.push(t), stderr: (t: string) => stderr.push(t) } };
 }
 
-test("#840 class 1: cleanup failure after accepted settlement still reports turnDispatched, not an uncaught throw", async () => {
+test("#840 class 1: cleanup failure after accepted settlement still reports turnDispatched, with its true cause durable in the dossier — not merely an attempt-scoped io", async () => {
   await withTempHome(async (home) => {
     const { admitted, runDirectory, request } = await buildFixture(home, "run-840-clear-court-throws", {
       courtAttemptId: "court-attempt-1",
     });
     const runStateFile = join(runDirectory, "run-state.json");
+    // The dossier append reads the existing session file (fixturePrincipal
+    // alone does not create it — see the sibling class-1 test in
+    // public-cli-auto-resume-dispatch-throw.test.ts for the same seed).
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "{}\n", "utf8");
 
     let executeTurnCalls = 0;
     const roleTurnHost: RoleTurnHost = {
       executeTurn: async () => {
         executeTurnCalls += 1;
-        // The host turn genuinely ran (markRunRunning already committed for
-        // this attempt, per class 2's fix). Make the subsequent post-settle
+        // The host turn genuinely ran. Make the subsequent post-settle
         // clearCurrentCourt write fail — the run-state file itself is made
         // read-only so the read that clearCurrentCourt performs still
         // succeeds and only its write fails (#840 r9 判词 class 1).
@@ -75,18 +87,27 @@ test("#840 class 1: cleanup failure after accepted settlement still reports turn
         return terminal;
       },
     };
-    const { io, stderr } = captureIo();
+    const env = buildEnv({ project: admitted.projectRoot, runDirectory }, home, roleTurnHost);
+    // Every real auto-resume attempt dispatches with a no-op io (dummyIo,
+    // src/public-cli/auto-resume.ts) — only the loop's own final
+    // presentation ever reaches a real caller's io. Dispatching with that
+    // same no-op shape here — instead of a capturing io, as an earlier
+    // version of this test did — proves the cleanup failure's trace
+    // survives on the path a real caller actually gets, rather than
+    // asserting on an attempt-scoped stderr line no real caller ever sees
+    // (#840 r9 判词 r7 class 2).
+    const noopIo = { stdout: () => {}, stderr: () => {} };
     const lease = await acquireRunWriterLease(runDirectory);
 
     await withPrimaryAwareCleanup(
       async () => {
         const result = await dispatchPostAdmissionTurn({
           admitted,
-          io,
+          io: noopIo,
           request,
           lease,
           adapters,
-          env: buildEnv({ project: admitted.projectRoot, runDirectory }, home, roleTurnHost),
+          env,
           persistRunState: false,
         });
         assert.equal(executeTurnCalls, 1);
@@ -97,9 +118,20 @@ test("#840 class 1: cleanup failure after accepted settlement still reports turn
         assert.equal(result.turnDispatched, true);
         assert.equal(result.exitCode, 0);
         assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-        // The cleanup failure's true cause must still leave a trace — caught
-        // is fine, laundered is not (失败诚实宪法).
-        assert.match(stderr.join(""), /current-court cleanup failed after accepted settlement/);
+        // The cleanup failure's true cause must still leave a real trace even
+        // though the dispatching attempt's own io was a no-op — durable in
+        // the dossier (卷宗), not an attempt-scoped stderr line (失败诚实宪法
+        // 真因必须落痕).
+        const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
+        const lines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
+        const diagnosticEntries = lines
+          .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+          .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
+        assert.equal(diagnosticEntries.length, 1);
+        assert.match(
+          String(diagnosticEntries[0]?.data?.diagnostic),
+          /current-court cleanup failed after accepted settlement/,
+        );
       },
       async () => {
         await chmod(runStateFile, 0o644);
@@ -162,65 +194,5 @@ test("#840 class 2: a pre-turn failure between beforeDispatch and executeTurn le
       await readFile(join(runDirectory, "invocation.json"), "utf8"),
     ) as { host?: string };
     assert.equal(invocation.host, "prior-host");
-  });
-});
-
-test("#840 class 2: markRunRunning failing on its run-state step must not have already committed the new host", async () => {
-  await withTempHome(async (home) => {
-    const { admitted, runDirectory, request } = await buildFixture(home, "run-840-mark-running-partial");
-    const invocationFile = join(runDirectory, "invocation.json");
-    await writeFile(invocationFile, `${JSON.stringify({ host: "prior-host" })}\n`, "utf8");
-    const runStateFile = join(runDirectory, "run-state.json");
-
-    let executeTurnCalls = 0;
-    const roleTurnHost: RoleTurnHost = {
-      executeTurn: async () => {
-        executeTurnCalls += 1;
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-    const adapters: PostAdmissionAdapters<typeof admitted, TerminalResult> = {
-      trySettle: async () => undefined,
-    };
-    const { io } = captureIo();
-    const lease = await acquireRunWriterLease(runDirectory);
-
-    // run-state.json is made unwritable (its read still succeeds) while
-    // invocation.json stays writable — the discriminating case (#840 r9 判词
-    // class 2 变异真跑): markRunRunning is not atomic, so whichever of its two
-    // writes runs first is the one a caller must trust after a mid-function
-    // failure. Ordering the run-state write first (this fix) means this
-    // failure aborts before the host page is ever touched; ordering the host
-    // write first (the reverted state) would commit the new host, then fail
-    // here — that mutation is exercised and confirmed red separately.
-    await chmod(runStateFile, 0o400);
-    await withPrimaryAwareCleanup(
-      async () => {
-        await assert.rejects(() =>
-          dispatchPostAdmissionTurn({
-            admitted,
-            io,
-            request,
-            lease,
-            adapters,
-            env: buildEnv({ project: admitted.projectRoot, runDirectory }, home, roleTurnHost, {
-              host: "new-host",
-            }),
-            persistRunState: false,
-          }),
-        );
-        assert.equal(executeTurnCalls, 0);
-        // The only externally observable contract under test: invocation.json's
-        // host must still be the true prior value, not this failed attempt's
-        // target — a later retry must not lose hostTransition.
-        const invocation = JSON.parse(await readFile(invocationFile, "utf8")) as {
-          host?: string;
-        };
-        assert.equal(invocation.host, "prior-host");
-      },
-      async () => {
-        await chmod(runStateFile, 0o644);
-      },
-    );
   });
 });
