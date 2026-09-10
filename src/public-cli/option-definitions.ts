@@ -1141,7 +1141,7 @@ export type PublicCommandHelpFacts = {
  * the role list like every other role).
  */
 export const PUBLIC_NAVIGATOR_HELP_NOTE =
-  "Navigator also attends automatically on every run; that sidecar is unchanged by direct `ak-role navigator` calls." as const;
+  "Navigator also attends automatically on top-level public entry legs; that sidecar is unchanged by direct `ak-role navigator` calls." as const;
 
 const TOP_LEVEL_HELP = {
   command: "top",

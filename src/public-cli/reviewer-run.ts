@@ -29,7 +29,6 @@ import {
   buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
-import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
@@ -84,7 +83,6 @@ function reviewerAdapters(
   methodMaterial?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedReviewerInvocation> {
   return {
-    beforeDispatch: (admitted) => clearReviewerDispatchRejection(admitted.runDirectory),
     trySettle: (admitted, authority, scope) =>
       methodMaterial === undefined
         ? Promise.resolve(undefined)

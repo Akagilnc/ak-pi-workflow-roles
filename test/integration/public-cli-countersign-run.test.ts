@@ -18,8 +18,9 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
-import type { HostContext, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
-import { runAkRole } from "../../src/public-cli/cli.ts";
+import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitCountersignInvocation,
@@ -85,6 +86,10 @@ function captureIo() {
       },
     },
   };
+}
+
+function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
+  return { name, create: () => ({ ok: true as const, host }) };
 }
 
 function seedGitProject(root: string): void {
@@ -830,27 +835,46 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
   await withCountersignProject(async ({ home, project }) => {
     // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
     ensureTicketProvenanceVolume(582, project, home);
+    // Temp-home seat row only — never write the real ~/.ak-roles table.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      publicCliConfigPath(home),
+      `${JSON.stringify({
+        seats: { diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" } },
+      })}\n`,
+      "utf8",
+    );
 
-    const turnOrder: string[] = [];
+    const parentRoles: string[] = [];
+    const childRoles: string[] = [];
     let turnPrompt = "";
-    const host = roleTurnHostFromLegacyPiRunner({
+    const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = argvFlagValue(args, "--ak-role") ?? "?";
-        turnOrder.push(role);
-        return courtPipelinePiRunner()(args, options);
-      },
+      piRunner: courtPipelinePiRunner(),
     });
-    const wrappedHost = {
+    const parentHost = {
       async executeTurn(request: RoleTurnRequest) {
+        parentRoles.push(request.activation.role);
         if (request.activation.role === "countersign") {
           turnPrompt = request.continuation.prompt;
         }
-        return host.executeTurn(request);
+        return parentBase.executeTurn(request);
+      },
+    };
+    const childBase = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(),
+    });
+    const childHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        childRoles.push(request.activation.role);
+        return childBase.executeTurn(request);
       },
     };
 
+    const { io, stdout, stderr } = captureIo();
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
       {
@@ -860,15 +884,21 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: wrappedHost,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: parentHost,
+        hostAdapters: [
+          adapter("pi", parentHost),
+          adapter("grok-build", childHost),
+        ],
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d45",
+        host: "pi",
       },
-      captureIo().io,
+      io,
       parseCountersignArgv,
     );
-    assert.equal(result.exitCode, 0);
-    // Identity 起居郎 (unbound assert) then bound refresh (issue face handoff).
-    assert.deepEqual(turnOrder, ["diarist", "diarist", "countersign"]);
+    assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
+    assert.deepEqual(parentRoles, ["countersign"], "parent adapter must not execute the court diarist child");
+    assert.deepEqual(childRoles, ["diarist", "diarist"], "child seat adapter must execute court diarist station");
     assert.ok(result.admitted?.bookKey);
     assert.equal(result.admitted?.ticketNumber, 582);
 
@@ -892,10 +922,125 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
     assert.equal(diaristState?.role, "diarist");
     assert.equal(diaristState?.state, "terminal");
 
-    // Feature observation: materials carry the typed volume paths (not heading/wording).
+    const diaristInvocation = JSON.parse(
+      await readFile(join(diaristCoords.runDirectory, "invocation.json"), "utf8"),
+    ) as { host?: string; model?: string; provider?: string };
+    assert.equal(
+      diaristInvocation.host,
+      "grok-build",
+      "court diarist station child must record own seat host",
+    );
+    assert.equal(
+      diaristInvocation.provider,
+      "openai-codex",
+      "court diarist station child must record own seat provider",
+    );
+    assert.equal(
+      diaristInvocation.model,
+      "gpt-5.6-sol",
+      "court diarist station child must record own seat model",
+    );
+
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
+  });
+});
+
+test("A2: exhausted court diarist station is not re-run by parent auto-resume", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    let diaristTurns = 0;
+    let parentTurns = 0;
+    const successChild = courtPipelinePiRunner();
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          diaristTurns += 1;
+          if (diaristTurns === 1) return successChild(args, options);
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          const sf = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sf,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+          return { code: 1, stderr: `diarist fail ${diaristTurns}\n`, timedOut: false, args: [...args] };
+        }
+        parentTurns += 1;
+        return courtPipelinePiRunner()(args, options);
+      },
+    });
+    const { io } = captureIo();
+    const result = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000a2p",
+        host: "pi",
+      },
+      io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(parentTurns, 0, "parent body must not run after the station child exhausts");
+    assert.equal(
+      diaristTurns,
+      4,
+      "identity once + bound refresh uses the child's own auto-resume budget, not parent retries",
+    );
+    assert.equal(result.terminal?.autoResumeCount ?? 0, 0, "parent must not auto-resume over an exhausted child");
+  });
+});
+
+test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    let bindAttempts = 0;
+    let parentTurns = 0;
+    const { io, stdout, stderr } = captureIo();
+    const result = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        ...countersignPathEnv({
+          home,
+          project,
+          runId: "01a0sign00-0000-7000-8000-000000000p1b",
+          onTurn: (request) => {
+            if (request.activation.role === "countersign") parentTurns += 1;
+          },
+          runCourtDiaristStation: async (admitted) => {
+            bindAttempts += 1;
+            if (bindAttempts === 1) {
+              throw new Error("transient ticket bind");
+            }
+            await bindAdmittedTicketNumber(admitted, 582);
+          },
+        }),
+      },
+      io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
+    assert.equal(bindAttempts, 2, "parent must retry its own beforeDispatch bind");
+    assert.equal(parentTurns, 1, "body turn runs once after bind succeeds");
+    assert.equal(result.terminal?.autoResumeCount, 1);
+    assert.equal(result.admitted?.ticketNumber, 582);
   });
 });
 
@@ -935,6 +1080,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
       roleTurnHost: host,
+      hostAdapters: [adapter("pi", host)],
     };
 
     const first = await runPublicCountersign(
@@ -1007,6 +1153,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
             return host.executeTurn(request);
           },
         },
+        hostAdapters: [adapter("pi", host)],
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
       },
       captureIo().io,

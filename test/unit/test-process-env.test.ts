@@ -23,7 +23,12 @@ const PROCESS_ENV_MODULE = join(REPO_ROOT, "scripts/test-process-env.mjs");
 test("isolatedTestProcessEnv: options.home wins over default and env.HOME", async () => {
   await withTempRoot("ak-549-explicit-home-", async (custom) => {
     const env = isolatedTestProcessEnv({
-      env: { ...process.env, HOME: HOST_HOME },
+      env: {
+        ...process.env,
+        HOME: HOST_HOME,
+        AK_ROLE_RUN_DIR: "/parent/runs/leaked@fixer",
+        AK_ROLE_COURT_ATTEMPT: "leaked-court-attempt",
+      },
       home: custom,
     });
     assert.equal(env.HOME, custom);
@@ -31,6 +36,7 @@ test("isolatedTestProcessEnv: options.home wins over default and env.HOME", asyn
     assert.equal(env.XDG_DATA_HOME, join(custom, ".local", "share"));
     assert.equal(env.XDG_CACHE_HOME, join(custom, ".cache"));
     assert.equal(env.AK_ROLE_RUN_DIR, undefined);
+    assert.equal(env.AK_ROLE_COURT_ATTEMPT, undefined);
     assert.equal(env.PI_CODING_AGENT_DIR, undefined);
     });
 });

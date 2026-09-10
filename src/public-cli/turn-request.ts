@@ -31,6 +31,8 @@ export type RoleTurnRequestProjectionOptions = {
   continuation: RoleTurnRequest["continuation"];
   /** #833 resume-with-message court attempt. */
   courtAttemptId?: string;
+  /** Station child role run (#840): omit automatic navigator attendance. */
+  stationChild?: boolean;
 };
 
 export type AdmittedTurnInvocation = {
@@ -74,5 +76,6 @@ export function projectRoleTurnRequest(
     ...(options.courtAttemptId === undefined || options.courtAttemptId.length === 0
       ? {}
       : { courtAttemptId: options.courtAttemptId }),
+    ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
   };
 }

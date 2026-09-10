@@ -29,7 +29,6 @@ import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
-  parseDiaristArgv,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -40,6 +39,7 @@ import {
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
   resumeTurnRequestProjectionOptions,
+  StationChildExhaustedError,
 } from "./post-admission.ts";
 import {
   loadResumableCountersignRun,
@@ -125,32 +125,24 @@ async function invokeCourtDiarist(input: {
     },
   };
 
-  const { runPublicDiarist } = await import("./diarist-run.ts");
-  const result = await runPublicDiarist(
-    ["--project", input.projectRoot, input.instruction],
-    {
-      home: env.home,
-      agentDir: env.agentDir,
-      packageRoot: env.packageRoot,
-      cwd: env.cwd,
-      principalAuthority: env.principalAuthority,
-      roleTurnHost: env.roleTurnHost,
-      sessionAppender: env.sessionAppender,
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.engine === undefined ? {} : { engine: env.engine }),
-      ...(env.host === undefined ? {} : { host: env.host }),
-      ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-      ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
-      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-      ...(env.signal === undefined ? {} : { signal: env.signal }),
-      // Typed handoff only — never derived from summons prose.
-      ...(input.boundTicketNumber === undefined
-        ? {}
-        : { boundTicketNumber: input.boundTicketNumber }),
-    },
-    quietIo,
-    parseDiaristArgv,
-  );
+  const { summonPublicRole } = await import("../public-role-summons.ts");
+  const result = await summonPublicRole({
+    role: "diarist",
+    argv: ["--project", input.projectRoot, input.instruction],
+    cwd: env.cwd,
+    home: env.home,
+    agentDir: env.agentDir,
+    packageRoot: env.packageRoot,
+    io: quietIo,
+    ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(input.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: input.boundTicketNumber }),
+    // Child seat selects from the composition-root table. Do not pass the
+    // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+  });
 
   const roleOutcome = result.terminal?.roleOutcome;
   // Discriminated union: only non-failure arms carry status (failure uses cause).
@@ -168,7 +160,7 @@ async function invokeCourtDiarist(input: {
     const diagnostic =
       roleOutcome?.kind === "failure"
         ? roleOutcome.diagnostic
-        : `exit ${result.exitCode}`;
+        : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
       failedWithoutEscalate: {
@@ -177,7 +169,7 @@ async function invokeCourtDiarist(input: {
     };
   }
 
-  const asserted = result.admitted?.ticketNumber;
+  const asserted = (result.admitted as { ticketNumber?: number } | undefined)?.ticketNumber;
   if (
     typeof asserted === "number" &&
     Number.isSafeInteger(asserted) &&
@@ -225,12 +217,12 @@ export async function runCountersignCourtDiaristStation(
   );
 
   if (outcome.identity.kind === "escalate") {
-    throw new Error(
+    throw new StationChildExhaustedError(
       `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
-    throw new Error(outcome.failedWithoutEscalate.diagnostic);
+    throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
   }
 }
 
@@ -282,8 +274,9 @@ export async function runPublicCountersign(
   // (never mechanical matching of summons text). Resolve that typed key after
   // admit so the countersign run page exists first; same-ticket re-summons
   // resume the prior run on the typed key (unused mint is abandoned). The test
-  // seam `runCourtDiaristStation` defers identity to beforeDispatch and
-  // therefore skips auto-resume under the seam alone.
+  // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
+  // hook failures stay on the parent call-local budget, exhausted nested
+  // station children still skip parent auto-resume (#840 父子不层叠).
   let typedTicket: number | undefined;
   let identityDiaristRan = false;
 

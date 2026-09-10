@@ -15,7 +15,8 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmodSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,
@@ -1012,6 +1014,152 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
     );
   } finally {
     if (heldLease !== undefined) await heldLease.release();
+    await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
+  // Real public entry (not an internal dispatchPostAdmissionTurn call): a
+  // bare `ak-role resume` that seals an open court is the one production path
+  // where courtAttemptId is set and clearCurrentCourt actually runs — this
+  // reuses the same real notary court sequence as the tracer above instead of
+  // a dedicated internal-dispatch fixture (#840 bounce class 1).
+  const scratch = await openNotaryScratch("home-cleanup-durable-");
+  try {
+    const { home, project, io: baseIo, credentials } = scratch;
+    const seen: SeenTurn[] = [];
+    let turn = 0;
+    let runStateFile = "";
+    // Manual resume dispatches with the real io given to runAkRole (no
+    // dummyIo — that only wraps the auto-resume loop's own attempts). This
+    // callback restores write access to run-state.json the instant the
+    // sealing turn reports *any* diagnostic — a structural "a best-effort
+    // diagnostic fired" signal (armed only for this turn), never inspecting
+    // what the diagnostic text says (#840 bounce class 2: the earlier version
+    // of this test matched the diagnostic's exact English wording to decide
+    // when to restore, and separately locked that wording as pass/fail —
+    // both are free-text mechanical dependencies the quality law forbids).
+    // The restore must land before the caller's own later lawful persist
+    // (markRunTerminal) also touches run-state.json, or this test's fault
+    // injection would collide with it too; io.stderr is the only synchronous,
+    // real (non-dummy) seam available at that exact point in the manual-
+    // resume dispatch chain.
+    let sealingTurnArmed = false;
+    let cleanupDiagnosticObserved = false;
+    const io = {
+      stdout: baseIo.stdout,
+      stderr: (_text: string) => {
+        if (sealingTurnArmed && !cleanupDiagnosticObserved) {
+          cleanupDiagnosticObserved = true;
+          chmodSync(runStateFile, 0o644);
+        }
+      },
+    };
+    const inner = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (extraArgs, options) => {
+        turn += 1;
+        if (turn === 1) {
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          })(extraArgs, options);
+        }
+        if (turn === 2) {
+          // Same-parent court: exit without sealing — opens the court.
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+            seal: false,
+          })(extraArgs, options);
+        }
+        // Bare resume of the open court seals it: make the run-state write
+        // that clearCurrentCourt performs fail (its read still succeeds).
+        // Arm the stderr-restore hook only for this turn.
+        sealingTurnArmed = true;
+        await chmod(runStateFile, 0o400);
+        return scriptedTerminatingToolSession({
+          role: "notary",
+          toolName: NOTARY_OUTPUT_TOOL_NAME,
+          details: { status: "pass", findings: [] },
+        })(extraArgs, options);
+      },
+    });
+    const host = observingSealHost(inner, seen);
+
+    const first = await runAkRole(
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a08400-0000-7000-8000-00000000c001",
+      },
+    );
+    assert.equal(first.exitCode, 0, "first sealed notary must accept");
+    const runDirectory = seen[0]!.runDirectory;
+    const runId = seen[0]!.runId;
+    runStateFile = join(runDirectory, "run-state.json");
+
+    const opened = await runAkRole(
+      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials,
+        io,
+        roleTurnHost: host,
+        createRunId: () => "01a08400-0000-7000-8000-00000000c002",
+      },
+    );
+    assert.notEqual(opened.exitCode, 0, "unsealed same-parent court must not accept");
+    assert.ok(
+      typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
+      "same-parent re-summons must open a courtAttemptId",
+    );
+
+    // Bare resume seals the open court through the real public entry —
+    // dispatchPostAdmissionTurn runs with courtAttemptId set, so
+    // clearCurrentCourt genuinely executes after settlement.
+    const resumed = await runAkRole(["resume", runId], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+    });
+
+    // The dispatch fact must survive the cleanup failure: the real public
+    // entry still delivers accepted, not redone or lost (structured terminal
+    // field, not stdout presentation text).
+    assert.equal(resumed.exitCode, 0, "cleanup failure after accepted settlement must not fail the command");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(cleanupDiagnosticObserved, "the injected cleanup failure must actually have been observed");
+
+    // The dossier is the single authoritative durable channel here (the
+    // session it appends to is healthy, so no run-artifacts fallback file is
+    // expected — #840 bounce class 1: a healthy channel must not also get a
+    // standing duplicate). Assert only the typed shape: a structured
+    // customType key, and that a diagnostic string landed — never its exact
+    // wording, which stays observation-only (#840 bounce class 2).
+    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const sessionLines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
+    const dossierEntries = sessionLines
+      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+      .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
+    assert.equal(dossierEntries.length, 1, "the dossier channel must carry exactly one cleanup diagnostic entry");
+    assert.equal(typeof dossierEntries[0]?.data?.diagnostic, "string");
+    assert.ok((dossierEntries[0]?.data?.diagnostic as string).length > 0);
+  } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
