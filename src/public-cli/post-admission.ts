@@ -440,15 +440,16 @@ export async function dispatchPostAdmissionTurn<
       };
     }
 
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
     // Per-attempt hygiene: stale Reviewer rejection pages must not ride into
     // auto-resume. ENOENT-safe for every seat.
     await clearReviewerDispatchRejection(admitted.runDirectory);
-    // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
-    // its failures must settle the run, not leave it permanently running.
-    // Call-local auto-resume retries this hook until it succeeds; only an
-    // exhausted nested station child skips the parent loop (#840 父子不层叠).
+    // beforeDispatch runs before the authoritative host write so a pre-turn
+    // retry still sees the prior invocation host (#840 auto-resume / hostTransition).
+    // Failures settle the run (presentControlledFailure); they must not leave it
+    // permanently running. Call-local auto-resume retries this hook until it
+    // succeeds; only an exhausted nested station child skips the parent loop
+    // (#840 父子不层叠).
     if (adapters.beforeDispatch !== undefined) {
       try {
         await adapters.beforeDispatch(admitted);
@@ -472,6 +473,7 @@ export async function dispatchPostAdmissionTurn<
         return { ...settled, ...deferredPersist };
       }
     }
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
