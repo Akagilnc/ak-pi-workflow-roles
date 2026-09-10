@@ -177,6 +177,63 @@ export type ControlledFailureInput = {
   typedHttpObservation?: TypedProviderHttpObservation;
 };
 
+/** Result of seat prep after the single pre-lease admitted load. */
+export type AfterAdmittedLoadResult<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+> =
+  | { kind: "continue"; adapters: PostAdmissionAdapters<A, T> }
+  | {
+      kind: "terminal";
+      exitCode: number;
+      admitted: A;
+      terminal: TerminalResult;
+    };
+
+/**
+ * Factory-seat resume method-material face (#833): one authority for
+ * load → adapters / controlled-failure short-circuit. Seats only declare
+ * irreducible differences (loader, adapter factories, optional gate, knownCause).
+ */
+export async function resolveResumeMethodMaterialAdapters<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+  M = unknown,
+>(input: {
+  admitted: A;
+  authority: DurablePrincipalAuthority;
+  io: CliIo;
+  /** When false, skip material and continue with emptyAdapters (coder plan). */
+  shouldLoad?: boolean;
+  loadMaterial: () => Promise<M>;
+  adaptersWith: (material: M) => PostAdmissionAdapters<A, T>;
+  emptyAdapters: PostAdmissionAdapters<A, T>;
+  knownCause?: ControlledFailureCause;
+}): Promise<AfterAdmittedLoadResult<A, T>> {
+  if (input.shouldLoad === false) {
+    return { kind: "continue", adapters: input.emptyAdapters };
+  }
+  try {
+    const material = await input.loadMaterial();
+    return { kind: "continue", adapters: input.adaptersWith(material) };
+  } catch (error) {
+    const terminal = await presentControlledFailure(
+      input.admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        ...(input.knownCause === undefined ? {} : { knownCause: input.knownCause }),
+      },
+      input.emptyAdapters,
+      input.authority,
+      input.io,
+    );
+    return { kind: "terminal", ...terminal };
+  }
+}
+
 export async function presentControlledFailure<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -644,21 +701,14 @@ export async function runPostAdmissionSeatResume<
   adapters: PostAdmissionAdapters<A, T>;
   /**
    * After the single pre-lease load. Factory seats resolve method-material
-   * adapters here (or short-circuit with the same controlled-failure face as
-   * initial). Must not re-load the same admitted; under-lease summons
-   * rehydrate remains the only second load, and only when materials change.
+   * adapters here via resolveResumeMethodMaterialAdapters (or short-circuit
+   * with the same controlled-failure face as initial). Must not re-load the
+   * same admitted; under-lease summons rehydrate remains the only second load,
+   * and only when materials change.
    */
   afterAdmittedLoad?: (
     admitted: A,
-  ) => Promise<
-    | { kind: "continue"; adapters: PostAdmissionAdapters<A, T> }
-    | {
-        kind: "terminal";
-        exitCode: number;
-        admitted: A;
-        terminal: TerminalResult;
-      }
-  >;
+  ) => Promise<AfterAdmittedLoadResult<A, T>>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;

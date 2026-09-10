@@ -43,6 +43,7 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
+  resolveResumeMethodMaterialAdapters,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -254,31 +255,16 @@ export async function runPublicReviewerResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    // Default adapters; afterAdmittedLoad replaces with method material.
     adapters: reviewerAdapters(env.packageRoot),
-    afterAdmittedLoad: async (admitted) => {
-      try {
-        const methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
-        return {
-          kind: "continue",
-          adapters: reviewerAdapters(env.packageRoot, methodMaterial),
-        };
-      } catch (error) {
-        const terminal = await presentControlledFailure(
-          admitted,
-          {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          },
-          reviewerAdapters(env.packageRoot),
-          env.principalAuthority,
-          io,
-        );
-        return { kind: "terminal", ...terminal };
-      }
-    },
+    afterAdmittedLoad: (admitted) =>
+      resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
+        io,
+        loadMaterial: () => loadReviewerMethodMaterial(env.packageRoot),
+        adaptersWith: (material) => reviewerAdapters(env.packageRoot, material),
+        emptyAdapters: reviewerAdapters(env.packageRoot),
+      }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

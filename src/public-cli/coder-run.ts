@@ -39,6 +39,7 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
+  resolveResumeMethodMaterialAdapters,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -232,39 +233,20 @@ export async function runPublicCoderResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    // Default adapters; afterAdmittedLoad replaces with apply method material.
     adapters: coderAdapters(),
-    afterAdmittedLoad: async (admitted) => {
-      // Apply-only method; plan resume keeps empty provenance (same as initial).
-      if (admitted.phase !== "apply") {
-        return { kind: "continue", adapters: coderAdapters() };
-      }
-      try {
-        const material = await loadPackagedMethodSkillMaterial(
-          env.packageRoot,
-          "tdd",
-        );
-        return {
-          kind: "continue",
-          adapters: coderAdapters(material.provenance),
-        };
-      } catch (error) {
-        const terminal = await presentControlledFailure(
-          admitted,
-          {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-            knownCause: "activation",
-          },
-          coderAdapters(),
-          env.principalAuthority,
-          io,
-        );
-        return { kind: "terminal", ...terminal };
-      }
-    },
+    // Apply-only method; plan resume keeps empty provenance (same as initial).
+    afterAdmittedLoad: (admitted) =>
+      resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
+        io,
+        shouldLoad: admitted.phase === "apply",
+        loadMaterial: () =>
+          loadPackagedMethodSkillMaterial(env.packageRoot, "tdd"),
+        adaptersWith: (material) => coderAdapters(material.provenance),
+        emptyAdapters: coderAdapters(),
+        knownCause: "activation",
+      }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

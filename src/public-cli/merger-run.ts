@@ -40,6 +40,7 @@ import {
 } from "./turn-request.ts";
 import {
   presentControlledFailure,
+  resolveResumeMethodMaterialAdapters,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -274,32 +275,17 @@ export async function runPublicMergerResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    // Default adapters; afterAdmittedLoad replaces with method material.
     adapters: mergerAdapters(env.packageRoot),
-    afterAdmittedLoad: async (admitted) => {
-      try {
-        const methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
-        return {
-          kind: "continue",
-          adapters: mergerAdapters(env.packageRoot, methodMaterial),
-        };
-      } catch (error) {
-        const terminal = await presentControlledFailure(
-          admitted,
-          {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-            knownCause: "activation",
-          },
-          mergerAdapters(env.packageRoot),
-          env.principalAuthority,
-          io,
-        );
-        return { kind: "terminal", ...terminal };
-      }
-    },
+    afterAdmittedLoad: (admitted) =>
+      resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
+        io,
+        loadMaterial: () => loadMergerMethodMaterial(env.packageRoot),
+        adaptersWith: (material) => mergerAdapters(env.packageRoot, material),
+        emptyAdapters: mergerAdapters(env.packageRoot),
+        knownCause: "activation",
+      }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
