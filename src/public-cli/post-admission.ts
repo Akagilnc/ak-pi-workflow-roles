@@ -56,9 +56,7 @@ import {
   acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
-  markRunResumable,
   markRunRunning,
-  markRunTerminal,
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
@@ -93,7 +91,7 @@ import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
 } from "./terminal.ts";
-import { runWithAutoResumeLoop } from "./auto-resume.ts";
+import { persistReturnedRunState, runWithAutoResumeLoop } from "./auto-resume.ts";
 
 /**
  * Nested station-child role already finished its own call-local loop.
@@ -278,6 +276,7 @@ export async function presentControlledFailure<
   adapters: PostAdmissionAdapters<A, T>,
   authority: DurablePrincipalAuthority,
   io: CliIo,
+  persistRunState = true,
 ): Promise<{
   exitCode: number;
   admitted: A;
@@ -338,10 +337,8 @@ export async function presentControlledFailure<
     resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
   }
 
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory);
+  if (persistRunState) {
+    await persistReturnedRunState(admitted, authority);
   }
 
   const terminal = await settleFailureTerminalResult(
@@ -371,14 +368,18 @@ export async function dispatchPostAdmissionTurn<
   lease: RunWriterLease;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
+  persistRunState?: boolean;
 }): Promise<{
   exitCode: number;
   admitted: A;
   terminal?: T;
   skipAutoResume?: true;
   turnDispatched?: true;
+  needsPersist?: true;
 }> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
+  const persistRunState = input.persistRunState !== false;
+  const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
   try {
@@ -387,13 +388,17 @@ export async function dispatchPostAdmissionTurn<
       env.credentials,
     );
     if (missingCredential !== undefined) {
-      return (await presentControlledFailure(
-        admitted,
-        missingCredential,
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
+      return {
+        ...(await presentControlledFailure(
+          admitted,
+          missingCredential,
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T },
+        ...deferredPersist,
+      };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
@@ -417,18 +422,22 @@ export async function dispatchPostAdmissionTurn<
           : undefined;
     } catch (error) {
       // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
+      return {
+        ...(await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T },
+        ...deferredPersist,
+      };
     }
 
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
@@ -455,11 +464,12 @@ export async function dispatchPostAdmissionTurn<
           adapters,
           env.principalAuthority,
           io,
+          persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
         if (error instanceof StationChildExhaustedError) {
-          return { ...settled, skipAutoResume: true as const };
+          return { ...settled, skipAutoResume: true as const, ...deferredPersist };
         }
-        return settled;
+        return { ...settled, ...deferredPersist };
       }
     }
 
@@ -507,8 +517,9 @@ export async function dispatchPostAdmissionTurn<
         adapters,
         env.principalAuthority,
         io,
+        persistRunState,
       )) as { exitCode: number; admitted: A; terminal: T };
-      return { ...settled, turnDispatched: true as const };
+      return { ...settled, turnDispatched: true as const, ...deferredPersist };
     }
 
     try {
@@ -543,8 +554,9 @@ export async function dispatchPostAdmissionTurn<
         adapters,
         env.principalAuthority,
         io,
+        persistRunState,
       )) as { exitCode: number; admitted: A; terminal: T };
-      return { ...settledFailure, turnDispatched: true as const };
+      return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
     }
     if (settled !== undefined && shouldPresent(settled)) {
       // This court sealed — drop open-court pointer (bare resume no longer continues it).
@@ -555,13 +567,14 @@ export async function dispatchPostAdmissionTurn<
       ) {
         await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
       }
-      await markRunTerminal(admitted.runDirectory);
-      io.stdout(formatTerminalResult(settled));
+      // Lawful persist + present is the caller's stop seam (auto-resume loop /
+      // manual resume), not this retried host-turn function.
       return {
         exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
         admitted,
         terminal: settled,
         turnDispatched: true as const,
+        ...deferredPersist,
       };
     }
 
@@ -595,8 +608,9 @@ export async function dispatchPostAdmissionTurn<
       adapters,
       env.principalAuthority,
       io,
+      persistRunState,
     )) as { exitCode: number; admitted: A; terminal: T };
-    return { ...failed, turnDispatched: true as const };
+    return { ...failed, turnDispatched: true as const, ...deferredPersist };
   } finally {
     await lease.release();
   }
@@ -965,6 +979,7 @@ export async function runPostAdmissionSeatResume<
                 request: turnRequest,
                 lease,
                 adapters: stationAdapters,
+                persistRunState: false,
                 ...(input.effectiveEngine === undefined
                   ? {}
                   : { effectiveEngine: input.effectiveEngine }),
@@ -1079,6 +1094,7 @@ export async function runPostAdmissionResumable<
         request,
         lease,
         adapters,
+        persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),
@@ -1179,6 +1195,13 @@ export async function runPostAdmissionManualResume<
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),
   });
+  if (
+    result.terminal !== undefined &&
+    isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
+  ) {
+    await persistReturnedRunState(admitted, env.principalAuthority);
+    io.stdout(formatTerminalResult(result.terminal));
+  }
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }

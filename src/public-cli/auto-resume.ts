@@ -25,8 +25,8 @@ import {
   AUTO_RESUME_LIMIT,
   describeErrorIdentity,
   acquireRunWriterLease,
+  markRunResumable,
   markRunTerminal,
-  RoleRunStatePersistenceError,
   RunWriterLeaseHeldError,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
@@ -35,11 +35,33 @@ import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifa
 import {
   presentFailureTerminal,
   presentStructuralRejection,
+  resolveControlledFailureResumeObservation,
   type SealedAcceptanceRedispatchDisposition,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
+
+/**
+ * Persist run-state after a host-turn result, outside the retried dispatch try.
+ * Write failure must escape the auto-resume loop instead of becoming a dispatch throw.
+ */
+export async function persistReturnedRunState(
+  admitted: { runDirectory: string; principal?: DurablePrincipal },
+  authority: DurablePrincipalAuthority,
+): Promise<void> {
+  const resumeObservation = await resolveControlledFailureResumeObservation({
+    runDirectory: admitted.runDirectory,
+  });
+  const typedHttp429 = resumeObservation.typedHttp429;
+  if (admitted.principal !== undefined && typedHttp429 !== undefined) {
+    if (await authority.isAvailable(admitted.principal)) {
+      await markRunResumable(admitted.runDirectory, typedHttp429);
+      return;
+    }
+  }
+  await markRunTerminal(admitted.runDirectory);
+}
 
 function presentTerminal(terminal: TerminalResult, io: CliIo): void {
   if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
@@ -78,6 +100,11 @@ export type AutoResumeDispatchResult = {
    * so the loop retries the initial payload instead of a session resume.
    */
   turnDispatched?: true;
+  /**
+   * Dispatch skipped run-state persist so this loop seam owns it.
+   * Absent when dispatch already persisted or never produced a terminal.
+   */
+  needsPersist?: true;
 };
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
@@ -395,11 +422,6 @@ export async function runWithAutoResumeLoop<
     try {
       result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
-      // Run-state persistence is not a host-turn failure. Retrying synthesizes a
-      // fake terminal and hides the original write error (#517 / #840 one-shot fold).
-      if (error instanceof RoleRunStatePersistenceError) {
-        throw error;
-      }
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
       // pointer); recording failure must not break the retry path (PR #418
@@ -443,6 +465,10 @@ export async function runWithAutoResumeLoop<
       }
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
+      if (result.needsPersist === true) {
+        // Persist on the loop seam, not inside retried dispatch.
+        await persistReturnedRunState(options.admitted, options.principalAuthority);
+      }
       if (lawful) {
         if (terminal !== undefined) {
           // Present lawful terminal once to real io (dummy was used inside dispatch)
