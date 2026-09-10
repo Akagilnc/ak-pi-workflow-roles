@@ -38,8 +38,6 @@ import {
   loadResumableReviewerRun,
   markRunAdmitted,
   markRunResumable,
-  RESUME_TRANSPORT_ENVELOPE,
-  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
@@ -883,7 +881,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(
-          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
+          args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
         assert.equal(

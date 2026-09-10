@@ -115,12 +115,6 @@ export type RoleRunRecord = {
   readonly resumable?: TypedHttp429Observation;
 };
 
-/**
- * Historical resume token. Kept to recognize old session user-turns in settlement.
- * #836: do not inject this string as a new LLM prompt (A4.1).
- */
-export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
-
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
   readonly runId: string;
@@ -173,9 +167,8 @@ export function instructResumeHandbookRead(
 
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Message present → base bytes; absent → transport envelope.
- * Engine material appends as structured coordinates (pointers only).
- * #836: no line-by-line 重新读 rewrite.
+ * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
+ * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
  */
 export function selectResumeContinuationPrompt(
   message?: string,

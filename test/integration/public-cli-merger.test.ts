@@ -34,7 +34,7 @@ import {
   parseMergerArgv,
 } from "../../src/public-cli/invocation.ts";
 
-import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
+
 import {
   extractMergerMethodInvocations,
   settleMergerTerminalResult,
@@ -677,7 +677,7 @@ test("ak-role resume continues merger with package method and exact session", as
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(
-          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
+          args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
         assert.equal(

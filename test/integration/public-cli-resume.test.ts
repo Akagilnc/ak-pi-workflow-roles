@@ -29,7 +29,6 @@ import {
   readTypedHttp429Observation,
   recordTypedProviderHttpStatus,
   renderResumeCommand,
-  RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
@@ -1148,7 +1147,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           assert.equal(args.includes("--continue"), false);
           // Must not resubmit original instruction as a new prompt payload.
           assert.equal(args.includes(instruction), false);
-          assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), false);
+          assert.equal(args.includes("[ak-role:resume-continue]"), false);
           // Exact model override for this resume only.
           assert.equal(args[args.indexOf("--provider") + 1], "xai");
           assert.equal(args[args.indexOf("--model") + 1], "grok-4.5");

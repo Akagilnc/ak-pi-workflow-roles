@@ -33,7 +33,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+
 import {
   extractFixerMethodInvocations,
   settleFixerTerminalResult,
@@ -593,7 +593,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), false);
+        assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
