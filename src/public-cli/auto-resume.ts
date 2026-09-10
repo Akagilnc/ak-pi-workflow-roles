@@ -465,7 +465,7 @@ export async function runWithAutoResumeLoop<
     }
     dispatchOrdinal += 1;
 
-    let persistFailed: unknown;
+    let persistFailure: { readonly error: unknown } | undefined;
     if (result !== undefined) {
       everyAttemptThrew = false;
       const terminal = (result as { terminal?: TerminalResult }).terminal;
@@ -487,7 +487,7 @@ export async function runWithAutoResumeLoop<
           // not a host-turn failure — do not auto-resume it — but sealed stop
           // must still see the already-settled result (#648).
           if (lawful) throw persistError;
-          persistFailed = persistError;
+          persistFailure = { error: persistError };
           lastThrownError = persistError;
         }
       }
@@ -539,8 +539,8 @@ export async function runWithAutoResumeLoop<
       }
     }
 
-    if (persistFailed !== undefined) {
-      throw persistFailed;
+    if (persistFailure !== undefined) {
+      throw persistFailure.error;
     }
 
     if (result !== undefined) {
