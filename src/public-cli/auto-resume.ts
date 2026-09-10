@@ -72,6 +72,11 @@ export type AutoResumeDispatchResult = {
    * Loop presents this result and must not redispatch (#840 父子不层叠).
    */
   skipAutoResume?: true;
+  /**
+   * Host turn actually started. Absent on beforeDispatch / pre-turn settlement
+   * so the loop retries the initial payload instead of a session resume.
+   */
+  turnDispatched?: true;
 };
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
@@ -486,7 +491,10 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
+      if (
+        result.turnDispatched === true
+        && !(await options.principalAuthority.isAvailable(options.admitted.principal))
+      ) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
@@ -529,7 +537,9 @@ export async function runWithAutoResumeLoop<
     }
 
     autoResumeAttempts++;
-    currentPayload = options.buildResumePayload();
+    if (result === undefined || result.turnDispatched === true) {
+      currentPayload = options.buildResumePayload();
+    }
     isFirst = false;
   }
 }

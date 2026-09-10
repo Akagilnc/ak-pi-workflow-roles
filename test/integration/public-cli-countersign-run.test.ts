@@ -924,11 +924,21 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
 
     const diaristInvocation = JSON.parse(
       await readFile(join(diaristCoords.runDirectory, "invocation.json"), "utf8"),
-    ) as { host?: string };
+    ) as { host?: string; model?: string; provider?: string };
     assert.equal(
       diaristInvocation.host,
       "grok-build",
       "court diarist station child must record own seat host",
+    );
+    assert.equal(
+      diaristInvocation.provider,
+      "openai-codex",
+      "court diarist station child must record own seat provider",
+    );
+    assert.equal(
+      diaristInvocation.model,
+      "gpt-5.6-sol",
+      "court diarist station child must record own seat model",
     );
 
     const volume = resolveTicketProvenanceVolume(582, project, home);
@@ -995,6 +1005,42 @@ test("A2: exhausted court diarist station is not re-run by parent auto-resume", 
       "identity once + bound refresh uses the child's own auto-resume budget, not parent retries",
     );
     assert.equal(result.terminal?.autoResumeCount ?? 0, 0, "parent must not auto-resume over an exhausted child");
+  });
+});
+
+test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    let bindAttempts = 0;
+    let parentTurns = 0;
+    const { io, stdout, stderr } = captureIo();
+    const result = await runPublicCountersign(
+      ["裁：继续审票 #582 是否足以开工。"],
+      {
+        ...countersignPathEnv({
+          home,
+          project,
+          runId: "01a0sign00-0000-7000-8000-000000000p1b",
+          onTurn: (request) => {
+            if (request.activation.role === "countersign") parentTurns += 1;
+          },
+          runCourtDiaristStation: async (admitted) => {
+            bindAttempts += 1;
+            if (bindAttempts === 1) {
+              throw new Error("transient ticket bind");
+            }
+            await bindAdmittedTicketNumber(admitted, 582);
+          },
+        }),
+      },
+      io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
+    assert.equal(bindAttempts, 2, "parent must retry its own beforeDispatch bind");
+    assert.equal(parentTurns, 1, "body turn runs once after bind succeeds");
+    assert.equal(result.terminal?.autoResumeCount, 1);
+    assert.equal(result.admitted?.ticketNumber, 582);
   });
 });
 

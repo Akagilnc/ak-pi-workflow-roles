@@ -39,6 +39,7 @@ import {
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
   resumeTurnRequestProjectionOptions,
+  StationChildExhaustedError,
 } from "./post-admission.ts";
 import {
   loadResumableCountersignRun,
@@ -216,12 +217,12 @@ export async function runCountersignCourtDiaristStation(
   );
 
   if (outcome.identity.kind === "escalate") {
-    throw new Error(
+    throw new StationChildExhaustedError(
       `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
-    throw new Error(outcome.failedWithoutEscalate.diagnostic);
+    throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
   }
 }
 
@@ -273,8 +274,9 @@ export async function runPublicCountersign(
   // (never mechanical matching of summons text). Resolve that typed key after
   // admit so the countersign run page exists first; same-ticket re-summons
   // resume the prior run on the typed key (unused mint is abandoned). The test
-  // seam `runCourtDiaristStation` defers identity to beforeDispatch and
-  // therefore skips auto-resume under the seam alone.
+  // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
+  // hook failures stay on the parent call-local budget, exhausted nested
+  // station children still skip parent auto-resume (#840 父子不层叠).
   let typedTicket: number | undefined;
   let identityDiaristRan = false;
 
