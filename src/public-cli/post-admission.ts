@@ -22,6 +22,7 @@ import {
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
+import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
 
 import type {
   ControlledFailureCause,
@@ -1124,12 +1125,15 @@ export async function runPostAdmissionSeatResume<
   try {
     if (input.env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
-      const engine = input.effectiveEngine ?? input.env.engine;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: input.env.principalAuthority,
+        isPrincipalAvailable: resolveHostAwareSessionAvailability(
+          input.env.host,
+          input.env.principalAuthority,
+        ),
         io: input.io,
         sessionAppender: input.env.sessionAppender,
         autoResumeLimit: input.env.autoResumeLimit,
@@ -1141,15 +1145,22 @@ export async function runPostAdmissionSeatResume<
           dispatchAfterWriterLease({
             lease,
             build: async () => {
+              // #840 r8 判词 class 2: this call-local retry must keep this
+              // court's frozen summons / 交卷 body / attachments verbatim
+              // (same object as firstTurn) and project only the minimal
+              // host-needed resume trigger — never the manual-resume engine
+              // handbook (buildResumeContinuationPrompt), which would replace
+              // a 审核循环 same-ticket continuation with a bare outsourcing
+              // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
+              // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
+              // non-semantic trigger that projection already uses for a
+              // same-ticket summons carrying no instruction/attachments.
               if (payload.resumeTurn && firstTurn !== undefined) {
                 return {
                   ...firstTurn,
                   continuation: {
                     kind: "resume",
-                    prompt: buildResumeContinuationPrompt({
-                      packageRoot: input.env.packageRoot,
-                      ...(engine === undefined ? {} : { engine }),
-                    }),
+                    prompt: RESUME_TRANSPORT_ENVELOPE,
                   },
                 };
               }
@@ -1267,6 +1278,7 @@ export async function runPostAdmissionResumable<
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
+    isPrincipalAvailable: resolveHostAwareSessionAvailability(env.host, env.principalAuthority),
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,

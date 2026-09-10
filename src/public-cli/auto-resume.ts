@@ -51,7 +51,7 @@ const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
  */
 export async function persistReturnedRunState(
   admitted: { runDirectory: string; principal?: DurablePrincipal },
-  authority: DurablePrincipalAuthority,
+  authority: Pick<DurablePrincipalAuthority, "isAvailable">,
   options?: { readonly lawful?: boolean },
 ): Promise<void> {
   if (options?.lawful === true) {
@@ -426,6 +426,16 @@ export async function runWithAutoResumeLoop<
     principal: DurablePrincipal;
   };
   principalAuthority: DurablePrincipalAuthority;
+  /**
+   * Host-aware "can this principal's turn still be resumed" probe (#840 P1).
+   * Callers that know the selected host pass
+   * session-identity.ts's resolveHostAwareSessionAvailability(host,
+   * principalAuthority) so an ACP/headless turn's own binding file — not
+   * pi's session.jsonl — decides continuation for that host. Defaults to
+   * principalAuthority.isAvailable (pi-only check) when omitted, so a
+   * caller that never leaves the pi host keeps identical behavior.
+   */
+  isPrincipalAvailable?: (principal: DurablePrincipal) => Promise<boolean>;
   io: CliIo;
   sessionAppender: SessionCustomEntryAppender;
   /**
@@ -450,6 +460,9 @@ export async function runWithAutoResumeLoop<
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
   const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
   parseAutoResumeLimit(limit);
+  const isPrincipalAvailable =
+    options.isPrincipalAvailable ??
+    ((principal: DurablePrincipal) => options.principalAuthority.isAvailable(principal));
   let autoResumeAttempts = 0;
   let isFirst = true;
   let currentPayload = options.buildInitialPayload();
@@ -531,7 +544,7 @@ export async function runWithAutoResumeLoop<
         try {
           await persistReturnedRunState(
             options.admitted,
-            options.principalAuthority,
+            { isAvailable: isPrincipalAvailable },
             lawful ? { lawful: true } : undefined,
           );
         } catch (persistError) {
@@ -603,7 +616,7 @@ export async function runWithAutoResumeLoop<
       }
       if (
         result.turnDispatched === true
-        && !(await options.principalAuthority.isAvailable(options.admitted.principal))
+        && !(await isPrincipalAvailable(options.admitted.principal))
       ) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
@@ -627,7 +640,7 @@ export async function runWithAutoResumeLoop<
           terminal,
         } as T;
       }
-      if (!(await options.principalAuthority.isAvailable(options.admitted.principal))) {
+      if (!(await isPrincipalAvailable(options.admitted.principal))) {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,

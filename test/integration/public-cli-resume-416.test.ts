@@ -16,6 +16,11 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import {
+  lookupHeadlessHostDescription,
+  lookupHostDescription,
+} from "../../src/host-descriptions.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { summonPublicRole } from "../../src/public-role-summons.ts";
 import {
   createMinimalHost,
@@ -30,7 +35,12 @@ import {
   resumeTurnRequestProjectionOptions,
   runPostAdmissionSeatResume,
 } from "../../src/public-cli/post-admission.ts";
-import { loadResumableDiaristRun, loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  loadResumableDiaristRun,
+  loadResumableJudgeRun,
+  readRoleRunState,
+  RESUME_TRANSPORT_ENVELOPE,
+} from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -529,15 +539,56 @@ test("A2: station-child after-lease build failure releases the lock and retries 
   });
 });
 
-test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", async () => {
+test("#840 r8 判词 class 2: station-child same-call retry keeps this court's frozen summons, never the manual-resume engine handbook", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    for (const hostName of ["pi", "grok-build", "claude"] as const) {
-      const calls = { n: 0 };
-      const failingHost = createMinimalHost(async (request: RoleTurnRequest) => {
-        calls.n += 1;
+    const first = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "整理 #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: scriptedTerminatingToolSession({
+          role: "diarist",
+          toolName: DIARIST_OUTPUT_TOOL_NAME,
+          details: { status: "completed", ticketNumber: 582, entries: [] },
+        }),
+      }),
+      createRunId: () => "840-station-prompt-preserve-001",
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(first.exitCode, 0, "first station-child mint must bind the ticket");
+
+    // Real same-ticket re-summons carrying this court's own instruction — the
+    // exact prose that must survive every call-local retry inside this one
+    // seat-resume call (#840 r8 判词 class 2 boundary).
+    const courtInstruction = "整理 #582 再核一次证据链";
+    const seenPrompts: string[] = [];
+    let turns = 0;
+    const env = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      stationChild: true as const,
+      // Engine axis configured (any legal name; no packaged notes file needed)
+      // so a same-call retry that wrongly falls back to
+      // buildResumeContinuationPrompt provably diverges from the plain
+      // RESUME_TRANSPORT_ENVELOPE trigger by appending an engine line —
+      // without an engine configured, that buggy path degenerates to the
+      // exact same bytes as the fix and the regression goes unnoticed.
+      engine: "cursor",
+      roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
+        turns += 1;
+        seenPrompts.push(request.continuation.prompt);
         const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
           request.principal,
         );
@@ -550,6 +601,101 @@ test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", as
           }) + "\n",
           "utf8",
         );
+        // Every attempt fails non-lawfully so the shared loop's call-local
+        // retry actually redispatches (#416) — the retry payload under test.
+        return { code: 1, stderr: `fail ${turns}\n`, timedOut: false };
+      }),
+    };
+    const { io } = captureIo();
+    const result = await runPostAdmissionSeatResume({
+      request: {
+        runId: "840-station-prompt-preserve-001",
+        summons: { instruction: courtInstruction },
+      },
+      env,
+      io,
+      load: (effective) =>
+        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
+      buildTurnRequest: async (admitted, effective) => {
+        const summonsPrepared = await prepareSummonsResumeMaterials(
+          admitted.runDirectory,
+          effective.summons,
+        );
+        return buildDiaristTurnRequest(
+          admitted,
+          resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
+        );
+      },
+      adapters: {
+        trySettle: async () => undefined,
+        shouldPresentSettled: () => true,
+      },
+    });
+    assert.ok(turns >= 2, "the loop must have redispatched at least once");
+    assert.ok(
+      seenPrompts[0]!.includes(courtInstruction),
+      "attempt 1 must carry this court's real instruction",
+    );
+    for (const prompt of seenPrompts.slice(1)) {
+      // Dispatch appends the case-dossier pointer section to every turn
+      // (ADR 0081, unrelated to this class-2 contract) — strip it before
+      // comparing the retry's own continuation base against the plain
+      // trigger. A wrong fallback to buildResumeContinuationPrompt would
+      // append the configured engine line here instead of leaving the
+      // trigger byte-exact (caught by the exact-equality assertion below).
+      const base = prompt.split("\n\n## 本票起居录")[0]!;
+      assert.equal(
+        base,
+        RESUME_TRANSPORT_ENVELOPE,
+        "same-call retry must project only the minimal host resume trigger, byte-exact",
+      );
+      assert.ok(
+        !prompt.includes("重新读"),
+        "same-ticket continuation must never be replaced by the outsourcing engine handbook",
+      );
+    }
+    assert.equal(result.terminal?.autoResumeCount, seenPrompts.length - 1);
+  });
+});
+
+test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    for (const hostName of ["pi", "grok-build", "claude"] as const) {
+      const calls = { n: 0 };
+      // Each stand-in host persists its OWN real resumable-session binding
+      // shape (#840 r8 判词 class 3) — never a shared fake. pi's binding is
+      // the transcript session.jsonl (DurablePrincipalAuthority#isAvailable);
+      // ACP/headless hosts persist a native session id under their own
+      // session-identity binding file (host-descriptions.ts) instead and
+      // never touch session.jsonl. Writing the same file for every host would
+      // mask exactly the native-binding gap this suite guards against.
+      const failingHost = createMinimalHost(async (request: RoleTurnRequest) => {
+        calls.n += 1;
+        if (hostName === "pi") {
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
+            request.principal,
+          );
+          await mkdir(sessionDirectory, { recursive: true });
+          await writeFile(
+            sessionFile,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+        } else {
+          const description =
+            lookupHostDescription(hostName) ?? lookupHeadlessHostDescription(hostName);
+          assert.ok(description, `host description registered for ${hostName}`);
+          await createSessionIdentityAuthority(
+            piDurablePrincipalAuthority,
+            description!.sessionBindingFile,
+          ).bind(request.principal, `native-session-${hostName}-${calls.n}`);
+        }
         return { code: 1, stderr: `fail ${calls.n}\n`, timedOut: false };
       });
       const hostAdapters: NamedRoleTurnHostAdapter[] = (
