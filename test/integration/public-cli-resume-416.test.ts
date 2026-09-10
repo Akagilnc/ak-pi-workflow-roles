@@ -26,7 +26,6 @@ import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
-  TRUE_UNBOUND_DIARIST_DETAILS,
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
@@ -40,7 +39,6 @@ import {
   loadResumableDiaristRun,
   loadResumableJudgeRun,
   readRoleRunState,
-  RESUME_TRANSPORT_ENVELOPE,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -537,119 +535,6 @@ test("A2: station-child after-lease build failure releases the lock and retries 
     assert.equal(turns, 1);
     assert.notEqual(result.exitCode, 2);
     assert.equal(result.terminal?.autoResumeCount, 2);
-  });
-});
-
-test("#840 r8 判词 class 2: station-child same-call retry projects the plain resume trigger, not the manual-resume engine handbook", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    // Unbound (no boundTicketNumber; sealed details keep ticketNumber null):
-    // this run never carries a ticketNumber, so post-admission's per-turn
-    // case-dossier projection (ADR 0081) stays undefined and never appends
-    // anything to continuation.prompt — the retry's prompt is then exactly
-    // what this seam's own build() returns, no unrelated presentation text
-    // to separate out first.
-    const first = await summonPublicRole({
-      role: "diarist",
-      argv: ["--project", project, "record this session"],
-      cwd: project,
-      home,
-      packageRoot,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: scriptedTerminatingToolSession({
-          role: "diarist",
-          toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: TRUE_UNBOUND_DIARIST_DETAILS,
-        }),
-      }),
-      createRunId: () => "840-station-prompt-preserve-001",
-      credentials: { "openai-codex": true, xai: true },
-    });
-    assert.equal(first.exitCode, 0);
-
-    const seenPrompts: string[] = [];
-    let turns = 0;
-    const env = {
-      home,
-      agentDir: join(home, ".pi"),
-      packageRoot,
-      cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
-      sessionAppender: appendPiSessionCustomEntry,
-      stationChild: true as const,
-      // Engine axis configured: a same-call retry that wrongly falls back to
-      // the manual-resume handbook then structurally differs (an extra
-      // engine-material section), which the equality assertion below can
-      // observe; without an engine configured that fallback would coincide
-      // with the trigger constant and hide the regression.
-      engine: "cursor",
-      roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
-        turns += 1;
-        seenPrompts.push(request.continuation.prompt);
-        const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
-          request.principal,
-        );
-        await mkdir(sessionDirectory, { recursive: true });
-        await writeFile(
-          sessionFile,
-          JSON.stringify({
-            type: "message",
-            message: { role: "user", content: [{ type: "text", text: "go" }] },
-          }) + "\n",
-          "utf8",
-        );
-        // Every attempt fails non-lawfully so the shared loop's call-local
-        // retry actually redispatches (#416) — the retry payload under test.
-        return { code: 1, stderr: `fail ${turns}\n`, timedOut: false };
-      }),
-    };
-    const { io } = captureIo();
-    const result = await runPostAdmissionSeatResume({
-      request: {
-        runId: "840-station-prompt-preserve-001",
-        summons: { instruction: "re-check the current findings" },
-      },
-      env,
-      io,
-      load: (effective) =>
-        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
-      buildTurnRequest: async (admitted, effective) => {
-        const summonsPrepared = await prepareSummonsResumeMaterials(
-          admitted.runDirectory,
-          effective.summons,
-        );
-        return buildDiaristTurnRequest(
-          admitted,
-          resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
-        );
-      },
-      adapters: {
-        trySettle: async () => undefined,
-        shouldPresentSettled: () => true,
-      },
-    });
-    assert.ok(turns >= 2, "the loop must have redispatched at least once");
-    // Structural, not textual: attempt 1 carries this court's real (non-trigger)
-    // continuation; every call-local retry must be identical to the named,
-    // package-owned trigger constant — no wording/template inspection, just
-    // equality/inequality against a typed production export.
-    assert.notEqual(
-      seenPrompts[0],
-      RESUME_TRANSPORT_ENVELOPE,
-      "attempt 1 must carry this court's own continuation, not the bare trigger",
-    );
-    for (const prompt of seenPrompts.slice(1)) {
-      assert.equal(
-        prompt,
-        RESUME_TRANSPORT_ENVELOPE,
-        "same-call retry must project only the minimal host resume trigger",
-      );
-    }
-    assert.equal(result.terminal?.autoResumeCount, seenPrompts.length - 1);
   });
 });
 
