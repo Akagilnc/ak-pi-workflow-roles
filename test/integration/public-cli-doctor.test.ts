@@ -12,6 +12,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -46,6 +47,7 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-doctor-", scenario);
@@ -513,6 +515,60 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       piDurablePrincipalAuthority,
     );
     assert.equal(settled.roleOutcome.kind, "accepted");
+
+    // #836: extractDoctorCandidateCostFact/extractDoctorCandidateAuditNoReceiptFact
+    // must bound their scan to the current attempt (currentAttemptStartIndex),
+    // the same bound already used elsewhere in settlement.ts for other
+    // attempt-sensitive scans — a later attempt with no candidate entry of
+    // its own must not inherit the prior attempt's cost/auditNoReceipt.
+    const settleSessionFile = join(runDirectory, "session", "session.jsonl");
+    await appendFile(
+      settleSessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "resume" },
+      })}\n${JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: DOCTOR_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: candidateDetails,
+        },
+      })}\n`,
+      "utf8",
+    );
+    const settledNextAttempt = await settleDoctorTerminalResult(
+      fixtureDoctorAdmitted({
+        runId: "run-doctor-settle",
+        bookKey,
+        projectRoot: project,
+        instruction: "inspect",
+        instructionEmpty: false,
+        runDirectory,
+        issueNumber: admittedSnap.issueNumber,
+        caseRunsPath: admittedSnap.caseRunsPath,
+        caseIdentity: admittedSnap.caseIdentity,
+      }),
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(settledNextAttempt.roleOutcome.kind, "accepted");
+    const reportPathNextAttempt = settledNextAttempt.artifacts.find((a) => a.kind === "report")?.path;
+    assert.ok(reportPathNextAttempt);
+    const reportNextAttempt = JSON.parse(
+      await readFile(reportPathNextAttempt!, "utf8"),
+    ) as { cost: unknown; auditNoReceipt: unknown };
+    assert.equal(
+      reportNextAttempt.cost,
+      undefined,
+      "#836: a prior attempt's candidate cost must not leak into a later attempt lacking its own candidate entry",
+    );
+    assert.equal(
+      reportNextAttempt.auditNoReceipt,
+      undefined,
+      "#836: a prior attempt's auditNoReceipt must not leak into a later attempt lacking its own candidate entry",
+    );
+
     assert.equal(
       await trySettleDoctorTerminalResult(
         fixtureDoctorAdmitted({
@@ -597,13 +653,18 @@ test("terminal persistence write failure through public entry propagates loudly 
       },
     );
 
-    // The original terminal-persistence error must propagate loudly and no
-    // fake terminal may be presented on stdout. If someone re-adds
-    // `.catch(() => undefined)` around the settled-path markRunTerminal, the
-    // failure would be swallowed and a terminal presented — this assertion
-    // then fails, so the restoration is killed.
-    assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
-    assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
-    assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
+    // #836: the original terminal-persistence error must propagate loudly as
+    // a real controlled-failure Terminal — never silently swallowed, and
+    // never an escaped exception that reaches auto-resume with no recorded
+    // Terminal at all. Reuses the shared public-failure-settlement contract
+    // (same assertions every other seam's real-persistence-failure case uses).
+    const { terminal } = await assertPublicFailureSettlement({
+      result,
+      stdout: captured.stdout,
+      stderr: captured.stderr,
+      expectedCause: "unrecognized",
+      diagnosticEquals: "cannot mark terminal: run state missing",
+    });
+    assert.equal(terminal.roleOutcome.role, "doctor");
   });
 });

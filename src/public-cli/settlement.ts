@@ -2843,7 +2843,8 @@ export async function trySettleCollectorTerminalResult(
 function extractDoctorCandidateCostFact(
   entries: readonly SessionEntry[],
 ): DoctorCaseCost | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
+  const scanStart = currentAttemptStartIndex(entries);
+  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
       const data = entry.data;
@@ -2861,7 +2862,8 @@ function extractDoctorCandidateCostFact(
 function extractDoctorCandidateAuditNoReceiptFact(
   entries: readonly SessionEntry[],
 ): unknown {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
+  const scanStart = currentAttemptStartIndex(entries);
+  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
       const data = entry.data;

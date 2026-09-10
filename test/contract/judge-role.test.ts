@@ -420,9 +420,10 @@ function passingOfficerSummon(officer: "inspector" | "notary" | "auditor"): Publ
         kind: "accepted",
         role: officer,
         status: "pass",
-        // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+        // #836: officer receipt content rides recorded payloads, not decisiveFacts —
+        // decisiveFacts stays a distinct, smaller machine-fact projection here.
         payloads: [{ status: "pass", findings: [] }],
-        decisiveFacts: { status: "pass", findings: [] },
+        decisiveFacts: { status: "pass" },
       },
       navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
       artifacts: [],
@@ -490,9 +491,10 @@ async function workerCompletionGatekeeperHarness(options: {
           kind: "accepted",
           role: officer,
           status: "not-a-conclusion",
-          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+          // #836: officer receipt content rides recorded payloads, not decisiveFacts —
+          // decisiveFacts stays a distinct, smaller machine-fact projection here.
           payloads: [officerUnusableSubmission as Record<string, unknown>],
-          decisiveFacts: officerUnusableSubmission as Record<string, unknown>,
+          decisiveFacts: {},
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
@@ -536,7 +538,10 @@ async function workerCompletionGatekeeperHarness(options: {
           role: officer,
           status: "bounce",
           // #775: structured officer findings must relay field content into parent-visible text.
-          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+          // #836/#847 finding3: payloads carries a payload-only marker absent
+          // from decisiveFacts below, so the receipt assertion (line ~669)
+          // fails if the production projection ever reads decisiveFacts
+          // instead of payloads for the officer's receipt.
           payloads: [{
             status: "bounce",
             findings: [{
@@ -544,15 +549,10 @@ async function workerCompletionGatekeeperHarness(options: {
               reason: "add a focused regression",
               evidence: "diff lacks a failing case",
             }],
+            payloadOnly: "gate-bounce-payload-marker",
           }],
-          decisiveFacts: {
-            status: "bounce",
-            findings: [{
-              article: "focused-regression",
-              reason: "add a focused regression",
-              evidence: "diff lacks a failing case",
-            }],
-          },
+          // Distinct, smaller machine-fact projection — not a receipt duplicate.
+          decisiveFacts: { status: "bounce" },
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
         artifacts: [],
@@ -604,9 +604,11 @@ async function workerCompletionGatekeeperHarness(options: {
                     status: typeof decisiveFacts.status === "string"
                       ? decisiveFacts.status
                       : "not-a-conclusion",
-                    // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+                    // #836: officer receipt content rides recorded payloads, not
+                    // roleOutcome.decisiveFacts — kept a distinct, smaller machine-fact
+                    // projection here, never the `decisiveFacts` param (that's the payload).
                     payloads: [decisiveFacts],
-                    decisiveFacts,
+                    decisiveFacts: {},
                   },
                   navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
                   artifacts: [],
@@ -662,6 +664,7 @@ async function workerCompletionGatekeeperHarness(options: {
           assert.deepEqual(error.result.receipt, {
             status: "bounce",
             findings: [structuredFinding],
+            payloadOnly: "gate-bounce-payload-marker",
           });
           assert.match(error.message, /focused-regression/);
           assert.match(error.message, /add a focused regression/);

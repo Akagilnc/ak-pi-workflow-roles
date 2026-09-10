@@ -184,6 +184,13 @@ export type ControlledFailureInput = {
   knownDetails?: Readonly<Record<string, unknown>>;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
+  /**
+   * #836: set when the caller already attempted markRunTerminal/markRunResumable
+   * and it is what threw `thrown` — presentControlledFailure must not retry
+   * the same known-failing run-state write a second time; the caught error is
+   * already the reported cause.
+   */
+  skipRunStateWrite?: boolean;
 };
 
 /** Result of seat prep after the single pre-lease admitted load. */
@@ -312,10 +319,12 @@ export async function presentControlledFailure<
     resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
   }
 
-  if (resumable && typedHttp429 !== undefined) {
-    await markRunResumable(admitted.runDirectory, typedHttp429);
-  } else {
-    await markRunTerminal(admitted.runDirectory);
+  if (!failureInput.skipRunStateWrite) {
+    if (resumable && typedHttp429 !== undefined) {
+      await markRunResumable(admitted.runDirectory, typedHttp429);
+    } else {
+      await markRunTerminal(admitted.runDirectory);
+    }
   }
 
   const terminal = await attachRecordedSubmissions(
@@ -576,14 +585,39 @@ export async function dispatchPostAdmissionTurn<
       && !directHostFailureSignal
       && stderrLogWriteFailure === undefined
     ) {
-      if (
-        settled.roleOutcome.kind === "accepted" &&
-        request.courtAttemptId !== undefined &&
-        request.courtAttemptId.length > 0
-      ) {
-        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+      try {
+        if (
+          settled.roleOutcome.kind === "accepted" &&
+          request.courtAttemptId !== undefined &&
+          request.courtAttemptId.length > 0
+        ) {
+          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+        }
+        await markRunTerminal(admitted.runDirectory);
+      } catch (error) {
+        // #836: `settled` already carries recorded submissions (attached
+        // above). A real run-state persistence failure here must surface
+        // loudly through the same controlled-failure seam every other
+        // dispatch-time failure in this function uses (ADR 0080: one
+        // settlement disposition owner) — not escape uncaught to
+        // auto-resume's dispatch-retry path, whose exhausted-budget terminal
+        // carries no recorded submissions at all. skipRunStateWrite: the
+        // write that just threw is the same write presentControlledFailure
+        // would otherwise retry — don't call a known-failing operation twice.
+        return (await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+            skipRunStateWrite: true,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+        )) as { exitCode: number; admitted: A; terminal: T };
       }
-      await markRunTerminal(admitted.runDirectory);
       io.stdout(formatTerminalResult(settled));
       return {
         exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
@@ -649,7 +683,28 @@ export async function dispatchPostAdmissionTurn<
       await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
       courtScope,
     );
-    await markRunTerminal(admitted.runDirectory);
+    try {
+      await markRunTerminal(admitted.runDirectory);
+    } catch (error) {
+      // #836: same run-state persistence hazard as the settled/accepted
+      // branch above — route through the shared controlled-failure seam so
+      // the real failure surfaces loudly instead of escaping uncaught to
+      // auto-resume's dispatch-retry path with no recorded submissions.
+      // skipRunStateWrite: don't retry the write that just threw.
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          skipRunStateWrite: true,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
     io.stdout(formatTerminalResult(noReceipt));
     return {
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
