@@ -18,6 +18,7 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import { lastRolePayloadRecord } from "./public-cli/terminal.ts";
 
 /**
  * Classify public-navigator failure terminal from structured decisiveFacts only
@@ -146,7 +147,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
-          const candidates = outcome.decisiveFacts.candidates;
+          const candidates = lastRolePayloadRecord(outcome.payloads ?? [])?.candidates;
           if (!Array.isArray(candidates)) {
             // Accepted reply without candidates array — no advice, no judgment.
             return;

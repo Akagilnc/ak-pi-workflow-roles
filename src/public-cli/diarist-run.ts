@@ -35,7 +35,7 @@ import {
   trySettleDiaristTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { TerminalResult } from "./terminal.ts";
+import { lastRolePayloadRecord, type TerminalResult } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -196,20 +196,22 @@ export async function runPublicDiarist(
     // leak an unverified ticketNumber into the caller-visible typed key.
     if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
       const roleOutcome = result.terminal?.roleOutcome;
+      const facts =
+        roleOutcome?.kind === "accepted"
+          ? lastRolePayloadRecord(roleOutcome.payloads ?? [])
+          : undefined;
       if (
         roleOutcome !== undefined &&
         roleOutcome.kind === "accepted" &&
-        roleOutcome.status !== "escalate"
+        facts?.status !== "escalate"
       ) {
-        const facts = roleOutcome.decisiveFacts as {
-          ticketNumber?: unknown;
-          sitian?: { ticketNumber?: unknown };
-        };
         const raw =
-          typeof facts.ticketNumber === "number"
+          typeof facts?.ticketNumber === "number"
             ? facts.ticketNumber
-            : typeof facts.sitian?.ticketNumber === "number"
-              ? facts.sitian.ticketNumber
+            : typeof facts?.sitian === "object"
+              && facts.sitian !== null
+              && typeof (facts.sitian as { ticketNumber?: unknown }).ticketNumber === "number"
+              ? (facts.sitian as { ticketNumber: number }).ticketNumber
               : undefined;
         if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
           (admitted as { ticketNumber?: number }).ticketNumber = raw;

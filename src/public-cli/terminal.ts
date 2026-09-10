@@ -55,15 +55,19 @@ export type TerminalRoleOutcome =
   | {
       kind: "accepted";
       role: TerminalRoleName;
-      status: string;
-      /** Few decisive facts drawn from the typed receipt. */
-      decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Original role payloads in ledger order — this is the role-result block (#836 / ADR 0052). */
+      payloads?: readonly unknown[];
+      /** Fixture/compat leaf only — settlement does not write a selected status. */
+      status?: string;
+      decisiveFacts?: Readonly<Record<string, unknown>>;
     }
   | {
       kind: "audit_escalation";
       role: TerminalRoleName;
       status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Original role payloads in ledger order (#836). */
+      payloads?: readonly unknown[];
+      decisiveFacts?: Readonly<Record<string, unknown>>;
     }
   | NoReceiptTerminalOutcome
   | {
@@ -74,6 +78,8 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Already-recorded original payloads, coexist with host failure (#836 A3). */
+      payloads?: readonly unknown[];
     };
 
 /** Lawful typed terminal results exit zero (including audit_escalation). */
@@ -162,14 +168,33 @@ export type TerminalGateFact = {
  * auto-resumes occurred during this single LLM call; it is not persisted to
  * run-state.json and does not participate in limit decisions.
  */
+/** Original payloads on a terminal — role result for accepted/audit; coexist on failure. */
+export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unknown[] {
+  if (outcome.kind === "accepted" || outcome.kind === "audit_escalation") return outcome.payloads ?? [];
+  if (outcome.kind === "failure") return outcome.payloads ?? [];
+  return [];
+}
+
+/** Last object payload the role actually wrote. No field remapping. */
+export function lastRolePayloadRecord(
+  payloads: readonly unknown[],
+): Record<string, unknown> | undefined {
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const payload = payloads[index];
+    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+      return payload as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * #836: every recorded role payload in ledger order (调几次记几次), raw `unknown` as stored.
-   * Present whenever the ledger has ≥1 recorded submission for this settle scope.
-   * roleOutcome.decisiveFacts is a typed status/compat view; this array is the full original face.
+   * Mirror of recorded original payloads (same bytes as roleOutcome.payloads).
+   * Kept so officer/compliance readers share one array with the role-result block.
    */
   submissions?: readonly unknown[];
   /**
@@ -229,7 +254,9 @@ export function formatTerminalResult(result: TerminalResult): string {
   const outcomeStatus =
     result.roleOutcome.kind === "failure"
       ? result.roleOutcome.cause
-      : result.roleOutcome.status;
+      : result.roleOutcome.kind === "accepted"
+        ? "accepted"
+        : result.roleOutcome.status;
   lines.push(
     `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${encodeTerminalField(outcomeStatus)}`,
   );
@@ -238,12 +265,14 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
-  const facts = result.roleOutcome.decisiveFacts;
-  for (const [key, value] of Object.entries(facts)) {
-    if (value === undefined) continue;
-    const rendered =
-      typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
+  if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt") {
+    const facts = result.roleOutcome.decisiveFacts;
+    for (const [key, value] of Object.entries(facts)) {
+      if (value === undefined) continue;
+      const rendered =
+        typeof value === "string" ? value : JSON.stringify(value);
+      lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
+    }
   }
   lines.push(`navigator\t${result.navigator.disposition}`);
   if (result.navigator.advisoryDiagnostic !== undefined) {
@@ -291,12 +320,16 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
-  // Typed submissions[] is the machine face; rows are human presentation of the same array.
-  if (result.submissions !== undefined) {
-    for (const payload of result.submissions) {
-      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`submission\t${encodeTerminalField(rendered)}`);
-    }
+  // Role-result block: original payloads in ledger order (#836 / ADR 0052).
+  const payloads =
+    result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation"
+      ? result.roleOutcome.payloads ?? result.submissions ?? []
+      : result.roleOutcome.kind === "failure"
+        ? result.roleOutcome.payloads ?? result.submissions ?? []
+        : result.submissions ?? [];
+  for (const payload of payloads) {
+    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+    lines.push(`submission\t${encodeTerminalField(rendered)}`);
   }
   return `${lines.join("\n")}\n`;
 }

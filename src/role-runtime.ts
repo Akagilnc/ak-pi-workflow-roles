@@ -392,14 +392,7 @@ export {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
-export type {
-  ReviewerExecutionRecord,
-  ReviewerTargetSnapshot,
-  ReviewerUsage,
-  ReviewerWorkspaceDisposition,
-} from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-export type { ReviewerDispatchRunResult } from "./reviewer-execution-ledger.ts";
+export type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
@@ -672,7 +665,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
 }
 
 export async function projectClosedSubmissionLifecycle(
-  projection: import("./submission-ledger.ts").ClosedSubmissionProjection,
+  closed: import("./submission-ledger.ts").ClosedSubmission,
   context: HostContext,
   phase: NavigatorPhase,
   recordAccepted: () => void,
@@ -680,12 +673,12 @@ export async function projectClosedSubmissionLifecycle(
 ): Promise<void> {
   recordAccepted();
   const closure = {
-    toolName: navigatorOutputTool(projection.role)!,
+    toolName: navigatorOutputTool(closed.role)!,
     isError: false,
-    details: projection.decisiveFacts,
+    details: closed.accepted,
   };
   context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-  await settle(publicNavigatorSettlement(projection.role, phase, closure));
+  await settle(publicNavigatorSettlement(closed.role, phase, closure));
 }
 
 /**
@@ -1039,14 +1032,14 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (envelopeHost: RoleEnvelopeHost) => void {
   return (envelopeHost) => {
-    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
+    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
       envelopeHost.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
-      async (projection, context) => projectClosedSubmission(projection, context),
+      async (closed, context) => projectClosedSubmission(closed, context),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1152,10 +1145,10 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = pending;
       await pending;
     };
-    projectClosedSubmission = async (projection, context) => projectClosedSubmissionLifecycle(
-      projection,
+    projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
+      closed,
       context,
-      navigatorPhase(roleHost, projection.role),
+      navigatorPhase(roleHost, closed.role),
       () => receiptDelivery.recordAccepted(),
       settleNavigatorProjection,
     );

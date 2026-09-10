@@ -35,6 +35,7 @@ import {
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { AdmittedCollectorInvocation } from "../../src/public-cli/invocation.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
+import { payloadFacts } from "../helpers/terminal-payload.ts";
 
 function seedProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
@@ -336,7 +337,7 @@ test("typed groups travel from real output settlement into the report artifact",
       }),
     });
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, receipt().groups);
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).groups, receipt().groups);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
     const artifact = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: { groups: unknown[] } };
@@ -548,8 +549,8 @@ test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", 
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "MERGED");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.requestAttempts, []);
+    assert.equal(result.terminal && payloadFacts(result.terminal.roleOutcome).prState, "MERGED");
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).requestAttempts, []);
   });
 });
 
@@ -592,8 +593,8 @@ test("#676 J2 CLOSED non-OPEN prState still returns materials without inventing 
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "CLOSED");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.requestAttempts, []);
+    assert.equal(result.terminal && payloadFacts(result.terminal.roleOutcome).prState, "CLOSED");
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).requestAttempts, []);
   });
 });
 

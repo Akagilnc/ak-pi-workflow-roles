@@ -33,6 +33,7 @@ import {
 import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
@@ -241,7 +242,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     assert.equal(first.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       first.terminal?.roleOutcome.kind === "accepted"
-        ? first.terminal.roleOutcome.status
+        ? payloadStatus(first.terminal.roleOutcome)
         : undefined,
       "pass",
     );
@@ -402,7 +403,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       secondCourtSeal.status,
       "open-court seal status must be the lawful non-pass, not first-court pass",
@@ -428,7 +429,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-        ? bareAfterSeal.terminal.roleOutcome.status
+        ? payloadStatus(bareAfterSeal.terminal.roleOutcome)
         : undefined,
       secondCourtSeal.status,
       "bare resume after seal keeps the open-court non-pass status",

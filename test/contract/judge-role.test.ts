@@ -59,7 +59,7 @@ import {
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
 async function acceptThroughTypedRoundClosure(input: {
@@ -69,7 +69,7 @@ async function acceptThroughTypedRoundClosure(input: {
   toolName: string;
   output: unknown;
   context: any;
-}): Promise<{ sealed: NonNullable<Awaited<ReturnType<typeof readSealedSubmission>>>; pending: any }> {
+}): Promise<{ sealed: { readonly role: string; readonly accepted: unknown }; pending: any }> {
   // #836: submission records immediately with original payload; no pending-round-closure rewrite.
   const pending = await input.tool.execute(input.toolCallId, input.output, undefined, undefined, input.context);
   assert.deepEqual(pending.details, input.output);
@@ -88,7 +88,8 @@ async function acceptThroughTypedRoundClosure(input: {
   const cwd = typeof input.context.cwd === "string" ? input.context.cwd : process.cwd();
   const ledgerHomeOwner = tryHomeFromAkRolesPath(runDirectory);
   assert.ok(ledgerHomeOwner, "institutional run must sit under temp .ak-roles topology");
-  const sealed = await readSealedSubmission(cwd, runId, ledgerHomeOwner);
+  const rows = await readRecordedSubmissionRows(cwd, runId, ledgerHomeOwner);
+  const sealed = rows.at(-1);
   assert.ok(sealed, "terminating submission must be recorded on the ledger");
   return { sealed, pending };
 }
@@ -1202,7 +1203,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   });
 
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-  assert.deepEqual(sealed.decisiveFacts, verdict);
+  assert.deepEqual(sealed.accepted, verdict);
 });
 
 test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", async () => {
@@ -1419,7 +1420,7 @@ test("coder plan loads its task without construction skill and returns planned",
     output,
     context,
   });
-  assert.deepEqual(sealed.decisiveFacts, output);
+  assert.deepEqual(sealed.accepted, output);
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
 });
 
@@ -1472,7 +1473,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       output: reasoned,
       context,
     });
-    assert.deepEqual(sealed.decisiveFacts, reasoned);
+    assert.deepEqual(sealed.accepted, reasoned);
   });
   // Negative: continuous bare resubmits bounce at most twice, then accept through Gatekeeper (no loop).
   // Fresh admitted run — prior seal must not cross run boundaries.
@@ -1511,7 +1512,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
       output: bare,
       context: context2,
     });
-    assert.deepEqual(sealed.decisiveFacts, bare);
+    assert.deepEqual(sealed.accepted, bare);
   });
 });
 
@@ -1753,7 +1754,7 @@ test("judge submissions traverse Notary then Auditor gates (#756)", async () => 
     context,
   });
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-  assert.deepEqual(sealed.decisiveFacts, continueVerdict);
+  assert.deepEqual(sealed.accepted, continueVerdict);
   assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
   // #756: reask→no_receipt + bounce + notary pass + auditor pass = 5.
   assert.equal(tracer.providerRequests, 5);
@@ -1919,7 +1920,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
         output: candidate("other"),
         context,
       });
-      assert.deepEqual(sealed.decisiveFacts, candidate("other"));
+      assert.deepEqual(sealed.accepted, candidate("other"));
     });
     await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
       const context = await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
@@ -1932,7 +1933,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
         context,
       });
       assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-      assert.deepEqual(sealed.decisiveFacts, candidate("owner.choice"));
+      assert.deepEqual(sealed.accepted, candidate("owner.choice"));
     });
 
     const partial = {
@@ -1959,7 +1960,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
         output: partial,
         context: context2,
       });
-      assert.deepEqual(sealed.decisiveFacts, partial);
+      assert.deepEqual(sealed.accepted, partial);
     });
 
     const sharedCommit = "shared-commit";
@@ -1977,7 +1978,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
         context: context3,
       });
       assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-      assert.deepEqual(sealed.decisiveFacts.classResults, [classA, classB]);
+      assert.deepEqual((sealed.accepted as { classResults?: unknown }).classResults, [classA, classB]);
     });
   });
 });
@@ -2000,7 +2001,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
       output: candidate,
       context,
     });
-    assert.deepEqual(sealed.decisiveFacts, candidate);
+    assert.deepEqual(sealed.accepted, candidate);
     assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   });
 });
@@ -2053,7 +2054,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     context,
   });
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-  assert.deepEqual(sealed.decisiveFacts, output);
+  assert.deepEqual(sealed.accepted, output);
 });
 
 

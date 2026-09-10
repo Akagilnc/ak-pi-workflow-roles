@@ -18,11 +18,8 @@ import {
 import {
   REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
-  projectReviewerIntentToReceipt,
   validateReviewerIntent,
-  validateRuntimeReviewerReceipt,
   type ReviewerIntent,
-  type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
@@ -59,9 +56,7 @@ export {
   MERGER_OUTPUT_TOOL_NAME,
   validateAcceptedCollectorReceipt,
   validateAcceptedJudgeDetails,
-  projectReviewerIntentToReceipt,
   validateReviewerIntent,
-  validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
   validateDoctorSubmissionShape,
   validateRecordedDoctorOutput,
@@ -79,7 +74,6 @@ export type {
   CollectorReceipt,
   JudgeVerdict,
   ReviewerIntent,
-  RuntimeReviewerReceiptV2,
   WorkerOutput,
   DoctorOutput,
   DoctorSubmission,
@@ -116,7 +110,7 @@ export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
 
 export type AcceptedDetails =
   | WorkerOutput
-  | RuntimeReviewerReceiptV2
+  | ReviewerIntent
   | JudgeVerdict
   | CollectorReceipt
   | DoctorOutput

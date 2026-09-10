@@ -10,7 +10,7 @@ import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import {
   createSubmissionLedgerHost,
-  readSealedSubmission,
+  hasRecordedSubmission,
 } from "../../src/submission-ledger.ts";
 
 function toolNameForRole(role: TerminalRoleName): string {
@@ -111,7 +111,7 @@ export async function sealAcceptedSubmission(input: {
   // this exact court turn would collide with an already-present latest seal without id.
   if (
     input.courtAttemptId === undefined &&
-    (await readSealedSubmission(input.cwd, input.runId, input.home)) !== undefined
+    (await hasRecordedSubmission(input.cwd, input.runId, input.home))
   ) {
     return;
   }

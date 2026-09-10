@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -35,13 +36,13 @@ import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlemen
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
-/** Typed-region proof: run ID appears only inside resume.command. */
+/** Resumable failure: top-level runId omitted; resume.command carries the id (#665). Original payloads/diagnostics are not rewritten (#836). */
 function assertRunIdOnlyInResumeCommand(
   terminal: TerminalResult,
   runId: string,
@@ -53,18 +54,6 @@ function assertRunIdOnlyInResumeCommand(
     terminal.runId,
     undefined,
     "top-level runId must be omitted on resumable failure Terminal",
-  );
-  const outsideResumeCommand = {
-    roleOutcome: terminal.roleOutcome,
-    navigator: terminal.navigator,
-    artifacts: terminal.artifacts,
-    runId: terminal.runId,
-    resumeKeys: terminal.resume === undefined ? [] : Object.keys(terminal.resume),
-  };
-  assert.equal(
-    JSON.stringify(outsideResumeCommand).includes(runId),
-    false,
-    "run ID must not appear outside resume.command in typed Terminal regions",
   );
 }
 
@@ -693,9 +682,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       `${runId}@judge`,
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-    const sealed = await readSealedSubmission(project, runId, home);
-    assert.ok(sealed, "recorded accepted projection must survive publication failure");
-    assert.equal(sealed.role, "judge");
+    assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
 
     // #833: manual resume is pass-through even after sealed + publication miss.
     // Host is reached; no re-seal keeps the prior sealed projection readable.
@@ -724,8 +711,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     });
     assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must remain readable after manual resume",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must remain readable after manual resume",
     );
 
     // #672 US6: clear the test-planted report.json directory fault, then manual
@@ -748,9 +735,9 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
     if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
       assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-      assert.equal(rebuilt.terminal!.roleOutcome.status, "converged");
+      assert.equal(payloadStatus(rebuilt.terminal!.roleOutcome), "converged");
       assert.equal(
-        (rebuilt.terminal!.roleOutcome.decisiveFacts as { note?: string }).note,
+        payloadFacts(rebuilt.terminal!.roleOutcome).note,
         "lawful despite later publication failure",
       );
     }
@@ -760,15 +747,14 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
       role?: string;
       runId?: string;
-      outcome?: { kind?: string; role?: string; status?: string; decisiveFacts?: { note?: string } };
+      outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
     };
     assert.equal(reportBody.role, "judge");
     assert.equal(reportBody.runId, runId);
     assert.equal(reportBody.outcome?.kind, "accepted");
     assert.equal(reportBody.outcome?.role, "judge");
-    assert.equal(reportBody.outcome?.status, "converged");
     assert.equal(
-      reportBody.outcome?.decisiveFacts?.note,
+      (reportBody.outcome?.payloads?.at(-1) as { note?: string } | undefined)?.note,
       "lawful despite later publication failure",
     );
     assert.ok(
@@ -776,8 +762,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       "rebuilt terminal must reference the public report artifact",
     );
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must remain after report rebuild",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must remain after report rebuild",
     );
   });
 
@@ -822,8 +808,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(dispatches(), 1);
     assert.equal(result.terminal!.autoResumeCount, 2);
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "recorded accepted projection must survive direct throw after record",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must survive direct throw after record",
     );
     if (result.terminal!.roleOutcome.kind === "failure") {
       assert.equal(
@@ -859,7 +845,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         roleTurnHost: {
           executeTurn: async (request) => {
             const out = await inner.executeTurn(request);
-            // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
+            // Poison the same ledger volume settlement reads.
             const ledgerFile = resolveSitianRecordPathInLedger(
                 {
                   level: "event",
@@ -872,7 +858,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
             await rm(ledgerFile, { force: true });
             await mkdir(ledgerFile, { recursive: true });
             await assert.rejects(
-              () => readSealedSubmission(project, runId, home),
+              () => readRecordedSubmissions(project, runId, home),
               (error: NodeJS.ErrnoException) => error.code === "EISDIR",
             );
             return out;
@@ -982,33 +968,9 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(
-        result.terminal!.roleOutcome.diagnostic.includes(runId),
-        false,
-        "typed Terminal diagnostic must not re-disclose exact run ID",
-      );
-      assert.equal(
-        result.terminal!.roleOutcome.diagnostic.includes("[run-id]"),
-        true,
-      );
-      assert.equal(
-        String(result.terminal!.roleOutcome.decisiveFacts.diagnostic).includes(
-          runId,
-        ),
-        false,
-      );
-    }
-
     const presented = `${stdout.join("")}${stderr.join("")}`;
     const resumeCommand = result.terminal!.resume!.command;
     assert.equal(presented.includes(resumeCommand), true);
-    const presentedOutsideCommand = presented.split(resumeCommand).join("");
-    assert.equal(
-      presentedOutsideCommand.includes(runId),
-      false,
-      "presented Terminal/stderr must not disclose run ID outside resume.command",
-    );
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(

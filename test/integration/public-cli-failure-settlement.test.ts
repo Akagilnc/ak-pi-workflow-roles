@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
@@ -513,7 +514,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(result.terminal!.roleOutcome.status, "escalate");
+    assert.equal(payloadStatus(result.terminal!.roleOutcome), "escalate");
     assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
     assert.equal(result.terminal!.runId, "run-escalate-001");
   });

@@ -26,6 +26,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitMergerInvocation as admitMergerInvocationRaw,
@@ -325,7 +326,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(
       terminal.roleOutcome.kind === "accepted"
-        ? terminal.roleOutcome.status
+        ? payloadStatus(terminal.roleOutcome)
         : undefined,
       "completed",
     );
@@ -333,10 +334,10 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     // #757: full receipt passes through decisiveFacts (report also lives in artifact).
     assert.equal(
-      Object.hasOwn(terminal.roleOutcome.decisiveFacts, "report"),
+      Object.hasOwn(payloadFacts(terminal.roleOutcome), "report"),
       true,
     );
-    assert.equal(terminal.roleOutcome.decisiveFacts.report, receipt.report);
+    assert.equal(payloadFacts(terminal.roleOutcome).report, receipt.report);
     const mergerReportBody = await readFile(
       terminal.artifacts.find((a) => a.kind === "report")!.path,
       "utf8",
@@ -438,12 +439,12 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
     assert.equal(
       escalateTerminal.roleOutcome.kind === "accepted"
-        ? escalateTerminal.roleOutcome.status
+        ? payloadStatus(escalateTerminal.roleOutcome)
         : undefined,
       "escalate",
     );
     assert.equal(
-      escalateTerminal.roleOutcome.decisiveFacts.diagnosis,
+      payloadFacts(escalateTerminal.roleOutcome).diagnosis,
       "New authority decision required on API surface.",
     );
   });
@@ -730,7 +731,7 @@ test("ak-role resume continues merger with package method and exact session", as
     assert.equal(resumed.terminal?.roleOutcome.role, "merger");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "escalate",
     );

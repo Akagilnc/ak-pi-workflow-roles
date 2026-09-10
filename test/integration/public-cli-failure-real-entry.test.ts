@@ -16,6 +16,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { exitCodeForTerminalOutcome, formatFailureStderrDiagnostic, isLawfulTypedTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -210,7 +211,7 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
         `${role}: escalate must not set acceptedReceipt true`,
       );
       assert.equal(
-        escalateOutcome.decisiveFacts.kind,
+        payloadFacts(escalateOutcome).kind,
         AUDIT_ESCALATION_KIND,
         role,
       );
@@ -695,7 +696,7 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(result.terminal!.roleOutcome.status, "converged");
+    assert.equal(payloadStatus(result.terminal!.roleOutcome), "converged");
     assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
   });
 });

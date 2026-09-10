@@ -149,7 +149,7 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const rows = summoned.terminal?.submissions ?? [];
+    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
     return {
       status: "transport_failure",
       diagnostic: outcome.diagnostic,
@@ -159,12 +159,9 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "accepted") {
-    const rows = summoned.terminal?.submissions ?? [];
+    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
     if (rows.length === 0) {
-      return readComplianceCandidate({
-        status: outcome.status,
-        ...outcome.decisiveFacts,
-      }, usage);
+      return readComplianceCandidate({}, usage);
     }
     // Queue the latest conclusion; keep every original row on the receipt/reply face.
     const decision = readComplianceCandidate(rows[rows.length - 1], usage);

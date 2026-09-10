@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -257,7 +258,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     });
     assert.equal(terminal.roleOutcome.role, "coder");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "completed");
+    assert.equal(payloadStatus(terminal.roleOutcome), "completed");
     assert.equal(terminal.runId, "run-coder-settle-001");
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
@@ -347,7 +348,7 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.roleOutcome.role, "coder");
-    assert.equal(result.terminal!.roleOutcome.status, "completed");
+    assert.equal(payloadStatus(result.terminal!.roleOutcome), "completed");
   });
 });
 
@@ -444,7 +445,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
       assert.equal(result.terminal?.roleOutcome.role, "coder");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.status
+          ? payloadStatus(result.terminal.roleOutcome)
           : undefined,
         "planned",
       );
@@ -616,7 +617,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     assert.equal(resumed.terminal?.roleOutcome.role, "coder");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "planned",
     );
@@ -720,7 +721,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal("thinking" in invocation, false);
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.status
+          ? payloadStatus(result.terminal.roleOutcome)
           : undefined,
         "planned",
       );

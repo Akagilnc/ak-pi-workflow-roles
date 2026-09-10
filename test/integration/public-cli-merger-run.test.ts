@@ -29,9 +29,11 @@ import {
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { payloadStatus } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
-  readSealedSubmission,
+  hasRecordedSubmission,
+  readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
 import type { HostContext, HostToolDefinition, RoleHost, RoleTurnHost } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -497,7 +499,7 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
       assert.equal(result.exitCode, 0, `${row.role} exit: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${row.role}: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.role, row.role, row.role);
-      assert.equal(result.terminal?.roleOutcome.status, row.status, row.role);
+      assert.equal(result.terminal && payloadStatus(result.terminal.roleOutcome), row.status, row.role);
     }
   });
 });
@@ -585,7 +587,7 @@ test("host-neutral typed turns record every terminating submission without sole 
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.roleOutcome.status, "converged");
+    assert.equal(result.terminal && payloadStatus(result.terminal.roleOutcome), "converged");
     assert.ok(result.terminal?.submissions, "terminal must carry submissions array");
     assert.equal(result.terminal!.submissions!.length, 2);
     assert.deepEqual(result.terminal!.submissions![0], first);
@@ -642,7 +644,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
       );
       assert.equal(result.exitCode, 1, JSON.stringify(result.terminal?.roleOutcome));
       assert.equal(result.terminal?.roleOutcome.kind, "failure");
-      assert.ok(await readSealedSubmission(project, "run-table-infrastructure", home));
+      assert.ok(await hasRecordedSubmission(project, "run-table-infrastructure", home));
       assert.ok(result.terminal?.submissions?.some((row) =>
         typeof row === "object" && row !== null && (row as { report?: unknown }).report === "candidate before failure",
       ), JSON.stringify(result.terminal?.submissions));
@@ -668,7 +670,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         }),
       });
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal((await readSealedSubmission(project, runId, home))?.role, "judge");
+      assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.role, "judge");
     }
   });
 });

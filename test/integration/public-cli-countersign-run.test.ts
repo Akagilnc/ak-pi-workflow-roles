@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -284,7 +285,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       assert.ok(result.terminal, `receipt ${receipt.countersignStatus}`);
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
       assert.equal(
-        result.terminal.roleOutcome.status,
+        payloadStatus(result.terminal.roleOutcome),
         receipt.countersignStatus,
       );
       const facts = result.terminal.roleOutcome.decisiveFacts as Record<
@@ -403,7 +404,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "converged",
     );
@@ -476,7 +477,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "continue",
     );

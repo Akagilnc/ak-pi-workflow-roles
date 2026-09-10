@@ -29,6 +29,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 
 import {
   admitDoctorInvocation,
@@ -369,12 +370,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(completed.terminal);
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(completed.terminal!.roleOutcome.status, "completed");
+    assert.equal(payloadStatus(completed.terminal!.roleOutcome), "completed");
     // #757: full receipt passes through — issueNumber stays under case, not lifted.
-    const completedCase = completed.terminal!.roleOutcome.decisiveFacts.case as { issueNumber?: number } | undefined;
+    const completedCase = payloadFacts(completed.terminal!.roleOutcome).case as { issueNumber?: number } | undefined;
     assert.equal(completedCase?.issueNumber, 40);
-    assert.ok(Array.isArray(completed.terminal!.roleOutcome.decisiveFacts.findings));
-    assert.equal((completed.terminal!.roleOutcome.decisiveFacts.findings as unknown[]).length, 1);
+    assert.ok(Array.isArray(payloadFacts(completed.terminal!.roleOutcome).findings));
+    assert.equal((payloadFacts(completed.terminal!.roleOutcome).findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
@@ -451,12 +452,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(refused.terminal!.roleOutcome.kind, "accepted");
     assert.equal(
       refused.terminal!.roleOutcome.kind === "accepted"
-        ? refused.terminal!.roleOutcome.status
+        ? payloadStatus(refused.terminal!.roleOutcome)
         : undefined,
       "refused",
     );
     assert.equal(
-      refused.terminal!.roleOutcome.decisiveFacts.reason,
+      payloadFacts(refused.terminal!.roleOutcome).reason,
       "Need retained sessions",
     );
 

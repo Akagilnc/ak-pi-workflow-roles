@@ -29,6 +29,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
@@ -398,8 +399,8 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   // AC4 typed owner: complete assembly before presentation.
   assert.equal(terminal.roleOutcome.role, "judge");
   assert.equal(terminal.roleOutcome.kind, "accepted");
-  assert.equal(terminal.roleOutcome.status, "converged");
-  assert.equal(terminal.roleOutcome.decisiveFacts.judgeStatus, "converged");
+  assert.equal(payloadStatus(terminal.roleOutcome), "converged");
+  assert.equal(payloadFacts(terminal.roleOutcome).judgeStatus, "converged");
   assert.equal(terminal.navigator.disposition, "recommendation");
   if (terminal.navigator.disposition === "recommendation") {
     assert.equal(terminal.navigator.next.role, "fixer");
@@ -1128,9 +1129,9 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(stdout.join(""), /judge\taccepted/);
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
     assert.equal(
-      (terminal.roleOutcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
+      (payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
       false,
     );
     assert.equal(terminal.navigator.disposition, "recommendation");
@@ -1240,6 +1241,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
       assert.equal(typeof terminal.navigator.reason, "string");
     }
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
   });
 });

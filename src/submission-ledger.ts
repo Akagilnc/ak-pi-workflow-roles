@@ -6,12 +6,9 @@ import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts"
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 
-import {
-  type TerminatingToolName,
-} from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
-import type { TerminalRoleName, TerminalRoleOutcome } from "./public-cli/terminal.ts";
+import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
@@ -37,18 +34,19 @@ export type SubmissionLedgerEvent =
       readonly outcome: SubmissionOutcomeKind;
       readonly diagnostic?: string;
       readonly code?: CorrectableRejectionCode;
+      /** Seat identity — machine fact beside the payload (ADR 0042). */
+      readonly role?: TerminalRoleName;
       /** Raw LLM params — bounce/infra/audit still keep the original words (#836). */
       readonly accepted?: unknown;
-      /** Present for audit-escalation so settlement can project without JSONL rebuild. */
-      readonly projection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
     }
   | {
       readonly type: "sealed";
       readonly attemptId: string;
       readonly toolCallId: string;
+      /** Seat identity — machine fact beside the payload (ADR 0042). */
+      readonly role: TerminalRoleName;
       /** Role payload as submitted — never rewritten (#836). */
       readonly accepted: unknown;
-      readonly projection: Extract<TerminalRoleOutcome, { kind: "accepted" }>;
     };
 
 /**
@@ -79,57 +77,21 @@ function attemptIdentity(context: HostContext, runId: string): string {
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
-/** Status leaf as the role wrote it (status / judgeStatus / countersignStatus). Never invents "collected". */
-function statusFromRoleDetails(details: Record<string, unknown>): string {
-  if (typeof details.status === "string") return details.status;
-  if (typeof details.judgeStatus === "string") return details.judgeStatus;
-  if (typeof details.countersignStatus === "string") return details.countersignStatus;
-  return "";
-}
+/** One recorded role submission as stored — original payload plus host identity. */
+export type RecordedSubmissionRow = {
+  readonly role: TerminalRoleName;
+  readonly kind: "accepted" | "audit-escalation";
+  readonly accepted: unknown;
+};
 
-function statusFromParams(params: unknown): string {
-  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
-    return statusFromRoleDetails(params as Record<string, unknown>);
-  }
-  return "";
-}
+/** Closed-submission callback: original payload, no status/facts projection (#836). */
+export type ClosedSubmission = {
+  readonly role: TerminalRoleName;
+  readonly kind: "accepted" | "audit_escalation";
+  readonly accepted: unknown;
+};
 
-function decisiveFactsView(params: unknown): Record<string, unknown> {
-  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
-    return params as Record<string, unknown>;
-  }
-  return {};
-}
-
-function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<Extract<TerminalRoleOutcome, { kind: "accepted" }>>;
-  return (
-    candidate.kind === "accepted" &&
-    typeof candidate.role === "string" &&
-    typeof candidate.status === "string" &&
-    typeof candidate.decisiveFacts === "object" &&
-    candidate.decisiveFacts !== null
-  );
-}
-
-function isAuditEscalationTerminalProjection(
-  value: unknown,
-): value is Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>>;
-  return (
-    candidate.kind === "audit_escalation" &&
-    typeof candidate.role === "string" &&
-    candidate.status === "audit_escalation" &&
-    typeof candidate.decisiveFacts === "object" &&
-    candidate.decisiveFacts !== null
-  );
-}
-
-export type SealedSubmissionProjection = Extract<SubmissionLedgerEvent, { type: "sealed" }>["projection"];
-export type AuditEscalationSubmissionProjection = Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
-export type ClosedSubmissionProjection = SealedSubmissionProjection | AuditEscalationSubmissionProjection;
+export type ClosedSubmissionProjection = ClosedSubmission;
 
 function submissionRecordFile(cwd: string, runId: string, home?: string): string {
   const ledgerHome = resolveActivationLedgerHome(home);
@@ -177,101 +139,74 @@ function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
   return owned;
 }
 
+function isTerminalRoleName(value: unknown): value is TerminalRoleName {
+  return typeof value === "string" && value.length > 0;
+}
+
+function recordedRole(payload: { role?: unknown; projection?: { role?: unknown } }): TerminalRoleName | undefined {
+  if (isTerminalRoleName(payload.role)) return payload.role;
+  // Historical rows stored role only inside the deleted projection envelope.
+  if (isTerminalRoleName(payload.projection?.role)) return payload.projection.role;
+  return undefined;
+}
+
 /**
- * Latest recorded submission projection for a run.
- * Display/compat view only — not sole acceptance authority (#836).
- * All original payloads live in `readRecordedSubmissions`.
+ * All recorded role submissions in ledger order (#836 multi-submit).
+ * `accepted` is the original payload; never rebuilt from a status/facts envelope.
  */
-export async function readSealedSubmission(
+export async function readRecordedSubmissionRows(
   cwd: string,
   runId: string,
   homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<SealedSubmissionProjection | undefined> {
+): Promise<readonly RecordedSubmissionRow[]> {
   const scope = resolveReadScope(homeOrScope);
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
   const scoped = recordsForAttempt(owned, scope.attemptId);
-  for (let index = scoped.length - 1; index >= 0; index -= 1) {
-    const record = scoped[index];
-    if (record?.kind !== "sealed") continue;
-    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
-    if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) return payload.projection;
+  const out: RecordedSubmissionRow[] = [];
+  for (const record of scoped) {
+    if (record.kind === "sealed") {
+      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> & {
+        projection?: { role?: unknown };
+      } | undefined;
+      if (payload?.type !== "sealed" || payload.accepted === undefined) continue;
+      const role = recordedRole(payload);
+      if (role === undefined) continue;
+      out.push({ role, kind: "accepted", accepted: payload.accepted });
+      continue;
+    }
+    if (record.kind !== "outcome") continue;
+    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> & {
+      projection?: { role?: unknown };
+    } | undefined;
+    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation" || payload.accepted === undefined) {
+      continue;
+    }
+    const role = recordedRole(payload);
+    if (role === undefined) continue;
+    out.push({ role, kind: "audit-escalation", accepted: payload.accepted });
   }
-  return undefined;
+  return out;
 }
 
 /**
  * All raw role payloads in ledger order (#836 multi-submit).
  * Returns `accepted` bytes as stored — unknown, never re-wrapped.
- * Includes sealed accepted rows and audit-escalation rows (both are role submissions).
  */
 export async function readRecordedSubmissions(
   cwd: string,
   runId: string,
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<readonly unknown[]> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
-  const out: unknown[] = [];
-  for (const record of scoped) {
-    if (record.kind === "sealed") {
-      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
-      if (payload?.type === "sealed") out.push(payload.accepted);
-      continue;
-    }
-    if (record.kind === "outcome") {
-      const payload = record.payload as {
-        type?: string;
-        accepted?: unknown;
-        projection?: { decisiveFacts?: unknown };
-      } | undefined;
-      if (payload?.type === "outcome" && payload.accepted !== undefined) {
-        out.push(payload.accepted);
-        continue;
-      }
-      if (payload?.projection?.decisiveFacts !== undefined) {
-        out.push(payload.projection.decisiveFacts);
-      }
-    }
-  }
-  return out;
+  return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).map((row) => row.accepted);
 }
 
-/** Latest sealed projection still used for status/compat settle face. */
-export async function readRecordedSubmissionProjections(
+/** True when the run has at least one recorded accepted or audit-escalation payload. */
+export async function hasRecordedSubmission(
   cwd: string,
   runId: string,
   homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<readonly SealedSubmissionProjection[]> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
-  const out: SealedSubmissionProjection[] = [];
-  for (const record of scoped) {
-    if (record.kind !== "sealed") continue;
-    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
-    if (payload?.type === "sealed" && isAcceptedProjection(payload.projection)) out.push(payload.projection);
-  }
-  return out;
-}
-
-/** Non-final audit-escalation projection written by the submission ledger. */
-export async function readAuditEscalationSubmission(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<AuditEscalationSubmissionProjection | undefined> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
-  for (let index = scoped.length - 1; index >= 0; index -= 1) {
-    const record = scoped[index];
-    if (record?.kind !== "outcome") continue;
-    const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> | undefined;
-    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation") continue;
-    if (isAuditEscalationTerminalProjection(payload.projection)) return payload.projection;
-  }
-  return undefined;
+): Promise<boolean> {
+  return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).length > 0;
 }
 
 export type LatestSubmissionOutcome = Extract<SubmissionLedgerEvent, { type: "outcome" }>;
@@ -320,7 +255,7 @@ export function createSubmissionLedgerHost(
   host: RoleHost,
   outputTools: ReadonlyMap<string, TerminalRoleName>,
   failInfrastructure: (error: unknown, context: HostContext) => never = (error) => { throw error; },
-  projectClosure: (projection: ClosedSubmissionProjection, context: HostContext) => void | Promise<void> = () => undefined,
+  projectClosure: (closed: ClosedSubmission, context: HostContext) => void | Promise<void> = () => undefined,
   options?: { home?: string },
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
@@ -431,38 +366,36 @@ export function createSubmissionLedgerHost(
           // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
           if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
-            const projection: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> = {
-              kind: "audit_escalation",
+            const closed: ClosedSubmission = {
               role,
-              status: "audit_escalation",
-              decisiveFacts: decisiveFactsView(params),
+              kind: "audit_escalation",
+              accepted: params,
             };
             append({
               type: "outcome",
               attemptId,
               toolCallId,
               outcome: "audit-escalation",
+              role,
               accepted: params,
-              projection,
             });
-            await projectClosure(projection, context);
+            await projectClosure(closed, context);
             return result;
           }
           // Terminating-tool wrap records every call; terminate flag does not withhold params.
-          const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = {
-            kind: "accepted",
+          const closed: ClosedSubmission = {
             role,
-            status: statusFromParams(params),
-            decisiveFacts: decisiveFactsView(params),
+            kind: "accepted",
+            accepted: params,
           };
           append({
             type: "sealed",
             attemptId,
             toolCallId,
+            role,
             accepted: params,
-            projection,
           });
-          await projectClosure(projection, context);
+          await projectClosure(closed, context);
           return result;
         },
       });

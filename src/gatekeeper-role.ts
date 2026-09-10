@@ -203,6 +203,11 @@ function projectOfficerDecision(
  * Multiple recorded payloads are all kept — code does not pick last-wins.
  */
 function officerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
+  const outcome = terminal?.roleOutcome;
+  if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
+    return outcome.payloads ?? terminal?.submissions ?? [];
+  }
+  if (outcome?.kind === "failure") return outcome.payloads ?? terminal?.submissions ?? [];
   return terminal?.submissions ?? [];
 }
 
@@ -269,14 +274,11 @@ function projectOfficerTerminal(
     return {
       status: "escalate",
       officer,
-      receipt: recorded.length > 0 ? (recorded.length === 1 ? recorded[0] : recorded) : retainedReceipt(outcome.decisiveFacts),
+      receipt: recorded.length === 1 ? recorded[0] : recorded,
     };
   }
   if (outcome.kind === "accepted") {
-    if (recorded.length > 0) {
-      return projectOfficerPayloads(officer, recorded, outcome.status);
-    }
-    return projectOfficerDecision(officer, outcome.decisiveFacts, outcome.status);
+    return projectOfficerPayloads(officer, recorded);
   }
   return {
     status: "needs_reask",

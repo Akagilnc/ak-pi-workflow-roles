@@ -1,6 +1,5 @@
 /**
  * #836 删 8: no code-compiled axis dispatch.
- * Types remain for historical execution-ledger records and public re-exports.
  * Parent seat invokes packaged code-review skill; this module does not construct or run children.
  */
 export {
@@ -19,9 +18,6 @@ export {
   type ReviewerPromptText as ReviewerPromptIdentity,
 } from "./reviewer-prompt-identity.ts";
 
-import type { ReviewerPinnedTarget } from "./reviewer-pinned-git.ts";
-import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
-
 export type ReviewerIssueFetchResult = Readonly<{
   number: number;
   title?: string;
@@ -33,31 +29,6 @@ export type ReviewerIssueFetcher = (input: {
   ticketNumber: number;
   signal?: AbortSignal;
 }) => Promise<ReviewerIssueFetchResult | undefined>;
-
-export type AcceptedReviewerLeg = Readonly<{
-  axis: "standards" | "spec";
-  prompt: ReviewerPromptText;
-}>;
-
-export type AcceptedReviewerDispatch = Readonly<{
-  identity: string;
-  recipe: "reviewer-common-bundle-v1";
-  targetSnapshot: ReviewerPinnedTarget;
-  legs: readonly AcceptedReviewerLeg[];
-  /** Historical dispatch fields retained for ledger/settlement record shape. */
-  input?: Readonly<{ canonicalSkill?: string; construction?: unknown }>;
-  range?: unknown;
-  authorityRefs?: readonly string[];
-  specDisposition?: "launched" | "skipped-missing";
-  specFetchedMaterial?: unknown;
-}>;
-
-export type AcceptedReviewerExecution = Readonly<{
-  identity: string;
-  recipe: "reviewer-common-bundle-v1";
-  targetSnapshot: ReviewerPinnedTarget;
-  legs: readonly AcceptedReviewerLeg[];
-}>;
 
 export const REVIEWER_PREFLIGHT_VIOLATIONS = [
   "base-invalid",

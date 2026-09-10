@@ -14,10 +14,8 @@ import {
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 
 import {
-  readAuditEscalationSubmission,
-  readLatestSubmissionOutcome,
+  readRecordedSubmissionRows,
   readRecordedSubmissions,
-  readSealedSubmission,
 } from "../submission-ledger.ts";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -65,14 +63,14 @@ import {
   type CoderOutput,
   type FixerOutput,
 } from "../package-contracts/worker-output.ts";
-import { validateAcceptedDetails } from "../package-contracts/terminating-tools.ts";
+
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   type DoctorOutput,
 } from "../doctor-contracts.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
-  type RuntimeReviewerReceiptV2,
+  type ReviewerIntent,
 } from "../package-contracts/reviewer-output.ts";
 import {
   MERGER_OUTPUT_TOOL_NAME,
@@ -175,11 +173,30 @@ function ledgerReadScope(
   };
 }
 
+function roleOutcomeFromRows(
+  role: TerminalRoleName,
+  rows: readonly { readonly role: TerminalRoleName; readonly kind: "accepted" | "audit-escalation"; readonly accepted: unknown }[],
+): Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined {
+  const mine = rows.filter((row) => row.role === role);
+  if (mine.length === 0) return undefined;
+  const payloads = mine.map((row) => row.accepted);
+  if (mine.some((row) => row.kind === "audit-escalation")) {
+    return { kind: "audit_escalation", role, status: "audit_escalation", payloads };
+  }
+  return { kind: "accepted", role, payloads };
+}
+
 async function sealedLedgerOutcome(
   admitted: AdmittedRoleInvocation,
+  role: TerminalRoleName,
   scope?: SettlementCourtScope,
-): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
-  return readSealedSubmission(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted, scope));
+): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+  const rows = await readRecordedSubmissionRows(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted, scope),
+  );
+  return roleOutcomeFromRows(role, rows);
 }
 
 /** #836: every raw role payload in settle scope (调几次记几次). */
@@ -187,9 +204,6 @@ export async function recordedSubmissionPayloads(
   admitted: AdmittedRoleInvocation,
   scope?: SettlementCourtScope,
 ): Promise<readonly unknown[]> {
-  // readRecordedSubmissions already returns raw accepted bytes in order.
-  // Role filter: only include rows that belong to this seat via sealed projections / audit.
-  // Raw list is per-run; multi-role on one run is not the production shape.
   return readRecordedSubmissions(
     admitted.projectRoot,
     admitted.runId,
@@ -202,7 +216,14 @@ export function withSubmissions<T extends TerminalResult>(
   submissions: readonly unknown[],
 ): T {
   if (submissions.length === 0) return terminal;
-  return { ...terminal, submissions };
+  const roleOutcome = terminal.roleOutcome;
+  const withPayloads =
+    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
+      ? { ...roleOutcome, payloads: (roleOutcome.payloads ?? []).length > 0 ? roleOutcome.payloads : submissions }
+      : roleOutcome.kind === "failure"
+        ? { ...roleOutcome, payloads: roleOutcome.payloads ?? submissions }
+        : roleOutcome;
+  return { ...terminal, roleOutcome: withPayloads, submissions };
 }
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
@@ -247,29 +268,12 @@ export async function settleHostEndedNoReceipt(
   );
 }
 
-async function auditEscalationLedgerOutcome(
-  admitted: AdmittedRoleInvocation,
-  role: TerminalRoleName,
-  scope?: SettlementCourtScope,
-): Promise<Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> | undefined> {
-  const projection = await readAuditEscalationSubmission(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted, scope),
-  );
-  if (projection?.role !== role) return undefined;
-  return projection;
-}
-
 async function closedLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
   scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, scope);
-  return sealed?.role === role
-    ? sealed
-    : auditEscalationLedgerOutcome(admitted, role, scope);
+  return sealedLedgerOutcome(admitted, role, scope);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -283,6 +287,7 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
+  lastRolePayloadRecord,
   recommendationNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
@@ -1450,26 +1455,6 @@ function safelyRead(object: object, key: string): { readable: true; value: unkno
   }
 }
 
-function auditNoReceiptDecisiveFact(candidate: object): Record<string, unknown> {
-  const projected = safelyRead(candidate, "auditNoReceipt");
-  if (!projected.readable || projected.value === undefined) return {};
-  try {
-    return { auditNoReceipt: parseNoReceiptLifecycleFacts(projected.value) };
-  } catch {
-    return {};
-  }
-}
-
-/** Keep optional auditNoReceipt parallel fact when present on sealed details. */
-function withAuditNoReceiptFacts(
-  candidate: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
-  return {
-    ...candidate,
-    ...auditNoReceiptDecisiveFact(candidate),
-  };
-}
-
 function toolResultText(message: SessionMessage): string {
   const content = message.content;
   if (typeof content === "string") return content.trim();
@@ -2360,12 +2345,8 @@ export async function publishCoderArtifacts(
 }
 
 /** Lawful Coder accepted outcome extracted from session (shared success interface). */
-export type LawfulCoderRoleOutcome = {
-  kind: "accepted";
-  role: "coder";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulCoderRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
+
 /**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
  * Malformed JSONL / other read failures throw with knownCause=session.
@@ -2396,20 +2377,7 @@ export async function readLawfulJudgeRoleOutcome(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<LawfulJudgeRoleOutcome | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, scope);
-  if (sealed?.role === "judge") {
-    const details = sealed.decisiveFacts as Record<string, unknown>;
-    // Display status from the recorded projection; original payloads ride `submissions`.
-    return {
-      kind: "accepted",
-      role: "judge",
-      status: sealed.status,
-      // #757: sealed details pass through (judgeStatus already on the receipt).
-      decisiveFacts: withAuditNoReceiptFacts(details),
-    };
-  }
-  // Non-final: consume ledger audit-escalation projection (no JSONL accepted rebuild).
-  return auditEscalationLedgerOutcome(admitted, "judge", scope);
+  return sealedLedgerOutcome(admitted, "judge", scope);
 }
 
 /**
@@ -2492,11 +2460,10 @@ async function settleLawfulCoderTerminalResult(
 ): Promise<TerminalResult | undefined> {
   const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
   if (ledgerOutcome === undefined) return undefined;
-  // #757: sealed facts pass through — no shape re-project / field drop.
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   const output: CoderOutput | undefined =
     ledgerOutcome.kind === "accepted"
-      ? (ledgerOutcome.decisiveFacts as unknown as CoderOutput)
+      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as CoderOutput | undefined)
       : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
@@ -2659,12 +2626,7 @@ export async function publishFixerArtifacts(
 }
 
 /** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
-export type LawfulFixerRoleOutcome = {
-  kind: "accepted";
-  role: "fixer";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulFixerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
   authority: DurablePrincipalAuthority,
@@ -2677,11 +2639,10 @@ async function settleLawfulFixerTerminalResult(
 ): Promise<TerminalResult | undefined> {
   const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
   if (ledgerOutcome === undefined) return undefined;
-  // #757: sealed facts pass through — no shape re-project / field drop.
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
   const output: FixerOutput | undefined =
     ledgerOutcome.kind === "accepted"
-      ? (ledgerOutcome.decisiveFacts as unknown as FixerOutput)
+      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as FixerOutput | undefined)
       : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
@@ -2793,13 +2754,7 @@ export async function publishCollectorArtifacts(
 }
 
 /** Lawful Collector accepted outcome extracted from session. */
-export type LawfulCollectorRoleOutcome = {
-  kind: "accepted";
-  role: "collector";
-  /** Collector has no status leaf — sealed projection carries acceptedFacts collected. */
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulCollectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
@@ -2808,8 +2763,8 @@ async function settleLawfulCollectorTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, scope);
-  if (roleOutcome?.role !== "collector") {
+  const roleOutcome = await sealedLedgerOutcome(admitted, "collector", scope);
+  if (roleOutcome?.role !== "collector" || roleOutcome.kind !== "accepted") {
     // Bounded to the current attempt so multi-attempt resume timeout/no-output
     // is not masked by a prior wait-tool residual (#633).
     const scanStart = currentAttemptStartIndex(entries);
@@ -2829,14 +2784,8 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  // #757 / #836: sealed facts pass through — no admitted-identity refuse.
-  const receipt = roleOutcome.decisiveFacts as unknown as CollectorReceipt;
-  const accepted: LawfulCollectorRoleOutcome = {
-    kind: "accepted",
-    role: "collector",
-    status: roleOutcome.status,
-    decisiveFacts: { ...roleOutcome.decisiveFacts },
-  };
+  const receipt = (lastRolePayloadRecord(roleOutcome.payloads ?? []) ?? {}) as CollectorReceipt;
+  const accepted: LawfulCollectorRoleOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
@@ -2942,35 +2891,25 @@ export async function publishDoctorArtifacts(
 }
 
 /** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
-export type LawfulDoctorRoleOutcome =
-  | {
-      kind: "accepted";
-      role: "doctor";
-      status: string;
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    }
-  | {
-      kind: "audit_escalation";
-      role: "doctor";
-      status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
-    };
+export type LawfulDoctorRoleOutcome = Extract<
+  TerminalRoleOutcome,
+  { kind: "accepted" } | { kind: "audit_escalation" }
+>;
 async function settleLawfulDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, scope);
+  const sealed = await sealedLedgerOutcome(admitted, "doctor", scope);
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  if (sealed?.role !== "doctor") {
-    const escalation = await auditEscalationLedgerOutcome(admitted, "doctor", scope);
-    if (escalation === undefined) return undefined;
-    const artifacts = await publishDoctorArtifacts(admitted, escalation, coordinates);
+  if (sealed === undefined) return undefined;
+  if (sealed.kind === "audit_escalation") {
+    const artifacts = await publishDoctorArtifacts(admitted, sealed, coordinates);
     return withOptionalGateProjection(
       {
-        roleOutcome: escalation,
+        roleOutcome: sealed,
         navigator: extractNavigatorFact(entries),
         artifacts,
         runId: admitted.runId,
@@ -2978,14 +2917,8 @@ async function settleLawfulDoctorTerminalResult(
       sessionDirectory,
     );
   }
-  // #757: sealed facts pass through — no validateRecordedDoctorOutput shape gate.
-  const output = sealed.decisiveFacts as unknown as DoctorOutput;
-  const roleOutcome: Extract<LawfulDoctorRoleOutcome, { kind: "accepted" }> = {
-    kind: "accepted",
-    role: "doctor",
-    status: sealed.status,
-    decisiveFacts: { ...sealed.decisiveFacts },
-  };
+  const output = (lastRolePayloadRecord(sealed.payloads ?? []) ?? {}) as DoctorOutput;
+  const roleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
@@ -3133,12 +3066,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
 }
 
 /** Lawful Notary accepted outcome (pass/bounce/escalate). */
-export type LawfulNotaryRoleOutcome = {
-  kind: "accepted";
-  role: "notary";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulNotaryRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulNotaryTerminalResult(
   admitted: AdmittedNotaryInvocation,
@@ -3177,12 +3105,7 @@ export async function trySettleNotaryTerminalResult(
 }
 
 /** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
-export type LawfulCountersignRoleOutcome = {
-  kind: "accepted";
-  role: "countersign";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulCountersignRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulCountersignTerminalResult(
   admitted: AdmittedCountersignInvocation,
@@ -3220,12 +3143,7 @@ export async function trySettleCountersignTerminalResult(
 }
 
 /** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
-export type LawfulGleanerLeftRoleOutcome = {
-  kind: "accepted";
-  role: "gleaner-left";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulGleanerLeftRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulGleanerLeftTerminalResult(
   admitted: AdmittedGleanerLeftInvocation,
@@ -3263,12 +3181,7 @@ export async function trySettleGleanerLeftTerminalResult(
 }
 
 /** Lawful Diarist accepted outcome (completed 入录选择, #708). */
-export type LawfulDiaristRoleOutcome = {
-  kind: "accepted";
-  role: "diarist";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulDiaristRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulDiaristTerminalResult(
   admitted: AdmittedDiaristInvocation,
@@ -3291,12 +3204,7 @@ export async function trySettleDiaristTerminalResult(
 }
 
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */
-export type LawfulInspectorRoleOutcome = {
-  kind: "accepted";
-  role: "inspector";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulInspectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulInspectorTerminalResult(
   admitted: AdmittedInspectorInvocation,
@@ -3318,12 +3226,7 @@ export async function trySettleInspectorTerminalResult(
 }
 
 /** Lawful Gatekeeper accepted outcome (dispatch | pass, #639). */
-export type LawfulGatekeeperRoleOutcome = {
-  kind: "accepted";
-  role: "gatekeeper";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulGatekeeperRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulGatekeeperTerminalResult(
   admitted: AdmittedGatekeeperInvocation,
@@ -3346,12 +3249,7 @@ export async function trySettleGatekeeperTerminalResult(
 }
 
 /** Lawful Navigator accepted outcome (route advice, #639). */
-export type LawfulNavigatorRoleOutcome = {
-  kind: "accepted";
-  role: "navigator";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulNavigatorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulNavigatorTerminalResult(
   admitted: AdmittedNavigatorInvocation,
@@ -3374,12 +3272,7 @@ export async function trySettleNavigatorTerminalResult(
 }
 
 /** Lawful Auditor accepted outcome (pass/bounce/escalate, #675 / #754). */
-export type LawfulAuditorRoleOutcome = {
-  kind: "accepted";
-  role: "auditor";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulAuditorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 async function settleLawfulAuditorTerminalResult(
   admitted: import("./invocation.ts").AdmittedAuditorInvocation,
@@ -3464,7 +3357,7 @@ export async function publishReviewerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly reviewerReceipt?: RuntimeReviewerReceiptV2;
+    readonly reviewerReceipt?: ReviewerIntent;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -3501,10 +3394,6 @@ export async function publishReviewerArtifacts(
         ...(admitted.instructionEmpty
           ? {}
           : { callerProvenance: admitted.instruction }),
-        // Self-fetch Spec bytes + source annotation when primary path produced material (#343).
-        ...(options.reviewerReceipt?.specFetchedMaterial === undefined
-          ? {}
-          : { specFetchedMaterial: options.reviewerReceipt.specFetchedMaterial }),
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
           frozenPath: a.frozenPath,
@@ -3528,12 +3417,7 @@ export async function publishReviewerArtifacts(
 }
 
 /** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
-export type LawfulReviewerRoleOutcome = {
-  kind: "accepted";
-  role: "reviewer";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulReviewerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3544,19 +3428,13 @@ async function settleLawfulReviewerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, scope);
-  if (sealed?.role !== "reviewer") return undefined;
+  const sealed = await sealedLedgerOutcome(admitted, "reviewer", scope);
+  if (sealed?.role !== "reviewer" || sealed.kind !== "accepted") return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  // #757: sealed facts pass through — no validateRuntimeReviewerReceipt shape gate.
-  const receipt = sealed.decisiveFacts as unknown as RuntimeReviewerReceiptV2;
-  const roleOutcome: LawfulReviewerRoleOutcome = {
-    kind: "accepted",
-    role: "reviewer",
-    status: sealed.status,
-    decisiveFacts: { ...sealed.decisiveFacts },
-  };
+  const receipt = lastRolePayloadRecord(sealed.payloads ?? []) as ReviewerIntent | undefined;
+  const roleOutcome: LawfulReviewerRoleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
@@ -3569,7 +3447,7 @@ async function settleLawfulReviewerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      reviewerReceipt: receipt,
+      ...(receipt === undefined ? {} : { reviewerReceipt: receipt }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -3714,12 +3592,7 @@ export async function publishMergerArtifacts(
 }
 
 /** Lawful Merger accepted outcome extracted from session (shared success interface). */
-export type LawfulMergerRoleOutcome = {
-  kind: "accepted";
-  role: "merger";
-  status: string;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
+export type LawfulMergerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3733,8 +3606,8 @@ async function settleLawfulMergerTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, scope);
-  if (roleOutcome?.role !== "merger") {
+  const roleOutcome = await sealedLedgerOutcome(admitted, "merger", scope);
+  if (roleOutcome?.role !== "merger" || roleOutcome.kind !== "accepted") {
     // #836: non-sole-round barrier deleted; residual path is host/session only.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
@@ -3752,13 +3625,7 @@ async function settleLawfulMergerTerminalResult(
     }
     return undefined;
   }
-  // #757 / #836: recorded facts pass through — no method-expansion veto, no shape gate.
-  const accepted: LawfulMergerRoleOutcome = {
-    kind: "accepted",
-    role: "merger",
-    status: roleOutcome.status,
-    decisiveFacts: { ...roleOutcome.decisiveFacts },
-  };
+  const accepted: LawfulMergerRoleOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractMergerMethodInvocations(entries, {
     allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
@@ -3768,7 +3635,7 @@ async function settleLawfulMergerTerminalResult(
     accepted,
     coordinates,
     {
-      mergerOutput: accepted.decisiveFacts as unknown as MergerOutput,
+      mergerOutput: (lastRolePayloadRecord(accepted.payloads ?? []) ?? {}) as MergerOutput,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
