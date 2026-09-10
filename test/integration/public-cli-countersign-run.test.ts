@@ -862,6 +862,7 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
         sessionAppender: appendPiSessionCustomEntry,
         roleTurnHost: wrappedHost,
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d45",
+        host: "claude",
       },
       captureIo().io,
       parseCountersignArgv,
@@ -891,6 +892,20 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
     );
     assert.equal(diaristState?.role, "diarist");
     assert.equal(diaristState?.state, "terminal");
+
+    const diaristInvocation = JSON.parse(
+      await readFile(join(diaristCoords.runDirectory, "invocation.json"), "utf8"),
+    ) as { host?: string };
+    assert.equal(
+      diaristInvocation.host,
+      "pi",
+      "court diarist station child must use own seat host (default pi), not parent host",
+    );
+    assert.notEqual(
+      diaristInvocation.host,
+      "claude",
+      "parent host must not be copied onto court diarist station child",
+    );
 
     // Feature observation: materials carry the typed volume paths (not heading/wording).
     const volume = resolveTicketProvenanceVolume(582, project, home);

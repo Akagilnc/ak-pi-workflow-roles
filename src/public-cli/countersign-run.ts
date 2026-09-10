@@ -125,32 +125,22 @@ async function invokeCourtDiarist(input: {
     },
   };
 
-  const { runPublicDiarist } = await import("./diarist-run.ts");
-  const result = await runPublicDiarist(
-    ["--project", input.projectRoot, input.instruction],
-    {
-      home: env.home,
-      agentDir: env.agentDir,
-      packageRoot: env.packageRoot,
-      cwd: env.cwd,
-      principalAuthority: env.principalAuthority,
-      roleTurnHost: env.roleTurnHost,
-      sessionAppender: env.sessionAppender,
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.engine === undefined ? {} : { engine: env.engine }),
-      ...(env.host === undefined ? {} : { host: env.host }),
-      ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-      ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
-      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-      ...(env.signal === undefined ? {} : { signal: env.signal }),
-      // Typed handoff only — never derived from summons prose.
-      ...(input.boundTicketNumber === undefined
-        ? {}
-        : { boundTicketNumber: input.boundTicketNumber }),
-    },
-    quietIo,
-    parseDiaristArgv,
-  );
+  const { summonPublicRole } = await import("../public-role-summons.ts");
+  const result = await summonPublicRole({
+    role: "diarist",
+    argv: ["--project", input.projectRoot, input.instruction],
+    cwd: env.cwd,
+    home: env.home,
+    agentDir: env.agentDir,
+    packageRoot: env.packageRoot,
+    io: quietIo,
+    ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(input.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: input.boundTicketNumber }),
+    ...(env.roleTurnHost === undefined ? {} : { roleTurnHost: env.roleTurnHost }),
+  });
 
   const roleOutcome = result.terminal?.roleOutcome;
   // Discriminated union: only non-failure arms carry status (failure uses cause).
@@ -177,7 +167,7 @@ async function invokeCourtDiarist(input: {
     };
   }
 
-  const asserted = result.admitted?.ticketNumber;
+  const asserted = (result.admitted as { ticketNumber?: number } | undefined)?.ticketNumber;
   if (
     typeof asserted === "number" &&
     Number.isSafeInteger(asserted) &&

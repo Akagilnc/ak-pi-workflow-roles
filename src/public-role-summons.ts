@@ -29,7 +29,8 @@ export type PublicSummonRole =
   | "navigator"
   | "gatekeeper"
   | "judge"
-  | "doctor";
+  | "doctor"
+  | "diarist";
 
 export type PublicSummonRequest = {
   readonly role: PublicSummonRole;
@@ -72,6 +73,8 @@ export type PublicSummonRequest = {
   readonly roleTurnHost?: RoleTurnHost;
   /** Offline test inject for deterministic run ids (same face as public CLI). */
   readonly createRunId?: () => string;
+  /** Typed ticket number handoff for diarist child run (#840). */
+  readonly boundTicketNumber?: number;
 };
 
 export type PublicSummonResult = {
@@ -81,6 +84,8 @@ export type PublicSummonResult = {
   readonly runDirectory?: string;
   /** Offline diagnostics from nested CLI (structural rejection text). */
   readonly stderr?: string;
+  /** Admitted role invocation from nested run. */
+  readonly admitted?: import("./public-cli/invocation.ts").AdmittedRoleInvocation;
 };
 
 function createCapturingIo(): { io: CliIo; stderrText(): string } {
@@ -304,6 +309,9 @@ export async function summonPublicRole(
     ...(options.gateReviewInstruction === undefined
       ? {}
       : { gateReviewInstruction: options.gateReviewInstruction }),
+    ...(options.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: options.boundTicketNumber }),
     // Offline test injects — same faces as public CLI env (production leaves unset).
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -391,6 +399,14 @@ export async function summonPublicRole(
       result = await runPublicDoctor(options.argv, env, io, parseDoctorArgv);
       break;
     }
+    case "diarist": {
+      const [{ runPublicDiarist }, { parseDiaristArgv }] = await Promise.all([
+        import("./public-cli/diarist-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      result = await runPublicDiarist(options.argv, env, io, parseDiaristArgv);
+      break;
+    }
   }
 
   const stderr = captured?.stderrText();
@@ -398,6 +414,7 @@ export async function summonPublicRole(
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+    ...(result.admitted === undefined ? {} : { admitted: result.admitted as import("./public-cli/invocation.ts").AdmittedRoleInvocation }),
     ...(typeof runDirectory === "string" && runDirectory.trim() !== ""
       ? { runDirectory }
       : {}),
