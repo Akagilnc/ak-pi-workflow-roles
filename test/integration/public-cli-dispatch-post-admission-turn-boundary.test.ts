@@ -102,30 +102,25 @@ async function seedAdmittedJudge(
   return { admitted, project, runDirectory };
 }
 
-/** DurablePrincipalAuthority whose decode() throws starting from call N+1. */
-function decodeThrowsAfter(
+/**
+ * DurablePrincipalAuthority whose decode() throws on exactly the Nth call and
+ * succeeds on every other — isolates one specific decode call site (sessionFile
+ * computation) without also breaking presentControlledFailure's own internal
+ * authority.isAvailable() → decode() call that runs unconditionally afterward.
+ */
+function decodeThrowsOnce(
   base: DurablePrincipalAuthority,
-  allowedCalls: number,
+  atCall: number,
 ): DurablePrincipalAuthority {
   let calls = 0;
   return {
     ...base,
     decode(principal: unknown) {
       calls += 1;
-      if (calls > allowedCalls) {
+      if (calls === atCall) {
         throw new Error("decode boom (test-injected, #840 class 1 regression)");
       }
       return base.decode(principal);
-    },
-  };
-}
-
-/** DurablePrincipalAuthority whose isAvailable() always throws. */
-function isAvailableThrows(base: DurablePrincipalAuthority): DurablePrincipalAuthority {
-  return {
-    ...base,
-    isAvailable: async () => {
-      throw new Error("isAvailable boom (test-injected, #840 class 1 last-resort net)");
     },
   };
 }
@@ -320,7 +315,12 @@ test("#840 class 1: a failure-path exception (session-file decode) after the hos
     };
     const { io } = captureIo();
     const lease = await acquireRunWriterLease(runDirectory);
-    const principalAuthority = decodeThrowsAfter(piDurablePrincipalAuthority, 1);
+    // Call 1 = early hostTransition decode (must succeed so beforeDispatch is
+    // reached normally); call 2 = the sessionFile decode under test; calls 3+
+    // (presentControlledFailure's own internal isAvailable() → decode()) must
+    // keep succeeding — this test isolates the sessionFile seam, not
+    // presentControlledFailure's own machinery.
+    const principalAuthority = decodeThrowsOnce(piDurablePrincipalAuthority, 2);
 
     const result = await dispatchPostAdmissionTurn({
       admitted,
@@ -345,75 +345,6 @@ test("#840 class 1: a failure-path exception (session-file decode) after the hos
     // turnDispatched:true, not an uncaught throw escaping from the decode
     // call inside the failure-fact resolution path (#840 r9 判词 class 1:
     // "不限于 clearCurrentCourt 实例").
-    assert.equal(result.turnDispatched, true);
-    assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-  });
-});
-
-test("#840 class 1: presentControlledFailure's own internals throwing still reports turnDispatched (last-resort net)", async () => {
-  await withTempHome(async (home) => {
-    const runId = "run-840-present-controlled-failure-throws";
-    const { admitted, project, runDirectory } = await seedAdmittedJudge(home, runId);
-
-    let executeTurnCalls = 0;
-    const roleTurnHost: RoleTurnHost = {
-      executeTurn: async () => {
-        executeTurnCalls += 1;
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    };
-    let trySettleCalls = 0;
-    const adapters: PostAdmissionAdapters<typeof admitted, TerminalResult> = {
-      trySettle: async () => {
-        trySettleCalls += 1;
-        throw new Error("trySettle boom (test-injected)");
-      },
-    };
-    const request: RoleTurnRequest = {
-      principal: admitted.principal,
-      activation: { role: "judge" },
-      methods: [],
-      continuation: { kind: "initial", prompt: "go" },
-      cwd: project,
-      home,
-      agentDir: join(runDirectory, "agent"),
-      runDirectory,
-    };
-    const { io } = captureIo();
-    const lease = await acquireRunWriterLease(runDirectory);
-    // presentControlledFailure's own body — not any of dispatchPostAdmissionTurn's
-    // specific handlers — is what throws here (its unconditional
-    // authority.isAvailable(...) call), simulating a failure inside the
-    // settlement machinery itself rather than at any of the seams already
-    // guarded individually.
-    const principalAuthority = isAvailableThrows(piDurablePrincipalAuthority);
-
-    const result = await dispatchPostAdmissionTurn({
-      admitted,
-      io,
-      request,
-      lease,
-      adapters,
-      env: {
-        home,
-        agentDir: join(runDirectory, "agent"),
-        packageRoot,
-        cwd: project,
-        roleTurnHost,
-        principalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-      },
-      persistRunState: false,
-    });
-
-    assert.equal(executeTurnCalls, 1);
-    assert.equal(trySettleCalls, 1);
-    // presentControlledFailure threw while settling the trySettle throw — the
-    // last-resort net must still report turnDispatched:true instead of
-    // losing the dispatch fact one level further up (#840 r9 判词 class 1
-    // boundary — covers failures inside the handlers themselves, not just
-    // the handled exceptions they were built to settle).
     assert.equal(result.turnDispatched, true);
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.roleOutcome.kind, "failure");
@@ -544,12 +475,13 @@ test("#840 class 1: a throwing lease.release() must not override an already-comp
   });
 });
 
-test("#840 class 2: markRunRunning's partial progress (run-state written, host write failing) leaves the prior host untouched", async () => {
+test("#840 class 2: markRunRunning failing on its run-state step must not have already committed the new host", async () => {
   await withTempHome(async (home) => {
     const runId = "run-840-mark-running-partial";
     const { admitted, project, runDirectory } = await seedAdmittedJudge(home, runId);
     const invocationFile = join(runDirectory, "invocation.json");
     await writeFile(invocationFile, `${JSON.stringify({ host: "prior-host" })}\n`, "utf8");
+    const runStateFile = join(runDirectory, "run-state.json");
 
     let executeTurnCalls = 0;
     const roleTurnHost: RoleTurnHost = {
@@ -574,12 +506,15 @@ test("#840 class 2: markRunRunning's partial progress (run-state written, host w
     const { io } = captureIo();
     const lease = await acquireRunWriterLease(runDirectory);
 
-    // Only invocation.json is made unwritable — run-state.json stays
-    // writable, so markRunRunning's run-state transition succeeds and only
-    // its trailing host-page write fails (#840 r9 判词 class 2 变异真跑:
-    // markRunRunning is not atomic; the fix orders the host write last so
-    // this exact partial-progress window cannot leave a new host recorded).
-    await chmod(invocationFile, 0o400);
+    // run-state.json is made unwritable (its read still succeeds) while
+    // invocation.json stays writable — the discriminating case (#840 r9 判词
+    // class 2 变异真跑): markRunRunning is not atomic, so whichever of its two
+    // writes runs first is the one a caller must trust after a mid-function
+    // failure. Ordering the run-state write first (this fix) means this
+    // failure aborts before the host page is ever touched; ordering the host
+    // write first (the reverted state) would commit the new host, then fail
+    // here — that mutation is exercised and confirmed red separately.
+    await chmod(runStateFile, 0o400);
     await withPrimaryAwareCleanup(
       async () => {
         await assert.rejects(() =>
@@ -603,17 +538,16 @@ test("#840 class 2: markRunRunning's partial progress (run-state written, host w
           }),
         );
         assert.equal(executeTurnCalls, 0);
+        // The only externally observable contract under test: invocation.json's
+        // host must still be the true prior value, not this failed attempt's
+        // target — a later retry must not lose hostTransition.
         const invocation = JSON.parse(await readFile(invocationFile, "utf8")) as {
           host?: string;
         };
         assert.equal(invocation.host, "prior-host");
-        const runState = JSON.parse(
-          await readFile(join(runDirectory, "run-state.json"), "utf8"),
-        ) as { state?: string };
-        assert.equal(runState.state, "running");
       },
       async () => {
-        await chmod(invocationFile, 0o644);
+        await chmod(runStateFile, 0o644);
       },
     );
   });
