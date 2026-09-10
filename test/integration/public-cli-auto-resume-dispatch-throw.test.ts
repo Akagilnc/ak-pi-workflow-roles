@@ -20,7 +20,10 @@ import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import { dispatchPostAdmissionTurn, type PostAdmissionAdapters } from "../../src/public-cli/post-admission.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { buildEnv, buildFixture } from "../helpers/dispatch-post-admission-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
@@ -134,8 +137,87 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
   });
 });
 
-// #840 r9 判词 class 1 (TurnDispatchedFailure switching the retry payload to
-// resume) is proven at test/integration/public-cli-dispatch-post-admission-turn-boundary.test.ts
-// through the real dispatchPostAdmissionTurn → settleAfterTurnStarted →
-// presentControlledFailure chain, not a test-constructed marker thrown
-// directly into this loop.
+/** DurablePrincipalAuthority whose isAvailable() throws on exactly the Nth call. */
+function isAvailableThrowsOnce(base: DurablePrincipalAuthority, atCall: number): DurablePrincipalAuthority {
+  let calls = 0;
+  return {
+    ...base,
+    isAvailable(principal) {
+      calls += 1;
+      if (calls === atCall) {
+        throw new Error("isAvailable boom (test-injected, presentControlledFailure's own internals)");
+      }
+      return base.isAvailable(principal);
+    },
+  };
+}
+
+test("#840 r9 判词 class 1: a settlement-authority failure after the turn started still switches the real next retry to a resume payload", async()=>{
+  await withTempHome(async(home)=>{
+    const { admitted, runDirectory, project } = await buildFixture(home, "run-840-settlement-internals-throw");
+    // isAvailable() must succeed once dispatchPostAdmissionTurn's own session
+    // file exists, or every attempt's settlement would fail for an unrelated
+    // reason (fixturePrincipal alone does not create session.jsonl).
+    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "{}\n", "utf8");
+
+    const seenContinuationKinds:string[]=[];
+    let executeTurnCalls=0;
+    const roleTurnHost:RoleTurnHost={
+      executeTurn: async (request) => {
+        executeTurnCalls+=1;
+        seenContinuationKinds.push(request.continuation.kind);
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    // Never settles — every attempt falls through to dispatchPostAdmissionTurn's
+    // tail failure-fact path, which is where settleAfterTurnStarted calls
+    // presentControlledFailure — the real production seam under test (#840 r9
+    // 判词 class 1), not a test-constructed TurnDispatchedFailure marker.
+    let trySettleCalls=0;
+    const adapters:PostAdmissionAdapters<typeof admitted, TerminalResult>={
+      trySettle: async () => { trySettleCalls+=1; return undefined; },
+    };
+    // Call 1 = presentControlledFailure's own unconditional authority.isAvailable()
+    // check inside attempt 1's real tail settlement. Calls 2+ (this loop's own
+    // post-throw isAvailable gate, then attempt 2's own settlement) succeed.
+    const principalAuthority=isAvailableThrowsOnce(piDurablePrincipalAuthority,1);
+    const {io}=captureIo();
+
+    const buildInitialRequest=():RoleTurnRequest=>({
+      principal: admitted.principal, activation: { role: "judge" }, methods: [],
+      continuation: { kind: "initial", prompt: "go" },
+      cwd: project, home, agentDir: join(runDirectory,"agent"), runDirectory,
+    });
+    const buildResumeRequest=():RoleTurnRequest=>({
+      ...buildInitialRequest(), continuation: { kind: "resume", prompt: "continue" },
+    });
+
+    const result=await runWithAutoResumeLoop({
+      admitted:{ runDirectory, role: "judge", runId: admitted.runId, principal: admitted.principal },
+      principalAuthority,
+      io,
+      sessionAppender: appendPiSessionCustomEntry,
+      autoResumeLimit: 1,
+      buildInitialPayload: buildInitialRequest,
+      buildResumePayload: buildResumeRequest,
+      dispatch: (request,lease,_isFirst,attemptIo) =>
+        dispatchPostAdmissionTurn({
+          admitted, io: attemptIo, request, lease, adapters,
+          env: buildEnv({ project, runDirectory }, home, roleTurnHost, { principalAuthority }),
+          persistRunState: false,
+        }),
+    });
+
+    // Attempt 1 genuinely dispatched (executeTurn ran with the initial
+    // continuation), then presentControlledFailure's own isAvailable() threw —
+    // production converted that into a TurnDispatchedFailure rather than an
+    // uncaught throw with no dispatch-fact signal, so attempt 2 receives the
+    // resume payload — proving the fact crossed the real dispatchPostAdmissionTurn
+    // → runWithAutoResumeLoop boundary, not a test-injected shortcut.
+    assert.equal(executeTurnCalls,2);
+    assert.equal(trySettleCalls,2);
+    assert.deepEqual(seenContinuationKinds,["initial","resume"]);
+    assert.equal(result.exitCode,1);
+    assert.equal(result.terminal?.roleOutcome.kind,"failure");
+  });
+});
