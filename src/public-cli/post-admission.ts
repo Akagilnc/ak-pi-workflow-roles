@@ -483,14 +483,19 @@ async function settleAfterTurnStarted<
  * failure still settles through the single existing controlled-failure
  * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080
  * single-settlement-disposition) — never a second hand-rolled
- * classify/artifact/Terminal (#836 r12 class 3). A lawful settlement's own
- * persist failure stops the caller's retry loop immediately (skipAutoResume)
- * so the already-settled result is never replayed (#840 已交劳动只整理终局不
- * 重做). A non-lawful outcome's persist failure is not itself a host-turn
- * failure — it never enters the caller's own auto-resume/retry accounting;
- * it rides beside the original (unchanged) result via a real stderr trace
- * only (失败诚实宪法 真因必须落痕), leaving that result's own budget/session
- * gates to decide what happens next.
+ * classify/artifact/Terminal (#836 r12 class 3), and never only a stderr
+ * trace on a caller-supplied io that may itself be a no-op dummy (#836 r13
+ * class 2 — the two dispatch closures above pass this function the loop's
+ * per-attempt attemptIo, which runWithAutoResumeLoop sets to a stdout/stderr
+ * no-op `dummyIo`; a stderr-only trace there is never seen anywhere and the
+ * exception is otherwise swallowed — 失败诚实宪法 真因必须落痕, catch 后照常
+ * 继续视同缺陷). Every real persist failure — lawful or not — settles the
+ * same way: through settleAfterTurnStarted, which attaches the run's already
+ * -recorded ledger submissions to the new failure terminal
+ * (attachRecordedSubmissions inside presentControlledFailure) so the original
+ * payload rides alongside, and returns with skipAutoResume so the caller's
+ * loop presents this terminal once (to its own real io) and stops — the
+ * failure never re-enters host auto-resume/retry accounting.
  */
 async function settleDeferredPersist<
   A extends AdmittedRoleInvocation,
@@ -516,14 +521,10 @@ async function settleDeferredPersist<
     await persistReturnedRunState(admitted, authority, lawful ? { lawful: true } : undefined);
     return settledResult;
   } catch (error) {
-    if (!lawful) {
-      io.stderr(
-        formatCliDiagnostic(
-          `run-state persist failed after settlement (continuing under existing retry budget): ${describeErrorIdentity(error)}`,
-        ),
-      );
-      return settledResult;
-    }
+    // #836 r13 class 2: lawful and non-lawful persist failures settle
+    // identically — both are real infra failures on the same write, and both
+    // must be presented loudly through the one existing authority rather than
+    // one of them only tracing to an io the caller may have made a no-op.
     const failed = await settleAfterTurnStarted(
       admitted,
       { timedOut: false, code: null, stderr: "", thrown: error, skipRunStateWrite: true },
