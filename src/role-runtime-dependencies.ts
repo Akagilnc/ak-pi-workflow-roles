@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "./canonical-skill-binding.ts";
-import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "./collector-github.ts";
+import { createGhCollectorGitHubTransport } from "./collector-github.ts";
 import { createPiDoctorAuditor } from "./doctor-auditor.ts";
 import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
@@ -33,7 +33,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
-    createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),

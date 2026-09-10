@@ -117,8 +117,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -400,7 +399,7 @@ export type {
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
 export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+export type { ReviewerDispatchRunResult } from "./reviewer-execution-ledger.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
@@ -573,8 +572,6 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
-  /** Shared-seam issue-fetch capability for Reviewer Spec self-fetch (#343). */
-  createReviewerIssueFetcher?(): ReviewerIssueFetcher;
   loadCollectorSoul?(): Promise<string>;
   /** #677: optional packaged seed for first-use general bot handbook. */
   loadCollectorHandbookSeed?(): Promise<string>;
@@ -599,16 +596,6 @@ export type RoleRuntimeDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
-  runReviewerDispatch?(
-    dispatch: AcceptedReviewerExecution,
-    options: {
-      context: HostContext;
-      signal?: AbortSignal;
-      /** Request-scoped RoleHost flag reader for engine axis (#818). */
-      getFlag?: (name: string) => boolean | string | undefined;
-    },
-  ): Promise<ReviewerDispatchRunResult>;
-  shutdownReviewerAgent?(): Promise<void>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -1146,7 +1133,27 @@ export function createRoleRuntimeExtension(
           pendingNavigatorPresentation = { event, report };
         }
         // 过时不候: do not await sidecar teardown — parent court must close.
-        void Promise.resolve(attendance.dispose()).catch(() => undefined);
+        // Dispose failure is recorded, not washed; it must not re-block the court.
+        void Promise.resolve(attendance.dispose()).then(
+          undefined,
+          (error) => {
+            try {
+              sitianReport({
+                level: "event",
+                kind: "navigator-dispose-failure",
+                payload: {
+                  diagnostic: error instanceof Error ? error.message : String(error),
+                },
+                source: "role-runtime",
+              });
+            } catch (recordError) {
+              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+                diagnostic: error instanceof Error ? error.message : String(error),
+                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              });
+            }
+          },
+        );
       })();
       pendingNavigatorSettlement = pending;
       await pending;
@@ -1482,21 +1489,6 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
-        ...(dependencies.createReviewerIssueFetcher === undefined
-          ? {}
-          : { fetchIssue: dependencies.createReviewerIssueFetcher() }),
-        async runDispatch(dispatch, options) {
-          if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          // #818: request-scoped engine flag reaches axis sub-session via same RoleHost
-          // that parent registerEngineDetourTool reads — never ambient process.env.
-          return dependencies.runReviewerDispatch(dispatch, {
-            ...options,
-            getFlag: (name) => roleHost.getFlag(name),
-          });
-        },
-        ...(dependencies.shutdownReviewerAgent === undefined
-          ? {}
-          : { shutdownAgent: dependencies.shutdownReviewerAgent }),
       },
       hostActions,
     );

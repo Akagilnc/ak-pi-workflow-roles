@@ -272,11 +272,7 @@ test("pipeline ledger records audit-escalation with original details and no rewr
     assert.equal(projection?.kind, "audit_escalation");
     assert.equal(projection?.role, "judge");
     assert.deepEqual(escalating.closedSubmissions, [projection]);
-    assert.deepEqual(publicNavigatorSettlement("judge", null, {
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      isError: false,
-      details: projection?.decisiveFacts,
-    }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+    assert.equal((projection?.decisiveFacts as { receipt?: { judgeStatus?: string } } | undefined)?.receipt?.judgeStatus, "escalate");
   });
 });
 

@@ -1,12 +1,33 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptText, sameReviewerPromptText, type ReviewerPromptText } from "./reviewer-prompt-identity.ts";
-import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   REVIEWER_PREFLIGHT_VIOLATIONS,
   type ReviewerPreflightViolation,
   type ReviewerPinnedTarget,
   type AcceptedReviewerDispatch,
 } from "./reviewer-dispatch.ts";
+
+type ReviewerLegRunResultCommon = Readonly<{
+  target: ReviewerTargetSnapshot;
+  prompt: ReviewerPromptText;
+  workspaceDisposition: ReviewerWorkspaceDisposition;
+}>;
+export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon &
+  Readonly<{ status: "successful"; report: unknown; usage: ReviewerUsage; failure?: never }>;
+export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon &
+  Readonly<{
+    status: "failed";
+    failure: ReviewerFailureClassification;
+    diagnostic: string;
+    cause?: unknown;
+    report?: never;
+    usage?: never;
+  }>;
+export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
+type DispatchEnvelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;
+export type ReviewerDispatchRunResult =
+  | DispatchEnvelope<{ standards: ReviewerLegRunResult; spec?: never }>
+  | DispatchEnvelope<{ standards: ReviewerLegRunResult; spec: ReviewerLegRunResult }>;
 
 export type ReviewerUsage = Readonly<{
   input: number; output: number; cacheRead: number; cacheWrite: number;
@@ -26,9 +47,12 @@ export type ReviewerAcceptedEvidence = Readonly<
 export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): ReviewerEvidenceEvent {
   return {
     source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
-    recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
-    range: dispatch.range, authorityRefs: dispatch.authorityRefs,
-    specDisposition: dispatch.specDisposition,
+    recipe: dispatch.recipe,
+    ...(dispatch.input === undefined ? {} : { input: dispatch.input }),
+    target: dispatch.targetSnapshot,
+    ...(dispatch.range === undefined ? {} : { range: dispatch.range }),
+    ...(dispatch.authorityRefs === undefined ? {} : { authorityRefs: dispatch.authorityRefs }),
+    ...(dispatch.specDisposition === undefined ? {} : { specDisposition: dispatch.specDisposition }),
     ...(dispatch.specFetchedMaterial === undefined
       ? {}
       : { specFetchedMaterial: dispatch.specFetchedMaterial }),
@@ -145,7 +169,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       const axes = event.legs.map((leg) => leg.axis);
       if (axes[0] !== "standards" || (axes.length !== 1 && (axes.length !== 2 || axes[1] !== "spec")))
         throw new Error("Accepted dispatch sibling axes disagree");
-      if (!isReviewerPromptText(event.input.canonicalSkill))
+      if (!isReviewerPromptText(event.input?.canonicalSkill))
         throw new Error("Accepted canonical Skill must be plain text");
       for (const leg of event.legs) {
         if (!isReviewerPromptText(leg.prompt))

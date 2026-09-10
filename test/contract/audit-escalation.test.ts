@@ -43,16 +43,12 @@ test("escalation projects one terminating human decision and is not an accepted 
   assert.equal(bounceCalls, 0);
   assert.equal(result.terminate, true);
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
-  assert.deepEqual(result.details.conflicts, decision.conflicts);
-  assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
-  // Human text reads the audit-owned gate only — question + every option present.
-  assert.ok(result.content[0].text.includes(decision.decisionGate.question));
-  for (const option of decision.decisionGate.options) {
-    assert.ok(
-      result.content[0].text.includes(option),
-      `human text must carry audit option: ${option}`,
-    );
-  }
+  assert.deepEqual((result.details.audit as { conflicts?: unknown }).conflicts, decision.conflicts);
+  assert.deepEqual(
+    (result.details.audit as { auditDecisionGate?: unknown }).auditDecisionGate,
+    decision.decisionGate,
+  );
+  assert.equal(result.content[0].text, JSON.stringify(decision));
   assert.doesNotMatch(result.content[0].text, /accepted/i);
   assert.equal(isAuditEscalationResult(result.details), true);
   // #836: status/allowlist rejection deleted — original payload is accepted as details.
@@ -134,28 +130,19 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
     delivered,
   );
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
-  assert.equal(result.details.judgeStatus, "converged");
-  assert.equal(result.details.note, "keep-me");
-  assert.equal(result.details.reason, "role reason");
-  assert.equal(result.details.officer, "role officer");
-  assert.deepEqual(result.details.findings, ["role finding"]);
-  assert.deepEqual(result.details.conflicts, ["conflict"]);
-  // Audit gate always lives at auditDecisionGate — one fixed home.
-  assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
-  // Role brought no decisionGate — that key stays absent (not filled by audit).
-  assert.equal(result.details.decisionGate, undefined);
-  // Without delivered output, verdict fields are absent (negative control).
+  assert.deepEqual(result.details.receipt, delivered);
+  assert.deepEqual((result.details.audit as { conflicts?: unknown }).conflicts, ["conflict"]);
+  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
   const stripped = projectAuditEscalation(decision).details;
-  assert.equal(stripped.note, undefined);
+  assert.equal(stripped.receipt, undefined);
 
-  // #836: role fields stay; audit-owned keys overlay without deleting the rest.
   const officer = projectAuditEscalation(
     { status: "escalate", officer: "notary" },
     delivered,
   ).details;
-  assert.equal(officer.officer, "notary");
-  assert.equal(officer.reason, "role reason");
-  assert.deepEqual(officer.findings, ["role finding"]);
+  assert.deepEqual(officer.receipt, delivered);
+  assert.equal((officer.audit as { officer?: unknown }).officer, "notary");
+  assert.equal((officer.receipt as { officer?: unknown }).officer, "role officer");
 });
 
 test("escalate face keeps role decisionGate and audit gate side by side", async () => {
@@ -193,37 +180,11 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
   );
   const details = result.details;
   assert.equal(details.kind, AUDIT_ESCALATION_KIND);
-  assert.equal(details.judgeStatus, "escalate");
-  assert.equal(details.reasoning, "need owner choice");
-  assert.deepEqual(details.classes, []);
-  // Role's options survive in full, in order — not eaten by the audit gate.
-  assert.deepEqual(details.decisionGate, roleGate);
-  assert.deepEqual(details.conflicts, decision.conflicts);
-  // Audit gate has one fixed home beside the role gate (neither folded).
-  assert.deepEqual(details.auditDecisionGate, auditGate);
-  // Human text carries the audit gate; role question is not passed off as audit's.
-  const face = result.content[0].text;
-  assert.ok(face.includes(auditGate.question), "audit question must appear in human text");
-  for (const option of auditGate.options) {
-    assert.ok(face.includes(option), `audit option must appear in human text: ${option}`);
-  }
-  assert.equal(
-    face.includes(`Question: ${roleGate.question}`),
-    false,
-    "role question must not be presented as the audit Question",
-  );
-  // Malformed role decisionGate must not throw (reads audit home only).
-  for (const badGate of ["oops", { question: "q" }] as const) {
-    const resilient = projectAuditEscalation(decision, {
-      judgeStatus: "escalate",
-      decisionGate: badGate,
-    });
-    assert.equal(resilient.details.kind, AUDIT_ESCALATION_KIND);
-    assert.deepEqual(resilient.details.auditDecisionGate, auditGate);
-    assert.equal(resilient.details.decisionGate, badGate);
-    assert.ok(resilient.content[0].text.includes(auditGate.question));
-  }
-  // kind cannot be laundered by a role field of the same name.
+  assert.deepEqual(details.receipt, delivered);
+  assert.deepEqual((details.receipt as { decisionGate?: unknown }).decisionGate, roleGate);
+  assert.deepEqual((details.audit as { conflicts?: unknown }).conflicts, decision.conflicts);
+  assert.deepEqual((details.audit as { auditDecisionGate?: unknown }).auditDecisionGate, auditGate);
+  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
   const launder = await disposeComplianceDecision(
     decision,
     {
@@ -238,6 +199,7 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
     { kind: "not-escalation", decisionGate: roleGate },
   );
   assert.equal(launder.details.kind, AUDIT_ESCALATION_KIND);
+  assert.equal((launder.details.receipt as { kind?: unknown }).kind, "not-escalation");
 });
 
 test("no-receipt uses its own projection leg instead of collapsing into pass", async () => {

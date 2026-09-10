@@ -146,40 +146,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
             captureExpansion: () => undefined,
           };
         },
-        // Activation stage owns fixed two-axis dispatch (issue #236 lifecycle).
-        runReviewerDispatch: async (execution) => {
-          const pin = {
-            repositoryRoot: fixtureRoot,
-            objectFormat: "sha1" as const,
-            targetHead: oid("9"),
-            refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
-          };
-          const usage = {
-            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          };
-          const standardsLeg = execution.legs.find((leg) => leg.axis === "standards");
-          const specLeg = execution.legs.find((leg) => leg.axis === "spec");
-          if (standardsLeg === undefined || specLeg === undefined) {
-            throw new Error("fixture expects fixed two-axis dispatch");
-          }
-          const success = (prompt: string) => Object.freeze({
-            status: "successful" as const,
-            report: "ok",
-            usage,
-            target: pin,
-            prompt,
-            workspaceDisposition: "deleted" as const,
-          });
-          return Object.freeze({
-            identity: execution.identity,
-            target: pin,
-            legs: Object.freeze({
-              standards: success(standardsLeg.prompt),
-              spec: success(specLeg.prompt),
-            }),
-          });
-        },
       };
     case "collector":
       return {

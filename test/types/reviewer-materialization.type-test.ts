@@ -5,8 +5,8 @@
 import type {
   ReviewerSuccessfulLegRunResult,
   ReviewerFailedLegRunResult,
-} from "../../src/reviewer-agent.ts";
-import type { ReviewerLegResultEvidence } from "../../src/reviewer-execution-ledger.ts";
+  ReviewerLegResultEvidence,
+} from "../../src/reviewer-execution-ledger.ts";
 import type { RuntimeReviewerOutcome } from "../../src/package-contracts/reviewer-output.ts";
 
 export function assertPlainTextOutcomeContracts(
@@ -15,7 +15,6 @@ export function assertPlainTextOutcomeContracts(
   receiptSuccess: Extract<RuntimeReviewerOutcome, { status: "successful" }>,
   failure: ReviewerFailedLegRunResult,
 ): void {
-  // Successful outcomes are plain text + workspace disposition — no materialization shell.
   const ok: readonly unknown[] = [runnerSuccess, ledgerSuccess, receiptSuccess, failure];
   void ok;
 }

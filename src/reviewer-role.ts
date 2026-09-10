@@ -5,8 +5,7 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
-import { type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-import { type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import { type ReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -44,10 +43,6 @@ export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
-  /** Injected issue-fetch capability; shared seam owns gh lifecycle. */
-  fetchIssue?: ReviewerIssueFetcher;
-  runDispatch?(execution: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
-  shutdownAgent?(): Promise<void>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 

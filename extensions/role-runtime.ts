@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 
-import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "../src/collector-github.ts";
+import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
@@ -118,7 +118,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
-    createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
