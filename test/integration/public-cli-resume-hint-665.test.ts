@@ -23,7 +23,10 @@ import {
 test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
   await withTempRoot("ak-665-resume-hint-", async (home) => {
     const runId = "run-665-uniform-429";
-    const runDirectory = join(home, "runs", `${runId}@doctor`);
+    // #836: home→runDirectory resolution requires the real .ak-roles/books/<bookKey>
+    // topology (activation-ledger-topology.ts homeFromRunDirectory) — every
+    // sibling fixture in this suite roots runDirectory there too.
+    const runDirectory = join(home, ".ak-roles", "books", "book", "runs", `${runId}@doctor`);
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
     const sessionFile = join(sessionDirectory, "session.jsonl");

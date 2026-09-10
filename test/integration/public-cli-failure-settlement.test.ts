@@ -21,7 +21,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
+import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
@@ -722,9 +722,11 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
 
     // report/evidence stay last-write-wins views of the final accepted attempt.
     const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", "run-419-pointer-overwrite-001@judge");
-    const report = JSON.parse(await readFile(join(runDirectory, "artifacts", "report.json"), "utf8")) as { outcome?: { kind?: string; status?: string } };
+    const report = JSON.parse(await readFile(join(runDirectory, "artifacts", "report.json"), "utf8")) as { outcome?: TerminalRoleOutcome };
     assert.equal(report.outcome?.kind, "accepted");
-    assert.equal(report.outcome?.status, "converged");
+    // #836: the persisted report carries the role's original payload, not an
+    // invented top-level status.
+    assert.equal(report.outcome === undefined ? undefined : payloadStatus(report.outcome), "converged");
     await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8");
   });
 });

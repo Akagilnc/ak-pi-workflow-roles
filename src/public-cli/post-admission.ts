@@ -586,6 +586,38 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
 
+    // No accepted row and no typed/host failure signal — lawful no_receipt
+    // requires that nothing real happened either (host never gave the role a
+    // genuine turn, but the admitted session file is present and blank).
+    // A session file that is simply absent means the admitted run never got
+    // a transcript at all (a session-read problem, distinct from a role that
+    // was dispatched and produced nothing lawful). A session with real
+    // content (the role was dispatched, wrote something) but never produced
+    // an accepted result is a true output failure, not a lawful absence —
+    // the shape of what it wrote is never judged here, only whether the
+    // session exists and whether anything was written into it at all.
+    const sessionActivity =
+      sessionFile === ""
+        ? ("blank" as const)
+        : await readFile(sessionFile, "utf8").then(
+            (text) => (text.trim().length > 0 ? ("content" as const) : ("blank" as const)),
+            () => "missing" as const,
+          );
+    if (sessionActivity !== "blank") {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: result.code,
+          stderr: result.stderr,
+          knownCause: sessionActivity === "missing" ? "session" : "output",
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+
     const noReceipt = await attachRecordedSubmissions(
       admitted,
       await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
