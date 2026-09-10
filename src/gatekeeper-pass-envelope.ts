@@ -106,19 +106,8 @@ export async function requireGatekeeperPass(options: {
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
-    if (gatekeeper.status === "transport_failure") {
-      const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
-        stage: typeof gatekeeper.stage;
-        reason: string;
-        submission?: unknown;
-      };
-      error.stage = gatekeeper.stage;
-      error.reason = gatekeeper.reason;
-      if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
-      options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-    }
-    // bounce | escalate | no_receipt: raw receipt (or lifecycle fact) back to parent.
-    // escalate is NOT thrown as parent next-step — parent reads the officer words (#753).
+    // #836: transport_failure / no_receipt / bounce / escalate all return to parent
+    // as raw non-pass — never failInfrastructure (不杀腿). Parent reads the words.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

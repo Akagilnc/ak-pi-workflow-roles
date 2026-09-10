@@ -1,18 +1,16 @@
 /**
- * Bound diagnostic text: rolling tail only, not a dossier/transcript face.
- * One authority for host stderr retention (headless + ACP).
+ * Diagnostic text retention — full process output, no clip (#836).
+ * One authority for host stderr retention (headless + ACP + pi).
+ * stderr is also written whole to stderr.log by post-admission.
  */
 
-/** Fixed cap for retained diagnostic tails. */
-export const DIAGNOSTIC_TAIL_CAP = 16 * 1024;
-
-const CLIP_MARK = "…[stderr clipped]\n";
+/** @deprecated #836: no clip; kept as Infinity so callers comparing length stay open. */
+export const DIAGNOSTIC_TAIL_CAP = Number.POSITIVE_INFINITY;
 
 /**
- * Retain at most DIAGNOSTIC_TAIL_CAP characters, keeping the newest bytes
- * when over budget. Clip mark is included inside the fixed cap.
+ * Retain the full diagnostic text. Clip/tail was deleted under #836
+ * (陛下「stderr这种不是错误信息应该完整保存错误文件吗。不准乱裁」).
  */
 export function retainDiagnosticTail(text: string): string {
-  if (text.length <= DIAGNOSTIC_TAIL_CAP) return text;
-  return CLIP_MARK + text.slice(text.length - (DIAGNOSTIC_TAIL_CAP - CLIP_MARK.length));
+  return text;
 }

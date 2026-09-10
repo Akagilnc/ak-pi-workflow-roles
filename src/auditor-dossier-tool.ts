@@ -133,17 +133,13 @@ export function createAuditorDossierTool(
           details: undefined,
         };
       }
-      const sessionPath = join(runDirectory, "session", "session.jsonl");
-      const submissionCandidate = options?.submissionCandidate;
-      // Prefer the persisted gate leaf when present: Grok session.jsonl is header-only
-      // (#617 DK-4) and is not a candidate source after material deletion (#632).
+      // #836: whole run directory pointer — officer finds materials; no leaf preference (A7.2).
       const details: AuditorDossierLocation = {
         runDirectory,
         admittedRequest: join(runDirectory, "admitted-request.json"),
-        parentSessionCandidate: submissionCandidate ?? sessionPath,
+        parentSessionCandidate: join(runDirectory, "session", "session.jsonl"),
         attachments: join(runDirectory, "attachments"),
         artifacts: join(runDirectory, "artifacts"),
-        ...(submissionCandidate === undefined ? {} : { submissionCandidate }),
       };
       return {
         content: [{ type: "text", text: JSON.stringify(details) }],

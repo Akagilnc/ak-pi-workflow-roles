@@ -1,11 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
-import {
-  auditorRunDirectory,
-  persistGateSubmissionCandidate,
-  readLatestSubmissionArguments,
-} from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
@@ -59,10 +55,10 @@ export type GatekeeperResult =
       readonly submission?: unknown;
     };
 
-/** Non-pass faces that bounce the parent session (correctable). */
+/** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "escalate" | "no_receipt" }
+  { status: "bounce" | "escalate" | "no_receipt" | "transport_failure" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
@@ -90,11 +86,6 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Production default relays
-   * it verbatim on same-parent officer resume (#786).
-   */
-  submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -313,16 +304,13 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // #632: Grok session.jsonl is header-only — freeze the in-memory tool-call leaf
-  // as a run artifact so dossier exploration still resolves. LLM→LLM resume does
-  // not ride this path: submission body goes verbatim on gateReviewInstruction (#786).
-  persistGateSubmissionCandidate(runDirectory, options.context);
-  const submission = readLatestSubmissionArguments(options.context);
+  // #836: officers receive the whole parent run directory pointer and find the
+  // submission themselves — code no longer picks latest toolCall leaf (A7.1–A7.3).
   let summoned: PublicSummonResult;
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask, nextSubmission) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
@@ -330,7 +318,6 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
-          ...(nextSubmission === undefined ? {} : { submission: nextSubmission }),
           ...(options.home === undefined ? {} : { home: options.home }),
           ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
           ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
@@ -342,7 +329,6 @@ export async function projectGatekeeperRun(
       runDirectory,
       options.signal,
       options.reask,
-      submission,
     );
   } catch (error) {
     return {

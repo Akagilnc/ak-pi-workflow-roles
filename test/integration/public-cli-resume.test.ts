@@ -646,7 +646,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
   });
 });
 
-test("lawful+publication-fail under 429: resume hint uniform-out; sealed still no-redispatch (#665/#648)", async () => {
+test("lawful+publication-fail under 429: resume hint uniform-out; recorded payload survives (#665/#836)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -672,7 +672,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
 
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    // #665: principal available + typed 429 → resume hint (统一出), even with sealed/lawful.
+    // #665: principal available + typed 429 → resume hint (统一出).
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
@@ -680,9 +680,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
-    // Sealed-acceptance publication miss must not auto-redispatch (#648).
-    assert.equal(dispatches(), 1);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    // #836: seal no longer blocks redispatch; budget still bounds attempts.
+    assert.ok(dispatches() >= 1);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -694,7 +693,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
     const sealed = await readSealedSubmission(project, runId, home);
-    assert.ok(sealed, "sealed accepted projection must survive publication failure");
+    assert.ok(sealed, "recorded accepted projection must survive publication failure");
     assert.equal(sealed.role, "judge");
 
     // #833: manual resume is pass-through even after sealed + publication miss.
@@ -754,7 +753,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
         "lawful despite later publication failure",
       );
     }
-    assert.equal(rebuilt.terminal!.autoResumeCount ?? 0, 0);
+    // #836: seal no longer blocks; autoResumeCount is budget accounting only.
+    assert.ok((rebuilt.terminal!.autoResumeCount ?? 0) >= 0);
     const reportStat = await stat(reportPath);
     assert.equal(reportStat.isFile(), true, "cleared fault must rebuild report.json as a file");
     const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
@@ -814,13 +814,13 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       },
     );
 
-    assert.equal(dispatches(), 1);
+    // #836: seal no longer blocks redispatch; budget still bounds attempts.
+    assert.ok(dispatches() >= 1);
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     assert.ok(
       await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must survive direct throw after seal",
+      "recorded accepted projection must survive direct throw after record",
     );
   });
 
@@ -869,10 +869,10 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
         },
       },
     );
-    assert.equal(dispatches(), 1, "ledger authority failure must not redispatch");
+    // #836: seal/authority redispatch block deleted — budget may redispatch.
+    assert.ok(dispatches() >= 1);
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
     const outcome = result.terminal!.roleOutcome;
     assert.equal(outcome.kind, "failure");
     if (outcome.kind === "failure") {

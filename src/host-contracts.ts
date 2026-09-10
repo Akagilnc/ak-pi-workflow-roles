@@ -299,8 +299,8 @@ export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, hand
 type HostGatekeeperSubject = {
   readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
 };
-/** Gatekeeper bounce/escalate/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" } & Record<string, unknown>;
+/** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
+type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };

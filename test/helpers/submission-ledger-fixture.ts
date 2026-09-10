@@ -76,12 +76,15 @@ async function driveLedgerProducer(input: {
         },
         abort() {},
       } as HostContext;
-    await handlers.get("tool_execution_start")!({ toolCallId: input.toolCallId, toolName }, context);
+    // #836: recording happens on execute; turn_end only books roundContext.
     await registered.execute(input.toolCallId, {}, undefined, undefined, context);
-    await handlers.get("turn_end")!({
-      turnIndex: 0,
-      calls: [{ toolCallId: input.toolCallId, toolName }],
-    }, context);
+    const turnEnd = handlers.get("turn_end");
+    if (turnEnd !== undefined) {
+      await turnEnd({
+        turnIndex: 0,
+        calls: [{ toolCallId: input.toolCallId, toolName }],
+      }, context);
+    }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorRun;

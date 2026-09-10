@@ -156,55 +156,30 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
-function resumeRereadInstruction(materialPath: string, handbook: boolean): string {
-  return handbook
-    ? `重新读 ${materialPath}，再组装外包 argv`
-    : `重新读 ${materialPath}`;
-}
-
 /**
- * Engine-axis resume-only material lines (#736 / ADR 0069·0071).
- * #755 withdrew this rewrite from 审核循环续话; review same-ticket resume stays
- * plain dialogue via resumeTurnRequestProjectionOptions. Outsourcing resume
- * still rewrites neutral handbook/path pointers into 重新读 instructions.
- * First-round delivery is unchanged; never pastes material body.
+ * #836: resume path rewrite deleted (A4.2).
+ * Pointer lines stay as pointer lines; no「重新读 <path>」code sentence injection.
+ * Kept as identity so call sites compile; engine material still appends below.
  */
 export function instructResumeHandbookRead(
   prompt: string,
-  engineMaterial?: EngineSessionMaterial,
+  _engineMaterial?: EngineSessionMaterial,
 ): string {
-  const handbookPath = engineMaterial?.materialPath;
-  return prompt
-    .split("\n")
-    .map((line) => {
-      if (!line.startsWith("- ")) return line;
-      const value = line.slice(2);
-      if (handbookPath !== undefined && value === handbookPath) {
-        return resumeRereadInstruction(handbookPath, true);
-      }
-      if (isAbsolute(value)) return resumeRereadInstruction(value, false);
-      return line;
-    })
-    .join("\n");
+  return prompt;
 }
 
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Not used for 审核循环 same-ticket summons (#755).
- * Message present → base bytes unchanged; absent → package transport envelope.
- * When engine material is present, append structured engine coordinates then
- * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
- * zero classify, zero narrow. Pointer only — never material body.
+ * (#471 / #600 / #736). Message present → base bytes; absent → transport envelope.
+ * Engine material appends as structured coordinates (pointers only).
+ * #836: no line-by-line 重新读 rewrite.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  return instructResumeHandbookRead(
-    appendEngineSessionMaterial([base], engineMaterial).join("\n"),
-    engineMaterial,
-  );
+  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
 }
 
 /**

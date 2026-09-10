@@ -178,32 +178,18 @@ async function sealedLedgerOutcome(
 }
 
 /**
- * Shared sealed-acceptance redispatch disposition for resume entrypoints
- * (#648 sealed authority; #672 / ADR 0080 single-settlement-disposition).
- * Owns the fail-closed gate auto and manual resume previously rebuilt beside
- * the shared sealed query: sealed → block; authority throw → block with
- * preserved cause; otherwise allow. Callers present entry-specific terminals;
- * they must not re-derive this judgment. Ledger projection remains the sole
- * seal truth — this is disposition over that read, not a second state.
- * Always run-scoped (no court attempt filter): any retained seal blocks auto-resume redispatch.
+ * #836: seal-based redispatch block deleted.
+ * Final = host end; recorded submissions do not abort or block resume by themselves.
+ * Always allow — retained for call-site shape compatibility only.
  */
 export type SealedAcceptanceRedispatchDisposition =
   | { readonly kind: "allow" }
-  | { readonly kind: "block"; readonly reason: "sealed-accepted" }
   | { readonly kind: "block"; readonly reason: "authority-failed"; readonly cause: unknown };
 
 export async function sealedAcceptanceRedispatchDisposition(
-  admitted: AdmittedRoleInvocation,
+  _admitted: AdmittedRoleInvocation,
 ): Promise<SealedAcceptanceRedispatchDisposition> {
-  try {
-    if ((await sealedLedgerOutcome(admitted)) !== undefined) {
-      return { kind: "block", reason: "sealed-accepted" };
-    }
-    return { kind: "allow" };
-  } catch (cause) {
-    // Ledger authority must not wash read failure into "unsealed" (#648).
-    return { kind: "block", reason: "authority-failed", cause };
-  }
+  return { kind: "allow" };
 }
 
 async function auditEscalationLedgerOutcome(
@@ -3193,9 +3179,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     );
   }
   if (roleOutcome?.role !== spec.role) {
-    // No sealed ledger outcome for this seat/court. Prefer a real isError residual
-    // (transport/lifecycle failure). Accepted-once without seal is absence — seal is
-    // the sole acceptance authority (#637); do not promote session bytes to success.
+    // No recorded ledger outcome for this seat/court. Prefer a real isError residual
+    // (transport/lifecycle failure). #836: recording only — no seal sole-authority.
     // Bounded to the current attempt so multi-attempt resume timeout/no-output
     // is not masked by a prior residual (#599 / #633).
     const scanStart = currentAttemptStartIndex(entries);
@@ -3839,17 +3824,7 @@ async function settleLawfulMergerTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome = await sealedLedgerOutcome(admitted, scope);
   if (roleOutcome?.role !== "merger") {
-    // Ledger owns 0041: a non-sole closed round is not residual-incomplete material.
-    const latestOutcome = await readLatestSubmissionOutcome(
-      admitted.projectRoot,
-      admitted.runId,
-      ledgerReadScope(admitted, scope),
-    );
-    if (latestOutcome?.outcome === "correctable-rejection" && latestOutcome.code === "non-sole-round") {
-      return undefined;
-    }
-    // Residual incomplete: shape/identity fail after the sole-round barrier passed (ledger typed).
-    // Settlement does not re-judge calls.length.
+    // #836: non-sole-round barrier deleted; residual path is host/session only.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const message = entries[index]?.message;
       if (message?.role !== "toolResult") continue;
@@ -3874,31 +3849,21 @@ async function settleLawfulMergerTerminalResult(
     }
     return undefined;
   }
-  // #757: sealed facts pass through — no validateMergerOutput shape gate.
-  const output = roleOutcome.decisiveFacts as unknown as MergerOutput;
+  // #757 / #836: recorded facts pass through — no method-expansion veto, no shape gate.
   const accepted: LawfulMergerRoleOutcome = {
     kind: "accepted",
     role: "merger",
     status: roleOutcome.status,
     decisiveFacts: { ...roleOutcome.decisiveFacts },
   };
-  const methodInvocations = extractMergerMethodInvocations(entries, {
-    allowedLocations: [
-      options.methodSkillPath,
-      options.methodSkillConfiguredPath,
-    ],
-  });
-  // Every invocation must expand the merge-only method before conflict work.
-  if (methodInvocations.length === 0) return undefined;
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishMergerArtifacts(
     admitted,
     accepted,
     coordinates,
     {
-      mergerOutput: output,
+      mergerOutput: accepted.decisiveFacts as unknown as MergerOutput,
       methodProvenance: options.methodProvenance,
-      methodInvocations,
     },
   );
   return withOptionalGateProjection(

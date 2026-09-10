@@ -297,21 +297,16 @@ function projectAcceptedGateCall(
   };
 
   if (DISPATCH_TOOLS.has(call.toolName)) {
-    // Lawful province non-dispatch release — opens no round, never unreadable (#597).
-    if (status === "pass") {
-      return undefined;
-    }
-    // Pairing terminal is dispatch; unknown/non-contract status stays loud (#475).
+    // Lawful province non-dispatch release — opens no round (#597).
+    // #836 / #622: bounce|escalate|unknown status must not throw and kill parent settlement.
+    // Only a real dispatch pairs; everything else is omitted from pairing (原 payload 已在账本).
     if (status !== "dispatch") {
-      throw new Error(
-        `accepted dispatch receipt has non-dispatch status ${JSON.stringify(status)} in ${filePath}`,
-      );
+      return undefined;
     }
     const officer = normalizeOfficerArg(call.args?.officer);
     if (officer === undefined) {
-      throw new Error(
-        `accepted dispatch receipt missing or unknown officer in ${filePath}`,
-      );
+      // Missing officer on a dispatch face — omit pairing; do not kill parent (#836).
+      return undefined;
     }
     const reason = optionalDispatchReason(call.args?.reason);
     return {

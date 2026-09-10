@@ -17,6 +17,8 @@ Status: accepted（owner 2026-09-05 本会话确认设计；不表示实现已�
 - 不选择强行合并整个流程：入口差异真实存在，合并后仍需分支区分；也不选择仅提取一个查询函数，封账查询已经共享，问题在调用方的重复处置。
 - 不增加自动补报告能力，不改变手动续跑已有的报告重建行为；不因报告写入失败重做已交卷劳动，真实故障仍如实呈现。未交卷、上呈后继续与已交卷不混同。
 - 保留既有唯一交卷与封账事实；不引入缓存、持久状态、调度器、校验或常驻扫描器。不把文件合并或行数下降当作验收。
+
+> **Supersession (#836, 陛下 2026-09-10):** 「保留既有唯一交卷与封账事实」一句由本票取代（封账删）。`separate-resume-entrypoints` / `single-settlement-disposition` / `class-wide-disposition-cleanup` 仍直接适用。
 - 沿用现有公开角色 CLI 的行为测试，验证真实派发次数、回执保留与故障呈现；不新增一套只测内部 helper 的平行测试。
 
 以上是本次提案获同意后的范围说明，不主张它们是新的普遍故障法。现行 [ADR 0052](0052-public-cli-is-the-only-supported-external-role-interface.md) 的公开终局职责及 [ADR 0076](0076-factory-fault-response-four-cases.md) 的具名故障决定不变；详细施工验收由承接票维护。

@@ -591,10 +591,7 @@ export async function prepareRoleEnvelope(options: {
       calls.length = 0;
       await emit("turn_end", { turnIndex: 0, calls: roundCalls });
     }
-    // Infrastructure failure outranks accepted closure / correctable retry: the
-    // declaration already aborted hostAbort; "already declared" is not success (#593).
-    // Lawful seal / non-sole rejection still call context.abort() (ledger), but that
-    // path does not arm hostAbort — only infrastructureRoundFailure is terminal here.
+    // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
       return { accepted: false as const, failure: infrastructureRoundFailure };
     }
@@ -617,11 +614,10 @@ export async function prepareRoleEnvelope(options: {
       rejection = undefined;
       return { accepted: false as const, retry };
     }
-    const failure: RoleTurnKnownFailure = {
-      cause: "output",
-      identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
-    };
-    return { accepted: false as const, failure };
+    // #836: host ended without a recorded submission is not a failure.
+    // Settlement presents ledger contents; empty ledger → no_receipt.
+    await emit("agent_settled", {});
+    return { accepted: true as const };
   };
 
   // Shared envelope activation. systemPrompt must be ready before session/new

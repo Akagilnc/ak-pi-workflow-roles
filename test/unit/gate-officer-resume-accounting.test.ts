@@ -132,7 +132,7 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent submission body", async () => {
+test("#836 projectGatekeeperRun summons officer with whole run directory pointer only", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -140,7 +140,6 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 786 });
 
     const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
-    const submission = { status: "completed", report: BODY_MARKER };
     const leaf = {
       type: "message",
       message: {
@@ -150,7 +149,7 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
             type: "toolCall",
             id: "call-parent-1",
             name: "ak_coder_output",
-            arguments: submission,
+            arguments: { status: "completed", report: BODY_MARKER },
           },
         ],
       },
@@ -174,7 +173,6 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
     };
     const io = captureIo().io;
 
-    // 1) Fresh mint establishes the same-parent notary run (prior seat to resume).
     const first = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -193,10 +191,8 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
     assert.equal(first.exitCode, 0);
     assert.equal(prompts.length, 1);
 
-    // 2) Production default path (no summonOfficer inject):
-    // parent leaf → projectGatekeeperRun → summonGateOfficer → resume prompt.
-    // Contract: officer resume user turn carries the parent 交卷 body marker.
-    // Offline host/createRunId ride the same faces public CLI already exposes.
+    // #836: code no longer picks latest toolCall leaf as submission body (A7.1–A7.3).
+    // Officer gets the whole run directory pointer and finds materials themselves.
     const projected = await projectGatekeeperRun({
       context: {
         cwd: project,
@@ -217,13 +213,13 @@ test("#786 projectGatekeeperRun → summonGateOfficer resume carries parent subm
     const resumePrompt = prompts[1]!;
     assert.equal(
       resumePrompt.includes(BODY_MARKER),
-      true,
-      "officer resume prompt must carry parent submission body from production wire",
+      false,
+      "code must not inject parent submission body; officer reads the run directory",
     );
-    assert.notEqual(
-      resumePrompt,
-      RESUME_TRANSPORT_ENVELOPE,
-      "resume must not be bare envelope when submission body rides",
+    assert.equal(
+      resumePrompt.includes("请重读") || resumePrompt.includes("卷宗指针") || resumePrompt.includes(sourceRunPath),
+      true,
+      "resume must carry path pointer (请重读 / 卷宗指针 / run path)",
     );
   });
 });

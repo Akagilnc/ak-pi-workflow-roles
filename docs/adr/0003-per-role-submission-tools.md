@@ -10,3 +10,5 @@ Date: 2026-07-27
 ## Amendment — 工具＝schema 通道（#753 / #750；`submission-tool-is-schema-channel`）
 
 具名交卷工具保留，其 schema 即回执契约。handler **只记录回执与排队**，不校验形状、不判内容。审核排队（父席交卷必经审核席、不过必回父席）与读结论字段（`pass`/`bounce`/`escalate`）是代码保证的排队内容，不算判内容。对方说了什么原样当 tool result 回父席；读不出三态 → resume 说话者本人；上呈原样抛出。绑定原话见 #750 键表 `submission-tool-is-schema-channel` / `code-never-judges-role-replies` / `review-queue-code-guarantee`。
+
+> **#836 加强：** 工具可多次调用，只记录；不 abort、不封账、不判 sole。终局由宿主结束。

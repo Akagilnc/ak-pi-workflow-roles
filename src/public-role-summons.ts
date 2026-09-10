@@ -472,8 +472,7 @@ export async function summonGateOfficer(options: {
   }
   if (options.officer === "auditor") {
     // #756: judge compliance path — same queue law as notary/inspector.
-    // Subject is judge (doctor compliance stays on the disposeCompliance path).
-    const { AUDITOR_DOSSIER_PROMPT } = await import("./compliance-transport.ts");
+    // #836: auditor kickoff is path pointer (同察院), not「本 run 卷宗已就绪」.
     return summonPublicRole({
       role: "auditor",
       argv: [
@@ -481,12 +480,13 @@ export async function summonGateOfficer(options: {
         "judge",
         "--source-run",
         options.sourceRunDirectory,
-        AUDITOR_DOSSIER_PROMPT,
+        `卷宗指针：${options.sourceRunDirectory}`,
       ],
       ...common,
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
+  // #836 resume 请重读 is added on the resume projection face, not here.
   return summonPublicRole({
     role: "inspector",
     argv: [`卷宗指针：${options.sourceRunDirectory}`],

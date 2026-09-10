@@ -2799,8 +2799,8 @@ export async function admitReviewerInvocation(
 
 /**
  * Build the Pi prompt transport for an admitted Reviewer request.
- * Semantic input is fixed base only — caller instruction stays provenance on disk.
- * Optional engine material follows the same dual-path coordinates as Judge (#376/#378).
+ * #836: caller instruction is no longer dropped (A3.5).
+ * Fixed base + optional caller words + engine material.
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
@@ -2809,6 +2809,9 @@ export function buildReviewerTransportPrompt(
   const lines = [
     `本次审查的固定基点：${admitted.baseRevision}`,
   ];
+  if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+    lines.push("", admitted.instruction);
+  }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 

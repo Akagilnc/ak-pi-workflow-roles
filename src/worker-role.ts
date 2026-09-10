@@ -400,14 +400,8 @@ export function createCoderRoleRuntime(
               throw new Error("将作监任务与阶段未装载");
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
-            if (
-              phase === "apply" && output.status === "completed" &&
-              !expansionCaptured
-            ) {
-              const rejection = new CoderSkillExpansionEvidenceMissingError();
-              hostActions.bindSubmissionNonPass(toolCallId, rejection.result);
-              throw rejection;
-            }
+            // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
+            // Skill still ships with the package (ADR 0052); code no longer refuses on it.
             assertAcceptableThroughHost(
               submissionGate,
               output.status,

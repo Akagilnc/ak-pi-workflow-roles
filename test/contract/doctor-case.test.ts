@@ -148,8 +148,11 @@ test("intermediate object details neither terminate nor manufacture session stat
     const incomplete = patient.cost.sessions.find((session) => session.source.endsWith("incomplete.jsonl"));
     assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
     assert.equal(incomplete?.wallMilliseconds, 3000);
+    // #836 B10.3: earlier statuses are retained (no wipe to last-only).
     assert.deepEqual(patient.cost.statuses, [
       { source: "coder/session/incomplete.jsonl", status: "refused" },
+      { source: "coder/session/terminal.jsonl", status: "refused" },
+      { source: "coder/session/terminal.jsonl", status: "completed" },
       { source: "coder/session/terminal.jsonl", status: "refused" },
     ]);
     assert.deepEqual(patient.cost.commits, []);

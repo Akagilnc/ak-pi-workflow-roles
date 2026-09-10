@@ -436,30 +436,18 @@ export async function runWithAutoResumeLoop<
       }
     }
 
-    // Settlement-owned sealed disposition before any redispatch (#648 / #672):
-    // shared for non-lawful return and direct throw. Only entry presentation
-    // differs (present returned terminal vs throw-path synthetic).
+    // #836: seal-based redispatch block deleted. Disposition retained only for
+    // authority-failed (ledger read infrastructure). Recorded submissions do not block.
     if (options.sealedAcceptanceDisposition !== undefined) {
       const disposition = await options.sealedAcceptanceDisposition();
-      if (disposition.kind === "block") {
-        if (disposition.reason === "sealed-accepted" && result !== undefined) {
-          const terminal = (result as { terminal?: TerminalResult }).terminal;
-          if (terminal !== undefined) presentTerminal(terminal, options.io);
-          return result;
-        }
+      if (disposition.kind === "block" && disposition.reason === "authority-failed") {
         const terminal = dispatchExceptionFailureTerminal({
           role: options.admitted.role,
           runId: options.admitted.runId,
-          causeError:
-            disposition.reason === "authority-failed"
-              ? disposition.cause
-              : lastThrownError,
+          causeError: disposition.cause,
           errorFiles: retainedErrorFiles,
           autoResumeAttempts,
-          endReason:
-            disposition.reason === "authority-failed"
-              ? "sealed-acceptance authority failed closed"
-              : "sealed accepted projection already present",
+          endReason: "sealed-acceptance authority failed closed",
           everyAttemptThrew,
         });
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);

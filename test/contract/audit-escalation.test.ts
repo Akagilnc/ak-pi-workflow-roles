@@ -55,9 +55,10 @@ test("escalation projects one terminating human decision and is not an accepted 
   }
   assert.doesNotMatch(result.content[0].text, /accepted/i);
   assert.equal(isAuditEscalationResult(result.details), true);
-  assert.throws(
-    () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, result.details),
-    /not an accepted role receipt/,
+  // #836: status/allowlist rejection deleted — original payload is accepted as details.
+  assert.deepEqual(
+    validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, result.details),
+    result.details,
   );
   assert.deepEqual(projectAuditEscalation(decision).details, result.details);
 });

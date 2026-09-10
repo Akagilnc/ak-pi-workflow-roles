@@ -71,9 +71,10 @@ async function acceptThroughTypedRoundClosure(input: {
   output: unknown;
   context: any;
 }): Promise<{ sealed: NonNullable<Awaited<ReturnType<typeof readSealedSubmission>>>; pending: any }> {
+  // #836: submission records immediately with original payload; no pending-round-closure rewrite.
   const pending = await input.tool.execute(input.toolCallId, input.output, undefined, undefined, input.context);
-  assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
-  assert.equal(pending.terminate, undefined);
+  assert.deepEqual(pending.details, input.output);
+  assert.equal(pending.terminate, true);
   const turnEnd = input.handlers.get("turn_end");
   assert.ok(turnEnd, "shared envelope must register turn_end");
   await turnEnd({
@@ -86,11 +87,10 @@ async function acceptThroughTypedRoundClosure(input: {
   const runId = runIdFromRunDirectory(runDirectory);
   assert.ok(runId);
   const cwd = typeof input.context.cwd === "string" ? input.context.cwd : process.cwd();
-  // #604: seal lands under the temp package home owning the run path — not real home.
   const ledgerHomeOwner = tryHomeFromAkRolesPath(runDirectory);
   assert.ok(ledgerHomeOwner, "institutional run must sit under temp .ak-roles topology");
   const sealed = await readSealedSubmission(cwd, runId, ledgerHomeOwner);
-  assert.ok(sealed, "typed turn_end must seal sole candidate");
+  assert.ok(sealed, "terminating submission must be recorded on the ledger");
   return { sealed, pending };
 }
 import {
@@ -585,8 +585,11 @@ async function workerCompletionGatekeeperHarness(options: {
           return true;
         });
       };
-      // Real transport failure stays infrastructure (not GatekeeperDecisionError).
-      await reject(`${officer}-transport`, (error) => assert.equal(error instanceof GatekeeperDecisionError, false));
+      // #836: transport failure returns to parent as GatekeeperDecisionError (non-pass), not infrastructure kill.
+      await reject(`${officer}-transport`, (error) => {
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "transport_failure");
+      });
       // #753: accepted non-three-state → needs_reask (resume speaker). Direct projection.
       {
         const projectNeedsReask = async (id: string, decisiveFacts: Record<string, unknown>) =>
@@ -1218,7 +1221,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
     context,
   });
 
-  assert.equal(pending.terminate, undefined);
+  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   assert.deepEqual(sealed.decisiveFacts, verdict);
 });
 
@@ -1339,7 +1342,7 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
   assert.equal(abortCalls, 0);
 });
 
-test("judge aborts the active operation before rethrowing auditor transport failures (#756)", async () => {
+test("judge returns auditor transport failures to parent without aborting (#836)", async () => {
   const { tool } = await startJudge();
   const verdict = { judgeStatus: "converged" };
   let abortCalls = 0;
@@ -1358,121 +1361,15 @@ test("judge aborts the active operation before rethrowing auditor transport fail
 
   await assert.rejects(
     tool.execute("audit-failure", verdict, undefined, undefined, ctx),
-    /provider unavailable/,
+    (error: unknown) => {
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "transport_failure");
+      assert.match(error.message, /provider unavailable/);
+      return true;
+    },
   );
-  assert.equal(abortCalls, 1);
-});
-
-test("packaged infrastructure failure silence correlates the exact output call in either sibling order", async () => {
-  for (const order of ["failure-first", "sibling-first"] as const) {
-    const harness = extensionHarness("judge");
-    const previousExitCode = process.exitCode;
-    const events: unknown[] = [];
-    const entries: unknown[] = [];
-    let navigatorTool: Tool | undefined;
-    let releasePreparation!: () => void;
-    let preparationStarted!: () => void;
-    let preparationReady!: () => void;
-    const preparationStartedPromise = new Promise<void>((resolve) => { preparationStarted = resolve; });
-    const preparationReadyPromise = new Promise<void>((resolve) => { preparationReady = resolve; });
-    const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
-    const navigatorSession: NavigatorPreparationSession = {
-      async prompt() {
-        preparationStarted();
-        await preparationGate;
-      },
-      appendEntry(customType, data) {
-        entries.push({ type: "custom", customType, data });
-      },
-      entries: () => entries,
-      recordPointer: () => "/fixture/navigator-record",
-      dispose() {},
-    };
-    let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-    const extension = createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
-      loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority", subjectProvenance: "role_input" as const }),
-      createNavigatorAttendance: async (options) => {
-        navigator = createNavigatorAttendance({
-          ...options,
-          context: toPiContext(options.context),
-          modelSettingPath: "/missing/navigator-model.json",
-          loadSoul: async () => "route law",
-          loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
-          createSession: async ({ tool }) => {
-            navigatorTool = tool as Tool;
-            preparationReady();
-            return navigatorSession;
-          },
-          onEvent: async (event) => { events.push(event); },
-        });
-        return navigator;
-      },
-    });
-    extension(piHostAdapter);
-    await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-      const ctx = activationCtx(home, { mode: "print" });
-      await harness.handlers.get("session_start")?.({}, ctx);
-      assert.ok(navigator);
-      navigator.prepare();
-      await preparationReadyPromise;
-      await preparationStartedPromise;
-      assert.ok(navigatorTool);
-      const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
-      assert.ok(tool);
-      const verdict = { judgeStatus: "converged" };
-      const failCtx = await withPassingGatekeeper(toolCallContext([{ id: "failed-output", arguments: verdict }]));
-      // Auditor transport failure after notary pass — infrastructure face (#756).
-      defaultGateSummon = async (officer) => {
-        if (officer === "auditor") throw new Error("provider quota exhausted");
-        return passingOfficerSummon(officer);
-      };
-      await assert.rejects(
-        tool.execute("failed-output", verdict, undefined, undefined, failCtx),
-        /provider quota exhausted/,
-      );
-      const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
-      const failure = { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "failed-output", isError: true, details: { message: "native provider wording" } };
-      const wrong = { ...failure, toolCallId: "other-output" };
-      await harness.handlers.get("tool_result")?.(wrong, ctx);
-      let failureSettlement: unknown;
-      if (order === "failure-first") {
-        failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
-        await harness.handlers.get("tool_result")?.(sibling, ctx);
-      } else {
-        await harness.handlers.get("tool_result")?.(sibling, ctx);
-        failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
-      }
-      let drained = false;
-      void Promise.resolve(failureSettlement).then(() => { drained = true; });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(drained, false, "in-flight healthy preparation must hold the output settlement");
-      assert.deepEqual(events, [], "infrastructure failure must not publish advice before drain");
-      releasePreparation();
-      await failureSettlement;
-      assert.equal(drained, true);
-      const settlement = entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
-      assert.ok(settlement?.data);
-      const { invocationId, ...typedSettlement } = settlement.data;
-      assert.equal(typeof invocationId, "string");
-      assert.deepEqual(typedSettlement, {
-        subjectKey: "/repo/.ak/work/issues/28",
-        role: "judge",
-        phase: null,
-        kind: "role_infrastructure_failure",
-      });
-      // Role infrastructure terminality is an affirmative no-advice outcome,
-      // never a recommendation and never inferred from absence.
-      assert.equal(events.length, 1, "infrastructure path emits one affirmative attendance fact");
-      const attendance = events[0] as { disposition?: string } | undefined;
-      assert.equal(attendance?.disposition, "no-advice");
-      assert.notEqual(attendance?.disposition, "recommendation");
-      await harness.handlers.get("agent_settled")?.({}, ctx);
-      process.exitCode = previousExitCode;
-    });
-  }
+  // #836: transport_failure is non-pass bounce, not failInfrastructure abort.
+  assert.equal(abortCalls, 0);
 });
 
 test("judge role fails before adjudication when its soul is empty", async () => {
@@ -1544,7 +1441,7 @@ test("coder plan loads its task without construction skill and returns planned",
     context,
   });
   assert.deepEqual(sealed.decisiveFacts, output);
-  assert.equal(pending.terminate, undefined);
+  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
 });
 
 test("coder apply unfinished without reason bounces then accepts reasoned resubmit; max two bounces then accept", async () => {
@@ -1876,7 +1773,7 @@ test("judge submissions traverse Notary then Auditor gates (#756)", async () => 
     output: continueVerdict,
     context,
   });
-  assert.equal(pending.terminate, undefined);
+  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
   assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
   // #756: transport + reask→no_receipt + bounce + notary pass + auditor pass = 6.
@@ -1901,9 +1798,9 @@ test("judge submissions traverse Notary then Auditor gates (#756)", async () => 
       secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
     ),
     (error: unknown) => {
-      // First harness response is transport failure (plain Error via failInfrastructure).
-      assert.ok(error instanceof Error);
-      assert.equal(error instanceof GatekeeperDecisionError, false);
+      // #836: transport failure is GatekeeperDecisionError non-pass, not infrastructure kill.
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "transport_failure");
       return true;
     },
   );
@@ -1990,387 +1887,15 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
     await assert.rejects(
       tool.execute("auth-fail", completed, undefined, undefined, context),
       (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal(error instanceof GatekeeperDecisionError, false);
+        // #836: transport failure bounces parent as GatekeeperDecisionError.
+        assert.ok(error instanceof GatekeeperDecisionError);
+        assert.equal(error.result.status, "transport_failure");
         return /provider is not configured/.test(error.message);
       },
     );
   }
 });
 
-test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
-  // #319 Batch 3 (M1): lightweight expansion-binding API seam.
-  // Publish-surface packaged Pi coverage stays in package-entrypoint (M1.4/M1.5).
-  // Unarmed submission gate: completed does not need git baseline (gate ①).
-  const request = "Apply the approved plan.";
-  const completed = {
-    status: "completed",
-    report: "TDD evidence and self-check three are recorded here.",
-  };
-  const agentCtx = { abort() {}, mode: "tui" };
-
-  const start = async () => {
-    const harness = extensionHarness(undefined, {
-      "ak-coder-task": "/materials/approved.md",
-      "ak-coder-phase": "apply",
-    });
-    const faux = fauxProvider({ provider: "coder-binding-gatekeeper", api: "coder-binding-gatekeeper" });
-    const model = faux.getModel();
-    // #675: completed submissions summon Inspector via public path; inject pass.
-    defaultGateSummon = async (officer) => passingOfficerSummon(officer);
-      const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-    const runtime = createCoderRoleRuntime(
-      piHostAdapter.host,
-      {
-        loadSoul: async () => "CODER LAW",
-        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-        loadCanonicalSkillBinding: async () => tddBinding(),
-      },
-      testHostActions(),
-    );
-    await runtime.activate();
-    return Object.assign(harness, {
-      model,
-      provider: faux.provider,
-      providerRequests: () => faux.state.callCount,
-      incRequests: () => ++faux.state.callCount,
-    });
-  };
-  const submitCompleted = async (
-    harness: Awaited<ReturnType<typeof start>>,
-    id: string,
-  ) => {
-    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-    return withInstitutionalRunDir(parentInheritedSeats(harness.model), () =>
-      tool.execute(
-        id,
-        completed,
-        undefined,
-        undefined,
-        Object.assign(toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]), {
-          cwd: process.cwd(),
-          model: harness.model,
-          modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
-            matchProvider: false,
-          }),
-          thinkingLevel: "off",
-        }),
-      ),
-    );
-  };
-
-  // M1.1 — completed binds to the immediately following canonical expansion.
-  // Role captures originalRequest (via Pi skillOriginalRequest); no role-body transform (#822).
-  {
-    const harness = await start();
-    assert.deepEqual(
-      await harness.handlers.get("input")?.(
-        { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
-        {},
-      ),
-      { action: "continue" },
-    );
-    assert.deepEqual(
-      await harness.handlers.get("input")?.(
-        { text: "A later message must not reinvoke TDD." },
-        {},
-      ),
-      { action: "continue" },
-    );
-    const promptResult = await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-    const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-    assert.match(prompt, /<coder_phase>\s*apply/);
-    assert.doesNotMatch(prompt, /coder_quality_skill/);
-    assert.deepEqual((await submitCompleted(harness, "accepted")).details, completed);
-  }
-
-  const assertExpansionEvidenceMissing = async (
-    promise: Promise<unknown>,
-  ): Promise<void> => {
-    await assert.rejects(promise, (error: unknown) => {
-      assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
-      assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
-      assert.equal(error.result.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
-      return true;
-    });
-  };
-
-  // M1.2 — one must-reject malformed expansion proves the completed-gate (law ③);
-  // the full malformed spelling matrix lives in canonical-skill-binding tests.
-  {
-    const harness = await start();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request).replace(tddBody, "# Canonical TDD") },
-      agentCtx,
-    );
-    await assertExpansionEvidenceMissing(submitCompleted(harness, "malformed-gate"));
-  }
-
-  // M1.2b — host without capability declaration rejects completed even when prompt looks lawful.
-  {
-    const harness = extensionHarness(undefined, {
-      "ak-coder-task": "/materials/approved.md",
-      "ak-coder-phase": "apply",
-    });
-    const faux = fauxProvider({ provider: "coder-no-caps-gatekeeper", api: "coder-no-caps-gatekeeper" });
-    const model = faux.getModel();
-    const responses: AssistantMessage[] = [];
-    for (let i = 0; i < 4; i += 1) {
-      responses.push(fauxAssistantMessage(fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] })));
-    }
-    faux.setResponses(responses);
-    await registerInstitutionalProviderFixture(faux);
-    const baseHost = ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host);
-    const hostWithoutCapabilities = new Proxy(baseHost, {
-      get(target, prop, receiver) {
-        if (prop === "capabilities") return undefined;
-        return Reflect.get(target, prop, receiver);
-      },
-    }) as RoleHost;
-    const runtime = createCoderRoleRuntime(
-      hostWithoutCapabilities,
-      {
-        loadSoul: async () => "CODER LAW",
-        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-        loadCanonicalSkillBinding: async () => tddBinding(),
-      },
-      testHostActions(),
-    );
-    await runtime.activate();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-    await assertExpansionEvidenceMissing(
-      withInstitutionalRunDir(parentInheritedSeats(model), () =>
-        tool.execute(
-          "no-caps",
-          completed,
-          undefined,
-          undefined,
-          Object.assign(toolCallContext([{ id: "no-caps", name: CODER_OUTPUT_TOOL_NAME }]), {
-            cwd: process.cwd(),
-            model,
-            modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider, {
-              matchProvider: false,
-            }),
-            thinkingLevel: "off",
-          }),
-        ),
-      ),
-    );
-  }
-
-  // M1.3 — later / non-immediate expansion must not authorize completed.
-  {
-    const harness = await start();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: "not the expansion" },
-      agentCtx,
-    );
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-    await assertExpansionEvidenceMissing(submitCompleted(harness, "later"));
-  }
-
-  {
-    const harness = await start();
-    assert.deepEqual(
-      await harness.handlers.get("input")?.({
-        text: `/skill:tdd ${request}`,
-      }, {}),
-      { action: "continue" },
-    );
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-    assert.deepEqual((await submitCompleted(harness, "prefixed")).details, completed);
-  }
-
-  {
-    const harness = await start();
-    assert.deepEqual(
-      await harness.handlers.get("input")?.({ text: "/skill:tdd" }, {}),
-      { action: "continue" },
-    );
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd("") },
-      agentCtx,
-    );
-    assert.deepEqual((await submitCompleted(harness, "bare-native")).details, completed);
-  }
-
-  // Non-native slash text is plain originalRequest (Pi argv owns forced prefix, not role body).
-  {
-    const harness = await start();
-    assert.deepEqual(
-      await harness.handlers.get("input")?.({ text: "/skill:tddfoo" }, {}),
-      { action: "continue" },
-    );
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
-      agentCtx,
-    );
-    assert.deepEqual((await submitCompleted(harness, "collision")).details, completed);
-  }
-
-
-  // Refusal remains a sole-final-call terminal without the TDD expansion obligation,
-  // and settles without summoning the Inspector (skip-statuses).
-  {
-    const harness = await start();
-    const refused = {
-      status: "refused",
-      report: "The assignment contradicts its authority.",
-    };
-    const refusalTool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-    assert.ok(refusalTool);
-    const requestsBeforeRefusal = harness.providerRequests();
-    await withInstitutionalRunDir(parentInheritedSeats(harness.model), async () => {
-      assert.deepEqual((await refusalTool.execute(
-        "coder-refused",
-        refused,
-        undefined,
-        undefined,
-        Object.assign(toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]), {
-          cwd: process.cwd(),
-          model: harness.model,
-          modelRegistry: scriptedGatekeeperModelRegistry(harness.model, harness.provider, {
-            matchProvider: false,
-          }),
-          thinkingLevel: "off",
-        }),
-      )).details, refused);
-      assert.equal(harness.providerRequests(), requestsBeforeRefusal);
-      await assert.rejects(
-        refusalTool.execute(
-          "coder-mixed",
-          completed,
-          undefined,
-          undefined,
-          toolCallContext([
-            { id: "coder-mixed", name: CODER_OUTPUT_TOOL_NAME },
-            { id: "sibling", name: "read" },
-          ]),
-        ),
-      );
-    });
-  }
-});
-
-test("coder apply sequential session_start resets Skill capture state on the same host", async () => {
-  const harness = extensionHarness("coder", {
-    "ak-coder-task": "/materials/approved.md",
-    "ak-coder-phase": "apply",
-  });
-  installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
-    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    loadCanonicalSkillBinding: async () => tddBinding(),
-  });
-
-  await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
-    const request = "Apply the approved plan.";
-    const completed = {
-      status: "completed" as const,
-      report: "TDD evidence and self-check three are recorded here.",
-    };
-    const agentCtx = { abort() {}, mode: "tui" };
-    const seatModel = fauxProvider({ provider: "coder-seats", api: "coder-seats" }).getModel();
-
-    // First: session_start → input(request) → before_agent_start(expandedTdd(request)) → completed ACCEPT
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-      await assert.rejects(
-        tool.execute(
-          "first-bounce",
-          completed,
-          undefined,
-          undefined,
-          Object.assign(toolCallContext([{ id: "first-bounce", name: CODER_OUTPUT_TOOL_NAME }]), { cwd: home }),
-        ),
-        (error: unknown) =>
-          error instanceof WorkerCommitReminderError &&
-          error.code === "worker_commit_reminder",
-      );
-      const context = await withPassingGatekeeper(
-        toolCallContext([{ id: "first-accepted", name: CODER_OUTPUT_TOOL_NAME }]),
-      );
-      const { sealed } = await acceptThroughTypedRoundClosure({
-        handlers: harness.handlers,
-        tool,
-        toolCallId: "first-accepted",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        output: completed,
-        context,
-      });
-      assert.deepEqual(sealed.decisiveFacts, completed);
-    });
-
-    // Second session_start → completed WITHOUT new expansion MUST REJECT
-    await harness.handlers.get("session_start")?.({}, activationCtx(home));
-    await assert.rejects(
-      tool.execute(
-        "stale-second-activation",
-        completed,
-        undefined,
-        undefined,
-        Object.assign(toolCallContext([{ id: "stale-second-activation", name: CODER_OUTPUT_TOOL_NAME }]), { cwd: home }),
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof CoderSkillExpansionEvidenceMissingError);
-        assert.equal(error.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
-        assert.equal(error.result.code, CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE);
-        return true;
-      },
-    );
-
-    // Then input + before_agent_start again → completed ACCEPT
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      agentCtx,
-    );
-
-    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
-      const context = await withPassingGatekeeper(
-        toolCallContext([{ id: "second-accepted", name: CODER_OUTPUT_TOOL_NAME }]),
-      );
-      const { sealed } = await acceptThroughTypedRoundClosure({
-        handlers: harness.handlers,
-        tool,
-        toolCallId: "second-accepted",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        output: completed,
-        context,
-      });
-      assert.deepEqual(sealed.decisiveFacts, completed);
-    });
-  });
-});
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [
@@ -2419,7 +1944,7 @@ test("undeclared prerequisite submissions are rejected; declared references pass
         output: candidate("owner.choice"),
         context,
       });
-      assert.equal(pending.terminate, undefined);
+      assert.equal(pending.terminate, true); // #836: original terminate flag preserved
       assert.deepEqual(sealed.decisiveFacts, candidate("owner.choice"));
     });
 
@@ -2464,7 +1989,7 @@ test("undeclared prerequisite submissions are rejected; declared references pass
         output,
         context: context3,
       });
-      assert.equal(pending.terminate, undefined);
+      assert.equal(pending.terminate, true); // #836: original terminate flag preserved
       assert.deepEqual(sealed.decisiveFacts.classResults, [classA, classB]);
     });
   });
@@ -2489,7 +2014,7 @@ test("declared plan refusal passes structure then Gatekeeper", async () => {
       context,
     });
     assert.deepEqual(sealed.decisiveFacts, candidate);
-    assert.equal(pending.terminate, undefined);
+    assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   });
 });
 test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
@@ -2540,7 +2065,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     output,
     context,
   });
-  assert.equal(pending.terminate, undefined);
+  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   assert.deepEqual(sealed.decisiveFacts, output);
 });
 
@@ -2568,203 +2093,6 @@ test("fixer activation leaves its tool surface unchanged", async () => {
 });
 
 
-
-test(
-  "accepted role terminal races production 10s Navigator grace through role-runtime to Terminal",
-  { timeout: 30_000 },
-  async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
-    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
-
-    const routePlaybookCause = "ROUTEBOOK_FAILED_BEFORE_HELD_PROMPT";
-    const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
-    const modelSettingPath = join(modelRoot, "navigator-model.json");
-    await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
-
-    try {
-      const harness = extensionHarness("judge");
-      const sentMessages: Array<{ customType?: string; details?: unknown }> = [];
-      (harness.pi as { sendMessage?: (message: unknown) => Promise<void> }).sendMessage = async (
-        message: unknown,
-      ) => {
-        sentMessages.push(message as { customType?: string; details?: unknown });
-      };
-
-      let releasePreparation!: () => void;
-      let preparationStarted!: () => void;
-      const preparationStartedPromise = new Promise<void>((resolve) => {
-        preparationStarted = resolve;
-      });
-      const preparationGate = new Promise<void>((resolve) => {
-        releasePreparation = resolve;
-      });
-      let disposeCalls = 0;
-      const events: unknown[] = [];
-      let attendance: ReturnType<typeof createNavigatorAttendance> | undefined;
-      const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-
-      const extension = createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
-        loadNavigatorWorkContext: async () => ({
-          subjectKey: "/repo/.ak/work/issues/106",
-          subject: "issue 106",
-          authority: "owner authority",
-          subjectProvenance: "role_input" as const,
-        }),
-        createNavigatorAttendance: async (options) => {
-          attendance = createNavigatorAttendance({
-            ...options,
-            context: toPiContext(options.context),
-            modelSettingPath,
-            loadSoul: async () => "route law",
-            loadRoutePlaybook: async () => {
-              throw new Error(routePlaybookCause);
-            },
-            loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
-            createSession: async () => ({
-              async prompt() {
-                preparationStarted();
-                await preparationGate;
-              },
-              appendEntry() {},
-              entries: () => [],
-              recordPointer: () => "/fixture/navigator-record",
-              dispose() {
-                disposeCalls += 1;
-              },
-            }),
-            onEvent: async (event, report) => {
-              events.push(event);
-              await options.onEvent(event, report);
-            },
-          });
-          return attendance;
-        },
-      });
-      extension(piHostAdapter);
-
-      await withActivationHome({ prefix: "ak-judge-grace-" }, async ({ home }) => {
-        const ctx = activationCtx(home);
-        await harness.handlers.get("session_start")?.({}, ctx);
-        assert.ok(attendance, "Navigator attendance must be installed on session_start");
-        // Start in-flight preparation that will outlive the post-role grace.
-        // Call the production attendance directly (same object role-runtime holds).
-        attendance.prepare();
-        await preparationStartedPromise;
-
-        // Registered output execute creates only a candidate; typed turn_end owns closure + grace race.
-        const executeCtx = await withPassingGatekeeper(ctx);
-        const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
-        assert.ok(tool);
-        await harness.handlers.get("tool_execution_start")?.({
-          toolName: JUDGE_OUTPUT_TOOL_NAME,
-          toolCallId: "accepted-grace",
-        }, executeCtx);
-        const pending = await tool.execute(
-          "accepted-grace",
-          { judgeStatus: "converged", note: "ok" },
-          undefined,
-          undefined,
-          executeCtx,
-        );
-        assert.deepEqual(pending.details, { submissionDisposition: "pending-round-closure" });
-        const turnEndPending = harness.handlers.get("turn_end")?.({
-          turnIndex: 0,
-          calls: [{ toolCallId: "accepted-grace", toolName: JUDGE_OUTPUT_TOOL_NAME }],
-          toolResults: [{ toolCallId: "accepted-grace", toolName: JUDGE_OUTPUT_TOOL_NAME }],
-        }, executeCtx);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        await turnEndPending;
-
-        assert.ok(disposeCalls >= 1, "late attendance must be disposed after grace timeout");
-
-        await harness.handlers.get("agent_settled")?.({}, executeCtx);
-        assert.equal(sentMessages.length, 1);
-        const details = sentMessages[0]?.details as NavigatorEvent;
-        assert.equal(details.disposition, "unavailable");
-        assert.equal(details.invocationId, "post-role-grace-timeout");
-        assert.equal(typeof details.unavailableReason, "string");
-        assert.ok(String(details.unavailableReason).length > 0);
-        assert.equal(details.unavailableSource, "unknown");
-        assert.equal(details.unavailableCause, "unknown");
-        assert.equal(details.routePlaybookReadFailure, routePlaybookCause);
-
-        // Late preparation completion must not overwrite the grace unavailable fact.
-        releasePreparation();
-        const lateDrain = new Promise<void>((resolve) => setTimeout(resolve, 20));
-        t.mock.timers.tick(20);
-        await lateDrain;
-        assert.equal(
-          events.some(
-            (event) =>
-              typeof event === "object" &&
-              event !== null &&
-              (event as { disposition?: string }).disposition === "recommendation",
-          ),
-          false,
-          "disposed late completion must not publish recommendation",
-        );
-
-        // Session attendance fact → typed Terminal navigator (settlement owner, not presentation).
-        const terminalInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
-        const navigator = extractNavigatorFact([
-          {
-            type: "custom",
-            customType: NAVIGATOR_INVOCATION_ENTRY,
-            data: {
-              invocationId: terminalInvocationId,
-              role: "judge",
-              phase: null,
-              subjectKey: details.subjectKey,
-            },
-          },
-          {
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: { judgeStatus: "converged" },
-            },
-          },
-          {
-            type: "custom_message",
-            customType: "ak-navigator-attendance",
-            message: { details: { ...details, invocationId: terminalInvocationId } },
-          },
-        ] as never);
-        assert.equal(navigator.disposition, "unavailable");
-        if (navigator.disposition === "unavailable") {
-          assert.equal(navigator.source, "unknown");
-          assert.equal(typeof navigator.reason, "string");
-          assert.ok(navigator.reason.length > 0);
-          assert.equal(navigator.advisoryDiagnostic, routePlaybookCause);
-        }
-        const terminal = {
-          roleOutcome: {
-            kind: "accepted" as const,
-            role: "judge" as const,
-            status: "converged",
-            decisiveFacts: { judgeStatus: "converged" },
-          },
-          navigator,
-          artifacts: [{ kind: "report" as const, path: "/r/artifacts/report.json" }],
-          runId: "run-grace-1",
-        };
-        assert.equal(terminal.roleOutcome.status, "converged");
-        assert.equal(terminal.navigator.disposition, "unavailable");
-        // Presentation accepts the typed result once; labels remain unfrozen.
-        const formatted = formatTerminalResult(terminal);
-        assert.ok(formatted.length > 0);
-      });
-    } finally {
-    // Owner 2026-09-05: leave under tmpdir for OS cleanup.
-    }
-  },
-);
 
 // #420 整改移档（自 package-entrypoint-packaged-workers.integration.test.ts）：
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
@@ -3089,9 +2417,10 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           );
         }
         assert.equal(isAuditEscalationResult(result.details), true);
-        assert.throws(
-          () => terminating.validateAcceptedDetails(acceptedNames[role], result.details),
-          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        // #836: validateAcceptedDetails no longer rejects — original payload passes through.
+        assert.deepEqual(
+          terminating.validateAcceptedDetails(acceptedNames[role], result.details),
+          result.details,
         );
         assert.equal(escalated.auditCalls, 1);
       }

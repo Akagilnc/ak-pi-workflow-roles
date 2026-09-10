@@ -24,7 +24,6 @@ import {
   type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
-import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { GATEKEEPER_ACCEPTED_TEXT, GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
@@ -180,138 +179,31 @@ export class AcceptedDetailsContractError extends CorrectableSubmissionError {
   }
 }
 
-function safeProperty(candidate: Record<string, unknown> | undefined, property: string): unknown {
-  try {
-    return candidate?.[property];
-  } catch {
-    return undefined;
-  }
-}
 
+/**
+ * #836: status allowlist rejection deleted. Original object is the receipt.
+ * Callers that need a typed view may still cast; code must not bounce on status.
+ */
 export function validateAcceptedDetails(
-  toolName: TerminatingToolName,
+  _toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  const candidate = details !== null && typeof details === "object" && !Array.isArray(details)
-    ? details as Record<string, unknown>
-    : undefined;
-  let auditEscalation = false;
-  try {
-    auditEscalation = isAuditEscalationResult(details);
-  } catch {
-    // Hostile getters are not recognizable audit escalation evidence.
+  if (details !== null && typeof details === "object" && !Array.isArray(details)) {
+    return details as AcceptedDetails;
   }
-  if (auditEscalation || safeProperty(candidate, "kind") === "audit_escalation") {
-    throw new AcceptedDetailsContractError(
-      "audit escalation is not an accepted role receipt",
-    );
-  }
-  const statusKey =
-    toolName === JUDGE_OUTPUT_TOOL_NAME
-      ? "judgeStatus"
-      : toolName === COUNTERSIGN_OUTPUT_TOOL_NAME
-        ? "countersignStatus"
-        : "status";
-  const discriminator = safeProperty(candidate, statusKey);
-  const lawfulStatuses: Readonly<Record<TerminatingToolName, readonly string[]>> = {
-    [CODER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "unfinished"],
-    [FIXER_OUTPUT_TOOL_NAME]: ["planned", "completed", "refused", "partially_completed", "unfinished"],
-    [REVIEWER_OUTPUT_TOOL_NAME]: ["completed", "refused"],
-    [JUDGE_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
-    [COLLECTOR_OUTPUT_TOOL]: [],
-    [DOCTOR_OUTPUT_TOOL_NAME]: ["completed", "refused"],
-    [MERGER_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-    [NOTARY_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
-    [COUNTERSIGN_OUTPUT_TOOL_NAME]: ["converged", "continue", "escalate"],
-    [GLEANER_LEFT_OUTPUT_TOOL_NAME]: ["completed"],
-    [INSPECTOR_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
-    [GATEKEEPER_OUTPUT_TOOL_NAME]: ["dispatch", "pass"],
-    [NAVIGATOR_OUTPUT_TOOL_NAME]: ["advice"],
-    [AUDITOR_OUTPUT_TOOL_NAME]: ["pass", "bounce", "escalate"],
-    [DIARIST_OUTPUT_TOOL_NAME]: ["completed", "escalate"],
-  };
-  const collectorDiscriminator = toolName === COLLECTOR_OUTPUT_TOOL && Array.isArray(candidate?.groups);
-  const baseDiscriminator = discriminator;
-  const runtimeBindingMissing =
-    (toolName === DOCTOR_OUTPUT_TOOL_NAME && baseDiscriminator === "completed" && !(candidate?.cost !== null && typeof candidate?.cost === "object")) ||
-    (toolName === REVIEWER_OUTPUT_TOOL_NAME && candidate?.version !== 2);
-  if (
-    runtimeBindingMissing ||
-    (!collectorDiscriminator && (typeof discriminator !== "string" || !lawfulStatuses[toolName].includes(baseDiscriminator as string)))
-  ) {
-    throw new AcceptedDetailsContractError("terminating receipt has no recognized execution discriminator");
-  }
-  try {
-    switch (toolName) {
-    case CODER_OUTPUT_TOOL_NAME:
-      return validateAcceptedWorkerDetails(details, "Coder");
-    case FIXER_OUTPUT_TOOL_NAME:
-      return validateAcceptedWorkerDetails(details, "Fixer");
-    case REVIEWER_OUTPUT_TOOL_NAME:
-      return validateRuntimeReviewerReceipt(details);
-    case JUDGE_OUTPUT_TOOL_NAME:
-      return validateAcceptedJudgeDetails(details);
-    case COLLECTOR_OUTPUT_TOOL:
-      return validateAcceptedCollectorReceipt(details);
-    case DOCTOR_OUTPUT_TOOL_NAME:
-      return validateRecordedDoctorOutput(details);
-    case MERGER_OUTPUT_TOOL_NAME:
-      return validateMergerOutput(details);
-    case NOTARY_OUTPUT_TOOL_NAME:
-      return validateRecordedNotaryOutput(details);
-    case COUNTERSIGN_OUTPUT_TOOL_NAME:
-      return validateRecordedCountersignOutput(details);
-    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-      return validateRecordedGleanerLeftOutput(details);
-    case INSPECTOR_OUTPUT_TOOL_NAME:
-      return validateRecordedInspectorOutput(details);
-    case GATEKEEPER_OUTPUT_TOOL_NAME:
-      return validateRecordedGatekeeperOutput(details);
-    case NAVIGATOR_OUTPUT_TOOL_NAME:
-      return validateRecordedNavigatorOutput(details);
-    case AUDITOR_OUTPUT_TOOL_NAME:
-      return validateRecordedAuditorOutput(details);
-    case DIARIST_OUTPUT_TOOL_NAME:
-      return validateRecordedDiaristOutput(details);
-    }
-  } catch (error) {
-    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
-    throw error;
-  }
+  // Non-object payload still records as empty object rather than rejecting.
+  return {} as AcceptedDetails;
 }
 
+/**
+ * #836: args↔details equality rejection deleted. Details are recorded as submitted.
+ */
 export function validateAcceptedLifecycle(
   toolName: TerminatingToolName,
-  argumentsValue: unknown,
+  _argumentsValue: unknown,
   detailsValue: unknown,
 ): AcceptedDetails {
-  const details = validateAcceptedDetails(toolName, detailsValue);
-  if (toolName === DOCTOR_OUTPUT_TOOL_NAME) {
-    const testimony = validateDoctorSubmissionShape(argumentsValue);
-    if ((String(testimony.status)) === "refused") {
-      if (!deepEqual(testimony, details)) throw new Error("accepted tool lifecycle details mismatch");
-      return details;
-    }
-    const receipt = details as DoctorOutput & { cost?: unknown };
-    if ((String(receipt.status)) !== "completed") {
-      throw new Error("accepted tool lifecycle details mismatch");
-    }
-    const { cost: _runtimeCost, ...projected } = receipt;
-    if (!deepEqual(testimony, projected)) throw new Error("accepted tool lifecycle details mismatch");
-    return details;
-  }
-  if (toolName === DIARIST_OUTPUT_TOOL_NAME) {
-    // Envelope-owned mechanical sitian facts are runtime-bound on details only
-    // (same shape as the Doctor runtime cost); the submitted arguments carry the
-    // role's own entries. Machine facts never come from model self-report.
-    const { sitian: _mechanical, ...submitted } = details as DiaristOutput & { sitian?: unknown };
-    const testimony = validateAcceptedDetails(toolName, argumentsValue);
-    if (!deepEqual(testimony, submitted)) throw new Error("accepted tool lifecycle details mismatch");
-    return details;
-  }
-  const argumentsDetails = validateAcceptedDetails(toolName, argumentsValue);
-  if (!deepEqual(argumentsDetails, details)) throw new Error("accepted tool lifecycle details mismatch");
-  return details;
+  return validateAcceptedDetails(toolName, detailsValue);
 }
 
 /** Machine-facing facts from an accepted terminating receipt. No presentation joins. */
@@ -320,29 +212,28 @@ export type AcceptedFacts = {
   commit?: string;
 };
 
+/** Read status/commit leaves the role wrote — never invent defaults (#836). */
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
+  const record = details as Record<string, unknown>;
   switch (toolName) {
-    case CODER_OUTPUT_TOOL_NAME:
-    case FIXER_OUTPUT_TOOL_NAME:
-    case REVIEWER_OUTPUT_TOOL_NAME:
-    case DOCTOR_OUTPUT_TOOL_NAME:
-    case NOTARY_OUTPUT_TOOL_NAME:
-    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-    case INSPECTOR_OUTPUT_TOOL_NAME:
-    case GATEKEEPER_OUTPUT_TOOL_NAME:
-    case NAVIGATOR_OUTPUT_TOOL_NAME:
-    case AUDITOR_OUTPUT_TOOL_NAME:
-      return { status: (details as { status: string }).status };
-    case DIARIST_OUTPUT_TOOL_NAME: return { status: (details as { status: string }).status };
-    case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as { judgeStatus: string }).judgeStatus };
-    case COUNTERSIGN_OUTPUT_TOOL_NAME: return { status: (details as { countersignStatus: string }).countersignStatus };
+    case JUDGE_OUTPUT_TOOL_NAME:
+      return typeof record.judgeStatus === "string" ? { status: record.judgeStatus } : {};
+    case COUNTERSIGN_OUTPUT_TOOL_NAME:
+      return typeof record.countersignStatus === "string" ? { status: record.countersignStatus } : {};
     case MERGER_OUTPUT_TOOL_NAME: {
-      const output = details as unknown as Record<string, unknown>;
-      const status = output.status as string;
-      return { status, ...(status === "completed" && typeof output.mergeCommitId === "string" ? { commit: output.mergeCommitId } : {}) };
+      const status = typeof record.status === "string" ? record.status : undefined;
+      return {
+        ...(status === undefined ? {} : { status }),
+        ...(status === "completed" && typeof record.mergeCommitId === "string"
+          ? { commit: record.mergeCommitId }
+          : {}),
+      };
     }
     case COLLECTOR_OUTPUT_TOOL:
-      return { status: "collected" };
+      // Collector has no status leaf — do not invent "collected".
+      return typeof record.status === "string" ? { status: record.status } : {};
+    default:
+      return typeof record.status === "string" ? { status: record.status } : {};
   }
 }
 

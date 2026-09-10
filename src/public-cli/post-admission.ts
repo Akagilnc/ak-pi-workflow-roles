@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  GATE_DOSSIER_POINTER_PREFIX,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -599,8 +600,18 @@ export function resumeTurnRequestProjectionOptions(
     prompt = buildInstructionTransportPrompt(summonsPrepared);
   } else if (request.summons !== undefined) {
     // #755: same-ticket summons with no instruction/attachments (e.g. notary
-    // source-run pointer) — plain resume envelope, no handbook / 重新读.
-    prompt = RESUME_TRANSPORT_ENVELOPE;
+    // source-run pointer). #836: officer resume opening adds「请重读」+ path pointer.
+    const path = request.summons.sourceRunPath;
+    if (
+      path !== undefined &&
+      (admitted.role === "notary" ||
+        admitted.role === "inspector" ||
+        admitted.role === "auditor")
+    ) {
+      prompt = `请重读\n${GATE_DOSSIER_POINTER_PREFIX}${path}`;
+    } else {
+      prompt = RESUME_TRANSPORT_ENVELOPE;
+    }
   } else {
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
     prompt = buildResumeContinuationPrompt({
