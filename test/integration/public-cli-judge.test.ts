@@ -381,8 +381,7 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
     roleOutcome: {
       kind: "accepted",
       role: "judge",
-      status: "converged",
-      decisiveFacts: { judgeStatus: "converged", note: "done" },
+      payloads: [{ judgeStatus: "converged", note: "done" }],
     },
     navigator: {
       disposition: "recommendation",

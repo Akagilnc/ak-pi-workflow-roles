@@ -220,7 +220,7 @@ function reviewerReceipt() {
 
 type AcceptedRow = {
   readonly role: TerminalRoleName;
-  readonly status: string;
+  readonly status: string | undefined;
   readonly args: (project: string, home: string) => Promise<string[]> | string[];
   readonly details: (ctx: {
     project: string;
@@ -471,8 +471,8 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
   },
   {
     role: "collector",
-    // #836: collector has no status leaf — do not invent "collected".
-    status: "",
+    // #836: collector has no status leaf — do not invent "collected" or "".
+    status: undefined,
     args: (project) => [
       "collector",
       "--pr",
@@ -588,10 +588,14 @@ test("host-neutral typed turns record every terminating submission without sole 
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal && payloadStatus(result.terminal.roleOutcome), "converged");
-    assert.ok(result.terminal?.submissions, "terminal must carry submissions array");
-    assert.equal(result.terminal!.submissions!.length, 2);
-    assert.deepEqual(result.terminal!.submissions![0], first);
-    assert.deepEqual(result.terminal!.submissions![1], second);
+    const recorded =
+      result.terminal?.roleOutcome.kind === "accepted"
+        ? result.terminal.roleOutcome.payloads
+        : undefined;
+    assert.ok(recorded, "role result block must carry original payloads");
+    assert.equal(recorded.length, 2);
+    assert.deepEqual(recorded[0], first);
+    assert.deepEqual(recorded[1], second);
   });
 });
 
