@@ -248,21 +248,6 @@ export async function settleHostEndedNoReceipt(
   );
 }
 
-/**
- * #836: seal-based redispatch block deleted.
- * Final = host end; recorded submissions do not abort or block resume by themselves.
- * Always allow — retained for call-site shape compatibility only.
- */
-export type SealedAcceptanceRedispatchDisposition =
-  | { readonly kind: "allow" }
-  | { readonly kind: "block"; readonly reason: "authority-failed"; readonly cause: unknown };
-
-export async function sealedAcceptanceRedispatchDisposition(
-  _admitted: AdmittedRoleInvocation,
-): Promise<SealedAcceptanceRedispatchDisposition> {
-  return { kind: "allow" };
-}
-
 async function auditEscalationLedgerOutcome(
   admitted: AdmittedRoleInvocation,
   role: TerminalRoleName,
@@ -300,8 +285,6 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
-  buildResidualIncompleteTerminalOutcome,
-  redactExactRunId,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalGateFact,
@@ -332,72 +315,13 @@ export type ControlledFailure = {
   readonly details?: Readonly<Record<string, unknown>>;
 };
 
-/** Presentation bound for one stderr diagnostic line (durable artifact keeps full text). */
-export const CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
-
 /**
- * True when a stderr line is observation/event/token/stack flood rather than a diagnostic.
- * Recognizes both `event:` prefixes and real JSONL records with an `event` key
- * (tool_execution_* observation face).
- */
-export function isChildDiagnosticFloodLine(line: string): boolean {
-  if (/^at\s+/.test(line)) return true;
-  if (line.startsWith("event:")) return true;
-  if (/\btokens?=/.test(line)) return true;
-  if (/\btool_calls?=/.test(line)) return true;
-  if (line.startsWith("{")) {
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        !Array.isArray(parsed) &&
-        typeof (parsed as { event?: unknown }).event === "string"
-      ) {
-        return true;
-      }
-    } catch {
-      // Not JSON — may still be a real diagnostic.
-    }
-  }
-  return false;
-}
-
-/**
- * True when a stderr line is Pi auth/model help scaffolding rather than the failure identity.
- * Real counterexample: multi-line "No API key…" guidance ends with docs/*.md path lines;
- * those footers must not displace the primary diagnostic.
- */
-export function isChildDiagnosticHelpFooterLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return false;
-  // Path-only doc references (indented or bare).
-  if (/^\S+\.(md|txt)$/i.test(trimmed)) return true;
-  // Auth guidance continuations from Pi formatNoApiKeyFoundMessage / getProviderLoginHelp.
-  if (/^Use \//i.test(trimmed)) return true;
-  if (/^Then use \//i.test(trimmed)) return true;
-  if (/^See:\s*$/i.test(trimmed)) return true;
-  return false;
-}
-
-/** #836: no 480-char clip — full diagnostic text retained. */
-export function boundConciseDiagnostic(
-  diagnostic: string,
-  _maxChars: number = CONCISE_DIAGNOSTIC_MAX_CHARS,
-): string {
-  return diagnostic;
-}
-
-/**
- * Pick one concise diagnostic line from child stderr without stacks/events/tokens/help footers.
- * Prefers the last nonblank line that is not a frame, observation flood, or docs-path footer.
- * Returns the full selected diagnostic (bound only at presentation).
+ * Host stderr as recorded — full bytes, no flood filter, no char clip (#836).
  */
 export function conciseChildDiagnostic(
   stderr: string,
   fallback: string,
 ): string {
-  // #836: no flood filter / first-line pick — full stderr diagnostic retained.
   const trimmed = stderr.trim();
   return trimmed.length > 0 ? stderr : fallback;
 }
@@ -1547,22 +1471,6 @@ function withAuditNoReceiptFacts(
   };
 }
 
-/**
- * ADR 0037: a shape-valid Collector receipt may still name the wrong live target.
- * Public success binds receipt identity to this admitted repository/PR/request manifest
- * at the existing settlement seam — not a second receipt factory or validator.
- */
-function collectorReceiptBindingFailure(
-  diagnostic: string,
-): Error & { knownCause: ControlledFailureCause } {
-  const error = new Error(diagnostic) as Error & {
-    knownCause: ControlledFailureCause;
-  };
-  error.name = "CollectorReceiptBindingError";
-  error.knownCause = "output";
-  return error;
-}
-
 function toolResultText(message: SessionMessage): string {
   const content = message.content;
   if (typeof content === "string") return content.trim();
@@ -1773,33 +1681,6 @@ export async function readEngineDetourInfrastructureFailure(
     sessionFile,
     ENGINE_DETOUR_INFRASTRUCTURE_FAILURE_SPEC,
   );
-}
-
-/**
- * Compare a validated receipt with the admitted Collector invocation identity.
- * Throws a typed output failure when any identity field mismatches.
- */
-export function assertCollectorReceiptMatchesAdmitted(
-  receipt: CollectorReceipt,
-  admitted: AdmittedCollectorInvocation,
-): void {
-  if (receipt.repository !== admitted.repository.canonical) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
-    );
-  }
-  // #676 A: when admission left the target unbound, receipt.prNumber is the role bind.
-  // When admission bound explicitly/head-commit, receipt must match.
-  if (admitted.prNumber !== undefined && receipt.prNumber !== admitted.prNumber) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
-    );
-  }
-  if (receipt.manifestDigest !== admitted.manifestDigest) {
-    throw collectorReceiptBindingFailure(
-      `Collector receipt manifestDigest does not match admitted manifestDigest`,
-    );
-  }
 }
 
 function auditToolNameForRole(
@@ -2939,20 +2820,13 @@ async function settleLawfulCollectorTerminalResult(
       const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
       if (residual === undefined) continue;
       const candidate = residual.candidate;
-      const duration = isRecord(candidate) ? candidate.durationMs : undefined;
-      if (Number.isSafeInteger(duration) && (duration as number) >= 1 && (duration as number) <= 900_000) {
-        continue;
-      }
-      return {
-        roleOutcome: buildResidualIncompleteTerminalOutcome({
-          role: "collector",
-          candidate,
-          diagnostic: residual.diagnostic,
-        }),
-        navigator: { disposition: "no-advice" },
-        artifacts: [],
-        runId: admitted.runId,
-      };
+      const details = isRecord(candidate) ? candidate : { candidate };
+      const failed = await settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details,
+      }, authority);
+      return attachRecordedSubmissions(admitted, failed, scope);
     }
     return undefined;
   }
@@ -2971,14 +2845,18 @@ async function settleLawfulCollectorTerminalResult(
     coordinates,
     { collectorReceipt: receipt },
   );
-  return withOptionalGateProjection(
-    {
-      roleOutcome: accepted,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
+  return attachRecordedSubmissions(
+    admitted,
+    await withOptionalGateProjection(
+      {
+        roleOutcome: accepted,
+        navigator,
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    ),
+    scope,
   );
 }
 
@@ -3198,6 +3076,29 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
+  // Host isError residual wins over any recorded projection (#836 A.3 coexistence).
+  const scanStart = currentAttemptStartIndex(entries);
+  for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(
+      entries,
+      index,
+      message,
+      spec.toolName,
+    );
+    if (residual !== undefined) {
+      const details = isRecord(residual.candidate)
+        ? residual.candidate
+        : { candidate: residual.candidate };
+      const failed = await settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details,
+      }, authority);
+      return withSubmissions(failed, submissions);
+    }
+  }
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
@@ -3214,52 +3115,22 @@ async function settleLawfulSeatAcceptedTerminalResult(
       submissions,
     );
   }
-  if (roleOutcome?.role !== spec.role) {
-    // No recorded ledger outcome for this seat/court. Prefer a real isError residual
-    // (transport/lifecycle failure). #836: recording only — no seal sole-authority.
-    // Bounded to the current attempt so multi-attempt resume timeout/no-output
-    // is not masked by a prior residual (#599 / #633).
-    const scanStart = currentAttemptStartIndex(entries);
-    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(
-        entries,
-        index,
-        message,
-        spec.toolName,
-      );
-      if (residual !== undefined) {
-        // isError residual: retain candidate bytes as details (no shape stamp).
-        // #836 A.3: host failure coexists with any already-recorded submissions.
-        const details = isRecord(residual.candidate)
-          ? residual.candidate
-          : { candidate: residual.candidate };
-        const failed = await settleFailureTerminalResult(admitted, {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        }, authority);
-        return withSubmissions(failed, submissions);
-      }
-    }
-    return undefined;
+  if (roleOutcome?.role === spec.role) {
+    const navigator = extractNavigatorFact(entries);
+    return withSubmissions(
+      await withOptionalGateProjection(
+        {
+          roleOutcome,
+          navigator,
+          artifacts: [],
+          runId: admitted.runId,
+        },
+        sessionDirectory,
+      ),
+      submissions,
+    );
   }
-  // Recorded ledger outcome: pass through full decisiveFacts (#757 / #836).
-  const acceptedOutcome = roleOutcome;
-  const navigator = extractNavigatorFact(entries);
-  return withSubmissions(
-    await withOptionalGateProjection(
-      {
-        roleOutcome: acceptedOutcome,
-        navigator,
-        artifacts: [],
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-    ),
-    submissions,
-  );
+  return undefined;
 }
 
 /** Lawful Notary accepted outcome (pass/bounce/escalate). */
@@ -3877,16 +3748,14 @@ async function settleLawfulMergerTerminalResult(
       // Admitted-attempt identity binding only (ADR 0037) — not sole-final cardinality.
       // isError residual with matching attemptId is incomplete; no shape re-judge (#757).
       if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
-      return {
-        roleOutcome: buildResidualIncompleteTerminalOutcome({
-          role: "merger",
-          candidate: residual.candidate,
-          diagnostic: residual.diagnostic,
-        }),
-        navigator: { disposition: "no-advice" },
-        artifacts: [],
-        runId: admitted.runId,
-      };
+      const candidate = residual.candidate;
+      const details = isRecord(candidate) ? candidate : { candidate };
+      const failed = await settleFailureTerminalResult(admitted, {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details,
+      }, authority);
+      return attachRecordedSubmissions(admitted, failed, scope);
     }
     return undefined;
   }
@@ -3907,14 +3776,18 @@ async function settleLawfulMergerTerminalResult(
       methodProvenance: options.methodProvenance,
     },
   );
-  return withOptionalGateProjection(
-    {
-      roleOutcome: accepted,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
+  return attachRecordedSubmissions(
+    admitted,
+    await withOptionalGateProjection(
+      {
+        roleOutcome: accepted,
+        navigator,
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    ),
+    scope,
   );
 }
 
@@ -4170,67 +4043,6 @@ export async function publishFailureArtifacts(
   ];
 }
 
-/**
- * Durably record a controlled failure (Error Artifact first), then return the
- * Terminal aggregate. Presentation must happen only after this resolves.
- */
-/** Redact exact run ID from any string leaves inside decisive facts (arrays/objects included). */
-function redactDecisiveFactValue(value: unknown, runId: string): unknown {
-  if (typeof value === "string") return redactExactRunId(value, runId);
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactDecisiveFactValue(entry, runId));
-  }
-  if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = redactDecisiveFactValue(child, runId);
-    }
-    return out;
-  }
-  return value;
-}
-
-/** Redact exact run ID from decisive facts at the public Terminal boundary. */
-function redactDecisiveFactsForPublicTerminal(
-  facts: Readonly<Record<string, unknown>>,
-  runId: string,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(facts)) {
-    out[key] = redactDecisiveFactValue(value, runId);
-  }
-  return out;
-}
-
-/** Redact exact run ID from navigator free-text fields (reason only; commands are registry-owned). */
-function redactNavigatorFactForPublicTerminal(
-  navigator: TerminalNavigatorFact,
-  runId: string,
-): TerminalNavigatorFact {
-  const advisoryDiagnostic = navigator.advisoryDiagnostic === undefined
-    ? {}
-    : { advisoryDiagnostic: redactExactRunId(navigator.advisoryDiagnostic, runId) };
-  if (navigator.disposition === "recommendation") {
-    return {
-      ...navigator,
-      ...advisoryDiagnostic,
-      reason: redactExactRunId(navigator.reason, runId),
-    };
-  }
-  if (navigator.disposition === "unavailable") {
-    return {
-      ...navigator,
-      ...advisoryDiagnostic,
-      reason: redactExactRunId(navigator.reason, runId),
-    };
-  }
-  return { ...navigator, ...advisoryDiagnostic };
-}
-
-/**
- * Durably record a controlled failure (Error Artifact first), then return the
- * Terminal aggregate. Presentation must happen only after this resolves.
- */
 /**
  * Shared controlled-failure Terminal settlement (#107 ownership).
  * Role identity comes from the admitted run; no new failure classes are introduced here.

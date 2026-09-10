@@ -15,7 +15,12 @@ function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
   if (result.status === "bounce" || result.status === "escalate") {
     return serializeReceipt(result.receipt);
   }
-  // no_receipt | transport_failure — reason as written; no kill (#836).
+  if (result.status === "transport_failure") {
+    const head = `门下省 ${result.status}（${result.stage}）：${result.reason}`;
+    return result.submission === undefined
+      ? head
+      : `${head}\n${serializeReceipt(result.submission)}`;
+  }
   return `门下省 ${result.status}（${result.stage}）：${result.reason}`;
 }
 

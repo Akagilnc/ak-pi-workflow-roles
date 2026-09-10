@@ -19,7 +19,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, CONCISE_DIAGNOSTIC_MAX_CHARS, exitCodeForTerminalOutcome, isChildDiagnosticFloodLine, isChildDiagnosticHelpFooterLine, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -153,9 +153,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: floodStderr(),
   });
   assert.equal(activation.cause, "activation");
-  assert.equal(activation.diagnostic.includes("provider boom"), true);
-  assert.equal(activation.diagnostic.includes("at Object.fn"), false);
-  assert.equal(activation.diagnostic.includes("tokens="), false);
+  assert.equal(activation.diagnostic, floodStderr());
 
   const missing = classifyPostAdmissionFailure({
     timedOut: false,
@@ -199,10 +197,9 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: realisticJsonlFloodStderr(),
   });
   assert.equal(jsonl.cause, "activation");
-  assert.equal(jsonl.diagnostic, "provider rejected the request");
-  assert.equal(isChildDiagnosticFloodLine(JSON.stringify({ event: "tool_execution_end" })), true);
+  assert.equal(jsonl.diagnostic, realisticJsonlFloodStderr());
 
-  // Pi auth-guidance multi-line stderr: help-footer lines must not wash the primary diagnostic.
+  // Pi auth-guidance multi-line stderr is kept whole (#836 no footer clip).
   const primaryAuthDiagnostic = "No API key found for the selected model.";
   const authGuidanceStderr = [
     primaryAuthDiagnostic,
@@ -211,13 +208,6 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     "  /tmp/example-docs/alpha.md",
     "  /tmp/example-docs/beta.md",
   ].join("\n");
-  assert.equal(isChildDiagnosticHelpFooterLine("/tmp/example-docs/alpha.md"), true);
-  assert.equal(
-    isChildDiagnosticHelpFooterLine(
-      "Use /login to log into a provider via OAuth or API key. See:",
-    ),
-    true,
-  );
   const authGuidance = classifyPostAdmissionFailure({
     timedOut: false,
     code: 1,
@@ -229,8 +219,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     },
   });
   assert.equal(authGuidance.cause, "provider");
-  // Typed sentinel round-trip: primary diagnostic retained, not a footer line.
-  assert.equal(authGuidance.diagnostic, primaryAuthDiagnostic);
+  assert.equal(authGuidance.diagnostic, authGuidanceStderr);
   assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
   assert.equal(authGuidance.identity?.code, "xai");
 
@@ -397,29 +386,24 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
           }),
         },
       );
+      const flood = realisticJsonlFloodStderr();
       const { terminal } = await assertPublicFailureSettlement({
         result,
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: "provider rejected the request",
+        diagnosticEquals: flood,
       });
-      // Durable cause keeps the real diagnostic; presentation must not select the JSON event.
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.diagnostic.includes("tool_execution_end"), false);
+        assert.equal(terminal.roleOutcome.diagnostic, flood);
       }
-      // stderr oracle is emission shape + non-flood — not selected diagnostic prose (AC6):
-      // stack frames, JSONL event lines, and token counters must never surface.
-      assert.equal(stderr[0]!.includes("tool_execution_end"), false);
-      assert.equal(stderr[0]!.includes("at Object.fn"), false);
-      assert.equal(stderr[0]!.includes("event:"), false);
-      assert.equal(stderr[0]!.includes("tokens="), false);
+      assert.equal(stderr[0]!.includes("tool_execution_end"), true);
     }
 
-    // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
+    // Counterexample 2: oversized diagnostic is kept whole on durable + presentation.
     {
-      const full = "x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200);
+      const stderrText = oversizedDiagnosticStderr();
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
         ["judge", "--project", project, "oversized diagnostic"],
@@ -438,7 +422,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             return {
               code: 1,
-              stderr: oversizedDiagnosticStderr(),
+              stderr: stderrText,
               timedOut: false,
               args: [...args],
             };
@@ -451,20 +435,17 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: full,
+        diagnosticEquals: stderrText,
       });
       const body = JSON.parse(await readFile(errorRef.path, "utf8")) as {
         diagnostic: string;
       };
-      // Durable evidence keeps the full diagnostic identity.
-      assert.equal(body.diagnostic, full);
+      assert.equal(body.diagnostic, stderrText);
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.diagnostic, full);
+        assert.equal(terminal.roleOutcome.diagnostic, stderrText);
       }
-      // Presentation bound is length/count only (AC6) — never ellipsis glyph or truncated prose.
-      // Helper already asserts one nonblank stderr line and CONCISE_DIAGNOSTIC_MAX_CHARS + 32.
-      assert.ok(stderr[0]!.length < full.length);
+      assert.ok(stderr[0]!.includes("x".repeat(680)));
     }
   });
 });
@@ -844,5 +825,5 @@ function realisticJsonlFloodStderr(): string {
   ].join("\n");
 }
 function oversizedDiagnosticStderr(): string {
-  return `Error: ${"x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200)}\n`;
+  return `Error: ${"x".repeat(680)}\n`;
 }

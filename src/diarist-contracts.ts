@@ -75,15 +75,19 @@ export function projectDiaristEntries(value: unknown): DiaristEntrySubmission[] 
   if (!Array.isArray(rows)) return [];
   const out: DiaristEntrySubmission[] = [];
   for (const row of rows) {
-    if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
-    const record = row as Record<string, unknown>;
-    if (typeof record.sourceKind !== "string") continue;
-    if (typeof record.transcript !== "string" || record.transcript.length === 0) continue;
-    if (typeof record.timestamp !== "string" || record.timestamp.length === 0) continue;
-    if (record.sourceRef === null || typeof record.sourceRef !== "object" || Array.isArray(record.sourceRef)) {
+    if (row === null || typeof row !== "object" || Array.isArray(row)) {
+      out.push({
+        sourceKind: "unprojected",
+        sourceRef: {},
+        transcript: JSON.stringify(row),
+        timestamp: "",
+      });
       continue;
     }
-    const ref = record.sourceRef as Record<string, unknown>;
+    const record = row as Record<string, unknown>;
+    const ref = record.sourceRef !== null && typeof record.sourceRef === "object" && !Array.isArray(record.sourceRef)
+      ? record.sourceRef as Record<string, unknown>
+      : {};
     const sourceRef: TicketProvenanceSourceRef = {
       ...(typeof ref.sessionFile === "string" ? { sessionFile: ref.sessionFile } : {}),
       ...(typeof ref.entryId === "string" || typeof ref.entryId === "number"
@@ -93,10 +97,12 @@ export function projectDiaristEntries(value: unknown): DiaristEntrySubmission[] 
       ...(typeof ref.url === "string" ? { url: ref.url } : {}),
     };
     out.push({
-      sourceKind: record.sourceKind as TicketProvenanceSourceKind,
+      sourceKind: typeof record.sourceKind === "string" ? record.sourceKind : "unprojected",
       sourceRef,
-      transcript: record.transcript,
-      timestamp: record.timestamp,
+      transcript: typeof record.transcript === "string" && record.transcript.length > 0
+        ? record.transcript
+        : JSON.stringify(record),
+      timestamp: typeof record.timestamp === "string" ? record.timestamp : "",
       ...(typeof record.note === "string" ? { note: record.note } : {}),
     });
   }

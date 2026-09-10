@@ -60,12 +60,6 @@ export type PublicSummonRequest = {
    */
   readonly reviewReask?: string;
   /**
-   * #786 same-parent re-summons: verbatim parent-submission body for the gate officer.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
-   * Never folded into argv / parent-run lookup keys (ADR 0079 卷宗指针 stays pure).
-   */
-  readonly gateReviewInstruction?: string;
-  /**
    * Offline test inject — same face as public CLI env.roleTurnHost. Production
    * summons leave this unset and use the seat-resolved host.
    */
@@ -300,10 +294,6 @@ export async function summonPublicRole(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     // #753: reask rides the existing notary same-ticket resume summons.instruction.
     ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
-    // #786: verbatim submission body on same-parent resume (not conclusion re-ask).
-    ...(options.gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction: options.gateReviewInstruction }),
     // Offline test injects — same faces as public CLI env (production leaves unset).
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -421,11 +411,6 @@ export async function summonGateOfficer(options: {
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim on resume
-   * when reask is absent (#786). Never a path pointer substitute.
-   */
-  readonly submission?: unknown;
   /** Offline test inject — forwarded to summonPublicRole. */
   readonly roleTurnHost?: RoleTurnHost;
   /** Offline test inject — forwarded to summonPublicRole. */
@@ -437,17 +422,10 @@ export async function summonGateOfficer(options: {
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
-  // Conclusion re-ask keeps sole ownership of reviewReask. New-submission body
-  // rides a separate field so first mint never fails the "reask requires prior" gate.
-  let gateReviewInstruction: string | undefined;
-  if (options.submission !== undefined) {
-    const { buildGateOfficerReviewInstruction } = await import("./auditor-dossier-tool.ts");
-    gateReviewInstruction = buildGateOfficerReviewInstruction({
-      submission: options.submission,
-    });
-  }
   // Officer host is seat-owned only (#821). Parent invocation.json.host stays a
   // hostTransition consumer in post-admission — not an officer override channel.
+  // #836: officers get the whole parent run directory pointer; code does not
+  // inject a picked toolCall leaf as the resume instruction.
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -455,9 +433,6 @@ export async function summonGateOfficer(options: {
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
-    ...(gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;

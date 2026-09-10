@@ -12,12 +12,8 @@ export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
 /** Payload discriminator: diagnostic residue (not a diary body entry). */
 export const TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC = "diagnostic" as const;
 
-/** Source families the diarist may enumerate (v1). */
-export type TicketProvenanceSourceKind =
-  | "cc-session"
-  | "issue-body-comment"
-  | "adr-decision-key"
-  | "ticket-decree-block";
+/** Source family as the diarist wrote it (#836: no allowlist drop). */
+export type TicketProvenanceSourceKind = string;
 
 /**
  * How a block entered the volume.
@@ -135,42 +131,29 @@ export function projectTicketProvenanceEntry(
   value: unknown,
 ): TicketProvenanceEntry | undefined {
   if (!isRecord(value)) return undefined;
-  // Diagnostics are a separate projection — never body entries.
   if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
     return undefined;
   }
-  if (!isRecord(value.basis)) return undefined;
-  if (typeof value.basis.method !== "string") {
-    return undefined;
-  }
-  if (typeof value.sourceKind !== "string") {
-    return undefined;
-  }
-  if (!isRecord(value.sourceRef)) return undefined;
-  if (typeof value.transcript !== "string" || value.transcript.length === 0) {
-    return undefined;
-  }
-  if (typeof value.timestamp !== "string" || value.timestamp.length === 0) {
-    return undefined;
-  }
-
+  const basisRecord = isRecord(value.basis) ? value.basis : undefined;
   const basis: TicketProvenanceBasis = {
-    method: value.basis.method as TicketProvenanceBasisMethod,
-    ...(Array.isArray(value.basis.anchors)
-      ? { anchors: value.basis.anchors as readonly string[] }
+    method: (typeof basisRecord?.method === "string" ? basisRecord.method : "llm-semantic") as TicketProvenanceBasisMethod,
+    ...(basisRecord !== undefined && Array.isArray(basisRecord.anchors)
+      ? { anchors: basisRecord.anchors as readonly string[] }
       : {}),
-    ...(typeof value.basis.note === "string" ? { note: value.basis.note } : {}),
+    ...(basisRecord !== undefined && typeof basisRecord.note === "string" ? { note: basisRecord.note } : {}),
   };
-
-  const sourceRef: TicketProvenanceSourceRef = {
-    ...(value.sourceRef as TicketProvenanceSourceRef),
-  };
-
+  const sourceRef: TicketProvenanceSourceRef = isRecord(value.sourceRef)
+    ? { ...(value.sourceRef as TicketProvenanceSourceRef) }
+    : {};
+  const transcript = typeof value.transcript === "string" && value.transcript.length > 0
+    ? value.transcript
+    : JSON.stringify(value);
+  const timestamp = typeof value.timestamp === "string" ? value.timestamp : "";
   return {
     basis,
-    sourceKind: value.sourceKind as TicketProvenanceSourceKind,
+    sourceKind: typeof value.sourceKind === "string" ? value.sourceKind : "unprojected",
     sourceRef,
-    transcript: value.transcript,
-    timestamp: value.timestamp,
+    transcript,
+    timestamp,
   };
 }

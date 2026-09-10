@@ -79,7 +79,7 @@ function attemptIdentity(context: HostContext, runId: string): string {
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
-/** Status leaf as the role wrote it — no allowlist, no invented defaults (#836). */
+/** Status leaf as the role wrote it (status / judgeStatus / countersignStatus). Never invents "collected". */
 function statusFromRoleDetails(details: Record<string, unknown>): string {
   if (typeof details.status === "string") return details.status;
   if (typeof details.judgeStatus === "string") return details.judgeStatus;
@@ -87,10 +87,6 @@ function statusFromRoleDetails(details: Record<string, unknown>): string {
   return "";
 }
 
-/**
- * Status/projection view only — never mutates the raw params stored in `accepted`.
- * Non-object params stay raw on accepted/submissions; typed face gets empty facts + "".
- */
 function statusFromParams(params: unknown): string {
   if (typeof params === "object" && params !== null && !Array.isArray(params)) {
     return statusFromRoleDetails(params as Record<string, unknown>);

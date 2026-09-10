@@ -84,7 +84,6 @@ import {
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
-  sealedAcceptanceRedispatchDisposition,
   attachRecordedSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -982,8 +981,6 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    sealedAcceptanceDisposition: () =>
-      sealedAcceptanceRedispatchDisposition(admitted),
     dispatch: (request, lease, _isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,

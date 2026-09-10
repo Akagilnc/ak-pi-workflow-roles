@@ -25,7 +25,7 @@ import {
   sampleReview,
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
-import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
+
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { createFakeGitHubTransport } from "../helpers/fake-github-transport.ts";
 
@@ -66,30 +66,7 @@ async function withPathGhStub<T>(
   });
 }
 
-test("runtime receipt is formed solely from observed typed identity groups", async () => {
-  const raw = JSON.parse(await readFile(new URL("../fixtures/collector/coderabbit-review-4895713581.json", import.meta.url), "utf8"));
-  const review = normalizeReview(raw);
-  const clock = clockAt("2026-08-11T00:00:00Z");
-  const ledger = createCollectorLedger({
-    repository: { display: "acme/widgets", canonical: "acme/widgets", owner: "acme", repo: "widgets" },
-    prNumber: 1,
-    manifest: emptyCollectorManifest(),
-  });
-  ledger.recordActivation(clock);
-  ledger.openWaitWindow(clock);
-  await ledger.observe(createFakeGitHubTransport({
-    user: { login: "collector", raw: { login: "collector" } },
-    pullRequest: { number: 1, state: "OPEN", headOid: review.commitId!, updatedAt: "2026-08-11T00:00:00Z", url: "https://github.com/acme/widgets/pull/1", raw: { number: 1 } },
-    reviews: [review], issueComments: [], reviewComments: [],
-  }), clock);
-  const receipt = buildCollectorReceipt(ledger, { ignored: "model projection" }, clock);
-  assert.equal(receipt.groups.length, 1);
-  assert.equal(receipt.groups[0]?.identity?.userId, 136622811);
-  assert.equal(receipt.groups[0]?.attendance, true);
-  assert.equal(Object.hasOwn(receipt, "reports"), false);
-  assert.equal(Object.hasOwn(receipt, "legs"), false);
-  assert.equal(Object.hasOwn(receipt, "identityGroups"), false);
-});
+
 
 test("production transport uses gh api --hostname github.com argument vector", async () => {
   const calls: string[][] = [];
@@ -1189,12 +1166,10 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
     const ledger = createCollectorLedger({ ...baseConfig, waitWindowMs: 60_000 });
     ledger.recordActivation(clock);
     ledger.openWaitWindow(clock);
-    await ledger.observe(transport, clock);
-    const receipt = buildCollectorReceipt(ledger, {}, clock);
-    assert.equal(receipt.activationTime, "2026-01-01T00:00:00.000Z");
-    assert.equal(receipt.deadlineTime, "2026-01-01T00:01:00.000Z");
-    assert.equal(receipt.groups.length >= 1, true);
-    assert.equal(receipt.prState, "OPEN");
+    const observed = await ledger.observe(transport, clock);
+    assert.equal(ledger.activationTime?.toISOString(), "2026-01-01T00:00:00.000Z");
+    assert.equal(ledger.deadlineTime?.toISOString(), "2026-01-01T00:01:00.000Z");
+    assert.equal(observed.snapshot.prState, "OPEN");
   }
 
   // After cutoff: request is refused; final observe + seal still keeps materials.
@@ -1219,12 +1194,9 @@ test("#678 wait window: cutoff blocks new requests; timeout still seals material
         error instanceof Error && error.name === "CollectorWaitWindowClosedError",
     );
     assert.equal(transport.calls.create, 0);
-    await ledger.observe(transport, clock);
-    const receipt = buildCollectorReceipt(ledger, {
-      unfinishedReasons: ["等待窗届满，无新 bot 回复"],
-    }, clock);
-    assert.deepEqual(receipt.unfinishedReasons, ["等待窗届满，无新 bot 回复"]);
-    assert.equal(receipt.groups.length >= 1, true);
+    const last = await ledger.observe(transport, clock);
+    assert.equal(last.snapshot.complete, true);
+    assert.equal(ledger.allEvidence().length >= 1, true);
   }
 
   // Wait sleeps only remaining window (controllable clock; no wall 10 minutes).

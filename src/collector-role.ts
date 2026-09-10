@@ -44,10 +44,7 @@ import {
   type CollectorConfigState,
   type CollectorLedger,
 } from "./collector-ledger.ts";
-import {
-  buildCollectorReceipt,
-  type CollectorReceipt,
-} from "./collector-receipt.ts";
+
 import {
   collectorBindTargetArgsSchema,
   collectorHandbookWriteArgsSchema,
@@ -63,18 +60,6 @@ import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submiss
 import { CollectorUnknownEvidenceError } from "./collector-identity.ts";
 
 export { CollectorUnknownEvidenceError } from "./collector-identity.ts";
-
-/**
- * #641 chain②: normal completion must never declare `infrastructureFailure`.
- * When the runtime can machine-verify a lawful receipt assembly, a declaration
- * is model misuse — bounce it as correctable guidance instead of host failure.
- */
-export class CollectorNormalCompletionDeclarationError extends CorrectableSubmissionError {
-  constructor() {
-    super("runtime 已按机器状态核验本局为正常完工（回执可合法组装）：正常完工的交件不得填 infrastructureFailure，请省略该字段后重新提交。");
-    this.name = "CollectorNormalCompletionDeclarationError";
-  }
-}
 
 /** #676 A: role-chosen target could not bind uniquely — correctable, not host failure. */
 export class CollectorTargetBindError extends CorrectableSubmissionError {
@@ -668,11 +653,8 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_OUTPUT_TOOL,
         label: "通进司输出",
-        description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
+        description: "观察完成后提交原交卷。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
         promptSnippet: "提交通进司回执",
-        bounceInfrastructureDeclaration() {
-          return undefined;
-        },
         parameters: outputSchema,
         async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
           const activation = getActivation();

@@ -34,7 +34,6 @@ import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifa
 import {
   presentFailureTerminal,
   presentStructuralRejection,
-  type SealedAcceptanceRedispatchDisposition,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -346,13 +345,6 @@ export async function runWithAutoResumeLoop<
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
-  /**
-   * After a non-lawful terminal or dispatch throw, consult settlement-owned
-   * sealed-acceptance redispatch disposition (#672 / ADR 0080). Publication
-   * miss must not redispatch and destroy the sealed read (#648 / #599).
-   * Loop presents entry-specific terminals; it must not rebuild the gate.
-   */
-  sealedAcceptanceDisposition?: () => Promise<SealedAcceptanceRedispatchDisposition>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -433,29 +425,6 @@ export async function runWithAutoResumeLoop<
           options.io.stdout(formatTerminalResult(terminal));
         }
         return result;
-      }
-    }
-
-    // #836: seal-based redispatch block deleted. Disposition retained only for
-    // authority-failed (ledger read infrastructure). Recorded submissions do not block.
-    if (options.sealedAcceptanceDisposition !== undefined) {
-      const disposition = await options.sealedAcceptanceDisposition();
-      if (disposition.kind === "block" && disposition.reason === "authority-failed") {
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: disposition.cause,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "sealed-acceptance authority failed closed",
-          everyAttemptThrew,
-        });
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
-          exitCode: 1,
-          terminal,
-        } as T;
       }
     }
 

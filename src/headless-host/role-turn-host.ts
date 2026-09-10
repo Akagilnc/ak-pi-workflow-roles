@@ -378,7 +378,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             return terminalFromSpawned(spawned, {
               cause: "output",
               identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
-              diagnostic: spawned.stderr.trim() || "headless CLI produced no parseable result",
+              diagnostic: spawned.stderr.length > 0 ? spawned.stderr : "headless CLI produced no parseable result",
               details: { sessionId, exitCode: spawned.code },
             });
           }
@@ -399,7 +399,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ? envelope.result
               : Array.isArray(envelope.errors)
                 ? envelope.errors.map(String).join("\n")
-                : spawned.stderr.trim() || "headless CLI reported is_error";
+                : spawned.stderr.length > 0 ? spawned.stderr : "headless CLI reported is_error";
             return terminalFromSpawned(spawned, {
               cause: "output",
               identity: { name: "HeadlessCliError", code: errorCode },

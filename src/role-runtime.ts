@@ -97,7 +97,7 @@ import {
 import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -400,7 +400,7 @@ export type {
 } from "./reviewer-execution-ledger.ts";
 export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 export type { ReviewerDispatchRunResult } from "./reviewer-execution-ledger.ts";
-export type { CollectorReceipt } from "./collector-receipt.ts";
+export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
@@ -878,7 +878,7 @@ export function createAuditorRoleRuntime(
  */
 function readDiaristTicketAssertion(
   submitted: Record<string, unknown> | undefined,
-): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } {
+): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } | { kind: "invalid" } {
   if (submitted === undefined || !("ticketNumber" in submitted)) {
     return { kind: "true-unbound" };
   }
@@ -893,9 +893,7 @@ function readDiaristTicketAssertion(
       return { kind: "ticket", ticketNumber: n };
     }
   }
-  throw new Error(
-    "diarist ticketNumber must be a safe integer >= 1, null, or absent",
-  );
+  return { kind: "invalid" };
 }
 
 /** Run coordinates + optional pre-bound ticket from durable pages (#779). */
@@ -956,12 +954,8 @@ export function createDiaristRoleRuntime(
             : undefined;
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates();
-        const ticketNumber =
-          coords.boundTicketNumber !== undefined
-            ? coords.boundTicketNumber
-            : assertion.kind === "ticket"
-              ? assertion.ticketNumber
-              : undefined;
+        // #836 7.3: pre-bound ticket is material for the LLM, not an override.
+        const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
         if (ticketNumber !== undefined) {
           if (coords.boundTicketNumber === undefined) {
             await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
@@ -1288,11 +1282,7 @@ export function createRoleRuntimeExtension(
       // a second file, grep, or nesting step. Receipt details stay contract-pure;
       // unavailable/no-advice leave the settlement untouched.
       if (event.isError) return;
-      const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
-      if (decorated === undefined) return;
-      return {
-        content: decorated.content as typeof event.content,
-      };
+      return;
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is

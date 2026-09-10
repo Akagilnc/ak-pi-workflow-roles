@@ -6,7 +6,6 @@ import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, 
 import {
   createNavigatorAttendance,
   createNavigatorPrepareTool,
-  decorateSettlementWithNavigation,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -340,12 +339,17 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       "human_decision",
       `${seat.role}: copied role-shaped details must not escalate Navigator`,
     );
+    const auditConflicts = Array.isArray((projected.audit as { conflicts?: unknown } | undefined)?.conflicts)
+      ? [...((projected.audit as { conflicts: readonly unknown[] }).conflicts)]
+      : Array.isArray(projected.conflicts)
+        ? [...(projected.conflicts as readonly unknown[])]
+        : [];
     for (const forged of [
       { ...projected, status: "pass" },
       { ...projected, kind: "audit_escalation", auditDecisionGate: undefined },
       { ...projected, conflicts: ["wrong"] },
-      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[]), "duplicate"] },
-      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[])].reverse() },
+      { ...projected, conflicts: [...auditConflicts, "duplicate"] },
+      { ...projected, conflicts: [...auditConflicts].reverse() },
     ]) {
       assert.notEqual(
         publicNavigatorSettlement(seat.role, seat.phase, {

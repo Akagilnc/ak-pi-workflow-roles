@@ -43,6 +43,7 @@ function bookDirectOfficerPointer(
     && result.status !== "bounce"
     && result.status !== "escalate"
     && result.status !== "needs_reask"
+    && result.status !== "transport_failure"
   ) {
     return;
   }
@@ -105,9 +106,8 @@ export async function requireGatekeeperPass(options: {
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
-    if (gatekeeper.status === "transport_failure") {
-      options.hostActions.failInfrastructure(new Error(gatekeeper.reason), options.context, options.toolCallId);
-    }
+    // bounce | escalate | no_receipt | transport_failure: parent stands.
+    // Host failure rides as transport_failure with recorded payloads in `submission`.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

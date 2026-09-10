@@ -58,7 +58,7 @@ export type GatekeeperResult =
 /** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "escalate" | "no_receipt" }
+  { status: "bounce" | "escalate" | "no_receipt" | "transport_failure" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
@@ -207,13 +207,42 @@ function projectOfficerDecision(
 
 /**
  * Project a public-role terminal onto the gate queue surface.
- * Lifecycle facts (no_receipt / transport) stay loud; conclusion reads only
- * the status field. No unusable/unreadable judgment (#753).
+ * Host failure stays failure; recorded officer payloads ride beside it (#836 A.3).
+ * Multiple recorded payloads are all kept — code does not pick last-wins.
  */
-function latestOfficerPayload(terminal: TerminalResult | undefined): unknown {
-  const rows = terminal?.submissions;
-  if (rows === undefined || rows.length === 0) return undefined;
-  return rows[rows.length - 1];
+function officerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
+  return terminal?.submissions ?? [];
+}
+
+function queueStatus(value: unknown): string | undefined {
+  const record = readRecord(value);
+  return record !== undefined && typeof record.status === "string" ? record.status : undefined;
+}
+
+function projectOfficerPayloads(
+  officer: GateOfficer,
+  payloads: readonly unknown[],
+  fallbackStatus?: string,
+): GatekeeperResult {
+  if (payloads.length === 0) {
+    return projectOfficerDecision(officer, undefined, fallbackStatus);
+  }
+  if (payloads.length === 1) {
+    return projectOfficerDecision(officer, payloads[0], fallbackStatus);
+  }
+  const three = new Set(
+    payloads
+      .map(queueStatus)
+      .filter((status): status is "pass" | "bounce" | "escalate" =>
+        status === "pass" || status === "bounce" || status === "escalate"),
+  );
+  if (three.size === 1) {
+    const status = [...three][0]!;
+    if (status === "pass") return { status, officer, receipt: payloads };
+    return { status, officer, receipt: payloads };
+  }
+  // Conflicting or non-three-state set: keep every payload, re-ask the speaker.
+  return { status: "needs_reask", officer, receipt: payloads };
 }
 
 function projectOfficerTerminal(
@@ -222,59 +251,57 @@ function projectOfficerTerminal(
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
-  const recorded = latestOfficerPayload(terminal);
+  const recorded = officerPayloads(terminal);
   if (outcome === undefined) {
-    const detail = summoned.stderr?.trim();
+    const detail = summoned.stderr ?? "";
     return {
       status: "transport_failure",
       stage: officer,
-      reason: detail && detail.length > 0
+      reason: detail.length > 0
         ? `${gateSeatLabel(officer)} public summon exit ${summoned.exitCode}: ${detail}`
         : `${gateSeatLabel(officer)} public summon produced no terminal (exit ${summoned.exitCode})`,
-      submission: summoned,
+      submission: recorded.length > 0 ? recorded : summoned,
     };
   }
   if (outcome.kind === "no_receipt") {
     return {
       status: "no_receipt",
       stage: officer,
-      reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`,
+      reason: typeof outcome.status === "string" && outcome.status.length > 0
+        ? outcome.status
+        : "no_receipt",
       facts: outcome,
     };
   }
   if (outcome.kind === "failure") {
-    // Host abort after a recorded officer receipt: queue the words, do not empty-bounce.
-    if (recorded !== undefined) {
-      return projectOfficerDecision(officer, recorded);
-    }
     return {
       status: "transport_failure",
       stage: officer,
       reason: outcome.diagnostic,
-      submission: outcome.decisiveFacts,
+      submission: recorded.length > 0 ? recorded : outcome.decisiveFacts,
     };
   }
   if (outcome.kind === "audit_escalation") {
-    // Residual/compliance escalate face: queue as escalate, receipt as written.
-    // Nested officer escalate itself seals accepted+status escalate (no rewrite).
     return {
       status: "escalate",
       officer,
-      receipt: retainedReceipt(outcome.decisiveFacts),
+      receipt: recorded.length > 0 ? (recorded.length === 1 ? recorded[0] : recorded) : retainedReceipt(outcome.decisiveFacts),
     };
   }
   if (outcome.kind === "accepted") {
-    const facts = recorded ?? outcome.decisiveFacts;
+    if (recorded.length > 0) {
+      return projectOfficerPayloads(officer, recorded, outcome.status);
+    }
+    const facts = outcome.decisiveFacts;
     if (isRecord(facts) && Object.keys(facts).length > 0) {
       return projectOfficerDecision(officer, facts, outcome.status);
     }
     return projectOfficerDecision(officer, { status: outcome.status });
   }
-  // Unknown terminal kind: still not a shape judgment — ask the speaker again.
   return {
     status: "needs_reask",
     officer,
-    receipt: retainedReceipt(outcome),
+    receipt: recorded.length > 0 ? recorded : retainedReceipt(outcome),
   };
 }
 

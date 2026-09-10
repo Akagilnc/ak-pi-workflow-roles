@@ -39,7 +39,7 @@ test("entry identity is stable for same source+transcript and differs otherwise"
   );
 });
 
-test("projectTicketProvenanceEntry accepts lawful entries and rejects garbage", () => {
+test("projectTicketProvenanceEntry keeps original entries; only non-objects are absent", () => {
   const ok = projectTicketProvenanceEntry({
     basis: { method: "llm-semantic", anchors: ["#582"] },
     sourceKind: "cc-session",
@@ -50,16 +50,20 @@ test("projectTicketProvenanceEntry accepts lawful entries and rejects garbage", 
   assert.ok(ok);
   assert.equal(ok.sourceKind, "cc-session");
   assert.equal(projectTicketProvenanceEntry(null), undefined);
-  assert.equal(
-    projectTicketProvenanceEntry({
-      basis: { method: "nope" },
-      sourceKind: "cc-session",
-      sourceRef: {},
-      transcript: "x",
-      timestamp: "t",
-    }),
-    undefined,
-  );
+  const unknownMethod = projectTicketProvenanceEntry({
+    basis: { method: "nope" },
+    sourceKind: "cc-session",
+    sourceRef: {},
+    transcript: "x",
+    timestamp: "t",
+  });
+  assert.deepEqual(unknownMethod, {
+    basis: { method: "nope" },
+    sourceKind: "cc-session",
+    sourceRef: {},
+    transcript: "x",
+    timestamp: "t",
+  });
 });
 
 test("diagnostic projection: recordClass payload only; forged disguise rejected", () => {
@@ -92,15 +96,19 @@ test("diagnostic projection: recordClass payload only; forged disguise rejected"
     }),
     undefined,
   );
-  // collector-failed is not a lawful body entry method.
-  assert.equal(
-    projectTicketProvenanceEntry({
-      basis: { method: "collector-failed", note: "old fail" },
-      sourceKind: "cc-session",
-      sourceRef: { path: "x" },
-      transcript: "old fail",
-      timestamp: "2026-08-31T00:00:00.000Z",
-    }),
-    undefined,
-  );
+  // Unknown method is still a body entry — no allowlist drop (#836 B6.9).
+  const kept = projectTicketProvenanceEntry({
+    basis: { method: "collector-failed", note: "old fail" },
+    sourceKind: "cc-session",
+    sourceRef: { path: "x" },
+    transcript: "old fail",
+    timestamp: "2026-08-31T00:00:00.000Z",
+  });
+  assert.deepEqual(kept, {
+    basis: { method: "collector-failed", note: "old fail" },
+    sourceKind: "cc-session",
+    sourceRef: { path: "x" },
+    transcript: "old fail",
+    timestamp: "2026-08-31T00:00:00.000Z",
+  });
 });

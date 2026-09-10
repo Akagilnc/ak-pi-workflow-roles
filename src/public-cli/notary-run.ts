@@ -52,11 +52,6 @@ export type NotaryRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — external callers still have zero prompt.
    */
   reviewReask?: string;
-  /**
-   * #786 same-parent re-summons: verbatim parent-submission body.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
-   */
-  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -123,7 +118,7 @@ export async function runPublicNotary(
   // #753/#786: gate re-ask and verbatim submission body share summons.instruction
   // (reask wins when both present; no parallel stack).
   {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+    const resumeInstruction = env.reviewReask;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,

@@ -154,18 +154,6 @@ export type SameTicketSummonsMaterials = {
 };
 
 /**
- * #836: resume path rewrite deleted (A4.2).
- * Pointer lines stay as pointer lines; no「重新读 <path>」code sentence injection.
- * Kept as identity so call sites compile; engine material still appends below.
- */
-export function instructResumeHandbookRead(
-  prompt: string,
-  _engineMaterial?: EngineSessionMaterial,
-): string {
-  return prompt;
-}
-
-/**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
  * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
  * #836: no transport-token prompt, no line-by-line 重新读 rewrite.

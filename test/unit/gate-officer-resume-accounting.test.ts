@@ -223,6 +223,75 @@ test("#836 projectGatekeeperRun summons officer with whole run directory pointer
   });
 });
 
+test("#836 host abort coexists with recorded officer payload — does not wash to bounce", async () => {
+  const bounce = { status: "bounce", findings: ["keep-me"] };
+  const projected = await projectGatekeeperRun({
+    context: {
+      cwd: process.cwd(),
+      sessionManager: { getSessionFile: () => "/tmp/unused" },
+    } as never,
+    subject: { kind: "countersign_verdict" },
+    runDirectory: "/tmp/parent-run",
+    summonOfficer: async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "notary",
+          cause: "output",
+          diagnostic: "This operation was aborted",
+          decisiveFacts: { cause: "output" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "officer-run",
+        submissions: [bounce],
+      },
+    }),
+  });
+  assert.equal(projected.result.status, "transport_failure");
+  if (projected.result.status === "transport_failure") {
+    assert.match(projected.result.reason, /This operation was aborted/);
+    assert.deepEqual(projected.result.submission, [bounce]);
+  }
+});
+
+test("#836 multiple recorded officer payloads are all kept — not last-wins", async () => {
+  const projected = await projectGatekeeperRun({
+    context: {
+      cwd: process.cwd(),
+      sessionManager: { getSessionFile: () => "/tmp/unused" },
+    } as never,
+    subject: { kind: "countersign_verdict" },
+    runDirectory: "/tmp/parent-run",
+    summonOfficer: async () => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "notary",
+          status: "bounce",
+          decisiveFacts: { status: "bounce" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "officer-run",
+        submissions: [
+          { status: "pass", findings: ["first"] },
+          { status: "bounce", findings: ["second"] },
+        ],
+      },
+    }),
+  });
+  assert.equal(projected.result.status, "needs_reask");
+  if (projected.result.status === "needs_reask") {
+    assert.deepEqual(projected.result.receipt, [
+      { status: "pass", findings: ["first"] },
+      { status: "bounce", findings: ["second"] },
+    ]);
+  }
+});
+
 test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, not parent invocation host", async () => {
   await withTempRoot("ak-gate-officer-seat-host-", async (home) => {
     const project = join(home, "project");

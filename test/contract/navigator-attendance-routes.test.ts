@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createNavigatorAttendance, createNavigatorPrepareTool, decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
+import { createNavigatorAttendance, createNavigatorPrepareTool, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -60,10 +60,7 @@ test("future arrival is typed and presentation-only", async () => {
   });
 });
 
-test("settlement decoration carries recommendation only; unavailable and no-advice stay absent", () => {
-  const base = {
-    content: [{ type: "text" as const, text: "Judge verdict accepted" }],
-    details: { judgeStatus: "converged" } };
+test("settlement navigation essentials keep recommendation fields as written", () => {
   const recommendationEvent = {
     version: 1 as const,
     disposition: "recommendation" as const,
@@ -75,28 +72,12 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
     next: { role: "reviewer" as const, phase: null },
     reason: "needs review",
     command: "Usage: pi --ak-role reviewer --help" };
-  const decorated = decorateSettlementWithNavigation(base, {
-    event: recommendationEvent,
-    report: {
-      disposition: "recommendation",
-      route: recommendationEvent.route,
-      next: recommendationEvent.next,
-      reason: recommendationEvent.reason,
-      command: recommendationEvent.command } });
-  assert.ok(decorated);
-  // Receipt details remain contract-pure (same reference / deep-equal shape).
-  assert.equal(decorated.details, base.details);
-  assert.deepEqual(decorated.details, { judgeStatus: "converged" });
-  const text = (decorated.content[0] as { text: string }).text;
-  assert.equal(text.includes(recommendationEvent.reason), true);
-  assert.equal(text.includes(recommendationEvent.command), true);
   assert.deepEqual(settlementNavigationFromEvent(recommendationEvent), {
     disposition: "recommendation",
     route: recommendationEvent.route,
     next: recommendationEvent.next,
     reason: recommendationEvent.reason,
     command: recommendationEvent.command });
-  // Direction-only recommendation (no reason/command) still settles as navigation essentials.
   assert.deepEqual(
     settlementNavigationFromEvent({
       version: 1,
@@ -109,19 +90,6 @@ test("settlement decoration carries recommendation only; unavailable and no-advi
     {
       disposition: "recommendation",
       next: { role: "fixer", phase: "apply" } },
-  );
-  assert.equal(
-    decorateSettlementWithNavigation(base, {
-      event: { ...recommendationEvent, disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
-      report: { disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" } }),
-    undefined,
-  );
-  assert.equal(decorateSettlementWithNavigation(base, undefined), undefined);
-  assert.equal(
-    decorateSettlementWithNavigation(base, {
-      event: { ...recommendationEvent, disposition: "no-advice" },
-      report: { disposition: "no-advice" } }),
-    undefined,
   );
 });
 
@@ -431,22 +399,6 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
       assert.equal(events[0]?.reason, row.expectedReason, `${row.label}: reason must not be rewritten`);
       assert.equal(events[0]?.invocationId, row.invocationId, row.label);
       assert.equal(harness.prompts(), 2, `${row.label}: unmatched speculative advice forces one settlement-bound rebind`);
-
-      // Real entry → external receipt surface: divergent recommendation decorates settlement content.
-      const decorated = decorateSettlementWithNavigation(
-        {
-          content: [{ type: "text" as const, text: "role terminal accepted" }],
-          details: { ok: true } },
-        { event: events[0], report: {
-          disposition: "recommendation",
-          next: events[0].next,
-          reason: events[0].reason,
-          command: events[0].command } },
-      );
-      assert.ok(decorated, `${row.label}: recommendation must decorate settlement`);
-      const text = (decorated.content[0] as { text: string }).text;
-      assert.equal(text.includes(row.expectedReason), true, `${row.label}: reason appears in settlement content`);
-      assert.equal(text.includes(row.expectedCommand), true, `${row.label}: command appears in settlement content`);
       assert.deepEqual(settlementNavigationFromEvent(events[0])?.next, row.expectedNext, `${row.label}: navigation essentials keep next as-is`);
     });
   }

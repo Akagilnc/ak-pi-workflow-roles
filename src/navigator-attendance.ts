@@ -100,7 +100,7 @@ export type NavigatorWorkContext = {
   contextError?: unknown;
 };
 
-export type NavigatorRouteTarget = { role: NavigatorTargetRole; phase: NavigatorPhase };
+export type NavigatorRouteTarget = { role: string; phase: NavigatorPhase };
 /** Normalized preparation advice. v1 success needs machine-usable next only. */
 export type NavigatorCandidate = {
   id?: string;
@@ -108,6 +108,7 @@ export type NavigatorCandidate = {
   route?: NavigatorRouteTarget[];
   next?: NavigatorRouteTarget;
   reason?: string;
+  command?: string;
 };
 
 export type NavigatorReport = {
@@ -237,24 +238,18 @@ function targetIsValid(value: unknown): value is NavigatorRouteTarget {
   return metadata !== undefined && metadata.phases.includes(value.phase as never);
 }
 
-/** Normalize one advice target. Phase is kept only when present and meaningful; bare role stays usable. */
+/** Keep the role/phase the model wrote. Unknown seats stay on the advice. */
 function normalizeTarget(value: unknown): NavigatorRouteTarget | undefined {
   if (!exactRecord(value)) return undefined;
   const role = typeof value.role === "string" ? value.role.trim() : "";
-  if (!targetRoles.has(role)) return undefined;
-  const metadata = packagedRoleMetadata(role);
-  if (metadata === undefined) return undefined;
+  if (role === "") return undefined;
   if (value.phase === undefined || value.phase === null) {
-    return { role: role as NavigatorTargetRole, phase: null };
+    return { role, phase: null };
   }
   if (value.phase === "plan" || value.phase === "apply") {
-    if (metadata.phases.includes(value.phase as never)) {
-      return { role: role as NavigatorTargetRole, phase: value.phase };
-    }
-    // Present but not meaningful for this role → drop to bare role direction.
-    return { role: role as NavigatorTargetRole, phase: null };
+    return { role, phase: value.phase };
   }
-  return undefined;
+  return { role, phase: null };
 }
 
 function normalizeMatches(value: unknown): NavigatorCandidate["matches"] | undefined {
@@ -289,13 +284,14 @@ function normalizeCandidate(value: unknown): NavigatorCandidate | undefined {
   const matches = normalizeMatches(value.matches);
   const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : undefined;
   const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : undefined;
-  // Model command prose is never execution authority; omit from normalized advice.
+  const command = typeof value.command === "string" ? value.command : undefined;
   return {
     ...(id === undefined ? {} : { id }),
     ...(matches === undefined ? {} : { matches }),
     ...(route === undefined || route.length === 0 ? {} : { route }),
     ...(next === undefined ? {} : { next }),
     ...(reason === undefined ? {} : { reason }),
+    ...(command === undefined ? {} : { command }),
   };
 }
 
@@ -316,10 +312,7 @@ function routeText(route: readonly NavigatorRouteTarget[]): string {
 function targetText(target: NavigatorRouteTarget): string {
   return target.phase === null ? target.role : `${target.role} ${target.phase}`;
 }
-/** #836 B9.1: full text retained — first-line clip deleted. */
-function oneLine(value: string): string {
-  return value;
-}
+
 export function navigatorSubjectKey(
   subjectRoot: string,
   subject: string,
@@ -417,16 +410,20 @@ export function selectNavigatorCandidate(
 export function formatNavigatorReport(report: NavigatorReport): string {
   const playbookFailure = report.routePlaybookReadFailure === undefined
     ? []
-    : [`路书读取失败：${oneLine(report.routePlaybookReadFailure)}`];
+    : [`路书读取失败：${report.routePlaybookReadFailure}`];
   if (report.disposition === "no-advice") return playbookFailure.join("\n");
-  if (report.disposition === "unavailable") return [...playbookFailure, `导航不可用：${oneLine(report.unavailableReason ?? "未能完成导航准备")}`].join("\n");
-  if (report.disposition === "arrival") return [...playbookFailure, oneLine(report.arrivalMessage ?? "已到达目的地")].join("\n");
+  if (report.disposition === "unavailable") {
+    return [...playbookFailure, ...(report.unavailableReason ? [report.unavailableReason] : [])].join("\n");
+  }
+  if (report.disposition === "arrival") {
+    return [...playbookFailure, ...(report.arrivalMessage ? [report.arrivalMessage] : [])].join("\n");
+  }
   return [
     ...playbookFailure,
     ...(report.route === undefined ? [] : [`路线：${routeText(report.route)}`]),
-    `下一步：${targetText(report.next!)}`,
-    ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${oneLine(report.reason)}`]),
-    ...(report.command === undefined || report.command.trim() === "" ? [] : [`命令：${oneLine(report.command)}`]),
+    ...(report.next === undefined ? [] : [`下一步：${targetText(report.next)}`]),
+    ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${report.reason}`]),
+    ...(report.command === undefined || report.command.trim() === "" ? [] : [`命令：${report.command}`]),
   ].join("\n");
 }
 
@@ -448,45 +445,6 @@ export function settlementNavigationFromEvent(event: NavigatorEvent): Settlement
     next: event.next,
     ...(event.reason === undefined ? {} : { reason: event.reason }),
     ...(event.command === undefined ? {} : { command: event.command }),
-  };
-}
-
-type SettlementTextPart = { type: "text"; text: string };
-
-function appendNavigatorReportToContent<T extends { type: string }>(
-  content: readonly T[],
-  reportText: string,
-): Array<T | SettlementTextPart> {
-  if (reportText === "") return content.slice();
-  const parts: Array<T | SettlementTextPart> = content.slice();
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index];
-    if (part !== undefined && part.type === "text" && typeof (part as SettlementTextPart).text === "string") {
-      parts[index] = { ...(part as object), type: "text", text: `${(part as SettlementTextPart).text}\n${reportText}` } as SettlementTextPart;
-      return parts;
-    }
-  }
-  return [...parts, { type: "text", text: reportText }];
-}
-
-/**
- * Decorate an accepted role-output tool result so the one mandatory settlement
- * extraction (last ak_*_output toolResult) carries recommendation essentials in
- * content text. Receipt details stay byte-identical to the terminating-tool
- * contract — unavailable and affirmative no-advice leave the settlement untouched.
- */
-export function decorateSettlementWithNavigation<T extends { type: string }>(
-  event: { content: readonly T[]; details: unknown },
-  presentation: { event: NavigatorEvent; report: NavigatorReport } | undefined,
-): { content: Array<T | SettlementTextPart>; details: unknown } | undefined {
-  if (presentation === undefined) return undefined;
-  if (settlementNavigationFromEvent(presentation.event) === undefined) return undefined;
-  const { routePlaybookReadFailure: _advisoryFailure, ...receiptReport } = presentation.report;
-  const reportText = formatNavigatorReport(receiptReport);
-  if (reportText === "") return undefined;
-  return {
-    content: appendNavigatorReportToContent(event.content, reportText),
-    details: event.details,
   };
 }
 
@@ -870,7 +828,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           try { await preparation; } catch (error) { preparationFailure ??= error; }
         }
         report = preparationFailure === undefined
-          ? { disposition: "arrival", arrivalMessage: settlement.message ?? "已到达目的地" }
+          ? { disposition: "arrival", ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }) }
           : unavailable(invocationId, preparationFailure);
       } else if (preparation === undefined) {
         report = unavailable(invocationId, "Navigator preparation did not start");
@@ -896,20 +854,20 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
           // advice remains the existing unavailable path.
           const selectedCandidate = selected?.candidate;
-          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
+          if (selectedCandidate?.next === undefined) {
             report = { disposition: "no-advice" };
-          } else if (selectedCandidate?.next === undefined) {
-            throw new Error("Navigator prepared no machine-usable next direction");
           } else {
           const selectedRoute = selectedCandidate.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
-          // Single owner: public registry renderer (ADR 0052). Model command prose is never authority.
-          const command = renderPublicAkRoleCommand(selectedCandidate.next);
+          const command =
+            typeof selectedCandidate.command === "string" && selectedCandidate.command.trim() !== ""
+              ? selectedCandidate.command
+              : renderPublicAkRoleCommand(selectedCandidate.next);
           report = {
             disposition: "recommendation",
             ...(routeChanged ? { route: selectedRoute } : {}),
             next: selectedCandidate.next,
-            ...(selectedCandidate.reason === undefined ? {} : { reason: oneLine(selectedCandidate.reason) }),
+            ...(selectedCandidate.reason === undefined ? {} : { reason: selectedCandidate.reason }),
             ...(command === undefined ? {} : { command }),
           };
           if (selectedRoute !== undefined) {

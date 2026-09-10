@@ -102,28 +102,6 @@ export function exitCodeForTerminalOutcome(
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
 }
 
-export function buildResidualIncompleteTerminalOutcome(input: {
-  role: "merger" | "collector";
-  candidate: unknown;
-  diagnostic: string;
-}): ResidualIncompleteTerminalOutcome {
-  return {
-    kind: "incomplete",
-    role: input.role,
-    status: "incomplete",
-    decision: "no-usable-result",
-    candidate: input.candidate,
-    diagnostic: input.diagnostic,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-result",
-      candidate: input.candidate,
-      diagnostic: input.diagnostic,
-      acceptedReceipt: false,
-    },
-  };
-}
-
 export type TerminalNavigatorFact =
   | {
       disposition: "recommendation";
@@ -189,19 +167,6 @@ export type TerminalGateFact = {
   readonly rounds: readonly TerminalGateRound[];
 };
 
-/** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
-export const REDACTED_RUN_ID_TOKEN = "[run-id]" as const;
-
-/**
- * Remove an exact Role run ID from untrusted free text at the public Terminal boundary.
- * Private durable artifacts keep the original bytes; only resume.command may disclose it.
- */
-export function redactExactRunId(text: string, runId: string): string {
-  if (runId.length === 0) return text;
-  if (!text.includes(runId)) return text;
-  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
-}
-
 /**
  * One admitted Role run's typed Terminal aggregate.
  * Resumable failures carry `resume` and must not re-disclose the run ID via
@@ -240,28 +205,22 @@ export type TerminalResult = {
 );
 
 /**
- * Build a recommendation navigator fact. Command is always registry-rendered;
- * any model-authored command string is ignored.
+ * Build a recommendation navigator fact. Model command is kept when present;
+ * registry render is fallback only. Unknown seats stay recommendations (#836 B4.1).
  */
 export function recommendationNavigatorFact(input: {
   next: { role: string; phase: NavigatorPhase };
   reason: string;
   route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
   advisoryDiagnostic?: string;
-  /** #836 B4.1/B9.2: model-authored command retained when present; registry is fallback only. */
   modelCommand?: string;
 }): TerminalNavigatorFact {
-  if (!isPublicCallableRole(input.next.role)) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: `recommended role is not a public callable seat: ${input.next.role}`,
-    };
-  }
   const command =
     typeof input.modelCommand === "string" && input.modelCommand.trim() !== ""
       ? input.modelCommand
-      : renderPublicAkRoleCommand(input.next);
+      : isPublicCallableRole(input.next.role)
+        ? renderPublicAkRoleCommand(input.next)
+        : undefined;
   return {
     disposition: "recommendation",
     next: input.next,

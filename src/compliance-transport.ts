@@ -137,21 +137,30 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const rows = summoned.terminal?.submissions;
-    const recorded = rows !== undefined && rows.length > 0 ? rows[rows.length - 1] : undefined;
-    if (recorded !== undefined) {
-      return readComplianceCandidate(recorded, usage);
-    }
-    throw new Error(outcome.diagnostic);
+    // Host failure stays loud; recorded payloads ride on the original terminal (#836 A.3).
+    // Do not throw (that kills the parent) and do not reclassify as bounce/pass.
+    return {
+      status: "received",
+      reply: summoned.terminal,
+      ...(usage === undefined ? {} : { usage }),
+    };
   }
   if (outcome.kind === "accepted") {
-    const rows = summoned.terminal?.submissions;
-    const recorded = rows !== undefined && rows.length > 0 ? rows[rows.length - 1] : undefined;
-    const candidate = recorded ?? {
+    const rows = summoned.terminal?.submissions ?? [];
+    if (rows.length === 1) {
+      return readComplianceCandidate(rows[0], usage);
+    }
+    if (rows.length > 1) {
+      return {
+        status: "received",
+        reply: rows,
+        ...(usage === undefined ? {} : { usage }),
+      };
+    }
+    return readComplianceCandidate({
       status: outcome.status,
       ...outcome.decisiveFacts,
-    };
-    return readComplianceCandidate(candidate, usage);
+    }, usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {

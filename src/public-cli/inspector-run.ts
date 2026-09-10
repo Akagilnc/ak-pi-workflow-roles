@@ -50,11 +50,6 @@ export type InspectorRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
    */
   reviewReask?: string;
-  /**
-   * #786 same-parent re-summons: verbatim parent-submission body.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv 卷宗指针.
-   */
-  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -102,7 +97,7 @@ export async function runPublicInspector(
   // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+    const resumeInstruction = env.reviewReask;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: parentRunPath,
       ...(resumeInstruction === undefined
