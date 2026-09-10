@@ -86,14 +86,14 @@ test("Error Artifact publication collisions retain original cause via durable fa
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: "original activation boom",
+        diagnosticEquals: "Error: original activation boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure", row.label);
       if (terminal.roleOutcome.kind === "failure") {
         // Original controlled failure must not be washed to the publication errno.
         assert.equal(terminal.roleOutcome.cause, "activation", row.label);
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR", row.label);
-        assert.equal(terminal.roleOutcome.diagnostic, "original activation boom", row.label);
+        assert.equal(terminal.roleOutcome.diagnostic, "Error: original activation boom\n", row.label);
       }
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
         cause: string;
@@ -101,7 +101,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
         publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
       assert.equal(errorBody.cause, "activation", row.label);
-      assert.equal(errorBody.diagnostic, "original activation boom", row.label);
+      assert.equal(errorBody.diagnostic, "Error: original activation boom\n", row.label);
       assert.ok(Array.isArray(errorBody.publicationIssues), row.label);
       assert.ok(
         errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
@@ -220,12 +220,12 @@ test("unwritable run directory retains activation cause with durable Error Artif
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: "boom",
+        diagnosticEquals: "Error: boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.cause, "activation");
-        assert.equal(terminal.roleOutcome.diagnostic, "boom");
+        assert.equal(terminal.roleOutcome.diagnostic, "Error: boom\n");
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EACCES");
       }
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
@@ -234,7 +234,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
         publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
       assert.equal(errorBody.cause, "activation");
-      assert.equal(errorBody.diagnostic, "boom");
+      assert.equal(errorBody.diagnostic, "Error: boom\n");
       assert.ok(Array.isArray(errorBody.publicationIssues));
       assert.ok(
         errorBody.publicationIssues!.some(
@@ -295,12 +295,12 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       stdout,
       stderr,
       expectedCause: "activation",
-      diagnosticEquals: "child failed after admission",
+      diagnosticEquals: "Error: child failed after admission\n",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "activation");
-      assert.equal(terminal.roleOutcome.diagnostic, "child failed after admission");
+      assert.equal(terminal.roleOutcome.diagnostic, "Error: child failed after admission\n");
       // Auxiliary stderr.log errno must not become the primary identity.
       assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
@@ -309,7 +309,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       diagnostic: string;
     };
     assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic, "child failed after admission");
+    assert.equal(errorBody.diagnostic, "Error: child failed after admission\n");
     // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
     assert.equal(stdout.length, 1);
     assert.equal(result.terminal !== undefined, true);

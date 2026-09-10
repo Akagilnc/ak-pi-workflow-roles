@@ -1193,7 +1193,26 @@ export function createRoleRuntimeExtension(
         // Soft session_start placeholders (no materials yet) recover here; hard
         // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
-          // #836 A7.10: do not rewrite work subject from prompt bytes.
+          // Navigator's own input bootstrap, not a rewrite of another role's
+          // output payload (#836 targets the latter): the human's own raw
+          // prompt bytes, copied verbatim into Navigator's work context when
+          // nothing else has supplied a subject yet.
+          const subject = event.prompt.trim();
+          if (subject !== "") {
+            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
+            const priorAuthority = navigatorWorkContext.authority;
+            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
+              ? priorAuthority
+              : subject;
+            navigatorWorkContext = {
+              subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
+              subject,
+              authority,
+              subjectProvenance,
+            };
+            await navigatorAttendance.setWorkContext(navigatorWorkContext);
+          }
         }
       }
       navigatorAttendance?.prepare();

@@ -212,7 +212,7 @@ for (const scenario of CASES) {
       );
       scenario.assertDecisiveFacts(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.decisiveFacts
+          ? payloadFacts(result.terminal.roleOutcome)
           : undefined,
       );
     });

@@ -464,25 +464,20 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
 
+    // Best-effort mirror only — `result.stderr` stays live in memory for the
+    // real classification below regardless. A write failure here (unwritable
+    // run directory, stderr.log occupied as a directory, ...) must never
+    // become THE controlling failure and wash out the primary child signal
+    // that already arrived on `result` (#836: a secondary failure must not
+    // overwrite an already-known cause).
     try {
       await writeFile(
         join(admitted.runDirectory, "stderr.log"),
         result.stderr,
         "utf8",
       );
-    } catch (error) {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: result.timedOut,
-          code: result.code,
-          stderr: result.stderr,
-          thrown: error,
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
+    } catch {
+      // Swallowed by design — see comment above.
     }
 
     const courtScope =
@@ -508,12 +503,27 @@ export async function dispatchPostAdmissionTurn<
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
-    const hostSignalFailed =
+    // A direct, current signal from the host/runner itself (timeout / host
+    // knownFailure / runner knownFailure / missing credential) is a real
+    // problem regardless of what else already settled — a settled accepted
+    // outcome must not paper over it (it rides beside the recorded payload
+    // via `submissions`, never replacing the payload).
+    const directHostFailureSignal =
       result.timedOut
       || result.knownFailure !== undefined
       || runnerKnownFailure !== undefined
-      || credentialFailure !== undefined
-      || (result.code !== null && result.code !== 0);
+      || credentialFailure !== undefined;
+    // The audited resolution's own typed session read (malformed JSONL,
+    // provider-stop, an illegal/unsealed accepted status, a stale/superseded
+    // typed-HTTP observation, ...) makes a run with no sealed acceptance a
+    // true failure too — it must not be discarded into a lawful no_receipt
+    // just because the raw runner signal alone looked clean. But it must not
+    // retroactively invalidate an acceptance that already sealed this turn —
+    // a resolved 429 observed earlier in the same session is exactly that.
+    const hostSignalFailed =
+      directHostFailureSignal
+      || (result.code !== null && result.code !== 0)
+      || resolution.knownFailure !== undefined;
 
     let settled: T | undefined;
     try {
@@ -536,23 +546,14 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
 
-    // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
-    if (hostSignalFailed) {
-      return (await presentControlledFailure(
-        admitted,
-        {
-          timedOut: result.timedOut,
-          code: result.code,
-          stderr: result.stderr,
-          ...controlledFailureInputFromResolution(resolution),
-        },
-        adapters,
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: A; terminal: T };
-    }
-
-    if (settled !== undefined && shouldPresent(settled)) {
+    // A lawful settled outcome already reached this turn takes precedence over
+    // a later bare exit-code / session-inspection signal (trailing nonzero
+    // exit, late stderr noise, a stale already-superseded typed-HTTP
+    // observation, ...) — but never over a direct current host/runner
+    // failure signal, which stays a real failure with the recorded payload
+    // riding beside it, not replacing it (#836: never kill an already-
+    // recorded leg, but never wash a real failure away either).
+    if (settled !== undefined && shouldPresent(settled) && !directHostFailureSignal) {
       if (
         settled.roleOutcome.kind === "accepted" &&
         request.courtAttemptId !== undefined &&
@@ -567,6 +568,22 @@ export async function dispatchPostAdmissionTurn<
         admitted,
         terminal: settled,
       };
+    }
+
+    // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
+    if (hostSignalFailed) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: result.timedOut,
+          code: result.code,
+          stderr: result.stderr,
+          ...controlledFailureInputFromResolution(resolution),
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
     }
 
     const noReceipt = await attachRecordedSubmissions(

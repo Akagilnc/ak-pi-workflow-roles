@@ -854,8 +854,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // Budget exhaustion is affirmative typed no-advice; malformed submitted
           // advice remains the existing unavailable path.
           const selectedCandidate = selected?.candidate;
-          if (selectedCandidate?.next === undefined) {
+          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
             report = { disposition: "no-advice" };
+          } else if (selectedCandidate?.next === undefined) {
+            throw new Error("Navigator prepared no machine-usable next direction");
           } else {
           const selectedRoute = selectedCandidate.route;
           const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
