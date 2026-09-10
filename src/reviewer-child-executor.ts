@@ -20,15 +20,11 @@ import type { AcceptedReviewerLeg } from "./reviewer-dispatch.ts";
 import type { ReviewerPromptText } from "./reviewer-prompt-identity.ts";
 import { hasUpstreamErrorTestimony, isNonSuccessHttpStatus } from "./upstream-error-testimony.ts";
 
-/** Path roster only — cadence prose stays in owner material (ADR 0073). */
-const AXIS_SUBSESSION_MATERIALS = ["souls/quality-law.md"] as const;
-
+/** #836 删 8/A1.10: no code-compiled axis system prompt from quality-law+engine.
+ * Parent seat invokes code-review skill; child gets engine pointer material only.
+ */
 async function buildAxisSystemPrompt(engineMaterial?: EngineSessionMaterial): Promise<string> {
-  const materials: string[] = [];
-  for (const relativePath of AXIS_SUBSESSION_MATERIALS) {
-    materials.push(await readPackageMaterial(relativePath));
-  }
-  return appendEngineSessionMaterial(materials, engineMaterial).join("\n");
+  return appendEngineSessionMaterial([], engineMaterial).join("\n");
 }
 
 type AxisFailureClassification = "provider" | "child" | "unknown";

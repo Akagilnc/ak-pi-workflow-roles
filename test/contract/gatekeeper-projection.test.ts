@@ -1,18 +1,16 @@
 /**
- * #639 repair: gatekeeper package-contract projection filters findings to strings.
- *
- * projectLawfulGatekeeperOutput must preserve prior province asStringArray behavior
- * when DRY'd into the shared contract — mixed arrays must not leak non-strings.
+ * #836: projectLawfulGatekeeperOutput is passthrough — no field drop / filter.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { projectLawfulGatekeeperOutput } from "../../src/package-contracts/gatekeeper-output.ts";
 
-test("gatekeeper projection filters mixed findings to strings only", () => {
-  const projected = projectLawfulGatekeeperOutput({
+test("gatekeeper projection keeps original findings payload as-is (#836)", () => {
+  const input = {
     status: "pass",
     findings: ["ok", 7, null, { x: 1 }],
-  });
-  assert.deepEqual(projected, { status: "pass", findings: ["ok"] });
+    extra: "kept",
+  };
+  assert.deepEqual(projectLawfulGatekeeperOutput(input), input);
 });

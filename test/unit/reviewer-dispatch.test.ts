@@ -596,10 +596,10 @@ test("constructed legs exclude caller task channel", async () => {
     assert.equal(leg.prompt.includes("Task:"), false);
     assert.equal(leg.prompt.includes("supplied task"), false);
     assert.equal(leg.prompt.includes("review task"), false);
-    // Structured range + skill bytes — no Chinese presentation-label pin (#495 S4).
-    assert.equal(leg.prompt.includes("Canonical-Skill:"), true);
+    // #836 删 8: JSON range pointer + skill body; no Chinese instruction labels.
+    assert.equal(leg.prompt.includes("目标："), false);
+    assert.equal(leg.prompt.includes("Canonical-Skill:"), false);
     assert.equal(leg.prompt.includes("review skill"), true);
-    assert.equal(leg.prompt.includes(JSON.stringify(range, null, 2)), true);
     assert.equal(leg.prompt.includes(range.target), true);
     assert.equal(leg.prompt.includes(range.base), true);
     assert.equal(leg.prompt.includes(range.diffCommand), true);

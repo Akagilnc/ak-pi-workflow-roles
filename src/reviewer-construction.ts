@@ -148,23 +148,21 @@ export function constructReviewerDispatch(input: {
       ? input.specAuthority.fetched
       : undefined;
   const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
+  // #836 删 8: no code-written instruction sentences (目标/基点/固定范围…).
+  // Materials are path/JSON pointers + skill body only; parent seat owns code-review skill.
   const common = [
-    `目标：${input.range.target}`,
-    `基点：${input.range.base}`,
-    `差异命令：${input.range.diffCommand}`,
-    reviewerScopePrompt(input.reviewScopeKeys),
-    `配方：${REVIEWER_CONSTRUCTION_RECIPE.recipeId}@${REVIEWER_CONSTRUCTION_RECIPE.version}`,
-    "Canonical-Skill:",
+    JSON.stringify({
+      range: input.range,
+      recipe: `${REVIEWER_CONSTRUCTION_RECIPE.recipeId}@${REVIEWER_CONSTRUCTION_RECIPE.version}`,
+      reviewScopeKeys: input.reviewScopeKeys ?? [],
+    }),
     input.canonicalSkill,
-    "固定范围：",
-    JSON.stringify(input.range, null, 2),
   ].join("\n");
   const axes: readonly { axis: "standards" | "spec" }[] = launchSpec
     ? [{ axis: "standards" }, { axis: "spec" }]
     : [{ axis: "standards" }];
   const legs = axes.map((x) => {
-    const parts = [common, reviewerAxisMethodAdapter(x.axis)];
-    // Spec axis only — never Standards or a parent replacement Spec leg.
+    const parts = [common, `axis=${x.axis}`];
     if (x.axis === "spec") {
       if (specFetchedMaterial !== undefined) {
         parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));

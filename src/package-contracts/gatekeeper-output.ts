@@ -48,31 +48,14 @@ function asStringArray(value: unknown): readonly string[] {
  * No throw on shape — ADR 0055 / 第 0 条: already-submitted params are retained as-is;
  * public-terminal projects non-usable releases via typed failure cause.
  */
+/** #836: no field drop — original object is the receipt. */
 export function projectLawfulGatekeeperOutput(value: unknown): GatekeeperDirectOutput | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.status === "pass") {
-    return Array.isArray(value.findings)
-      ? { status: "pass", findings: asStringArray(value.findings) }
-      : { status: "pass" };
-  }
-  if (
-    value.status === "dispatch" &&
-    (value.officer === "inspector" || value.officer === "notary")
-  ) {
-    return { status: "dispatch", officer: value.officer };
-  }
-  return undefined;
+  return isRecord(value) ? (value as GatekeeperDirectOutput) : undefined;
 }
 
-/**
- * Settlement/recording path: only lawful recorded dispatch/pass.
- * Does not gate role admission — callers must not use this to reject a submission.
- */
+/** #836: no status allowlist rejection — pass object through. */
 export function validateRecordedGatekeeperOutput(value: unknown): GatekeeperDirectOutput {
-  const projected = projectLawfulGatekeeperOutput(value);
-  if (projected === undefined) {
-    throw new Error("Gatekeeper output has no recognized execution discriminator");
-  }
-  return projected;
+  if (!isRecord(value)) throw new Error("Gatekeeper output is not an object");
+  return value as GatekeeperDirectOutput;
 }
 

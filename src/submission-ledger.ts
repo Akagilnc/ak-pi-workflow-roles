@@ -30,6 +30,8 @@ export type SubmissionLedgerEvent =
       readonly outcome: SubmissionOutcomeKind;
       readonly diagnostic?: string;
       readonly code?: CorrectableRejectionCode;
+      /** Raw LLM params for audit-escalation submissions (#836 submissions face). */
+      readonly accepted?: unknown;
       /** Present for audit-escalation so settlement can project without JSONL rebuild. */
       readonly projection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
     }
@@ -79,14 +81,21 @@ function statusFromRoleDetails(details: Record<string, unknown>): string {
 }
 
 /**
- * LLM tool-call arguments are the role payload (#836 bounce: 写进账本的必须是 LLM 说的话).
- * Non-object args are preserved under `submission` — never replaced with `{}`.
+ * Status/projection view only — never mutates the raw params stored in `accepted`.
+ * Non-object params stay raw on accepted/submissions; typed face gets empty facts + "".
  */
-function rolePayloadFromParams(params: unknown): Record<string, unknown> {
+function statusFromParams(params: unknown): string {
+  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
+    return statusFromRoleDetails(params as Record<string, unknown>);
+  }
+  return "";
+}
+
+function decisiveFactsView(params: unknown): Record<string, unknown> {
   if (typeof params === "object" && params !== null && !Array.isArray(params)) {
     return params as Record<string, unknown>;
   }
-  return { submission: params };
+  return {};
 }
 
 function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {
@@ -195,8 +204,43 @@ export async function readSealedSubmission(
   return undefined;
 }
 
-/** All recorded submission projections in ledger order (#836 multi-submit). */
+/**
+ * All raw role payloads in ledger order (#836 multi-submit).
+ * Returns `accepted` bytes as stored — unknown, never re-wrapped.
+ * Includes sealed accepted rows and audit-escalation rows (both are role submissions).
+ */
 export async function readRecordedSubmissions(
+  cwd: string,
+  runId: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): Promise<readonly unknown[]> {
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  const out: unknown[] = [];
+  for (const record of scoped) {
+    if (record.kind === "sealed") {
+      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> | undefined;
+      if (payload?.type === "sealed") out.push(payload.accepted);
+      continue;
+    }
+    if (record.kind === "outcome") {
+      const payload = record.payload as {
+        type?: string;
+        outcome?: string;
+        accepted?: unknown;
+        projection?: { decisiveFacts?: unknown };
+      } | undefined;
+      if (payload?.type === "outcome" && payload.outcome === "audit-escalation") {
+        out.push(payload.accepted !== undefined ? payload.accepted : payload.projection?.decisiveFacts);
+      }
+    }
+  }
+  return out;
+}
+
+/** Latest sealed projection still used for status/compat settle face. */
+export async function readRecordedSubmissionProjections(
   cwd: string,
   runId: string,
   homeOrScope?: string | SubmissionLedgerReadScope,
@@ -377,21 +421,21 @@ export function createSubmissionLedgerHost(
               throw error;
             }
           }
-          // #836: ledger authority is the LLM tool-call params (角色原话), never result.details.
+          // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
-          const rolePayload = rolePayloadFromParams(params);
           if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
             const projection: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> = {
               kind: "audit_escalation",
               role,
               status: "audit_escalation",
-              decisiveFacts: rolePayload,
+              decisiveFacts: decisiveFactsView(params),
             };
             append({
               type: "outcome",
               attemptId,
               toolCallId,
               outcome: "audit-escalation",
+              accepted: params,
               projection,
             });
             await projectClosure(projection, context);
@@ -411,12 +455,12 @@ export function createSubmissionLedgerHost(
             });
             throw new Error("提交账只受理终止工具");
           }
-          // #836: record LLM params immediately; call N times → N rows; no abort.
+          // #836: record LLM params immediately as-is; call N times → N rows; no abort.
           const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = {
             kind: "accepted",
             role,
-            status: statusFromRoleDetails(rolePayload),
-            decisiveFacts: rolePayload,
+            status: statusFromParams(params),
+            decisiveFacts: decisiveFactsView(params),
           };
           append({
             type: "sealed",

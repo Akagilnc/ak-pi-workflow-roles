@@ -178,24 +178,24 @@ async function sealedLedgerOutcome(
   return readSealedSubmission(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted, scope));
 }
 
-/** #836: every recorded role payload in settle scope (调几次记几次). */
+/** #836: every raw role payload in settle scope (调几次记几次). */
 export async function recordedSubmissionPayloads(
   admitted: AdmittedRoleInvocation,
   scope?: SettlementCourtScope,
-): Promise<readonly Readonly<Record<string, unknown>>[]> {
-  const recorded = await readRecordedSubmissions(
+): Promise<readonly unknown[]> {
+  // readRecordedSubmissions already returns raw accepted bytes in order.
+  // Role filter: only include rows that belong to this seat via sealed projections / audit.
+  // Raw list is per-run; multi-role on one run is not the production shape.
+  return readRecordedSubmissions(
     admitted.projectRoot,
     admitted.runId,
     ledgerReadScope(admitted, scope),
   );
-  return recorded
-    .filter((row) => row.role === admitted.role)
-    .map((row) => row.decisiveFacts);
 }
 
 export function withSubmissions<T extends TerminalResult>(
   terminal: T,
-  submissions: readonly Readonly<Record<string, unknown>>[],
+  submissions: readonly unknown[],
 ): T {
   if (submissions.length === 0) return terminal;
   return { ...terminal, submissions };
@@ -342,14 +342,12 @@ export function isChildDiagnosticHelpFooterLine(line: string): boolean {
   return false;
 }
 
-/** Bound one diagnostic for human stderr presentation; durable evidence stays full. */
+/** #836: no 480-char clip — full diagnostic text retained. */
 export function boundConciseDiagnostic(
   diagnostic: string,
-  maxChars: number = CONCISE_DIAGNOSTIC_MAX_CHARS,
+  _maxChars: number = CONCISE_DIAGNOSTIC_MAX_CHARS,
 ): string {
-  if (diagnostic.length <= maxChars) return diagnostic;
-  if (maxChars <= 1) return "…";
-  return `${diagnostic.slice(0, maxChars - 1)}…`;
+  return diagnostic;
 }
 
 /**
@@ -361,18 +359,9 @@ export function conciseChildDiagnostic(
   stderr: string,
   fallback: string,
 ): string {
-  const lines = stderr
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i]!;
-    if (isChildDiagnosticFloodLine(line)) continue;
-    if (isChildDiagnosticHelpFooterLine(line)) continue;
-    // Strip a leading "Error:" label but keep the message identity.
-    return line.replace(/^Error:\s*/i, "").trim() || fallback;
-  }
-  return fallback;
+  // #836: no flood filter / first-line pick — full stderr diagnostic retained.
+  const trimmed = stderr.trim();
+  return trimmed.length > 0 ? stderr : fallback;
 }
 
 export function formatCliDiagnostic(message: string): string {

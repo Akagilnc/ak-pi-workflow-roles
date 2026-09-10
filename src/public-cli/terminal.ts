@@ -215,11 +215,11 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * #836: every recorded role payload in ledger order (调几次记几次).
+   * #836: every recorded role payload in ledger order (调几次记几次), raw `unknown` as stored.
    * Present whenever the ledger has ≥1 recorded submission for this settle scope.
-   * roleOutcome.decisiveFacts is the latest entry for status/compat; this array is the full face.
+   * roleOutcome.decisiveFacts is a typed status/compat view; this array is the full original face.
    */
-  submissions?: readonly Readonly<Record<string, unknown>>[];
+  submissions?: readonly unknown[];
   /**
    * Optional gate facts (#478). Present when accepted direct or historical
    * paired rounds exist under session/auditor-roles; omitted on no-gate runs.

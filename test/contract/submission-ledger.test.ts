@@ -117,6 +117,42 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
 }
 
 
+
+test("audit escalation params enter submissions face even when result.details differ (#836 bounce)", async () => {
+  await withLedgerFixture(async (f) => {
+    const params = { judgeStatus: "escalate", report: "from-params" };
+    const details = buildAuditEscalationResult(
+      { status: "escalate", conflicts: ["c1"], decisionGate: { question: "q", options: ["a"] } },
+      { judgeStatus: "escalate", rewritten: true },
+    );
+    const host = registerTool(
+      f.root,
+      async () => ({ content: [], details, terminate: true }),
+    );
+    await host.start("a1");
+    await host.tool().execute("a1", params, undefined, undefined, host.context);
+    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+    assert.equal(all.length, 1);
+    assert.deepEqual(all[0], params, "audit submissions must keep LLM params");
+    assert.notDeepEqual(all[0], details);
+  });
+});
+
+
+test("non-object params stay raw on accepted/submissions — no envelope wrap (#836 bounce)", async () => {
+  await withLedgerFixture(async (f) => {
+    const host = registerTool(
+      f.root,
+      async () => ({ content: [], details: { ignored: true }, terminate: true }),
+    );
+    await host.start("raw");
+    await host.tool().execute("raw", "plain-string-submission", undefined, undefined, host.context);
+    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+    assert.equal(all.length, 1);
+    assert.equal(all[0], "plain-string-submission");
+  });
+});
+
 test("ledger records LLM params, not rewritten result.details (#836 bounce)", async () => {
   await withLedgerFixture(async (f) => {
     const params = { judgeStatus: "converged", report: "from-llm-params" };
@@ -132,7 +168,7 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
     assert.notDeepEqual(sealed?.decisiveFacts, details, "must not store rewritten tool result");
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 1);
-    assert.deepEqual(all[0]?.decisiveFacts, params);
+    assert.deepEqual(all[0], params);
   });
 });
 
@@ -163,8 +199,8 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 2);
-    assert.deepEqual(all[0]?.decisiveFacts, { judgeStatus: "converged" });
-    assert.deepEqual(all[1]?.decisiveFacts, secondDetails);
+    assert.deepEqual(all[0], { judgeStatus: "converged" });
+    assert.deepEqual(all[1], secondDetails);
     assert.equal(f.deliveredRejections.length, 0);
     assert.equal(secondHost.deliveredRejections.length, 0);
   });

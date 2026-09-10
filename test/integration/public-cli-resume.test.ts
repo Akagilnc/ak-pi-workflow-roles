@@ -680,8 +680,10 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
-    // #836: seal no longer blocks redispatch; budget still bounds attempts.
-    assert.ok(dispatches() >= 1);
+    // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
+    // Publication failure under 429 is non-lawful → retries until budget (default 2 resumes → 3 dispatches).
+    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without seal block");
+    assert.equal(result.terminal!.autoResumeCount, 2);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -813,14 +815,25 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       },
     );
 
-    // #836: seal no longer blocks redispatch; budget still bounds attempts.
-    assert.ok(dispatches() >= 1);
+    // #836: seal no longer blocks; non-lawful throw path records then fails.
+    // Host wrapper counts 1 outer dispatch; auto-resume loop still records resumesUsed=2.
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    assert.equal(dispatches(), 1);
+    assert.equal(result.terminal!.autoResumeCount, 2);
     assert.ok(
       await readSealedSubmission(project, runId, home),
       "recorded accepted projection must survive direct throw after record",
     );
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(
+        result.terminal!.roleOutcome.diagnostic.includes("sealed accepted"),
+        false,
+      );
+      assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
+      assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
+    }
   });
 
   // Failing ledger authority: read errors must preserve true cause and fail closed —
@@ -868,14 +881,17 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         },
       },
     );
-    // #836: seal/authority redispatch block deleted — budget may redispatch.
-    assert.ok(dispatches() >= 1);
+    // #836: authority-failed seal block deleted — non-lawful failure still exhausts budget.
+    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without authority block");
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
+    assert.equal(result.terminal!.autoResumeCount, 2);
     const outcome = result.terminal!.roleOutcome;
     assert.equal(outcome.kind, "failure");
     if (outcome.kind === "failure") {
       assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(typeof outcome.diagnostic, "string");
+      assert.ok(String(outcome.diagnostic).length > 0);
     }
 
     // #833: poisoned ledger no longer short-circuits manual resume — host is reached.

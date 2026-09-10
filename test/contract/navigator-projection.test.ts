@@ -1,12 +1,5 @@
 /**
- * #639 repair: navigator projection retains status into acceptedFacts.
- *
- * projectLawfulNavigatorOutput used to return { candidates } only, so the
- * ticket-trajectory / doctor-evidence consumption chain read status as
- * undefined. The projection now carries status: "advice" like the gatekeeper
- * projection carries its own status.
- *
- * Oracles: typed acceptedFacts.status only (锚定宪法).
+ * #836: navigator projection is passthrough; acceptedFacts still reads status when present.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -18,22 +11,18 @@ import {
 } from "../../src/package-contracts/navigator-output.ts";
 
 test("navigator projection retains advice status into acceptedFacts", () => {
-  const projected = projectLawfulNavigatorOutput({
+  const input = {
     status: "advice",
     candidates: [{ next: { role: "judge", phase: null }, reason: "needs adjudication" }],
-  });
-  assert.ok(projected !== undefined);
-  const facts = acceptedFacts(NAVIGATOR_OUTPUT_TOOL_NAME, projected);
+  };
+  const projected = projectLawfulNavigatorOutput(input);
+  assert.deepEqual(projected, input);
+  const facts = acceptedFacts(NAVIGATOR_OUTPUT_TOOL_NAME, projected!);
   assert.equal(facts.status, "advice");
 });
 
-test("navigator projection rejects non-advice receipts", () => {
-  assert.equal(
-    projectLawfulNavigatorOutput({ status: "dispatch", candidates: [] }),
-    undefined,
-  );
-  assert.equal(
-    projectLawfulNavigatorOutput({ candidates: [] }),
-    undefined,
-  );
+test("navigator projection keeps non-advice receipts as-is (#836)", () => {
+  const dispatch = { status: "dispatch", candidates: [] };
+  assert.deepEqual(projectLawfulNavigatorOutput(dispatch), dispatch);
+  assert.deepEqual(projectLawfulNavigatorOutput({ candidates: [] }), { candidates: [] });
 });
