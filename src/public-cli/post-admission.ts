@@ -56,6 +56,7 @@ import {
   acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
+  describeErrorIdentity,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
@@ -444,8 +445,12 @@ export async function dispatchPostAdmissionTurn<
     // Per-attempt hygiene: stale Reviewer rejection pages must not ride into
     // auto-resume. ENOENT-safe for every seat.
     await clearReviewerDispatchRejection(admitted.runDirectory);
-    // beforeDispatch runs before the authoritative host write so a pre-turn
-    // retry still sees the prior invocation host (#840 auto-resume / hostTransition).
+    // The authoritative host write (markRunRunning) is delayed to just before
+    // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
+    // pre-turn retry (beforeDispatch, dossier projection, continuation
+    // assembly) must still see the prior invocation host on its next attempt;
+    // committing env.host earlier would make readInvocationHost read back the
+    // new host on the retry and silently drop hostTransition.
     // Failures settle the run (presentControlledFailure); they must not leave it
     // permanently running. Call-local auto-resume retries this hook until it
     // succeeds; only an exhausted nested station child skips the parent loop
@@ -473,7 +478,6 @@ export async function dispatchPostAdmissionTurn<
         return { ...settled, ...deferredPersist };
       }
     }
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
@@ -503,6 +507,11 @@ export async function dispatchPostAdmissionTurn<
         ),
       };
     }
+
+    // Authoritative host write happens here, at the real dispatch boundary —
+    // immediately before the turn actually starts, after every retryable
+    // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
+    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
 
     let result: RoleTurnResult;
     try {
@@ -567,7 +576,22 @@ export async function dispatchPostAdmissionTurn<
         request.courtAttemptId !== undefined &&
         request.courtAttemptId.length > 0
       ) {
-        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+        try {
+          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+        } catch (error) {
+          // Settlement already sealed accepted — a cleanup failure here must
+          // not erase that fact or make the caller replay this court's
+          // summons over already-delivered work (#840 r9 判词 class 1 已交劳动
+          // 只整理终局不重做). A later bare resume self-heals: buildRequestAfterLease
+          // finds the open court already sealed and clears it then (documented
+          // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
+          // 必须落痕).
+          io.stderr(
+            formatCliDiagnostic(
+              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+            ),
+          );
+        }
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
@@ -584,29 +608,44 @@ export async function dispatchPostAdmissionTurn<
       admitted.principal !== undefined
         ? env.principalAuthority.decode(admitted.principal).sessionFile
         : "";
-    const runnerKnownFailure =
-      adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
-        ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
-        : result.knownFailure;
-    const credentialFailure = postRunMissingCredentialFailure(
-      result,
-      env.model,
-      env.credentials,
-    );
-    const resolution = await resolveAuditedRunnerFailureResolution({
-      runner: runnerKnownFailure,
-      sessionFile,
-      credential: credentialFailure,
-      runDirectory: admitted.runDirectory,
-    });
-    const failed = (await presentControlledFailure(
-      admitted,
-      {
+    // Any exception while resolving the failure facts below still happened
+    // after the host turn genuinely started (#840 r9 判词 class 1) — fold it
+    // into the same single controlled-failure settlement below instead of
+    // losing turnDispatched to an uncaught throw.
+    let failureInput: ControlledFailureInput;
+    try {
+      const runnerKnownFailure =
+        adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
+          ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
+          : result.knownFailure;
+      const credentialFailure = postRunMissingCredentialFailure(
+        result,
+        env.model,
+        env.credentials,
+      );
+      const resolution = await resolveAuditedRunnerFailureResolution({
+        runner: runnerKnownFailure,
+        sessionFile,
+        credential: credentialFailure,
+        runDirectory: admitted.runDirectory,
+      });
+      failureInput = {
         timedOut: result.timedOut,
         code: result.code,
         stderr: result.stderr,
         ...controlledFailureInputFromResolution(resolution),
-      },
+      };
+    } catch (error) {
+      failureInput = {
+        timedOut: false,
+        code: result.code,
+        stderr: result.stderr,
+        thrown: error,
+      };
+    }
+    const failed = (await presentControlledFailure(
+      admitted,
+      failureInput,
       adapters,
       env.principalAuthority,
       io,
