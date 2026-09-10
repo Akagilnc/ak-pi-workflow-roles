@@ -16,6 +16,7 @@ import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sit
 import {
   readAuditEscalationSubmission,
   readLatestSubmissionOutcome,
+  readRecordedSubmissions,
   readSealedSubmission,
 } from "../submission-ledger.ts";
 
@@ -175,6 +176,38 @@ async function sealedLedgerOutcome(
   scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" }> | undefined> {
   return readSealedSubmission(admitted.projectRoot, admitted.runId, ledgerReadScope(admitted, scope));
+}
+
+/** #836: every recorded role payload in settle scope (调几次记几次). */
+export async function recordedSubmissionPayloads(
+  admitted: AdmittedRoleInvocation,
+  scope?: SettlementCourtScope,
+): Promise<readonly Readonly<Record<string, unknown>>[]> {
+  const recorded = await readRecordedSubmissions(
+    admitted.projectRoot,
+    admitted.runId,
+    ledgerReadScope(admitted, scope),
+  );
+  return recorded
+    .filter((row) => row.role === admitted.role)
+    .map((row) => row.decisiveFacts);
+}
+
+export function withSubmissions<T extends TerminalResult>(
+  terminal: T,
+  submissions: readonly Readonly<Record<string, unknown>>[],
+): T {
+  if (submissions.length === 0) return terminal;
+  return { ...terminal, submissions };
+}
+
+/** Attach full ledger submissions onto any settled terminal (#836). */
+export async function attachRecordedSubmissions<T extends TerminalResult>(
+  admitted: AdmittedRoleInvocation,
+  terminal: T,
+  scope?: SettlementCourtScope,
+): Promise<T> {
+  return withSubmissions(terminal, await recordedSubmissionPayloads(admitted, scope));
 }
 
 /**
@@ -3165,17 +3198,21 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const submissions = await recordedSubmissionPayloads(admitted, scope);
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
-    return withOptionalGateProjection(
-      {
-        roleOutcome,
-        navigator,
-        artifacts: [],
-        runId: admitted.runId,
-      },
-      sessionDirectory,
+    return withSubmissions(
+      await withOptionalGateProjection(
+        {
+          roleOutcome,
+          navigator,
+          artifacts: [],
+          runId: admitted.runId,
+        },
+        sessionDirectory,
+      ),
+      submissions,
     );
   }
   if (roleOutcome?.role !== spec.role) {
@@ -3195,29 +3232,34 @@ async function settleLawfulSeatAcceptedTerminalResult(
       );
       if (residual !== undefined) {
         // isError residual: retain candidate bytes as details (no shape stamp).
+        // #836 A.3: host failure coexists with any already-recorded submissions.
         const details = isRecord(residual.candidate)
           ? residual.candidate
           : { candidate: residual.candidate };
-        return settleFailureTerminalResult(admitted, {
+        const failed = await settleFailureTerminalResult(admitted, {
           cause: "output",
           diagnostic: residual.diagnostic,
           details,
         }, authority);
+        return withSubmissions(failed, submissions);
       }
     }
     return undefined;
   }
-  // Sealed ledger outcome: pass through full decisiveFacts (#757).
+  // Recorded ledger outcome: pass through full decisiveFacts (#757 / #836).
   const acceptedOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
-  return withOptionalGateProjection(
-    {
-      roleOutcome: acceptedOutcome,
-      navigator,
-      artifacts: [],
-      runId: admitted.runId,
-    },
-    sessionDirectory,
+  return withSubmissions(
+    await withOptionalGateProjection(
+      {
+        roleOutcome: acceptedOutcome,
+        navigator,
+        artifacts: [],
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+    ),
+    submissions,
   );
 }
 

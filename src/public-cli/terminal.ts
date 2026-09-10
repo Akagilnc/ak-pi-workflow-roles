@@ -215,6 +215,12 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
+   * #836: every recorded role payload in ledger order (调几次记几次).
+   * Present whenever the ledger has ≥1 recorded submission for this settle scope.
+   * roleOutcome.decisiveFacts is the latest entry for status/compat; this array is the full face.
+   */
+  submissions?: readonly Readonly<Record<string, unknown>>[];
+  /**
    * Optional gate facts (#478). Present when accepted direct or historical
    * paired rounds exist under session/auditor-roles; omitted on no-gate runs.
    */
@@ -242,10 +248,9 @@ export function recommendationNavigatorFact(input: {
   reason: string;
   route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
   advisoryDiagnostic?: string;
-  /** Ignored — retained only so callers can pass through raw attendance without using it. */
+  /** #836 B4.1/B9.2: model-authored command retained when present; registry is fallback only. */
   modelCommand?: string;
 }): TerminalNavigatorFact {
-  void input.modelCommand;
   if (!isPublicCallableRole(input.next.role)) {
     return {
       disposition: "unavailable",
@@ -253,7 +258,10 @@ export function recommendationNavigatorFact(input: {
       reason: `recommended role is not a public callable seat: ${input.next.role}`,
     };
   }
-  const command = renderPublicAkRoleCommand(input.next);
+  const command =
+    typeof input.modelCommand === "string" && input.modelCommand.trim() !== ""
+      ? input.modelCommand
+      : renderPublicAkRoleCommand(input.next);
   return {
     disposition: "recommendation",
     next: input.next,

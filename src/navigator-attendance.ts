@@ -316,8 +316,9 @@ function routeText(route: readonly NavigatorRouteTarget[]): string {
 function targetText(target: NavigatorRouteTarget): string {
   return target.phase === null ? target.role : `${target.role} ${target.phase}`;
 }
+/** #836 B9.1: full text retained — first-line clip deleted. */
 function oneLine(value: string): string {
-  return value.split(/\r?\n/, 1)[0]!.trim();
+  return value;
 }
 export function navigatorSubjectKey(
   subjectRoot: string,

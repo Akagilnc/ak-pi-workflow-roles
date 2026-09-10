@@ -686,18 +686,20 @@ export function createCollectorRoleRuntime(
           if (activation === undefined) throw new Error("通进司未激活");
           try {
             activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
-            const receipt: CollectorReceipt = buildCollectorReceipt(
-              activation.ledger,
-              params,
-              activation.clock,
-            );
+            // #836 B6.1/2.20: LLM params are the role payload — never replace with
+            // code-assembled receipt or refuse on assembly gates.
+            try {
+              buildCollectorReceipt(activation.ledger, params, activation.clock);
+            } catch {
+              // Assembly failure is not a role rejection.
+            }
             activation.ledger.recordOutputCandidate();
             return {
               content: [{
                 type: "text" as const,
                 text: COLLECTOR_ACCEPTED_TEXT,
               }],
-              details: receipt,
+              details: params,
               terminate: true as const,
             };
           } catch (error) {

@@ -300,7 +300,8 @@ function hostNeutralTypedTurn(options: {
           }
           for (const { id, kind } of turn) {
             if (kind === "output") {
-              const result = await registered!.execute(id, {}, undefined, undefined, context) as {
+              // #836: LLM params are the ledger payload — pass details as params.
+              const result = await registered!.execute(id, options.details, undefined, undefined, context) as {
                 content: unknown;
                 details: unknown;
               };
@@ -502,9 +503,96 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
 });
 
 test("host-neutral typed turns record every terminating submission without sole reject (#836)", async () => {
-  // #836: non-sole-round barrier deleted — multiple terminating calls all record.
-  // Behavior covered by test/contract/submission-ledger.test.ts.
+  await withSharedHome(async (home, project) => {
+    const runId = "run-multi-submit-836";
+    const first = { judgeStatus: "continue", report: "first-submit" };
+    const second = { judgeStatus: "converged", report: "second-submit" };
+    const { io } = captureIo();
+    const payloads = [first, second];
+    let payloadIndex = 0;
+    const host: RoleTurnHost = {
+      async executeTurn(request) {
+        let registered: HostToolDefinition | undefined;
+        const handlers = new Map<string, (...values: any[]) => unknown>();
+        const fakeHost = {
+          registerTool(tool: HostToolDefinition) { registered = tool; },
+          on(event: string, handler: (...values: any[]) => unknown) { handlers.set(event, handler); },
+        } as RoleHost;
+        const outputTool = packagedRoleOutputTool("judge")!;
+        createSubmissionLedgerHost(fakeHost, new Map([[outputTool, "judge" as const]])).registerTool({
+          name: outputTool,
+          label: "output",
+          description: "",
+          parameters: {},
+          execute: async (_id, params) => ({ content: [], details: params, terminate: true }),
+        });
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(join(coordinates.sessionFile, ".."), { recursive: true });
+        await writeFile(coordinates.sessionFile, "", "utf8");
+        const context = {
+          cwd: request.cwd,
+          mode: "json",
+          model: undefined,
+          sessionManager: {
+            getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
+            getSessionFile: () => coordinates.sessionFile,
+            getSessionDir: () => coordinates.sessionDirectory,
+            appendCustomEntry(customType: string, data: unknown) {
+              appendFileSync(coordinates.sessionFile, `${JSON.stringify({ type: "custom", customType, data })}\n`, "utf8");
+            },
+          },
+          abort() {},
+        } as HostContext;
+        const priorRun = process.env.AK_ROLE_RUN_DIR;
+        process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+        try {
+          for (const payload of payloads) {
+            const id = `call-${payloadIndex++}`;
+            await registered!.execute(id, payload, undefined, undefined, context);
+            await appendFile(coordinates.sessionFile, `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: id,
+                toolName: outputTool,
+                isError: false,
+                details: payload,
+              },
+            })}\n`, "utf8");
+          }
+          await handlers.get("turn_end")?.({
+            turnIndex: 0,
+            calls: payloads.map((_, i) => ({ toolCallId: `call-${i}`, toolName: outputTool })),
+          }, context);
+        } finally {
+          if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+          else process.env.AK_ROLE_RUN_DIR = priorRun;
+        }
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const result = await runAkRole(
+      ["judge", "--project", project, "two submissions"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => runId,
+        credentials: { "openai-codex": true, xai: false },
+        io,
+        roleTurnHost: host,
+      },
+    );
+    assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.roleOutcome.status, "converged");
+    assert.ok(result.terminal?.submissions, "terminal must carry submissions array");
+    assert.equal(result.terminal!.submissions!.length, 2);
+    assert.deepEqual(result.terminal!.submissions![0], first);
+    assert.deepEqual(result.terminal!.submissions![1], second);
+  });
 });
+
 
 test("public-cli shared entry covers post-seal, no-receipt, and infrastructure", { timeout: 120_000 }, async () => {
   await withSharedHome(async (home, project) => {

@@ -76,8 +76,9 @@ async function driveLedgerProducer(input: {
         },
         abort() {},
       } as HostContext;
-    // #836: recording happens on execute; turn_end only books roundContext.
-    await registered.execute(input.toolCallId, {}, undefined, undefined, context);
+    // #836: recording happens on execute from LLM params; turn_end only books roundContext.
+    // Fixture details stand in for the model tool-call arguments.
+    await registered.execute(input.toolCallId, input.details, undefined, undefined, context);
     const turnEnd = handlers.get("turn_end");
     if (turnEnd !== undefined) {
       await turnEnd({

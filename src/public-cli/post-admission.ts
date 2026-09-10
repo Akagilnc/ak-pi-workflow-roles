@@ -86,6 +86,7 @@ import {
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   sealedAcceptanceRedispatchDisposition,
+  attachRecordedSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -310,13 +311,16 @@ export async function presentControlledFailure<
     await markRunTerminal(admitted.runDirectory);
   }
 
-  const terminal = await settleFailureTerminalResult(
+  const terminal = await attachRecordedSubmissions(
     admitted,
-    failure,
-    authority,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
+    await settleFailureTerminalResult(
+      admitted,
+      failure,
+      authority,
+      resumable
+        ? { resume: { command: renderResumeCommand(admitted.runId) } }
+        : {},
+    ),
   );
   presentFailureTerminal(terminal, io);
   return {
@@ -481,6 +485,10 @@ export async function dispatchPostAdmissionTurn<
         : { courtAttemptId: request.courtAttemptId };
     try {
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
+      // #836:终局承载该次范围内全部原始交卷（调几次记几次）.
+      if (settled !== undefined) {
+        settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
+      }
     } catch (error) {
       // Settle throw is a real failure fact — never swallow into undefined.
       return (await presentControlledFailure(

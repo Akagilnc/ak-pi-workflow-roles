@@ -24,9 +24,12 @@ import {
 
 function registerTool(
   root: string,
-  execute: () => Promise<HostToolResult<unknown>> = async () => ({
+  execute: (params?: unknown) => Promise<HostToolResult<unknown>> = async (params) => ({
     content: [],
-    details: { judgeStatus: "converged" },
+    // Default: echo params as details so ledger params≡details unless a test overrides.
+    details: params !== undefined && params !== null && typeof params === "object" && !Array.isArray(params) && Object.keys(params as object).length > 0
+      ? params
+      : { judgeStatus: "converged" },
     terminate: true,
   }),
   outputTool = JUDGE_OUTPUT_TOOL_NAME,
@@ -45,7 +48,13 @@ function registerTool(
   const pipeline = createSubmissionLedgerHost(host, new Map([[outputTool, role]]), undefined, async (projection) => {
     closedSubmissions.push(projection);
   }, { home: root });
-  pipeline.registerTool({ name: outputTool, label: "output", description: "", parameters: Type.Object({}), execute });
+  pipeline.registerTool({
+    name: outputTool,
+    label: "output",
+    description: "",
+    parameters: Type.Object({}),
+    execute: async (_id, params, ...rest) => execute(params),
+  });
   const context = {
     cwd: root,
     mode: "json",
@@ -107,12 +116,33 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   );
 }
 
+
+test("ledger records LLM params, not rewritten result.details (#836 bounce)", async () => {
+  await withLedgerFixture(async (f) => {
+    const params = { judgeStatus: "converged", report: "from-llm-params" };
+    const details = { judgeStatus: "converged", report: "from-tool-result", injected: true };
+    const host = registerTool(
+      f.root,
+      async () => ({ content: [], details, terminate: true }),
+    );
+    await host.start("p1");
+    await host.tool().execute("p1", params, undefined, undefined, host.context);
+    const sealed = await readSealedSubmission(f.root, "run-ledger", f.root);
+    assert.deepEqual(sealed?.decisiveFacts, params, "ledger must keep LLM params");
+    assert.notDeepEqual(sealed?.decisiveFacts, details, "must not store rewritten tool result");
+    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+    assert.equal(all.length, 1);
+    assert.deepEqual(all[0]?.decisiveFacts, params);
+  });
+});
+
 test("one turn two submissions → two ledger rows; original payload returned; no abort (#836)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("first");
-    const first = await f.tool().execute("first", {}, undefined, undefined, f.context);
+    const firstPayload = { judgeStatus: "converged" };
+    const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.equal(first.terminate, true);
-    assert.deepEqual(first.details, { judgeStatus: "converged" });
+    assert.deepEqual(first.details, firstPayload);
     assert.deepEqual(await readSealedSubmission(f.root, "run-ledger", f.root), {
       kind: "accepted",
       role: "judge",
@@ -127,7 +157,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       async () => ({ content: [], details: secondDetails, terminate: true }),
     );
     await secondHost.start("second");
-    const accepted2 = await secondHost.tool().execute("second", {}, undefined, undefined, secondHost.context);
+    const accepted2 = await secondHost.tool().execute("second", secondDetails, undefined, undefined, secondHost.context);
     assert.deepEqual(accepted2.details, secondDetails);
     assert.equal(accepted2.terminate, true);
 
@@ -143,7 +173,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 test("mixed tools in one turn still record every terminating submission (#836 no sole)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("a");
-    await f.tool().execute("a", {}, undefined, undefined, f.context);
+    await f.tool().execute("a", { judgeStatus: "converged" }, undefined, undefined, f.context);
     await f.start("b", "read");
     await f.close();
     assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 1);
@@ -198,7 +228,7 @@ test("pipeline ledger records audit-escalation with original details and no rewr
     );
     const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
     await escalating.start("esc");
-    const result = await escalating.tool().execute("esc", {}, undefined, undefined, escalating.context);
+    const result = await escalating.tool().execute("esc", details, undefined, undefined, escalating.context);
     assert.equal(result.terminate, true);
     assert.deepEqual(result.details, details, "original details reach the model");
     const projection = await readAuditEscalationSubmission(f.root, "run-ledger", f.root);
@@ -286,7 +316,7 @@ test("every packaged role records original payload through the production ledger
         row.role,
       );
       await alternateHost.start(`${row.role}-output`, outputTool);
-      const accepted = await alternateHost.tool().execute(`${row.role}-output`, {}, undefined, undefined, alternateHost.context);
+      const accepted = await alternateHost.tool().execute(`${row.role}-output`, row.details, undefined, undefined, alternateHost.context);
       assert.deepEqual(accepted.details, row.details, row.role);
       assert.equal(accepted.terminate, true, row.role);
       const sealed = await readSealedSubmission(f.root, `run-${row.role}`, f.root);
@@ -331,13 +361,13 @@ test("a recorded append failure never returns accepted", async () => {
 test("court attempt tags isolate reads without sealing the attempt (#836)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("t1");
-    await f.tool().execute("t1", {}, undefined, undefined, f.context);
+    await f.tool().execute("t1", { judgeStatus: "converged" }, undefined, undefined, f.context);
     const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
     process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
     try {
       const reopened = registerTool(f.root);
       await reopened.start("court-2");
-      await reopened.tool().execute("court-2", {}, undefined, undefined, reopened.context);
+      await reopened.tool().execute("court-2", { judgeStatus: "converged" }, undefined, undefined, reopened.context);
       assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 2);
       assert.deepEqual(
         await readSealedSubmission(f.root, "run-ledger", { home: f.root, attemptId: "court-turn-2" }),

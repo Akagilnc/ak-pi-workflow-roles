@@ -8,9 +8,8 @@ export type { CanonicalSkillBinding };
 import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
 import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
-import { assembleRuntimeReviewerReceipt } from "./reviewer-settlement.ts";
-import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome } from "./reviewer-execution-ledger.ts";
+import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -144,18 +143,13 @@ export function createReviewerRoleRuntime(
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(id: string, parameters: unknown, _signal: AbortSignal | undefined, _update: unknown, toolCtx: HostContext): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
-            const output = validateReviewerIntent(parameters);
-            let record: ReviewerExecutionRecord;
-            try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
-            const candidate = assembleRuntimeReviewerReceipt({
-                intent: output,
-                record,
-                canonicalSkillText: binding.snapshot.raw,
-              });
+            // #836: 删 8/7.6 — do not refuse on ledger axes or reassemble receipt.
+            // LLM params are the role payload; runtime child facts stay off this face.
+            // Parent seat invokes code-review skill itself (陛下「父session自己调用code review skill」).
             try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
             return {
               content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
-              details: candidate,
+              details: parameters,
               terminate: true as const,
             };
           } });

@@ -78,6 +78,17 @@ function statusFromRoleDetails(details: Record<string, unknown>): string {
   return "";
 }
 
+/**
+ * LLM tool-call arguments are the role payload (#836 bounce: 写进账本的必须是 LLM 说的话).
+ * Non-object args are preserved under `submission` — never replaced with `{}`.
+ */
+function rolePayloadFromParams(params: unknown): Record<string, unknown> {
+  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
+    return params as Record<string, unknown>;
+  }
+  return { submission: params };
+}
+
 function isAcceptedProjection(value: unknown): value is Extract<TerminalRoleOutcome, { kind: "accepted" }> {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<Extract<TerminalRoleOutcome, { kind: "accepted" }>>;
@@ -366,13 +377,15 @@ export function createSubmissionLedgerHost(
               throw error;
             }
           }
-          // #836: audit-escalation records original payload; no abort; no details rewrite.
-          if (isAuditEscalationProjection(result.details)) {
+          // #836: ledger authority is the LLM tool-call params (角色原话), never result.details.
+          // Machine facts on result.details stay on the tool-result face returned to the model.
+          const rolePayload = rolePayloadFromParams(params);
+          if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
             const projection: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }> = {
               kind: "audit_escalation",
               role,
               status: "audit_escalation",
-              decisiveFacts: result.details as Record<string, unknown>,
+              decisiveFacts: rolePayload,
             };
             append({
               type: "outcome",
@@ -398,22 +411,18 @@ export function createSubmissionLedgerHost(
             });
             throw new Error("提交账只受理终止工具");
           }
-          // #836: record original payload immediately; call N times → N rows; no abort.
-          const details =
-            typeof result.details === "object" && result.details !== null && !Array.isArray(result.details)
-              ? (result.details as Record<string, unknown>)
-              : {};
+          // #836: record LLM params immediately; call N times → N rows; no abort.
           const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = {
             kind: "accepted",
             role,
-            status: statusFromRoleDetails(details),
-            decisiveFacts: details,
+            status: statusFromRoleDetails(rolePayload),
+            decisiveFacts: rolePayload,
           };
           append({
             type: "sealed",
             attemptId,
             toolCallId,
-            accepted: result.details,
+            accepted: params,
             projection,
           });
           await projectClosure(projection, context);

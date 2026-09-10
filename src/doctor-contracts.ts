@@ -114,59 +114,43 @@ export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly coverage = new Map<string, Array<[number, number]>>();
   constructor(readonly patient: DoctorCase) { this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry])); }
-  read(evidenceId: string, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry) throw new Error(`证据 ID 未准入：${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new Error("证据分页参数无效"); if (offset > entry.contentLength) throw new Error("证据 offset 超出内容"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end] as [number, number]].sort((a, b) => a[0] - b[0]); const merged: Array<[number, number]> = []; for (const range of ranges) { const prior = merged.at(-1); if (prior && range[0] <= prior[1]) prior[1] = Math.max(prior[1], range[1]); else merged.push([...range]); } this.coverage.set(evidenceId, merged); return { evidenceId, kind: entry.kind, offset, content: entry.content.slice(offset, end), nextOffset: end < entry.contentLength ? end : null, contentLength: entry.contentLength, byteLength: entry.byteLength, sha256: entry.sha256 }; }
+  // #836 A6.5: no 4096 hard cap — limit only bounds the requested window when provided.
+  read(evidenceId: string, offset = 0, limit?: number) {
+    const entry = this.entries.get(evidenceId);
+    if (!entry) throw new Error(`证据 ID 未准入：${evidenceId}`);
+    if (!Number.isInteger(offset) || offset < 0) throw new Error("证据分页参数无效");
+    if (offset > entry.contentLength) throw new Error("证据 offset 超出内容");
+    const window = limit === undefined
+      ? entry.contentLength - offset
+      : (!Number.isInteger(limit) || limit < 1 ? (() => { throw new Error("证据分页参数无效"); })() : limit);
+    const end = Math.min(entry.contentLength, offset + window);
+    const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end] as [number, number]].sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+    for (const range of ranges) {
+      const prior = merged.at(-1);
+      if (prior && range[0] <= prior[1]) prior[1] = Math.max(prior[1], range[1]);
+      else merged.push([...range]);
+    }
+    this.coverage.set(evidenceId, merged);
+    return {
+      evidenceId,
+      kind: entry.kind,
+      offset,
+      content: entry.content.slice(offset, end),
+      nextOffset: end < entry.contentLength ? end : null,
+      contentLength: entry.contentLength,
+      byteLength: entry.byteLength,
+      sha256: entry.sha256,
+    };
+  }
   hasRead(id: string) { const entry = this.entries.get(id); const ranges = this.coverage.get(id); return !!entry && ranges?.length === 1 && ranges[0]![0] === 0 && ranges[0]![1] === entry.contentLength; }
   readRecord() { return [...this.coverage.keys()].sort().map((evidenceId) => ({ evidenceId, fullyRead: this.hasRead(evidenceId) })); }
 }
-export function validateDoctorOutput(value: unknown, patient: DoctorCase, store: DoctorEvidenceStore): DoctorSubmission {
-  const output = validateDoctorSubmissionShape(value);
-  const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
-  const assertTarget = (targetKey: unknown) => { if (typeof targetKey === "string" && !lawfulTargets.has(targetKey)) throw new DoctorSubmissionContractError(`targetKey 不是合法案目标：${targetKey}`); };
-  const readCitations = (ids: unknown, label: string) => { if (!Array.isArray(ids)) return; for (const id of ids) if (typeof id === "string" && (!store.entries.has(id) || !store.hasRead(id))) throw new DoctorSubmissionContractError(`${label} 须引用已准入/已读证据：${id}`); };
-  if (read(output, "status") === "refused") {
-    const missingEvidence = read(output, "missingEvidence");
-    if (Array.isArray(missingEvidence)) for (const missing of missingEvidence) {
-      const targets = read(missing, "targetKeys");
-      if (Array.isArray(targets)) for (const target of targets) assertTarget(target);
-    }
-    return output;
-  }
-  const identity = read(output, "case");
-  const issueNumber = read(identity, "issueNumber");
-  const runsPath = read(identity, "runsPath");
-  if ((issueNumber !== undefined && issueNumber !== patient.identity.issueNumber) || (runsPath !== undefined && runsPath !== patient.identity.runsPath)) throw new DoctorSubmissionContractError("太医署交卷 case 须等于已激活案身份");
-  const findings = read(output, "findings");
-  if (!Array.isArray(findings)) return output;
-  for (const finding of findings) {
-    const targetKey = read(finding, "targetKey");
-    readCitations(read(finding, "evidenceIds"), "finding");
-    const assetEvidence = read(finding, "assetEvidence");
-    if (!isRecord(assetEvidence)) { assertTarget(targetKey); continue; }
-    const assetTargetKey = read(assetEvidence, "targetKey");
-    const assetTargetKind = read(assetEvidence, "targetKind");
-    const assetEvidenceId = read(assetEvidence, "evidenceId");
-    if (typeof assetTargetKey === "string" && assetTargetKey !== targetKey) throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKey");
-    if (typeof assetTargetKind === "string" && assetTargetKind !== read(finding, "targetKind")) throw new DoctorSubmissionContractError("类型化资产证据须确立 finding 的 targetKind");
-    if (typeof assetEvidenceId === "string") readCitations([assetEvidenceId], "asset evidence");
-    const guardrails = read(finding, "guardrails");
-    for (const key of ["reproducibleFailure", "owningSeamOrInvariant", "deletionOrSimplificationSuffices"]) readCitations(read(read(guardrails, key), "evidenceIds"), "guardrail");
-    const bite = read(finding, "lastRealBite");
-    const biteKind = read(bite, "kind");
-    if (biteKind !== "actual" && biteKind !== "noRealBite") continue;
-    if (read(bite, "targetKey") !== targetKey) throw new DoctorSubmissionContractError("lastRealBite 目标不匹配");
-    if (biteKind === "actual") {
-      const evidenceId = read(bite, "evidenceId");
-      const entry = typeof evidenceId === "string" ? store.entries.get(evidenceId) : undefined;
-      if (!entry || entry.kind !== "session" || !store.hasRead(entry.id)) throw new DoctorSubmissionContractError("actual bite 须引用已准入/已读的留存 session");
-    } else {
-      const eligible = patient.evidence.map((entry) => entry.id).sort();
-      const ids = read(bite, "eligibleEvidenceIds");
-      if (Array.isArray(ids)) {
-        const claimed = ids.filter((id): id is string => typeof id === "string").sort();
-        if (canonicalJson(claimed) !== canonicalJson(eligible)) throw new DoctorSubmissionContractError("noRealBite 须证明完整的单案合格证据全集");
-        readCitations(eligible, "noRealBite");
-      }
-    }
-  }
-  return output;
+/**
+ * #836: cross-check rejection deleted (2.6). Shape guidance only — code does not
+ * re-verify evidence citations, case identity, or bite completeness against the store.
+ * Judge/察院 read the original volume.
+ */
+export function validateDoctorOutput(value: unknown, _patient: DoctorCase, _store: DoctorEvidenceStore): DoctorSubmission {
+  return validateDoctorSubmissionShape(value);
 }
