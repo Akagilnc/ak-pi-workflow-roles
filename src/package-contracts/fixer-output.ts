@@ -1,5 +1,4 @@
 import { Type, type Static } from "typebox";
-import { FIXER_PREREQUISITE_ID_PATTERN } from "./fixer-packet.ts";
 import { openToolObjectFromUnion } from "../open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
 
@@ -8,7 +7,13 @@ export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
 
 const nonblankTransportString = Type.String({ minLength: 1 });
 const authorityBlockerSchema = Type.Object({ cause: Type.Literal("authority_violation"), evidence: nonblankTransportString });
-const prerequisiteBlockerSchema = Type.Object({ cause: Type.Literal("prerequisite_unmet"), prerequisiteId: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }), evidence: nonblankTransportString });
+// #836 class 1: prerequisiteId used to carry a regex `pattern` constraint that
+// the provider's own tool-schema validation actually enforces against the
+// role's own output — a real shape rejection of the role's submission
+// (CLAUDE.md 第0条). The declared-prerequisite identity itself is still the
+// caller's own attachment schema (fixer-packet.ts); the role's reference back
+// to it here stays a plain nonblank string — recorded, never shape-rejected.
+const prerequisiteBlockerSchema = Type.Object({ cause: Type.Literal("prerequisite_unmet"), prerequisiteId: nonblankTransportString, evidence: nonblankTransportString });
 const blockerSchema = Type.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
 const exceptionSchema = Type.Object({ where: nonblankTransportString, reason: nonblankTransportString });
 /** ⑥ test evidence slip — require submit when diff has test changes; machine does not check existence/completeness/coverage. */

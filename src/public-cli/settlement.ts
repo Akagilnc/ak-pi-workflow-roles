@@ -14,6 +14,7 @@ import {
 import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sitian-facade.ts";
 
 import {
+  hasFreshAttemptSubmission,
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../submission-ledger.ts";
@@ -199,6 +200,29 @@ async function sealedLedgerOutcome(
     ledgerReadScope(admitted, scope),
   );
   return roleOutcomeFromRows(role, rows);
+}
+
+/**
+ * True when this court/attempt itself already produced a sealed or
+ * audit-escalation submission (#836 r12 class 2). Presentation
+ * (submissions/payloads) always stays run-scoped and unfiltered — this is a
+ * control-flow signal only, consumed to keep a stale prior-attempt
+ * acceptance from outranking this attempt's own real host-turn failure.
+ * Absent a courtAttemptId scope there is no distinct prior attempt to stale
+ * against, so this defaults true (unchanged behavior for ordinary,
+ * non-court dispatches).
+ */
+export async function attemptProducedFreshSubmission(
+  admitted: AdmittedRoleInvocation,
+  scope?: SettlementCourtScope,
+): Promise<boolean> {
+  if (scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0) return true;
+  return hasFreshAttemptSubmission(
+    admitted.projectRoot,
+    admitted.runId,
+    scope.courtAttemptId,
+    sealedLedgerHome(admitted),
+  );
 }
 
 /** #836: every raw role payload in settle scope (调几次记几次). */

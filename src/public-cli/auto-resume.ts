@@ -33,11 +33,9 @@ import {
 import { parseAutoResumeLimit } from "./config.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
-  classifyPostAdmissionFailure,
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
-  withSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -528,7 +526,14 @@ export async function runWithAutoResumeLoop<
     }
     dispatchOrdinal += 1;
 
-    let persistFailure: { readonly error: unknown } | undefined;
+    // #836 r12 class 3: run-state persist for a dispatch that deferred it
+    // (needsPersist) is settled by the dispatch closure itself, before this
+    // loop ever sees the result — through the single existing
+    // presentControlledFailure / settleFailureTerminalResult authority (ADR
+    // 0080), never a second hand-rolled classify/artifact/Terminal here. This
+    // loop only ever sees the already-resolved outcome: a lawful/failure
+    // Terminal (with skipAutoResume set when persist failed after an
+    // already-settled result) or the original non-lawful result unchanged.
     if (result !== undefined) {
       everyAttemptThrew = false;
       const terminal = (result as { terminal?: TerminalResult }).terminal;
@@ -537,92 +542,6 @@ export async function runWithAutoResumeLoop<
       }
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
-      if (result.needsPersist === true) {
-        // Persist on the loop seam, not inside retried dispatch.
-        try {
-          await persistReturnedRunState(
-            options.admitted,
-            { isAvailable: isPrincipalAvailable },
-            lawful ? { lawful: true } : undefined,
-          );
-        } catch (persistError) {
-          // Lawful persist stays loud, but loud means a real controlled-failure
-          // Terminal — never a raw escaped exception with no Terminal at all
-          // (失败诚实宪法 真因必须落痕). The already-lawful outcome's recorded
-          // submissions ride beside this real persistence failure rather than
-          // being lost to an uncaught throw (#836: never wash a real failure
-          // away, never drop an already-recorded leg either). Non-lawful
-          // persist is not a host-turn failure — do not auto-resume it — but
-          // sealed stop must still see the already-settled result (#648).
-          if (lawful) {
-            const failure = classifyPostAdmissionFailure({
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: persistError,
-            });
-            const decisiveFacts: Record<string, unknown> = {
-              cause: failure.cause,
-              diagnostic: failure.diagnostic,
-            };
-            if (failure.identity?.name !== undefined) decisiveFacts.errorName = failure.identity.name;
-            if (failure.identity?.code !== undefined) decisiveFacts.errorCode = failure.identity.code;
-            if (failure.details !== undefined) decisiveFacts.secondaryEvidence = failure.details;
-            const artifacts: TerminalArtifactRef[] = [];
-            try {
-              const artifactsDir = await ensureRealArtifactsDirectory(options.admitted.runDirectory);
-              const errorPath = await writeHardenedArtifactFile(artifactsDir, "lawful-persist-error", {
-                kind: "error",
-                role: options.admitted.role,
-                runId: options.admitted.runId,
-                cause: failure.cause,
-                diagnostic: failure.diagnostic,
-                ...(failure.identity === undefined ? {} : { identity: failure.identity }),
-                ...(failure.details === undefined ? {} : { details: failure.details }),
-              });
-              artifacts.push({ kind: "error", path: errorPath });
-              // #836 A.3 shape: the shared public-failure-settlement contract
-              // (test/helpers/failure-settlement-kit.ts) expects an evidence
-              // ref beside the error ref, mirroring settleFailureTerminalResult
-              // / publishFailureArtifacts (settlement.ts). This loop seam only
-              // knows the narrow admitted identity, not the rich
-              // AdmittedRoleInvocation those hold (attachments, sessionFile,
-              // ...) — record exactly what's actually known here, nothing
-              // fabricated.
-              const evidencePath = await writeHardenedArtifactFile(artifactsDir, "lawful-persist-evidence", {
-                runId: options.admitted.runId,
-                runDirectory: options.admitted.runDirectory,
-                failureCause: failure.cause,
-              });
-              artifacts.push({ kind: "evidence", path: evidencePath });
-            } catch (retentionError) {
-              options.io.stderr(
-                `lawful persist-error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
-              );
-            }
-            const failureTerminal = withSubmissions(
-              {
-                roleOutcome: {
-                  kind: "failure",
-                  role: options.admitted.role,
-                  cause: failure.cause,
-                  diagnostic: failure.diagnostic,
-                  decisiveFacts,
-                },
-                navigator: { disposition: "no-advice" },
-                artifacts,
-                runId: options.admitted.runId,
-                autoResumeCount: autoResumeAttempts,
-              } satisfies TerminalResult,
-              terminal?.submissions ?? [],
-            );
-            presentTerminal(failureTerminal, options.io);
-            return { exitCode: 1, terminal: failureTerminal } as unknown as T;
-          }
-          persistFailure = { error: persistError };
-          lastThrownError = persistError;
-        }
-      }
       if (lawful) {
         if (terminal !== undefined) {
           // Present lawful terminal once to real io (dummy was used inside dispatch)
@@ -634,20 +553,6 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-    }
-
-    if (persistFailure !== undefined) {
-      // Non-lawful persist failure (recording resumable/terminal state) is
-      // not itself a host-turn failure — it must not fabricate its own stop
-      // or its own replacement Terminal. It rides beside `lastThrownError`
-      // (set above) and falls through to the same budget/session-availability
-      // gates below as any other non-lawful attempt (real trace via
-      // io.stderr, never silently dropped — 失败诚实宪法 真因必须落痕); the
-      // already-settled `result` this attempt produced still presents once
-      // the loop actually stops (#648).
-      options.io.stderr(
-        `run-state persist failed after settlement (continuing under existing retry budget): ${describeErrorIdentity(persistFailure.error)}\n`,
-      );
     }
 
     if (result !== undefined) {

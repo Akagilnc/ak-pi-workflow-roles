@@ -139,6 +139,47 @@ function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
   return owned;
 }
 
+/** Recording tag a row was written under — subject first, historical payload fallback. */
+function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
+  if (typeof record.subject === "object" && record.subject !== null) {
+    const fromSubject = (record.subject as { attemptId?: unknown }).attemptId;
+    if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
+  }
+  if (typeof record.payload === "object" && record.payload !== null) {
+    const fromPayload = (record.payload as { attemptId?: unknown }).attemptId;
+    if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
+  }
+  return undefined;
+}
+
+/**
+ * True when the given attemptId itself already produced a sealed or
+ * audit-escalation submission (#836 r12 class 2). This is a separate
+ * freshness signal, not a presentation filter — `recordsForAttempt` above
+ * stays a pass-through so every original payload keeps presenting honestly
+ * (#836: attemptId is a recording tag, not a visibility gate). Settlement
+ * consumes this only to stop a prior attempt's stale acceptance from
+ * outranking the current attempt's own real host-turn failure signal
+ * (#637 original intent, restored narrowly).
+ */
+export async function hasFreshAttemptSubmission(
+  cwd: string,
+  runId: string,
+  attemptId: string,
+  home?: string,
+): Promise<boolean> {
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  return owned.some((record) => {
+    if (recordAttemptId(record) !== attemptId) return false;
+    if (record.kind === "sealed") return true;
+    if (record.kind === "outcome") {
+      const payload = record.payload as { type?: string; outcome?: string } | undefined;
+      return payload?.type === "outcome" && payload.outcome === "audit-escalation";
+    }
+    return false;
+  });
+}
+
 function isTerminalRoleName(value: unknown): value is TerminalRoleName {
   return typeof value === "string" && value.length > 0;
 }

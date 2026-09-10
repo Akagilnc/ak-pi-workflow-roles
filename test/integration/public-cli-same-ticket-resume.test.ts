@@ -1086,9 +1086,20 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
 test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async () => {
   // Real public entry (not an internal dispatchPostAdmissionTurn call): a
   // bare `ak-role resume` that seals an open court is the one production path
-  // where courtAttemptId is set and clearCurrentCourt actually runs — this
-  // reuses the same real notary court sequence as the tracer above instead of
-  // a dedicated internal-dispatch fixture (#840 bounce class 1).
+  // where courtAttemptId is set and clearCurrentCourt actually runs.
+  //
+  // #836 r12 判词 note 4: presenting an already-*accepted* court always
+  // clears its current-court marker in that same dispatch (courtAttempt is a
+  // recording tag, not a visibility gate — see the tracer above and #637
+  // public inspector); a courtAttemptId can therefore never survive to a
+  // later, separate dispatch once this run already holds a sealed payload.
+  // So the only real production shape where a *later* dispatch still finds
+  // an open courtAttemptId is a court that reached no seal at all yet (still
+  // lawfully `no_receipt`, not `accepted`) — the initial mint and the
+  // same-parent re-summons below both stay unsealed; the bare resume is the
+  // turn that seals for the first time, and that is exactly where
+  // clearCurrentCourt genuinely runs and can be fault-injected (not
+  // resurrecting a prior attempt to paper over the contradiction).
   const scratch = await openNotaryScratch("home-cleanup-durable-");
   try {
     const { home, project, io: baseIo, credentials } = scratch;
@@ -1126,14 +1137,8 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
       piRunner: async (extraArgs, options) => {
         turn += 1;
         if (turn === 1) {
-          return scriptedTerminatingToolSession({
-            role: "notary",
-            toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
-          })(extraArgs, options);
-        }
-        if (turn === 2) {
-          // Same-parent court: exit without sealing — opens the court.
+          // Initial mint: no seal yet — stays lawfully no_receipt (no prior
+          // accepted payload exists to wash into a stale "accepted" clear).
           return scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
@@ -1141,9 +1146,19 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
             seal: false,
           })(extraArgs, options);
         }
-        // Bare resume of the open court seals it: make the run-state write
-        // that clearCurrentCourt performs fail (its read still succeeds).
-        // Arm the stderr-restore hook only for this turn.
+        if (turn === 2) {
+          // Same-parent court opens (mints courtAttemptId) — still no seal,
+          // so this run's ledger stays empty and nothing gets cleared.
+          return scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+            seal: false,
+          })(extraArgs, options);
+        }
+        // Bare resume of the still-open court seals it for the first time:
+        // make the run-state write that clearCurrentCourt performs fail (its
+        // read still succeeds). Arm the stderr-restore hook only for this turn.
         sealingTurnArmed = true;
         await chmod(runStateFile, 0o400);
         return scriptedTerminatingToolSession({
@@ -1167,7 +1182,8 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         createRunId: () => "01a08400-0000-7000-8000-00000000c001",
       },
     );
-    assert.equal(first.exitCode, 0, "first sealed notary must accept");
+    assert.equal(first.exitCode, 0, "initial no-seal mint is still a lawful run");
+    assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
     const runId = seen[0]!.runId;
     runStateFile = join(runDirectory, "run-state.json");
@@ -1184,15 +1200,16 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         createRunId: () => "01a08400-0000-7000-8000-00000000c002",
       },
     );
-    // #836: courtAttempt is a recording tag, not a visibility gate — a
-    // same-parent court that dispatches without recording a new submission
-    // still honestly presents whatever the run's ledger already holds (the
-    // first court's sealed pass), not an invented "not accepted" status.
-    assert.equal(opened.exitCode, 0, "same-parent court without a new seal still presents the run's ledger honestly");
-    assert.equal(opened.terminal?.roleOutcome.kind, "accepted", "ledger still holds the first court's accepted payload");
+    assert.equal(opened.exitCode, 0, "same-parent no-seal court is still a lawful run");
+    assert.equal(opened.terminal?.roleOutcome.kind, "no_receipt", "still nothing sealed — the open court must survive this dispatch");
     assert.ok(
       typeof seen[1]!.courtAttemptId === "string" && seen[1]!.courtAttemptId.length > 0,
       "same-parent re-summons must open a courtAttemptId",
+    );
+    assert.equal(
+      (await readCurrentCourt(runDirectory))?.courtAttemptId,
+      seen[1]!.courtAttemptId,
+      "no accept has happened yet — the open court must survive this dispatch for the bare resume below to continue it",
     );
 
     // Bare resume seals the open court through the real public entry —

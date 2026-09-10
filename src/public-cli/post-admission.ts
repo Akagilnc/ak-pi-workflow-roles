@@ -81,6 +81,7 @@ import {
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
+  attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
@@ -475,6 +476,66 @@ async function settleAfterTurnStarted<
   }
 }
 
+/**
+ * Persist run-state for a result dispatchPostAdmissionTurn deferred
+ * (needsPersist — station-child / resumable auto-resume loop, #416/#840):
+ * that write must land outside the loop's own retried-dispatch try, but its
+ * failure still settles through the single existing controlled-failure
+ * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080
+ * single-settlement-disposition) — never a second hand-rolled
+ * classify/artifact/Terminal (#836 r12 class 3). A lawful settlement's own
+ * persist failure stops the caller's retry loop immediately (skipAutoResume)
+ * so the already-settled result is never replayed (#840 已交劳动只整理终局不
+ * 重做). A non-lawful outcome's persist failure is not itself a host-turn
+ * failure — it never enters the caller's own auto-resume/retry accounting;
+ * it rides beside the original (unchanged) result via a real stderr trace
+ * only (失败诚实宪法 真因必须落痕), leaving that result's own budget/session
+ * gates to decide what happens next.
+ */
+async function settleDeferredPersist<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(
+  admitted: A,
+  authority: DurablePrincipalAuthority,
+  adapters: PostAdmissionAdapters<A, T>,
+  io: CliIo,
+  result: {
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  },
+): Promise<typeof result> {
+  if (result.needsPersist !== true || result.terminal === undefined) return result;
+  const { needsPersist: _needsPersist, ...settledResult } = result;
+  const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
+  try {
+    await persistReturnedRunState(admitted, authority, lawful ? { lawful: true } : undefined);
+    return settledResult;
+  } catch (error) {
+    if (!lawful) {
+      io.stderr(
+        formatCliDiagnostic(
+          `run-state persist failed after settlement (continuing under existing retry budget): ${describeErrorIdentity(error)}`,
+        ),
+      );
+      return settledResult;
+    }
+    const failed = await settleAfterTurnStarted(
+      admitted,
+      { timedOut: false, code: null, stderr: "", thrown: error, skipRunStateWrite: true },
+      adapters,
+      authority,
+      io,
+      true,
+    );
+    return { ...failed, turnDispatched: true as const, skipAutoResume: true as const };
+  }
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -768,6 +829,18 @@ export async function dispatchPostAdmissionTurn<
       if (settled !== undefined) {
         settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
       }
+      // #836 r12 class 2: an accepted/audit_escalation settlement can be
+      // entirely a prior attempt's stale payload (courtAttempt is a
+      // recording tag, not a visibility gate — attachRecordedSubmissions
+      // above still surfaces that historical payload honestly either way).
+      // Consume the ledger's own subject.attemptId (submission-ledger.ts)
+      // only to learn whether *this* attempt itself produced a fresh seal —
+      // never to filter what presents.
+      const settledIsFreshThisAttempt =
+        settled === undefined
+        || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
+          ? true
+          : await attemptProducedFreshSubmission(admitted, courtScope);
       // A lawful settled outcome already reached this turn takes precedence
       // over a later bare exit-code / session-inspection signal (trailing
       // nonzero exit, late stderr noise, a stale already-superseded
@@ -779,11 +852,16 @@ export async function dispatchPostAdmissionTurn<
       // leg, but never wash a real failure away either). Note: the narrower
       // directHostFailureSignal gates acceptance here; the broader
       // hostSignalFailed (adds bare exit code / resolution.knownFailure)
-      // only gates the no-settlement fallback below.
+      // only gates the no-settlement fallback below — except when the
+      // settlement itself is entirely stale (no fresh seal this attempt),
+      // where a bare nonzero exit / resolution failure must not be outranked
+      // by someone else's earlier success (#836 r12 class 2).
+      const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
       if (
         settled !== undefined
         && shouldPresent(settled)
         && !directHostFailureSignal
+        && !staleAcceptanceOutranksRealFailure
         && stderrLogWriteFailure === undefined
       ) {
         // This court sealed — drop open-court pointer (bare resume no longer continues it).
@@ -1357,8 +1435,8 @@ export async function runPostAdmissionSeatResume<
               firstTurn = turnRequest;
               return turnRequest;
             },
-            dispatch: (turnRequest) =>
-              dispatchPostAdmissionTurn({
+            dispatch: async (turnRequest) => {
+              const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
                 env: {
                   ...input.env,
@@ -1374,7 +1452,15 @@ export async function runPostAdmissionSeatResume<
                 ...(input.effectiveEngine === undefined
                   ? {}
                   : { effectiveEngine: input.effectiveEngine }),
-              }),
+              });
+              return settleDeferredPersist(
+                loaded.admitted,
+                input.env.principalAuthority,
+                stationAdapters,
+                attemptIo,
+                result,
+              );
+            },
           }),
       });
     }
@@ -1473,8 +1559,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    dispatch: (request, lease, _isFirst, attemptIo) =>
-      dispatchPostAdmissionTurn({
+    dispatch: async (request, lease, _isFirst, attemptIo) => {
+      const result = await dispatchPostAdmissionTurn({
         admitted,
         env: {
           ...env,
@@ -1487,7 +1573,9 @@ export async function runPostAdmissionResumable<
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      }),
+      });
+      return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
+    },
   });
 }
 
@@ -1589,7 +1677,11 @@ export async function runPostAdmissionManualResume<
     result.terminal !== undefined &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
   ) {
-    await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+    // dispatchPostAdmissionTurn already persisted this lawful outcome inline
+    // (persistRunState defaults true here — no station-child/loop deferral)
+    // through its own settleAfterTurnStarted-backed branches; a lawful result
+    // only ever reaches this point once that persist has already succeeded
+    // (#836 r12 class 3 dedup — one persist owner, not a second here).
     io.stdout(formatTerminalResult(result.terminal));
   }
   if (result.terminal !== undefined) {
