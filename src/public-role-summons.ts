@@ -16,7 +16,7 @@ import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
 import type { RoleTurnHost } from "./host-contracts.ts";
-import type { NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
+import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
@@ -178,6 +178,13 @@ function projectSeatHost(seat: EffectiveSeat): { host?: string } {
   return seat.host === undefined ? {} : { host: seat.host };
 }
 
+function hostSelectionFailureFromUnknown(error: unknown): HostSelectionFailure | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  if ((error as { name?: unknown }).name !== "HostSelectionError") return undefined;
+  const failure = (error as { failure?: HostSelectionFailure }).failure;
+  return failure;
+}
+
 async function createSummonEnv(options: {
   readonly role: PublicCallableRole;
   readonly home: string;
@@ -263,8 +270,9 @@ export async function summonPublicRole(
   // Nested summons resolve host on the officer seat only (flag>seat>default pi).
   // Parent run host is not an override channel (#821 / ADR 0082 host-flag-two-channels).
   const seat = resolveEffectiveSeat(config, options.role, credentials);
-  const env = {
-    ...(await createSummonEnv({
+  let summonEnv;
+  try {
+    summonEnv = await createSummonEnv({
       role: options.role,
       home,
       agentDir,
@@ -275,7 +283,17 @@ export async function summonPublicRole(
       ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
-    })),
+    });
+  } catch (error) {
+    const failure = hostSelectionFailureFromUnknown(error);
+    if (failure !== undefined) {
+      const { formatHostSelectionFailure } = await import("./public-cli/role-turn-host-resolution.ts");
+      return { exitCode: 1, stderr: formatHostSelectionFailure(failure) };
+    }
+    throw error;
+  }
+  const env = {
+    ...summonEnv,
     // Station child role run (#840): omit automatic navigator attendance.
     stationChild: true,
     // Host config passthrough only — same face as public CLI (#422 / #675).

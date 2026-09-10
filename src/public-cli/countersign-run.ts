@@ -160,7 +160,7 @@ async function invokeCourtDiarist(input: {
     const diagnostic =
       roleOutcome?.kind === "failure"
         ? roleOutcome.diagnostic
-        : `exit ${result.exitCode}`;
+        : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
       failedWithoutEscalate: {

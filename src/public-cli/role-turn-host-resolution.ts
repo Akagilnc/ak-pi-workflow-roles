@@ -23,6 +23,10 @@ export type HostSelectionFailure = {
   readonly registeredHosts: readonly string[];
 };
 
+export function formatHostSelectionFailure(failure: HostSelectionFailure): string {
+  return `${failure.kind}: ${failure.host}; seat=${failure.seat}; model=${failure.model}; registered: ${failure.registeredHosts.join(", ")}`;
+}
+
 export type NamedRoleTurnHostAdapter = {
   readonly name: string;
   readonly create: (input: { role: PublicCallableRole; model: EffectiveSeat["selection"] }) =>
@@ -32,7 +36,8 @@ export type NamedRoleTurnHostAdapter = {
 
 export class HostSelectionError extends Error {
   constructor(readonly failure: HostSelectionFailure) {
-    super(failure.kind);
+    super(formatHostSelectionFailure(failure));
+    this.name = "HostSelectionError";
   }
 }
 

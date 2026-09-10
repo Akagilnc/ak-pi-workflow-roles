@@ -124,7 +124,12 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
 async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<ComplianceDecision> {
   const outcome = summoned.terminal?.roleOutcome;
   if (outcome === undefined) {
-    throw new Error(`Auditor public summon produced no terminal (exit ${summoned.exitCode})`);
+    const detail = summoned.stderr?.trim();
+    throw new Error(
+      detail && detail.length > 0
+        ? `Auditor public summon produced no terminal (exit ${summoned.exitCode}: ${detail})`
+        : `Auditor public summon produced no terminal (exit ${summoned.exitCode})`,
+    );
   }
   const usage = await usageFromSummonedSession(summoned);
   if (outcome.kind === "no_receipt") {

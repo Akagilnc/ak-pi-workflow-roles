@@ -47,6 +47,7 @@ import type { RoleTurnHost } from "../host-contracts.ts";
 import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 import {
   composeRoleTurnHostAdapters,
+  formatHostSelectionFailure,
   HostSelectionError,
   selectRoleTurnHost,
   type HostSelectionFailure,
@@ -1546,8 +1547,7 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof HostSelectionError) {
-      const registered = error.failure.registeredHosts.join(", ");
-      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
+      io.stderr(formatCliDiagnostic(formatHostSelectionFailure(error.failure)));
       return { exitCode: 1, hostFailure: error.failure };
     }
     if (error instanceof CliUsageError) {
