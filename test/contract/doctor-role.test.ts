@@ -39,7 +39,7 @@ const refusal = { status: "refused" as const, reason: "Session bytes are incompl
 test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient, auditCompliance: async () => ({ status: "pass" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });
 
 test("Doctor output audits testimony, records runtime cost beside it, and keeps failure behavior", async () => {
-  let decision: "pass" | "bounce" | "failure" = "bounce";
+  let decision: "pass" | "bounce" | "failure" | "no-receipt" = "bounce";
   let aborts = 0;
   let auditCalls = 0;
   // #775: structured violations must reach the parent seat with field content intact.
@@ -47,6 +47,18 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     article: "method-proof",
     reason: "missing method proof",
     evidence: "case catalog lists no method bite",
+  };
+  // #836: the auditor's own no-receipt lifecycle facts — a machine fact about
+  // the audit leg, never merged into the accepted testimony.
+  const auditNoReceiptFacts = {
+    status: "no-receipt" as const,
+    terminalToolCalled: false,
+    rejectedReceipts: [],
+    deliveryTurns: 2 as const,
+    sessionCompletion: "settled-without-accepted-receipt" as const,
+    runPointer: "test-run",
+    attemptPointer: "test-attempt",
+    acceptedReceipt: false as const,
   };
   const h = harness();
   const runtime = createDoctorRoleRuntime(h.host, {
@@ -56,6 +68,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
       auditCalls += 1;
       assert.ok(options.context);
       if (decision === "failure") throw new Error("provider unavailable");
+      if (decision === "no-receipt") return auditNoReceiptFacts;
       return decision === "bounce"
         ? { status: "bounce", violations: [structuredViolation] }
         : { status: "pass" };
@@ -89,6 +102,19 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   // candidate audit entry, not folded into the accepted payload.
   assert.deepEqual(candidates, [{ version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity }]);
   assert.equal(auditCalls, 3);
+  decision = "no-receipt";
+  const noReceiptCandidates: unknown[] = [];
+  const noReceiptAccepted = await output.execute("doctor", testimony, undefined, undefined, context("doctor", () => {}, noReceiptCandidates));
+  // #836: audit-no-receipt is a fact about the audit leg, not the role's
+  // testimony — the accepted payload still equals testimony unmerged.
+  assert.deepEqual(noReceiptAccepted.details, testimony);
+  assert.equal(noReceiptAccepted.terminate, true);
+  // The submission candidate is recorded pre-audit as always; the audit-leg
+  // fact rides in its own second candidate entry alongside the same testimony.
+  assert.deepEqual(noReceiptCandidates, [
+    { version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity },
+    { version: 1, testimony, cost: patient.cost, auditNoReceipt: auditNoReceiptFacts, readRecord: [], patientIdentity: patient.identity },
+  ]);
   decision = "failure";
   await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts += 1; })), /provider unavailable/);
   assert.equal(aborts, 1);

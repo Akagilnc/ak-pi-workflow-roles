@@ -2853,6 +2853,24 @@ function extractDoctorCandidateCostFact(
   return undefined;
 }
 
+/**
+ * #836: the auditor's own no-receipt lifecycle facts are a machine fact about
+ * the audit leg, recorded beside (never merged into) the role's accepted
+ * testimony. Absence reads as undefined — never invented.
+ */
+function extractDoctorCandidateAuditNoReceiptFact(
+  entries: readonly SessionEntry[],
+): unknown {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
+      const data = entry.data;
+      return isRecord(data) ? data.auditNoReceipt : undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function publishDoctorArtifacts(
   admitted: AdmittedDoctorInvocation,
   roleOutcome: TerminalRoleOutcome,
@@ -2860,6 +2878,7 @@ export async function publishDoctorArtifacts(
   options: {
     readonly doctorOutput?: DoctorOutput;
     readonly cost?: DoctorCaseCost;
+    readonly auditNoReceipt?: unknown;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2876,8 +2895,9 @@ export async function publishDoctorArtifacts(
         ...(options.doctorOutput === undefined
           ? {}
           : { receipt: options.doctorOutput }),
-        // Independent machine field beside the receipt — not merged into it.
+        // Independent machine fields beside the receipt — not merged into it.
         ...(options.cost === undefined ? {} : { cost: options.cost }),
+        ...(options.auditNoReceipt === undefined ? {} : { auditNoReceipt: options.auditNoReceipt }),
       },
       null,
       2,
@@ -2945,11 +2965,16 @@ async function settleLawfulDoctorTerminalResult(
   const roleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const cost = extractDoctorCandidateCostFact(entries);
+  const auditNoReceipt = extractDoctorCandidateAuditNoReceiptFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
     roleOutcome,
     coordinates,
-    { doctorOutput: output, ...(cost === undefined ? {} : { cost }) },
+    {
+      doctorOutput: output,
+      ...(cost === undefined ? {} : { cost }),
+      ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
+    },
   );
   return withOptionalGateProjection(
     {
