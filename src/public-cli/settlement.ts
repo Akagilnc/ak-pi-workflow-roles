@@ -1059,14 +1059,11 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // Historical write token only — never a new prompt (#836 A4.1).
-  const historicalResumeToken = "[ak-role:resume-continue]";
   const isResumeEnvelopeBytes = (value: unknown): boolean => {
     if (typeof value !== "string") return false;
     if (value.length === 0) return true;
     const nl = value.indexOf("\n");
     const firstLine = nl === -1 ? value : value.slice(0, nl);
-    if (firstLine === historicalResumeToken) return true;
     const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
     return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
   };
