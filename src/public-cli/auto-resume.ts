@@ -44,12 +44,20 @@ const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
 /**
  * Persist run-state after a host-turn result, outside the retried dispatch try.
- * Write failure must escape the auto-resume loop instead of becoming a dispatch throw.
+ * Lawful settlement always seals terminal — a typed 429 observation must not
+ * win (#416 成功即停). 429 only marks resumable on the controlled-failure path.
+ * Write failure must escape the retried dispatch try instead of becoming a
+ * synthetic host-turn terminal.
  */
 export async function persistReturnedRunState(
   admitted: { runDirectory: string; principal?: DurablePrincipal },
   authority: DurablePrincipalAuthority,
+  options?: { readonly lawful?: boolean },
 ): Promise<void> {
+  if (options?.lawful === true) {
+    await markRunTerminal(admitted.runDirectory);
+    return;
+  }
   const resumeObservation = await resolveControlledFailureResumeObservation({
     runDirectory: admitted.runDirectory,
   });
@@ -457,6 +465,7 @@ export async function runWithAutoResumeLoop<
     }
     dispatchOrdinal += 1;
 
+    let persistFailed: unknown;
     if (result !== undefined) {
       everyAttemptThrew = false;
       const terminal = (result as { terminal?: TerminalResult }).terminal;
@@ -467,7 +476,20 @@ export async function runWithAutoResumeLoop<
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
       if (result.needsPersist === true) {
         // Persist on the loop seam, not inside retried dispatch.
-        await persistReturnedRunState(options.admitted, options.principalAuthority);
+        try {
+          await persistReturnedRunState(
+            options.admitted,
+            options.principalAuthority,
+            lawful ? { lawful: true } : undefined,
+          );
+        } catch (persistError) {
+          // Lawful persist stays loud (no fake terminal). Non-lawful persist is
+          // not a host-turn failure — do not auto-resume it — but sealed stop
+          // must still see the already-settled result (#648).
+          if (lawful) throw persistError;
+          persistFailed = persistError;
+          lastThrownError = persistError;
+        }
       }
       if (lawful) {
         if (terminal !== undefined) {
@@ -515,6 +537,10 @@ export async function runWithAutoResumeLoop<
           terminal,
         } as T;
       }
+    }
+
+    if (persistFailed !== undefined) {
+      throw persistFailed;
     }
 
     if (result !== undefined) {

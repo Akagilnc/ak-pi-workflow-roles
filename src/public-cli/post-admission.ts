@@ -1199,7 +1199,7 @@ export async function runPostAdmissionManualResume<
     result.terminal !== undefined &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
   ) {
-    await persistReturnedRunState(admitted, env.principalAuthority);
+    await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
     io.stdout(formatTerminalResult(result.terminal));
   }
   if (result.terminal !== undefined) {
