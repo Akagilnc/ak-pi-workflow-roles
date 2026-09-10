@@ -67,6 +67,11 @@ async function finalizeExceptionRunBestEffort(runDirectory: string, io: CliIo): 
 export type AutoResumeDispatchResult = {
   exitCode: number;
   terminal?: TerminalResult;
+  /**
+   * Pre-turn settlement under the writer lease (station child exhausted).
+   * Loop presents this result and must not redispatch (#840 父子不层叠).
+   */
+  skipAutoResume?: true;
 };
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
@@ -432,6 +437,10 @@ export async function runWithAutoResumeLoop<
           // Present lawful terminal once to real io (dummy was used inside dispatch)
           options.io.stdout(formatTerminalResult(terminal));
         }
+        return result;
+      }
+      if (result.skipAutoResume === true) {
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
     }

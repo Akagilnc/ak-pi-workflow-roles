@@ -334,55 +334,6 @@ export async function presentControlledFailure<
   };
 }
 
-/** Drop beforeDispatch so the auto-resume loop cannot re-run station children. */
-function adaptersWithoutBeforeDispatch<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult,
->(adapters: PostAdmissionAdapters<A, T>): PostAdmissionAdapters<A, T> {
-  return {
-    trySettle: adapters.trySettle,
-    ...(adapters.shouldPresentSettled === undefined
-      ? {}
-      : { shouldPresentSettled: adapters.shouldPresentSettled }),
-    ...(adapters.resolveRunnerKnownFailure === undefined
-      ? {}
-      : { resolveRunnerKnownFailure: adapters.resolveRunnerKnownFailure }),
-  };
-}
-
-/**
- * Station / seat pre-turn work once per call (#840 父子不层叠). Failure is this
- * call's terminal — the auto-resume loop must not re-summon exhausted children.
- */
-async function runBeforeDispatchOnce<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult,
->(input: {
-  admitted: A;
-  adapters: PostAdmissionAdapters<A, T>;
-  env: PostAdmissionEnv;
-  io: CliIo;
-}): Promise<{ exitCode: number; admitted: A; terminal: TerminalResult } | undefined> {
-  if (input.adapters.beforeDispatch === undefined) return undefined;
-  try {
-    await input.adapters.beforeDispatch(input.admitted);
-    return undefined;
-  } catch (error) {
-    return (await presentControlledFailure(
-      input.admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      input.adapters,
-      input.env.principalAuthority,
-      input.io,
-    )) as { exitCode: number; admitted: A; terminal: TerminalResult };
-  }
-}
-
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -394,12 +345,20 @@ export async function dispatchPostAdmissionTurn<
   lease: RunWriterLease;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
+  /**
+   * First attempt of a call-local auto-resume loop runs seat beforeDispatch
+   * under the writer lease. Later attempts skip it so exhausted station
+   * children are not re-summoned (#840). Manual resume omits the flag (once).
+   */
+  runBeforeDispatch?: boolean;
 }): Promise<{
   exitCode: number;
   admitted: A;
   terminal?: T;
+  skipAutoResume?: true;
 }> {
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
+  const runBeforeDispatch = input.runBeforeDispatch !== false;
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
   try {
@@ -459,11 +418,12 @@ export async function dispatchPostAdmissionTurn<
     await clearReviewerDispatchRejection(admitted.runDirectory);
     // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
     // its failures must settle the run, not leave it permanently running.
-    if (adapters.beforeDispatch !== undefined) {
+    // Call-local auto-resume runs this only on the first leased attempt.
+    if (runBeforeDispatch && adapters.beforeDispatch !== undefined) {
       try {
         await adapters.beforeDispatch(admitted);
       } catch (error) {
-        return (await presentControlledFailure(
+        const settled = (await presentControlledFailure(
           admitted,
           {
             timedOut: false,
@@ -475,6 +435,7 @@ export async function dispatchPostAdmissionTurn<
           env.principalAuthority,
           io,
         )) as { exitCode: number; admitted: A; terminal: T };
+        return { ...settled, skipAutoResume: true as const };
       }
     }
 
@@ -907,15 +868,6 @@ export async function runPostAdmissionSeatResume<
   // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
   try {
     if (input.env.stationChild === true) {
-      const beforeDispatchResult = await runBeforeDispatchOnce({
-        admitted: loaded.admitted,
-        adapters,
-        env: input.env,
-        io: input.io,
-      });
-      if (beforeDispatchResult !== undefined) {
-        return beforeDispatchResult as { exitCode: number; admitted?: A; terminal?: T };
-      }
       let firstTurn: RoleTurnRequest | undefined;
       const engine = input.effectiveEngine ?? input.env.engine;
       return await runWithAutoResumeLoop({
@@ -956,7 +908,8 @@ export async function runPostAdmissionSeatResume<
             io: attemptIo,
             request: turnRequest,
             lease,
-            adapters: adaptersWithoutBeforeDispatch(adapters),
+            adapters,
+            runBeforeDispatch: isFirst,
             ...(input.effectiveEngine === undefined
               ? {}
               : { effectiveEngine: input.effectiveEngine }),
@@ -1049,14 +1002,6 @@ export async function runPostAdmissionResumable<
 }> {
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, adapters, effectiveEngine } = input;
 
-  const beforeDispatchResult = await runBeforeDispatchOnce({
-    admitted,
-    adapters,
-    env,
-    io,
-  });
-  if (beforeDispatchResult !== undefined) return beforeDispatchResult as { exitCode: number; admitted?: A; terminal?: T };
-
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
@@ -1067,7 +1012,7 @@ export async function runPostAdmissionResumable<
     buildResumePayload: buildResumeRequest,
     sealedAcceptanceDisposition: () =>
       sealedAcceptanceRedispatchDisposition(admitted),
-    dispatch: (request, lease, _isFirst, attemptIo) =>
+    dispatch: (request, lease, isFirst, attemptIo) =>
       dispatchPostAdmissionTurn({
         admitted,
         env: {
@@ -1077,7 +1022,8 @@ export async function runPostAdmissionResumable<
         io: attemptIo,
         request,
         lease,
-        adapters: adaptersWithoutBeforeDispatch(adapters),
+        adapters,
+        runBeforeDispatch: isFirst,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),
