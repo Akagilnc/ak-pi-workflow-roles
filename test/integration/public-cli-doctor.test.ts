@@ -606,6 +606,13 @@ test("terminal persistence write failure through public entry propagates loudly 
       `${runId}@doctor`,
     );
     const captured = captureIo();
+    // #836 A.3 (class 2, r9 bounce): the accepted Doctor payload must ride
+    // beside the persistence failure, not just a bare failure Terminal —
+    // so this run must actually record a submission (sealedAcceptance, same
+    // producer the "completed" tracer above uses) before the run-state write
+    // is broken. Captured here so the assertion below checks against the
+    // real recorded bytes, not a hand-authored duplicate.
+    let recordedDetails: unknown;
     const result = await runAkRole(
       ["doctor", "--issue", "41", "--project", project, "inspect"],
       {
@@ -623,6 +630,8 @@ test("terminal persistence write failure through public entry propagates loudly 
           const patient = await loadDoctorCase(casePath);
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = sampleCompletedDoctorOutput(patient.identity);
+          recordedDetails = details;
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -631,7 +640,7 @@ test("terminal persistence write failure through public entry propagates loudly 
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity),
+                details,
               },
             })}\n`,
             "utf8",
@@ -644,6 +653,7 @@ test("terminal persistence write failure through public entry propagates loudly 
           await mkdir(join(runDirectory, "run-state.json"));
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
@@ -666,5 +676,11 @@ test("terminal persistence write failure through public entry propagates loudly 
       diagnosticEquals: "cannot mark terminal: run state missing",
     });
     assert.equal(terminal.roleOutcome.role, "doctor");
+    // #836 A.3: the already-recorded Doctor payload rides beside the real
+    // persistence failure — never dropped by the controlled-failure path.
+    assert.deepEqual(terminal.submissions, [recordedDetails]);
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.deepEqual(terminal.roleOutcome.payloads, [recordedDetails]);
+    }
   });
 });
