@@ -14,8 +14,11 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
+import { summonPublicRole } from "../../src/public-role-summons.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -346,5 +349,65 @@ test("A2: non-judge public seat enters the shared auto-resume loop", async () =>
     assert.equal(calls, 3, "non-judge seat retries non-lawful run up to shared budget");
     assert.equal(result.exitCode, 1);
     assert.equal(result.terminal?.autoResumeCount, 2);
+  });
+});
+
+test("A2: station-child same-ticket resume enters the shared auto-resume loop", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    let calls = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        calls += 1;
+        if (calls === 1) {
+          return scriptedTerminatingToolSession({
+            role: "diarist",
+            toolName: DIARIST_OUTPUT_TOOL_NAME,
+            details: { status: "completed", ticketNumber: 582, entries: [] },
+          })(args, options);
+        }
+        const sd = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sd, { recursive: true });
+        const sf = args[args.indexOf("--session") + 1]!;
+        await writeFile(
+          sf,
+          JSON.stringify({
+            type: "message",
+            message: { role: "user", content: [{ type: "text", text: "go" }] },
+          }) + "\n",
+          "utf8",
+        );
+        return { code: 1, stderr: `fail ${calls}\n`, timedOut: false, args: [...args] };
+      },
+    });
+    const first = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "整理 #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: host,
+      createRunId: () => "416-station-child-001",
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(first.exitCode, 0, "first station-child mint must bind the ticket");
+    const resumed = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "refresh #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: host,
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(calls, 4, "same-ticket station-child resume retries up to shared budget");
+    assert.equal(resumed.exitCode, 1);
+    assert.equal(resumed.terminal?.autoResumeCount, 2);
   });
 });

@@ -70,6 +70,7 @@ import {
 } from "./run-lifecycle.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { readSealedSubmission } from "../submission-ledger.ts";
+import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
@@ -333,6 +334,55 @@ export async function presentControlledFailure<
   };
 }
 
+/** Drop beforeDispatch so the auto-resume loop cannot re-run station children. */
+function adaptersWithoutBeforeDispatch<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(adapters: PostAdmissionAdapters<A, T>): PostAdmissionAdapters<A, T> {
+  return {
+    trySettle: adapters.trySettle,
+    ...(adapters.shouldPresentSettled === undefined
+      ? {}
+      : { shouldPresentSettled: adapters.shouldPresentSettled }),
+    ...(adapters.resolveRunnerKnownFailure === undefined
+      ? {}
+      : { resolveRunnerKnownFailure: adapters.resolveRunnerKnownFailure }),
+  };
+}
+
+/**
+ * Station / seat pre-turn work once per call (#840 父子不层叠). Failure is this
+ * call's terminal — the auto-resume loop must not re-summon exhausted children.
+ */
+async function runBeforeDispatchOnce<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(input: {
+  admitted: A;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+}): Promise<{ exitCode: number; admitted: A; terminal: TerminalResult } | undefined> {
+  if (input.adapters.beforeDispatch === undefined) return undefined;
+  try {
+    await input.adapters.beforeDispatch(input.admitted);
+    return undefined;
+  } catch (error) {
+    return (await presentControlledFailure(
+      input.admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      input.adapters,
+      input.env.principalAuthority,
+      input.io,
+    )) as { exitCode: number; admitted: A; terminal: TerminalResult };
+  }
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -404,6 +454,9 @@ export async function dispatchPostAdmissionTurn<
 
     await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
     await clearTypedProviderHttpObservation(admitted.runDirectory);
+    // Per-attempt hygiene: stale Reviewer rejection pages must not ride into
+    // auto-resume. ENOENT-safe for every seat.
+    await clearReviewerDispatchRejection(admitted.runDirectory);
     // beforeDispatch (seat-owned pre-turn work) runs after running is marked —
     // its failures must settle the run, not leave it permanently running.
     if (adapters.beforeDispatch !== undefined) {
@@ -689,7 +742,8 @@ export async function prepareSummonsResumeMaterials(
  * Shared manual-resume orchestration for seats whose continuation is the
  * package resume envelope (#599 / #633): load once → structural rejection →
  * optional seat afterAdmittedLoad (method material / controlled failure) →
- * seat turn projection → runPostAdmissionManualResume. Seat-owned loader
+ * seat turn projection → station-child auto-resume or public manual resume.
+ * Seat-owned loader
  * validation, turn builder, and adapters stay on the seat.
  *
  * Court open/recovery transaction (#637): under the existing writer lease,
@@ -751,17 +805,7 @@ export async function runPostAdmissionSeatResume<
     adapters = prepared.adapters;
   }
 
-  // Court recovery / open under lease, then always dispatch (resume is pass-through).
-  try {
-    return await runPostAdmissionManualResume({
-      admitted: loaded.admitted,
-      env: input.env,
-      io: input.io,
-      adapters,
-      ...(input.effectiveEngine === undefined
-        ? {}
-        : { effectiveEngine: input.effectiveEngine }),
-      buildRequestAfterLease: async () => {
+  const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
         // Build uses the admitted judged under this lease (rehydrated when open
         // court materials ride). Settlement identity stays on the outer admitted.
@@ -855,8 +899,80 @@ export async function runPostAdmissionSeatResume<
             await recordCurrentCourt(admittedForBuild.runDirectory, court);
           }
         }
-        return turnRequest;
-      },
+    return turnRequest;
+  };
+
+  // Court recovery / open under lease, then dispatch.
+  // Station-child same-ticket/same-parent resume is call-local auto-resume
+  // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
+  try {
+    if (input.env.stationChild === true) {
+      const beforeDispatchResult = await runBeforeDispatchOnce({
+        admitted: loaded.admitted,
+        adapters,
+        env: input.env,
+        io: input.io,
+      });
+      if (beforeDispatchResult !== undefined) {
+        return beforeDispatchResult as { exitCode: number; admitted?: A; terminal?: T };
+      }
+      let firstTurn: RoleTurnRequest | undefined;
+      const engine = input.effectiveEngine ?? input.env.engine;
+      return await runWithAutoResumeLoop({
+        admitted: loaded.admitted,
+        principalAuthority: input.env.principalAuthority,
+        io: input.io,
+        sessionAppender: input.env.sessionAppender,
+        autoResumeLimit: input.env.autoResumeLimit,
+        buildInitialPayload: () => undefined,
+        buildResumePayload: () => undefined,
+        // Same as public manual resume: prior-court sealed acceptance is not a
+        // redispatch brake (#833). New-court station-child turns still auto-resume.
+        dispatch: async (_payload, lease, isFirst, attemptIo) => {
+          let turnRequest: RoleTurnRequest;
+          if (isFirst || firstTurn === undefined) {
+            turnRequest = await buildRequestAfterLease();
+            firstTurn = turnRequest;
+          } else {
+            turnRequest = {
+              ...firstTurn,
+              continuation: {
+                kind: "resume",
+                prompt: buildResumeContinuationPrompt({
+                  packageRoot: input.env.packageRoot,
+                  ...(engine === undefined ? {} : { engine }),
+                }),
+              },
+            };
+          }
+          return dispatchPostAdmissionTurn({
+            admitted: loaded.admitted,
+            env: {
+              ...input.env,
+              ...(loaded.admitted.correlationId === undefined
+                ? {}
+                : { correlationId: loaded.admitted.correlationId }),
+            },
+            io: attemptIo,
+            request: turnRequest,
+            lease,
+            adapters: adaptersWithoutBeforeDispatch(adapters),
+            ...(input.effectiveEngine === undefined
+              ? {}
+              : { effectiveEngine: input.effectiveEngine }),
+          });
+        },
+      });
+    }
+    return await runPostAdmissionManualResume({
+      admitted: loaded.admitted,
+      env: input.env,
+      io: input.io,
+      adapters,
+      ...(input.effectiveEngine === undefined
+        ? {}
+        : { effectiveEngine: input.effectiveEngine }),
+      buildRequestAfterLease,
     });
   } catch (error) {
     // Open-court rehydrate load under lease may still surface seat structural
@@ -933,6 +1049,14 @@ export async function runPostAdmissionResumable<
 }> {
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, adapters, effectiveEngine } = input;
 
+  const beforeDispatchResult = await runBeforeDispatchOnce({
+    admitted,
+    adapters,
+    env,
+    io,
+  });
+  if (beforeDispatchResult !== undefined) return beforeDispatchResult as { exitCode: number; admitted?: A; terminal?: T };
+
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
@@ -953,7 +1077,7 @@ export async function runPostAdmissionResumable<
         io: attemptIo,
         request,
         lease,
-        adapters,
+        adapters: adaptersWithoutBeforeDispatch(adapters),
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       }),

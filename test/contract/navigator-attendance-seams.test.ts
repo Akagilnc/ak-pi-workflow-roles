@@ -21,7 +21,7 @@ import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
-import type { RoleEnvelopeHost, RoleHost } from "../../src/host-contracts.ts";
+import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
   candidate,
@@ -600,6 +600,103 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
     );
   });
+});
+
+test("station-child shared lifecycle omits Navigator attendance; top-level still creates it", async () => {
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+  const { projectActivationFlags } = await import("../../src/role-activation-flags.ts");
+
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    await withActivationHome({ prefix: "ak-nav-station-child-" }, async ({ home }) => {
+      async function attendanceCreated(stationChild: boolean): Promise<boolean> {
+        const runDir = join(
+          home,
+          ".ak-roles",
+          "books",
+          basename(home),
+          "runs",
+          stationChild ? "judge-station" : "judge-top",
+        );
+        await mkdir(join(runDir, "session"), { recursive: true });
+        process.env.AK_ROLE_RUN_DIR = runDir;
+        let created = false;
+        const flags = projectActivationFlags({
+          activation: { role: "judge" },
+          ...(stationChild ? { stationChild: true } : {}),
+        } as RoleTurnRequest);
+        const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+        const pi = {
+          registerFlag() {},
+          getFlag(name: string) {
+            return flags.get(name);
+          },
+          on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+            handlers.set(name, handler);
+          },
+          registerTool() {},
+          getAllTools() {
+            return [];
+          },
+          setActiveTools() {},
+          getActiveTools() {
+            return [];
+          },
+          appendEntry() {},
+        };
+        const envelopeHost: RoleEnvelopeHost = {
+          host: pi as RoleHost,
+          appendEntry: pi.appendEntry,
+          sendMessage() {},
+          startKeepalive() {},
+          stopKeepalive() {},
+        };
+        createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "JUDGE LAW",
+          loadNavigatorWorkContext: async () => ({
+            subjectKey: `${runDir}/work`,
+            subject: "work",
+            authority: "authority",
+            subjectProvenance: "role_input" as const,
+          }),
+          createNavigatorAttendance: () => {
+            created = true;
+            return {
+              prepare() {},
+              setWorkContext() {},
+              warmHelp() {},
+              isPreparing: () => false,
+              settle: async () => {},
+              dispose() {},
+            };
+          },
+        })(envelopeHost);
+        const sessionDir = join(runDir, "session");
+        const sessionManager = SessionManager.create(home, sessionDir);
+        await handlers.get("session_start")?.({}, {
+          cwd: home,
+          sessionManager,
+          abort() {},
+        });
+        return created;
+      }
+
+      assert.equal(
+        await attendanceCreated(false),
+        true,
+        "top-level public activation must construct Navigator attendance",
+      );
+      assert.equal(
+        await attendanceCreated(true),
+        false,
+        "station-child activation must not construct Navigator attendance",
+      );
+    });
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+  }
 });
 
 test("host-neutral envelope drives shared registration and session lifecycle", async () => {
