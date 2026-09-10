@@ -324,8 +324,15 @@ async function readRoleRunStateDisk(
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only true absence (ENOENT) is a lawful "no run state yet". A real read
+    // failure (EISDIR, EACCES, ...) or a JSON.parse SyntaxError on a present
+    // file is genuine infrastructure/data damage and must keep its own
+    // identity — callers route it through the controlled-failure seam
+    // (markRunRunning/markRunResumable/markRunTerminal/recordCurrentCourt)
+    // instead of it being relabeled "run state missing" (#836).
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return undefined;

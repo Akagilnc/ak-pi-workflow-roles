@@ -589,7 +589,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
   });
 });
 
-test("terminal persistence write failure through public entry propagates loudly with no fake terminal", async () => {
+test("terminal persistence failure through public entry propagates loudly with no fake terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -647,7 +647,11 @@ test("terminal persistence write failure through public entry propagates loudly 
           );
           // Real run-state seam: the facade admitted the run and the
           // coordinator already marked it running; now occupy run-state.json
-          // with a directory so markRunTerminal's terminal write fails (EISDIR).
+          // with a directory. markRunTerminal reads current run-state before
+          // it writes, so this actually fails that precondition read
+          // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
+          // write step. The real EISDIR identity must propagate through, not
+          // get relabeled a synthetic "run state missing".
           // No production hook, no direct markRunTerminal call, no new fixture.
           await rm(join(runDirectory, "run-state.json"));
           await mkdir(join(runDirectory, "run-state.json"));
@@ -664,16 +668,21 @@ test("terminal persistence write failure through public entry propagates loudly 
     );
 
     // #836: the original terminal-persistence error must propagate loudly as
-    // a real controlled-failure Terminal — never silently swallowed, and
-    // never an escaped exception that reaches auto-resume with no recorded
-    // Terminal at all. Reuses the shared public-failure-settlement contract
-    // (same assertions every other seam's real-persistence-failure case uses).
+    // a real controlled-failure Terminal, carrying its own real EISDIR
+    // identity — never silently swallowed, never relabeled a synthetic
+    // "run state missing", and never an escaped exception that reaches
+    // auto-resume with no recorded Terminal at all. Reuses the shared
+    // public-failure-settlement contract (same assertions every other seam's
+    // real-persistence-failure case uses). Asserted on the portable
+    // structured identity (code) rather than a hand-authored diagnostic
+    // string, since the exact Node error message is not a stable contract.
     const { terminal } = await assertPublicFailureSettlement({
       result,
       stdout: captured.stdout,
       stderr: captured.stderr,
       expectedCause: "unrecognized",
-      diagnosticEquals: "cannot mark terminal: run state missing",
+      diagnosticIncludes: "EISDIR",
+      identityCode: "EISDIR",
     });
     assert.equal(terminal.roleOutcome.role, "doctor");
     // #836 A.3: the already-recorded Doctor payload rides beside the real
