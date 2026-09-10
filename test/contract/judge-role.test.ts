@@ -420,6 +420,8 @@ function passingOfficerSummon(officer: "inspector" | "notary" | "auditor"): Publ
         kind: "accepted",
         role: officer,
         status: "pass",
+        // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+        payloads: [{ status: "pass", findings: [] }],
         decisiveFacts: { status: "pass", findings: [] },
       },
       navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -488,6 +490,8 @@ async function workerCompletionGatekeeperHarness(options: {
           kind: "accepted",
           role: officer,
           status: "not-a-conclusion",
+          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+          payloads: [officerUnusableSubmission as Record<string, unknown>],
           decisiveFacts: officerUnusableSubmission as Record<string, unknown>,
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -532,6 +536,15 @@ async function workerCompletionGatekeeperHarness(options: {
           role: officer,
           status: "bounce",
           // #775: structured officer findings must relay field content into parent-visible text.
+          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+          payloads: [{
+            status: "bounce",
+            findings: [{
+              article: "focused-regression",
+              reason: "add a focused regression",
+              evidence: "diff lacks a failing case",
+            }],
+          }],
           decisiveFacts: {
             status: "bounce",
             findings: [{
@@ -591,6 +604,8 @@ async function workerCompletionGatekeeperHarness(options: {
                     status: typeof decisiveFacts.status === "string"
                       ? decisiveFacts.status
                       : "not-a-conclusion",
+                    // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+                    payloads: [decisiveFacts],
                     decisiveFacts,
                   },
                   navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -1292,6 +1307,8 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
             kind: "accepted",
             role: "auditor",
             status: "bounce",
+            // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+            payloads: [bounceReceipt],
             decisiveFacts: bounceReceipt,
           },
           navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -1544,6 +1561,8 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
           kind: "accepted",
           role: officer,
           status: "bounce",
+          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+          payloads: [bounceSubmission],
           decisiveFacts: bounceSubmission,
         },
         navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -2212,6 +2231,8 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
                 kind: "accepted",
                 role: "auditor",
                 status: selectedDecision.status,
+                // #836: compliance decision content rides recorded payloads, not decisiveFacts.
+                payloads: [selectedDecision as Record<string, unknown>],
                 decisiveFacts: selectedDecision as Record<string, unknown>,
               },
               navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
@@ -2238,6 +2259,8 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
                     kind: "accepted",
                     role: "auditor",
                     status: selectedDecision.status,
+                    // #836: officer receipt content rides recorded payloads, not decisiveFacts.
+                    payloads: [selectedDecision as Record<string, unknown>],
                     decisiveFacts: selectedDecision as Record<string, unknown>,
                   },
                   navigator: { disposition: "unavailable", source: "unknown", reason: "test" },

@@ -72,6 +72,8 @@ export function sampleCompletedDoctorOutput(
   identity: { issueNumber: number; runsPath: string },
   findingObservation?: string,
 ): DoctorOutput {
+  // #836: DoctorOutput is the role's accepted payload as submitted — runtime
+  // cost is a separate machine fact recorded beside it, never merged in.
   return {
     status: "completed",
     case: identity,
@@ -79,36 +81,5 @@ export function sampleCompletedDoctorOutput(
       findingObservation === undefined
         ? []
         : [{ targetKey: "law/unique-s2", observation: findingObservation, evidenceIds: ["ev-1"] }],
-    cost: {
-      invocations: { count: 1, sources: ["review-001"] },
-      legs: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      modelApiTurns: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      outputTokens: { count: 7, sources: ["review-001/session/leg.jsonl"] },
-      toolCalls: { count: 1, sources: ["review-001/session/leg.jsonl"] },
-      retries: {
-        count: 0,
-        sources: [],
-        evidence: "literal run-dir naming",
-      },
-      statuses: [
-        { source: "review-001/session/leg.jsonl", status: "completed" },
-      ],
-      commits: [],
-      sessions: [
-        {
-          source: "review-001/session/leg.jsonl",
-          startedAt: "2026-08-01T05:01:18.580Z",
-          endedAt: "2026-08-01T05:01:20.000Z",
-          wallMilliseconds: 1420,
-          completion: "accepted",
-        },
-      ],
-      outputBytes: {
-        count: 1,
-        sources: ["review-001/session/leg.jsonl"],
-        payload: "raw JSONL bytes",
-        providerWireBytes: "unavailable",
-      },
-    },
   };
 }

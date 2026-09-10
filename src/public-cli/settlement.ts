@@ -66,8 +66,10 @@ import {
 
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
+  type DoctorCaseCost,
   type DoctorOutput,
 } from "../doctor-contracts.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
   type ReviewerIntent,
@@ -2832,12 +2834,32 @@ export async function trySettleCollectorTerminalResult(
   return settleLawfulCollectorTerminalResult(admitted, authority, scope);
 }
 
+/**
+ * #836: runtime cost is a machine fact recorded beside the role's original
+ * testimony (`ak_doctor_audit_candidate` custom entry), never merged into the
+ * accepted payload itself. Absence (no candidate entry, or entry without a
+ * cost sibling) reads as undefined — never invented.
+ */
+function extractDoctorCandidateCostFact(
+  entries: readonly SessionEntry[],
+): DoctorCaseCost | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
+      const data = entry.data;
+      return isRecord(data) ? (data.cost as DoctorCaseCost | undefined) : undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function publishDoctorArtifacts(
   admitted: AdmittedDoctorInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   options: {
     readonly doctorOutput?: DoctorOutput;
+    readonly cost?: DoctorCaseCost;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2854,6 +2876,8 @@ export async function publishDoctorArtifacts(
         ...(options.doctorOutput === undefined
           ? {}
           : { receipt: options.doctorOutput }),
+        // Independent machine field beside the receipt — not merged into it.
+        ...(options.cost === undefined ? {} : { cost: options.cost }),
       },
       null,
       2,
@@ -2920,11 +2944,12 @@ async function settleLawfulDoctorTerminalResult(
   const output = (lastRolePayloadRecord(sealed.payloads ?? []) ?? {}) as DoctorOutput;
   const roleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
+  const cost = extractDoctorCandidateCostFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
     roleOutcome,
     coordinates,
-    { doctorOutput: output },
+    { doctorOutput: output, ...(cost === undefined ? {} : { cost }) },
   );
   return withOptionalGateProjection(
     {

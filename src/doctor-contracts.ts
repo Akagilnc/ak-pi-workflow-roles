@@ -7,7 +7,7 @@ export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_ACCEPTED_TEXT = "太医署回执已接受";
 export const DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "太医署回执已接受；审计无回执";
-export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings；runtime 补记派生成本入回执。";
+export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
@@ -40,14 +40,13 @@ export type DoctorFinding =
 export type DoctorSubmission =
   | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
-export type DoctorOutput =
-  | { status: "completed"; case: DoctorCaseIdentity; findings: DoctorFinding[]; cost: DoctorCaseCost }
-  | Extract<DoctorSubmission, { status: "refused" }>;
+// #836: runtime cost is a fact beside the role payload, never merged into it —
+// DoctorOutput is the accepted payload itself, identical to DoctorSubmission.
+export type DoctorOutput = DoctorSubmission;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
-const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
 const evidenceIds = Type.Array(nonblank, { minItems: 1 });
 const guardrail = Type.Object({ answer: Type.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
 const lastRealBite = Type.Union([
@@ -65,20 +64,9 @@ const finding = Type.Union([
   Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
-const cost = Type.Object({
-  invocations: count, legs: count, modelApiTurns: count, outputTokens: count, toolCalls: count,
-  retries: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), evidence: Type.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: Type.Array(Type.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
-  commits: Type.Array(Type.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
-  sessions: Type.Array(Type.Union([
-    Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Literal("accepted") }, { additionalProperties: false }),
-    Type.Object({ source: nonblank, startedAt: Type.Optional(nonblank), endedAt: Type.Optional(nonblank), wallMilliseconds: Type.Optional(Type.Number({ minimum: 0 })), completion: Type.Literal("incomplete"), degradationReason: Type.Optional(nonblank) }, { additionalProperties: false }),
-  ])),
-  outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
-}, { additionalProperties: false });
 const doctorSubmissionVariants = Type.Union([
   Type.Object({
-    status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸；允许空 findings；runtime 补记派生成本入回执" }),
+    status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸；允许空 findings" }),
     case: Type.Unsafe({ ...caseIdentity, description: "留存太医署案身份" }),
     findings: Type.Array(finding, { description: "可空或仅含非处方案观察；缺可复用资产或 bounded-bite 证据只排除对应资产处方" }),
   }, { additionalProperties: false, description: "单案证词，不要求任何处方或可复用 finding" }),
@@ -91,10 +79,6 @@ const doctorSubmissionVariants = Type.Union([
 export const doctorSubmissionSchema = withInfrastructureFailureDeclaration(
   openToolObjectFromUnion(doctorSubmissionVariants),
 );
-export const doctorOutputSchema = Type.Union([
-  Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
-  doctorSubmissionVariants.anyOf[1]!,
-]);
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: Type.String({ minLength: 1, description: "待读留存证据标识" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "起始字节偏移（从 0 计）" })), limit: Type.Optional(Type.Integer({ minimum: 1, description: "返回字节数（无上限）" })) }, { additionalProperties: false });
 export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

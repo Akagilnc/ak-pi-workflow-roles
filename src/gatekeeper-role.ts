@@ -278,7 +278,10 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "accepted") {
-    return projectOfficerPayloads(officer, recorded);
+    // outcome.status is the fixture/compat leaf: production settlement leaves
+    // it undefined once payloads are recorded, so this only matters when a
+    // caller still supplies status without any recorded payload (#836 hang).
+    return projectOfficerPayloads(officer, recorded, outcome.status);
   }
   return {
     status: "needs_reask",
