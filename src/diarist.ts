@@ -53,18 +53,14 @@ export async function commitDiaristEntries(input: {
   let dropped = 0;
 
   for (const submitted of input.entries) {
-    const payload =
-      typeof submitted === "object" && submitted !== null && !Array.isArray(submitted)
-        ? submitted
-        : { original: submitted, unprojected: true as const };
-    if (projectTicketProvenanceEntry(payload) === undefined) {
+    if (projectTicketProvenanceEntry(submitted) === undefined) {
       dropped += 1;
     }
     appendTicketProvenanceEntry({
       ticketNumber,
       cwd,
       ...homeOpt,
-      payload,
+      payload: submitted,
       source: "diarist",
     });
   }
@@ -75,6 +71,7 @@ export async function commitDiaristEntries(input: {
     cwd,
     ...homeOpt,
     entries: volume.entries,
+    unprojected: volume.unprojected,
   });
 
   const appended = volume.entries.length - before.entries.length;

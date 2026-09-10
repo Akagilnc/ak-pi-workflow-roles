@@ -5,6 +5,7 @@ import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -107,6 +108,8 @@ export type AuditorSummon = (
   sourceRunDirectory: string,
   /** Parent cancellation forwarded to the nested activation (#675). */
   signal?: AbortSignal,
+  /** Plain-language re-ask when the prior reply was not a three-state conclusion. */
+  reask?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
@@ -192,6 +195,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       auditSubject: AuditorSoulRole,
       sourceRunDirectory: string,
       auditSignal?: AbortSignal,
+      reask?: string,
     ) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
@@ -211,8 +215,17 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         cwd: options.context.cwd ?? process.cwd(),
         home,
         ...(auditSignal === undefined ? {} : { signal: auditSignal }),
+        ...(reask === undefined ? {} : { reviewReask: reask }),
       });
     });
-  const summoned = await summon(subject, runDirectory, options.signal);
-  return await projectAuditorTerminal(summoned);
+  let reask: string | undefined;
+  for (;;) {
+    const summoned = await summon(subject, runDirectory, options.signal, reask);
+    const decision = await projectAuditorTerminal(summoned);
+    if (decision.status === "received") {
+      reask = OFFICER_CONCLUSION_REASK;
+      continue;
+    }
+    return decision;
+  }
 }

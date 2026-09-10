@@ -157,8 +157,7 @@ function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
 
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
- * When courtAttemptId is set, ledger reads only that attempt so a prior seal
- * cannot present as this turn's result. Omit for run-scoped latest sealed read.
+ * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
@@ -2400,7 +2399,7 @@ export async function readLawfulJudgeRoleOutcome(
   const sealed = await sealedLedgerOutcome(admitted, scope);
   if (sealed?.role === "judge") {
     const details = sealed.decisiveFacts as Record<string, unknown>;
-    // sealed.status is the sole authority (written by acceptedFacts at seal).
+    // Display status from the recorded projection; original payloads ride `submissions`.
     return {
       kind: "accepted",
       role: "judge",
@@ -3742,12 +3741,6 @@ async function settleLawfulMergerTerminalResult(
       if (message?.role !== "toolResult") continue;
       const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
       if (residual === undefined) continue;
-      const attemptId = isRecord(residual.candidate)
-        ? safelyRead(residual.candidate, "attemptId")
-        : { readable: true as const, value: undefined };
-      // Admitted-attempt identity binding only (ADR 0037) — not sole-final cardinality.
-      // isError residual with matching attemptId is incomplete; no shape re-judge (#757).
-      if (!attemptId.readable || attemptId.value !== admitted.runId) continue;
       const candidate = residual.candidate;
       const details = isRecord(candidate) ? candidate : { candidate };
       const failed = await settleFailureTerminalResult(admitted, {
@@ -3767,6 +3760,9 @@ async function settleLawfulMergerTerminalResult(
     decisiveFacts: { ...roleOutcome.decisiveFacts },
   };
   const navigator = extractNavigatorFact(entries);
+  const methodInvocations = extractMergerMethodInvocations(entries, {
+    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
+  });
   const artifacts = await publishMergerArtifacts(
     admitted,
     accepted,
@@ -3774,6 +3770,7 @@ async function settleLawfulMergerTerminalResult(
     {
       mergerOutput: accepted.decisiveFacts as unknown as MergerOutput,
       methodProvenance: options.methodProvenance,
+      methodInvocations,
     },
   );
   return attachRecordedSubmissions(

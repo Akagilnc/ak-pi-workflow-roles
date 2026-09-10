@@ -152,6 +152,11 @@ export function resolveTicketProvenanceVolume(
 export type ReadTicketProvenanceResult = {
   /** Readable diary body entries only. */
   readonly entries: readonly TicketProvenanceEntry[];
+  /**
+   * Original payloads that did not project — kept beside typed entries (#836 / ADR 0075).
+   * Never dropped from the volume.
+   */
+  readonly unprojected: readonly unknown[];
   /** Typed diagnostics on the same partition (collector/issue-source failures). */
   readonly diagnostics: readonly TicketProvenanceDiagnostic[];
   readonly records: readonly SitianRecord[];
@@ -169,6 +174,7 @@ export async function readTicketProvenance(
   const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   const { records } = await readSitianRecords(recordFile);
   const entries: TicketProvenanceEntry[] = [];
+  const unprojected: unknown[] = [];
   const diagnostics: TicketProvenanceDiagnostic[] = [];
   let skipped = 0;
   for (const record of records) {
@@ -184,12 +190,12 @@ export async function readTicketProvenance(
     }
     const entry = projectTicketProvenanceEntry(record.payload);
     if (entry === undefined) {
-      skipped += 1;
+      unprojected.push(record.payload);
       continue;
     }
     entries.push(entry);
   }
-  return { entries, diagnostics, records, recordFile, skipped };
+  return { entries, unprojected, diagnostics, records, recordFile, skipped };
 }
 
 /**
@@ -214,37 +220,56 @@ function markdownFenceFor(text: string): string {
 export function renderTicketProvenanceMarkdown(input: {
   readonly ticketNumber: number;
   readonly entries: readonly TicketProvenanceEntry[];
+  readonly unprojected?: readonly unknown[];
 }): string {
+  const unprojected = input.unprojected ?? [];
   const lines: string[] = [
     `# 起居录 · #${input.ticketNumber}`,
     "",
-    `条目数：${input.entries.length}`,
+    `条目数：${input.entries.length + unprojected.length}`,
     "",
   ];
   let index = 0;
   for (const entry of input.entries) {
     index += 1;
-    lines.push(`## ${index}. ${entry.sourceKind} · ${entry.timestamp}`);
+    const sourceKind = typeof entry.sourceKind === "string" ? entry.sourceKind : "未投影";
+    const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
+    lines.push(`## ${index}. ${sourceKind} · ${timestamp}`);
     lines.push("");
-    lines.push(`- basis.method: \`${entry.basis.method}\``);
-    if (entry.basis.anchors !== undefined && entry.basis.anchors.length > 0) {
-      lines.push(`- anchors: ${entry.basis.anchors.map((a) => `\`${a}\``).join(", ")}`);
+    const basis = entry.basis;
+    const method =
+      typeof basis === "object" && basis !== null && !Array.isArray(basis) && typeof basis.method === "string"
+        ? basis.method
+        : "未投影";
+    lines.push(`- basis.method: \`${method}\``);
+    if (
+      typeof basis === "object" &&
+      basis !== null &&
+      !Array.isArray(basis) &&
+      Array.isArray(basis.anchors) &&
+      basis.anchors.length > 0
+    ) {
+      lines.push(`- anchors: ${basis.anchors.map((a) => `\`${String(a)}\``).join(", ")}`);
     }
-    if (entry.basis.note !== undefined) {
-      lines.push(`- note: ${entry.basis.note}`);
+    if (typeof basis === "object" && basis !== null && !Array.isArray(basis) && basis.note !== undefined) {
+      lines.push(`- note: ${String(basis.note)}`);
     }
+    const sourceRef =
+      typeof entry.sourceRef === "object" && entry.sourceRef !== null && !Array.isArray(entry.sourceRef)
+        ? entry.sourceRef as { sessionFile?: unknown; entryId?: unknown; path?: unknown; url?: unknown }
+        : {};
     const refParts: string[] = [];
-    if (entry.sourceRef.sessionFile !== undefined) {
-      refParts.push(`sessionFile=${entry.sourceRef.sessionFile}`);
+    if (sourceRef.sessionFile !== undefined) {
+      refParts.push(`sessionFile=${String(sourceRef.sessionFile)}`);
     }
-    if (entry.sourceRef.entryId !== undefined) {
-      refParts.push(`entryId=${String(entry.sourceRef.entryId)}`);
+    if (sourceRef.entryId !== undefined) {
+      refParts.push(`entryId=${String(sourceRef.entryId)}`);
     }
-    if (entry.sourceRef.path !== undefined) {
-      refParts.push(`path=${entry.sourceRef.path}`);
+    if (sourceRef.path !== undefined) {
+      refParts.push(`path=${String(sourceRef.path)}`);
     }
-    if (entry.sourceRef.url !== undefined) {
-      refParts.push(`url=${entry.sourceRef.url}`);
+    if (sourceRef.url !== undefined) {
+      refParts.push(`url=${String(sourceRef.url)}`);
     }
     if (refParts.length > 0) {
       lines.push(`- sourceRef: ${refParts.join(" · ")}`);
@@ -254,6 +279,17 @@ export function renderTicketProvenanceMarkdown(input: {
     const fence = markdownFenceFor(transcript);
     lines.push(fence);
     lines.push(transcript);
+    lines.push(fence);
+    lines.push("");
+  }
+  for (const payload of unprojected) {
+    index += 1;
+    lines.push(`## ${index}. 未投影`);
+    lines.push("");
+    const text = typeof payload === "string" ? payload : JSON.stringify(payload);
+    const fence = markdownFenceFor(text);
+    lines.push(fence);
+    lines.push(text);
     lines.push(fence);
     lines.push("");
   }
@@ -285,11 +321,13 @@ export function writeTicketProvenanceHumanView(input: {
   readonly cwd: string;
   readonly home?: string;
   readonly entries: readonly TicketProvenanceEntry[];
+  readonly unprojected?: readonly unknown[];
 }): string {
   const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
   const md = renderTicketProvenanceMarkdown({
     ticketNumber: input.ticketNumber,
     entries: input.entries,
+    ...(input.unprojected === undefined ? {} : { unprojected: input.unprojected }),
   });
   writeFileSync(volume.humanViewFile, md, "utf8");
   return volume.humanViewFile;

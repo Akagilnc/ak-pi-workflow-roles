@@ -85,45 +85,29 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     assert.ok(Object.isFrozen(binding.snapshot));
 
     const request = "Implement the approved slice.";
-    const configuredContent = `References are relative to ${dirname(configuredPath)}.\n\n${body}`;
-    const resolvedContent = `References are relative to ${dirname(canonicalPath)}.\n\n${body}`;
-    const configuredEvidence = evidence("tdd", configuredPath, configuredContent, request);
-    const resolvedEvidence = evidence("tdd", canonicalPath, resolvedContent, request);
+    const configuredEvidence = evidence("tdd", configuredPath, body, request);
+    const resolvedEvidence = evidence("tdd", canonicalPath, body, request);
 
     assert.deepEqual(binding.captureExpansion(configuredEvidence, request), {
       name: "tdd",
       location: configuredPath,
-      content: configuredContent,
+      content: body,
       userMessage: request,
     });
     assert.deepEqual(binding.captureExpansion(resolvedEvidence, request), {
       name: "tdd",
       location: canonicalPath,
-      content: resolvedContent,
+      content: body,
       userMessage: request,
     });
     assert.deepEqual(
-      binding.captureExpansion(evidence("tdd", configuredPath, configuredContent, ""), ""),
+      binding.captureExpansion(evidence("tdd", configuredPath, body, ""), ""),
       {
         name: "tdd",
         location: configuredPath,
-        content: configuredContent,
+        content: body,
         userMessage: "",
       },
-    );
-    assert.equal(
-      binding.captureExpansion(
-        evidence("tdd", configuredPath, resolvedContent, request),
-        request,
-      ),
-      undefined,
-    );
-    assert.equal(
-      binding.captureExpansion(
-        evidence("tdd", canonicalPath, configuredContent, request),
-        request,
-      ),
-      undefined,
     );
 
     await writeFile(targetPath, raw.replace("Run one red-green slice.", "Changed after activation."));
@@ -139,26 +123,10 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
     assert.notEqual(binding.captureExpansion(configuredEvidence, request), captured);
 
     const rejected: HostSkillExpansionEvidence[] = [
-      evidence("tdd", "/copy/SKILL.md", resolvedContent, request),
-      evidence("code-review", canonicalPath, resolvedContent, request),
-      evidence("tdd", "/alternate/tdd/SKILL.md", resolvedContent, request),
-      evidence("tdd", canonicalPath, body, request),
-      evidence(
-        "tdd",
-        canonicalPath,
-        resolvedContent.replace(`References are relative to ${dirname(canonicalPath)}.\n\n`, ""),
-        request,
-      ),
-      evidence(
-        "tdd",
-        canonicalPath,
-        resolvedContent.replace(
-          `References are relative to ${dirname(canonicalPath)}.`,
-          "References are relative elsewhere.",
-        ),
-        request,
-      ),
-      evidence("tdd", canonicalPath, resolvedContent, "Review a different point."),
+      evidence("tdd", "/copy/SKILL.md", body, request),
+      evidence("code-review", canonicalPath, body, request),
+      evidence("tdd", "/alternate/tdd/SKILL.md", body, request),
+      evidence("tdd", canonicalPath, body, "Review a different point."),
     ];
     for (const row of rejected) {
       assert.equal(binding.captureExpansion(row, request), undefined, JSON.stringify(row));

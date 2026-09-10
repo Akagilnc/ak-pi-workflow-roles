@@ -134,7 +134,7 @@ export function projectTicketProvenanceEntry(
   if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
     return undefined;
   }
-  if (value.unprojected === true) {
+  if (typeof value.sourceKind !== "string" || typeof value.transcript !== "string") {
     return undefined;
   }
   return value as TicketProvenanceEntry;

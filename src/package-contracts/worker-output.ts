@@ -5,7 +5,6 @@ export {
   FIXER_OUTPUT_TOOL_NAME,
   fixerOutputSchema,
   validateFixerOutput,
-  validateFixerOutputForPacket,
 } from "./fixer-output.ts";
 export type {
   FixerBlocker,

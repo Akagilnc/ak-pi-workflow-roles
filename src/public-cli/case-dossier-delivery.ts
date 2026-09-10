@@ -7,24 +7,14 @@
  *
  * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口追加本段。
  */
-import { stat } from "node:fs/promises";
-
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only). */
 const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
 
-/** Honest one-line state of one dossier file: present, absent, or unreadable. */
-async function describeDossierFile(path: string): Promise<string> {
-  try {
-    const stats = await stat(path);
-    if (!stats.isFile()) return `不可读（非普通文件）：${path}`;
-    return path;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return `尚未生成：${path}`;
-    return `不可读（${code ?? "未知错误"}）：${path}`;
-  }
+/** Pointer only — presence/absence is for the role to observe at the path. */
+function describeDossierFile(path: string): string {
+  return path;
 }
 
 /**
@@ -48,7 +38,7 @@ export async function projectCaseDossierPointerSection(input: {
     CASE_DOSSIER_SECTION_HEADING,
     "",
     `票号：#${input.ticketNumber}`,
-    `人读视图：${await describeDossierFile(volume.humanViewFile)}`,
-    `记录卷宗：${await describeDossierFile(volume.recordFile)}`,
+    `人读视图：${describeDossierFile(volume.humanViewFile)}`,
+    `记录卷宗：${describeDossierFile(volume.recordFile)}`,
   ].join("\n");
 }

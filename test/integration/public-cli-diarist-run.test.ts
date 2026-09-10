@@ -10,7 +10,6 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import type { DiaristCommitFacts } from "../../src/diarist.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
 import {
@@ -172,16 +171,7 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.ok(landed, "volume missing entry with submitted sourceRef");
     const humanView = await readFile(paths.humanViewFile, "utf8");
     assert.equal(humanView.length > 0, true, "人读面必须有内容");
-
-    const facts = (
-      result.terminal?.roleOutcome as { decisiveFacts?: { sitian?: DiaristCommitFacts } }
-    ).decisiveFacts?.sitian;
-    assert.ok(facts, "accepted 回执缺 sitian 机械事实");
-    assert.equal(facts.ticketNumber, TICKET);
-    assert.equal(facts.volumeRecordFile, paths.recordFile);
-    assert.equal(facts.humanViewFile, paths.humanViewFile);
-    assert.equal(facts.collectorStatus, "ok");
-    assert.equal(facts.dropped, 1);
+    // Machine sitian facts stay beside the original payload, not injected into it (#836 B6.7).
   });
 });
 

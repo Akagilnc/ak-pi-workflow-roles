@@ -44,18 +44,6 @@ export type TerminalRoleName =
   | "auditor"
   | "diarist";
 
-/** Merger/Collector residual only — Notary/audit residual abolished (#475). */
-export type ResidualIncompleteTerminalOutcome = {
-  kind: "incomplete";
-  role: "merger" | "collector";
-  status: "incomplete";
-  decision: "no-usable-result";
-  candidate: unknown;
-  diagnostic: string;
-  acceptedReceipt: false;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
-
 export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";
   role: TerminalRoleName;
@@ -77,7 +65,6 @@ export type TerminalRoleOutcome =
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
-  | ResidualIncompleteTerminalOutcome
   | NoReceiptTerminalOutcome
   | {
       kind: "failure";
@@ -146,7 +133,7 @@ export type TerminalGateDispatch =
 export type TerminalGateOfficerReport = {
   readonly seat: "inspector" | "notary";
   readonly status: string;
-  readonly findings: readonly string[];
+  readonly findings: readonly unknown[];
 };
 
 /** One direct or historical paired gate round on the public Terminal. */

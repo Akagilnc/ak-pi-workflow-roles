@@ -391,32 +391,29 @@ test("a recorded append failure never returns accepted", async () => {
   });
 });
 
-test("court attempt tags isolate reads without sealing the attempt (#836)", async () => {
+test("court attempt tags record without hiding earlier payloads (#836)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("t1");
-    await f.tool().execute("t1", { judgeStatus: "converged" }, undefined, undefined, f.context);
+    await f.tool().execute("t1", { judgeStatus: "continue" }, undefined, undefined, f.context);
     const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
     process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
     try {
       const reopened = registerTool(f.root);
       await reopened.start("court-2");
       await reopened.tool().execute("court-2", { judgeStatus: "converged" }, undefined, undefined, reopened.context);
-      assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 2);
+      const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+      assert.equal(recorded.length, 2);
+      assert.deepEqual(recorded, [
+        { judgeStatus: "continue" },
+        { judgeStatus: "converged" },
+      ]);
+      // attemptId is a recording tag, not a visibility gate.
       assert.deepEqual(
-        await readSealedSubmission(f.root, "run-ledger", { home: f.root, attemptId: "court-turn-2" }),
-        {
-          kind: "accepted",
-          role: "judge",
-          status: "converged",
-          decisiveFacts: { judgeStatus: "converged" },
-        },
-      );
-      assert.equal(
-        await readSealedSubmission(f.root, "run-ledger", {
+        await readRecordedSubmissions(f.root, "run-ledger", {
           home: f.root,
           attemptId: "court-turn-empty",
         }),
-        undefined,
+        recorded,
       );
     } finally {
       if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;

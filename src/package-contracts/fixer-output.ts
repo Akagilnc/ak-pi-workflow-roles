@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixer-packet.ts";
+import { FIXER_PREREQUISITE_ID_PATTERN } from "./fixer-packet.ts";
 import { openToolObjectFromUnion } from "../open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
 
@@ -53,9 +53,4 @@ export type FixerPhase = "plan" | "apply";
 
 export function validateFixerOutput(value: unknown, _phase?: FixerPhase): FixerOutput {
   return value as FixerOutput;
-}
-
-/** #836 删 9: packet binding is not a code reject. Record the payload as-is. */
-export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, _packet: FixerInvocationInput): FixerOutput {
-  return validateFixerOutput(value, phase);
 }

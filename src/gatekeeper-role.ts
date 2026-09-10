@@ -157,21 +157,13 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-/** Serializable stand-in when the child tool call had no arguments object. */
-export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Keep original decision bytes for the next reader; undefined becomes a serializable missing-args fact. */
+/** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
-  // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
-  // Through the real provider adapter an undefined root argument arrives as an
-  // empty object after serialization; that must also project a missing-args fact.
-  return decision === undefined || (isRecord(decision) && Object.keys(decision).length === 0)
-    ? MISSING_ARGUMENTS_SUBMISSION
-    : decision;
+  return decision;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -230,18 +222,19 @@ function projectOfficerPayloads(
   if (payloads.length === 1) {
     return projectOfficerDecision(officer, payloads[0], fallbackStatus);
   }
+  const statuses = payloads.map(queueStatus);
   const three = new Set(
-    payloads
-      .map(queueStatus)
-      .filter((status): status is "pass" | "bounce" | "escalate" =>
-        status === "pass" || status === "bounce" || status === "escalate"),
+    statuses.filter((status): status is "pass" | "bounce" | "escalate" =>
+      status === "pass" || status === "bounce" || status === "escalate"),
   );
+  // Any non-three-state payload → resume the speaker. Do not filter then unique-pass.
+  if (statuses.some((status) => status !== "pass" && status !== "bounce" && status !== "escalate")) {
+    return { status: "needs_reask", officer, receipt: payloads };
+  }
   if (three.size === 1) {
     const status = [...three][0]!;
-    if (status === "pass") return { status, officer, receipt: payloads };
     return { status, officer, receipt: payloads };
   }
-  // Conflicting or non-three-state set: keep every payload, re-ask the speaker.
   return { status: "needs_reask", officer, receipt: payloads };
 }
 
@@ -292,11 +285,7 @@ function projectOfficerTerminal(
     if (recorded.length > 0) {
       return projectOfficerPayloads(officer, recorded, outcome.status);
     }
-    const facts = outcome.decisiveFacts;
-    if (isRecord(facts) && Object.keys(facts).length > 0) {
-      return projectOfficerDecision(officer, facts, outcome.status);
-    }
-    return projectOfficerDecision(officer, { status: outcome.status });
+    return projectOfficerDecision(officer, outcome.decisiveFacts, outcome.status);
   }
   return {
     status: "needs_reask",

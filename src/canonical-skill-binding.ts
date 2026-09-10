@@ -52,13 +52,14 @@ export function captureCanonicalSkillExpansion<Name extends CanonicalSkillName>(
       : evidence?.location === snapshot.path
         ? snapshot.path
         : undefined;
-  const expectedContent = matchedPath === undefined
+  const expectedContent = matchedPath === undefined ? undefined : snapshot.body;
+  const prefixedContent = matchedPath === undefined
     ? undefined
     : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
   if (
     evidence?.name !== name
     || matchedPath === undefined
-    || evidence.content !== expectedContent
+    || (evidence.content !== expectedContent && evidence.content !== prefixedContent)
     || evidence.userMessage !== originalRequest
   ) {
     return undefined;

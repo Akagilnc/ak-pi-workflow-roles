@@ -368,7 +368,7 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
-export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
+export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
@@ -1256,7 +1256,7 @@ export function createRoleRuntimeExtension(
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
-          .trim() || "terminating tool rejected";
+          .trim();
         receiptDelivery.recordRejected(reason);
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
@@ -1624,23 +1624,6 @@ export function createRoleRuntimeExtension(
         if (event.reason === "fork" || event.reason === "reload") {
           throw new Error(
             `Collector does not support session_start reason ${event.reason}`,
-          );
-        }
-        // #676 J4: ambient skill/prompt/template commands fail closed at activation.
-        const commands = roleHost.getCommands?.() ?? [];
-        const ambientCommands = commands.filter((command) => {
-          const name = command.name.toLowerCase();
-          return (
-            name.includes("skill")
-            || name.includes("prompt")
-            || name.startsWith("template")
-          );
-        });
-        if (ambientCommands.length > 0) {
-          throw new Error(
-            `Collector detected ambient instruction commands: ${
-              ambientCommands.map((c) => c.name).join(", ")
-            }`,
           );
         }
         // Business tools behind admission barrier (inert-without-role invariant).

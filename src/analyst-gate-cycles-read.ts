@@ -61,10 +61,9 @@ export type AnalystGateCycleRound = {
   readonly officerStartedAt: string;
   readonly officerEndedAt: string;
   /**
-   * Typed string findings retained from the accepted officer receipt (#478 Terminal
-   * projection). Analyst metrics still consume findingsCount only — never prose.
+   * Officer findings as recorded. Metrics consume findingsCount only — never prose.
    */
-  readonly findings: readonly string[];
+  readonly findings: readonly unknown[];
   /** findings.length — retained so metric families need not re-derive. */
   readonly findingsCount: number;
   /** Direct summons or historical province-paired dispatch. */
@@ -119,10 +118,9 @@ function normalizeOfficerArg(raw: unknown): "inspector" | "notary" | undefined {
   return OFFICER_ARG_ALIASES[raw.trim()];
 }
 
-/** Typed string findings only — non-strings dropped; missing/non-array → []. */
-function asStringFindings(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
+/** Findings as recorded — missing/non-array → []. */
+function asFindings(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 /**
@@ -162,16 +160,11 @@ function acceptedGateReceiptIds(
   return accepted;
 }
 
-function requireAcceptedGateStatus(
+function readAcceptedGateStatus(
   args: Record<string, unknown> | undefined,
-  filePath: string,
 ): string {
-  if (args === undefined || typeof args.status !== "string" || args.status.trim() === "") {
-    throw new Error(
-      `accepted gate receipt missing usable status in ${filePath}`,
-    );
-  }
-  return args.status.trim();
+  if (args === undefined) return "";
+  return typeof args.status === "string" ? args.status : args.status === undefined ? "" : String(args.status);
 }
 
 function requireAcceptedGateSpan(
@@ -216,7 +209,7 @@ type ClassifiedVolume =
       readonly endedAt: string;
       readonly officer: "inspector" | "notary";
       readonly status: string;
-      readonly findings: readonly string[];
+      readonly findings: readonly unknown[];
       readonly findingsCount: number;
       readonly officerWallMs: number;
       readonly attemptEntryId?: string;
@@ -288,8 +281,8 @@ function projectAcceptedGateCall(
 ): ClassifiedVolume | undefined {
   // Continuous memory volumes carry many summons; span only this binding's interval.
   const span = requireAcceptedGateSpan(intervalRowsForGateCall(rows, call.rowIndex), filePath);
-  const status = requireAcceptedGateStatus(call.args, filePath);
-  const findings = asStringFindings(call.args?.findings);
+  const status = readAcceptedGateStatus(call.args);
+  const findings = asFindings(call.args?.findings);
   const findingsCount = findings.length;
   const bindingFields = {
     ...(call.attemptEntryId === undefined ? {} : { attemptEntryId: call.attemptEntryId }),

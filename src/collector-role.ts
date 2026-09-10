@@ -335,15 +335,6 @@ export function createCollectorRoleRuntime(
       if (event.toolName === COLLECTOR_OUTPUT_TOOL) {
         activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, event.toolCallId);
       }
-      if (
-        activation.ledger.outputCandidate &&
-        event.toolName !== COLLECTOR_OUTPUT_TOOL
-      ) {
-        return {
-          block: true,
-          reason: "通进司已产出输出候选，本局不再受理操作",
-        };
-      }
       return undefined;
     },
 
@@ -376,32 +367,40 @@ export function createCollectorRoleRuntime(
             }
 
             let bound = prNumber;
+            let associated: readonly number[] = [];
             if (issueNumber !== undefined) {
-              const associated = await listPullRequestNumbersByTicket(createGhApiRunner(), {
+              associated = await listPullRequestNumbersByTicket(createGhApiRunner(), {
                 owner: activation.repository.owner,
                 repo: activation.repository.repo,
                 ticketNumber: issueNumber,
               });
-              if (associated.length === 0) {
-                throw new CollectorTargetBindError(
-                  `${activation.repository.canonical} 的 issue #${issueNumber} 无关联 PR；请改用明确 --pr 或其他 issueNumber`,
-                );
+              if (bound === undefined && associated.length === 1) {
+                bound = associated[0]!;
               }
-              if (associated.length > 1) {
-                throw new CollectorTargetBindError(
-                  `issue #${issueNumber} 关联多个 PR：${associated.join("、")}；请改用明确 prNumber 或 --pr`,
-                );
-              }
-              const fromIssue = associated[0]!;
-              if (prNumber !== undefined && prNumber !== fromIssue) {
-                throw new CollectorTargetBindError(
-                  `prNumber ${prNumber} 与 issue #${issueNumber} 关联 PR ${fromIssue} 冲突`,
-                );
-              }
-              bound = fromIssue;
+            }
+            if (bound === undefined) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    bound: false,
+                    repository: activation.repository.canonical,
+                    prNumber: prNumber ?? null,
+                    issueNumber: issueNumber ?? null,
+                    associated,
+                  }),
+                }],
+                details: {
+                  bound: false,
+                  repository: activation.repository.canonical,
+                  prNumber: prNumber ?? null,
+                  issueNumber: issueNumber ?? null,
+                  associated,
+                },
+              };
             }
 
-            activation.ledger.bindTarget(bound!);
+            activation.ledger.bindTarget(bound);
             activation.ledger.completeOperational(toolCallId);
             return {
               content: [{
@@ -409,9 +408,11 @@ export function createCollectorRoleRuntime(
                 text: `目标已绑定：${activation.repository.canonical}#${bound}`,
               }],
               details: {
+                bound: true,
                 repository: activation.repository.canonical,
                 prNumber: bound,
-                ...(issueNumber === undefined ? {} : { issueNumber }),
+                issueNumber: issueNumber ?? null,
+                associated,
               },
             };
           } catch (error) {

@@ -54,8 +54,5 @@ export function validateMergerInput(value: unknown): MergerInput {
 }
 
 export function validateMergerOutput(value: unknown): MergerOutput {
-  if (!record(value)) throw new Error("合并回执无已识别的执行判别");
-  const status = typeof value.status === "string" ? value.status : undefined;
-  if (status === "completed" || status === "escalate") return structuredClone(value) as MergerOutput;
-  throw new Error("合并回执无已识别的执行判别");
+  return value as MergerOutput;
 }

@@ -676,7 +676,14 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/missing usable status/, "blank status", home);
+    {
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      assert.equal(
+        result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
+        false,
+        "blank status must not kill parent settlement",
+      );
+    }
 
     // #836/#622: unknown officer on dispatch is omitted from pairing, not unreadable kill.
     await rm(auditorDir, { recursive: true, force: true });

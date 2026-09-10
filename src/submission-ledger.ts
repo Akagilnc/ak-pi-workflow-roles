@@ -153,7 +153,10 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: str
 /** Optional court-turn scope for settlement reads (#637). */
 export type SubmissionLedgerReadScope = {
   readonly home?: string;
-  /** When set, only this court attempt's ledger rows participate. */
+  /**
+   * Recording tag for this court. Presentation of original payloads is run-scoped
+   * (#836: attempt/latest must not hide already-recorded rows).
+   */
   readonly attemptId?: string;
 };
 
@@ -165,30 +168,19 @@ function resolveReadScope(
   return homeOrScope;
 }
 
-function recordAttemptId(record: { subject?: unknown; payload?: unknown }): string | undefined {
-  if (typeof record.subject === "object" && record.subject !== null) {
-    const fromSubject = (record.subject as { attemptId?: unknown }).attemptId;
-    if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
-  }
-  if (typeof record.payload === "object" && record.payload !== null) {
-    const fromPayload = (record.payload as { attemptId?: unknown }).attemptId;
-    if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
-  }
-  return undefined;
-}
-
 function recordsForAttempt<T extends { subject?: unknown; payload?: unknown }>(
   owned: readonly T[],
   attemptId: string | undefined,
 ): readonly T[] {
-  if (attemptId === undefined) return owned;
-  return owned.filter((record) => recordAttemptId(record) === attemptId);
+  // #836: courtAttempt is a recording tag for new courts, not a visibility gate.
+  void attemptId;
+  return owned;
 }
 
 /**
- * Latest recorded submission projection for a run (or court attempt).
- * #836: recording only — multiple submissions are all kept; this returns the latest.
- * Name retained for settlement call sites; no seal barrier remains.
+ * Latest recorded submission projection for a run.
+ * Display/compat view only — not sole acceptance authority (#836).
+ * All original payloads live in `readRecordedSubmissions`.
  */
 export async function readSealedSubmission(
   cwd: string,

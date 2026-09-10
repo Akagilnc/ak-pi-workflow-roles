@@ -12,7 +12,6 @@ import {
 import {
   fixerOutputSchema,
   validateFixerOutput,
-  validateFixerOutputForPacket,
 } from "../../src/package-contracts/fixer-output.ts";
 
 const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
@@ -110,7 +109,6 @@ test("typed prerequisite blockers cross the public TypeBox schema and prerequisi
   for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
     assert.equal(Value.Check(fixerOutputSchema, candidate), true);
     assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
-    assert.deepEqual(validateFixerOutputForPacket(candidate, phase, invocation), candidate);
   }
 });
 
@@ -118,6 +116,6 @@ test("zero declarations preserve authority refusal, completed apply, and existin
   const invocation = input(Object.freeze([]));
   const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
   const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  assert.deepEqual(validateFixerOutputForPacket(authority, "plan", invocation), authority);
-  assert.deepEqual(validateFixerOutputForPacket(completed, "apply", invocation), completed);
+  assert.deepEqual(validateFixerOutput(authority, "plan"), authority);
+  assert.deepEqual(validateFixerOutput(completed, "apply"), completed);
 });

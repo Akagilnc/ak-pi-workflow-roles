@@ -20,7 +20,7 @@ import {
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
-import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -261,7 +261,7 @@ export function createFixerRoleRuntime(
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
-            const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
+            const output = deepFreeze(validateFixerOutput(parameters, phase));
             assertAcceptableThroughHost(
               submissionGate,
               output.status,
@@ -331,7 +331,6 @@ export function createCoderRoleRuntime(
   let tddInvocationInjected = false;
   let originalRequest: string | undefined;
   let expansionPending = false;
-  let expansionCaptured = false;
   let lifecycleRegistered = false;
   const submissionGate = createWorkerSubmissionGate();
 
@@ -352,7 +351,6 @@ export function createCoderRoleRuntime(
       tddInvocationInjected = false;
       originalRequest = undefined;
       expansionPending = false;
-      expansionCaptured = false;
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
@@ -453,12 +451,6 @@ export function createCoderRoleRuntime(
             }
             if (expansionPending) {
               expansionPending = false;
-              if (originalRequest !== undefined) {
-                expansionCaptured = binding.captureExpansion(
-                  pi.capabilities?.skillExpansion(event.prompt),
-                  originalRequest,
-                ) !== undefined;
-              }
             }
           }
           return {

@@ -26,7 +26,6 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  MISSING_ARGUMENTS_SUBMISSION,
   runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
@@ -475,23 +474,9 @@ async function workerCompletionGatekeeperHarness(options: {
   } = options;
   const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
   const model = faux.getModel();
-  // #753: script public-summon terminals in order (transport → needs_reask → no_receipt → bounce → pass*).
+  // #753: script public-summon terminals in order (needs_reask → no_receipt → bounce → pass*).
+  // transport_failure is a real failure channel (failInfrastructure), not this bounce sequence.
   const queue: PublicSummonResult[] = [
-    {
-      exitCode: 1,
-      terminal: {
-        roleOutcome: {
-          kind: "failure",
-          role: officer,
-          cause: "provider",
-          diagnostic: "Officer transport dropped",
-          decisiveFacts: {},
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-transport",
-      },
-    },
     // #753: accepted reply without three-state conclusion → needs_reask (resume speaker),
     // not unreadable/parent-stand. Queue entry is consumed by the reask loop then followed
     // by a pass so the submit path can complete after one reask.
@@ -585,11 +570,6 @@ async function workerCompletionGatekeeperHarness(options: {
           return true;
         });
       };
-      // #836: transport failure returns to parent as GatekeeperDecisionError (non-pass), not infrastructure kill.
-      await reject(`${officer}-transport`, (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "transport_failure");
-      });
       // #753: accepted non-three-state → needs_reask (resume speaker). Direct projection.
       {
         const projectNeedsReask = async (id: string, decisiveFacts: Record<string, unknown>) =>
@@ -628,15 +608,15 @@ async function workerCompletionGatekeeperHarness(options: {
           assert.equal(projected.officer, officer);
           assert.deepEqual(projected.receipt, officerUnusableSubmission);
         }
-        // Empty/missing officer args → retained missing-args receipt, still needs_reask.
+        // Empty officer args stay original bytes and still needs_reask (#836).
         const omitted = await projectNeedsReask(
           `${officer}-reask-omitted`,
-          MISSING_ARGUMENTS_SUBMISSION as unknown as Record<string, unknown>,
+          {},
         );
         assert.equal(omitted.status, "needs_reask");
         if (omitted.status === "needs_reask") {
           assert.equal(omitted.officer, officer);
-          assert.deepEqual(omitted.receipt, MISSING_ARGUMENTS_SUBMISSION);
+          assert.deepEqual(omitted.receipt, {});
         }
       }
       // Queue: needs_reask then pass — envelope resumes speaker and parent completes (#753).
@@ -1342,7 +1322,7 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
   assert.equal(abortCalls, 0);
 });
 
-test("judge returns auditor transport failures to parent without aborting (#836)", async () => {
+test("judge returns auditor transport failures on the failure channel with abort (#836 A.3)", async () => {
   const { tool } = await startJudge();
   const verdict = { judgeStatus: "converged" };
   let abortCalls = 0;
@@ -1362,14 +1342,13 @@ test("judge returns auditor transport failures to parent without aborting (#836)
   await assert.rejects(
     tool.execute("audit-failure", verdict, undefined, undefined, ctx),
     (error: unknown) => {
-      assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "transport_failure");
-      assert.match(error.message, /provider unavailable/);
+      assert.ok(error instanceof Error);
+      assert.equal((error as Error).name, "GatekeeperTransportFailure");
+      assert.match((error as Error).message, /provider unavailable/);
       return true;
     },
   );
-  // #836: transport_failure is non-pass bounce, not failInfrastructure abort.
-  assert.equal(abortCalls, 0);
+  assert.equal(abortCalls, 1);
 });
 
 test("judge role fails before adjudication when its soul is empty", async () => {
@@ -1645,8 +1624,8 @@ test("coder completed submissions traverse the direct Inspector gate until pass"
   const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
 
   assert.equal(accepted.terminate, true);
-  // #753: transport + needs_reask→no_receipt (2) + bounce + pass = 5.
-  assert.equal(tracer.providerRequests, 5);
+  // #753: needs_reask→no_receipt (2) + bounce + pass = 4.
+  assert.equal(tracer.providerRequests, 4);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1731,8 +1710,8 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
   );
   // skip statuses must not consume further officer passes.
   assert.equal(tracer.providerRequests, beforeAllStatuses);
-  // #753: reject matrix (transport + reask→no_receipt + bounce = 4) + two DONE passes = 6.
-  assert.equal(tracer.providerRequests, 6);
+  // #753: reject matrix (reask→no_receipt + bounce = 3) + two DONE passes = 5.
+  assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 });
 
@@ -1776,8 +1755,8 @@ test("judge submissions traverse Notary then Auditor gates (#756)", async () => 
   assert.equal(pending.terminate, true); // #836: original terminate flag preserved
   assert.deepEqual(sealed.decisiveFacts, continueVerdict);
   assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
-  // #756: transport + reask→no_receipt + bounce + notary pass + auditor pass = 6.
-  assert.equal(tracer.providerRequests, 6);
+  // #756: reask→no_receipt + bounce + notary pass + auditor pass = 5.
+  assert.equal(tracer.providerRequests, 5);
   assert.equal(tracer.remainingResponses, 0);
 
   // Other judgeStatus: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
@@ -1798,14 +1777,13 @@ test("judge submissions traverse Notary then Auditor gates (#756)", async () => 
       secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
     ),
     (error: unknown) => {
-      // #836: transport failure is GatekeeperDecisionError non-pass, not infrastructure kill.
       assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "transport_failure");
+      assert.equal(error.result.status, "no_receipt");
       return true;
     },
   );
-  assert.equal(auditorCalls.length, 1, "auditor must not start again on Gatekeeper transport non-pass for other judgeStatus");
-  assert.equal(secondGate.providerRequests, 1);
+  assert.equal(auditorCalls.length, 1, "auditor must not start again on Gatekeeper non-pass for other judgeStatus");
+  assert.equal(secondGate.providerRequests, 2);
 });
 
 test("direct Inspector submit summons inspector; transport failure stays loud", async () => {
@@ -1887,10 +1865,9 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
     await assert.rejects(
       tool.execute("auth-fail", completed, undefined, undefined, context),
       (error: unknown) => {
-        // #836: transport failure bounces parent as GatekeeperDecisionError.
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "transport_failure");
-        return /provider is not configured/.test(error.message);
+        assert.ok(error instanceof Error);
+        assert.equal((error as Error).name, "GatekeeperTransportFailure");
+        return /provider is not configured/.test((error as Error).message);
       },
     );
   }
@@ -1921,7 +1898,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   }
 });
 
-test("undeclared prerequisite submissions are rejected; declared references pass structure then Gatekeeper", async () => {
+test("undeclared prerequisite ids are recorded as-is; declared references still pass Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
@@ -1931,9 +1908,19 @@ test("undeclared prerequisite submissions are rejected; declared references pass
     const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
     const seatModel = fauxProvider({ provider: "prereq-seats", api: "prereq-seats" }).getModel();
     const candidate = (prerequisiteId: string) => ({ status: "refused" as const, report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused" as const, remainingScope: "policy", blocker: { cause: "prerequisite_unmet" as const, prerequisiteId, evidence: "Choice absent." } }] });
-    // Shape reject: session header supplies run identity (no shared unbound).
-    await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, Object.assign(toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }]), { cwd: process.cwd() })), /Fixer output/);
-    // Each accepted sole-final needs its own admitted run — post-seal is terminal.
+    // #836 删 9 / 2.12: packet binding is not a code reject. Record the payload as-is.
+    await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
+      const context = await withPassingGatekeeper(toolCallContext([{ id: "undeclared", name: FIXER_OUTPUT_TOOL_NAME }]));
+      const { sealed } = await acceptThroughTypedRoundClosure({
+        handlers: harness.handlers,
+        tool,
+        toolCallId: "undeclared",
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        output: candidate("other"),
+        context,
+      });
+      assert.deepEqual(sealed.decisiveFacts, candidate("other"));
+    });
     await withInstitutionalRunDir(parentInheritedSeats(seatModel), async () => {
       const context = await withPassingGatekeeper(toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
       const { sealed, pending } = await acceptThroughTypedRoundClosure({
@@ -2407,11 +2394,13 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         assert.equal(result.terminate, true);
         // Doctor escalate face carries audit kind/conflicts/gate AND seat fields (ADR 0055).
         assert.equal(result.details.kind, "audit_escalation");
-        assert.deepEqual(result.details.conflicts, escalation.conflicts);
-        assert.deepEqual(result.details.auditDecisionGate, escalation.decisionGate);
+        const auditOwned = (result.details as { audit?: { conflicts?: unknown; auditDecisionGate?: unknown } }).audit;
+        assert.deepEqual(auditOwned?.conflicts, escalation.conflicts);
+        assert.deepEqual(auditOwned?.auditDecisionGate, escalation.decisionGate);
+        const delivered = (result.details as { receipt?: Record<string, unknown> }).receipt ?? result.details;
         for (const [key, value] of Object.entries(outputs[role])) {
           assert.deepEqual(
-            (result.details as Record<string, unknown>)[key],
+            (delivered as Record<string, unknown>)[key],
             value,
             `${role} delivered field ${key} must ride the escalate face`,
           );

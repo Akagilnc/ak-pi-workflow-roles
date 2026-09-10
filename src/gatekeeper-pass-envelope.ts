@@ -106,8 +106,14 @@ export async function requireGatekeeperPass(options: {
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
-    // bounce | escalate | no_receipt | transport_failure: parent stands.
-    // Host failure rides as transport_failure with recorded payloads in `submission`.
+    if (gatekeeper.status === "transport_failure") {
+      const failure = Object.assign(new Error(gatekeeper.reason), {
+        name: "GatekeeperTransportFailure",
+        ...(gatekeeper.submission === undefined ? {} : { submission: gatekeeper.submission }),
+      });
+      options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
+    }
+    // bounce | escalate | no_receipt: parent stands and may resubmit. Not a run abort.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

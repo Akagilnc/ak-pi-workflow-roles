@@ -321,17 +321,8 @@ export async function runPublicInstructionSeat(
         }),
     });
     if (resumed !== undefined) return resumed;
-    // Reask without a prior same-parent run cannot deliver the plain-language ask
-    // on a fresh mint without inventing a second prompt path — fail loud (#753 / #756).
-    if (env.reviewReask !== undefined) {
-      presentStructuralRejection(
-        new CliUsageError(
-          "auditor review reask requires a prior same-parent run to resume",
-        ),
-        io,
-      );
-      return { exitCode: 2 };
-    }
+    // #836: reask without a prior same-parent run still mints; summons.instruction
+    // already carries the reask text. Do not structurally terminate the queue.
   }
 
   let admitted: AdmittedInstructionSeatInvocation;

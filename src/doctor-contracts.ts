@@ -100,15 +100,10 @@ export class DoctorSubmissionContractError extends Error { override readonly nam
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function read(value: unknown, key: string): unknown { if (!isRecord(value)) return undefined; try { return value[key]; } catch { return undefined; } }
 export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission {
-  const status = read(value, "status");
-  if (status !== "completed" && status !== "refused") throw new DoctorSubmissionContractError("太医署交卷无已识别的执行状态");
   return value as DoctorSubmission;
 }
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput {
-  const output = validateDoctorSubmissionShape(value);
-  const status = read(output, "status");
-  if (status === "completed" && read(output, "cost") === undefined) throw new DoctorSubmissionContractError("completed 太医署回执缺少 runtime 持有的 cost 证词");
-  return output as DoctorOutput;
+  return value as DoctorOutput;
 }
 
 export class DoctorEvidenceStore {
