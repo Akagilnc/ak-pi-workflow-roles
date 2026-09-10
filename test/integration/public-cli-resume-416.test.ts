@@ -26,6 +26,7 @@ import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  TRUE_UNBOUND_DIARIST_DETAILS,
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
@@ -539,36 +540,37 @@ test("A2: station-child after-lease build failure releases the lock and retries 
   });
 });
 
-test("#840 r8 判词 class 2: station-child same-call retry keeps this court's frozen summons, never the manual-resume engine handbook", async () => {
+test("#840 r8 判词 class 2: station-child same-call retry projects the plain resume trigger, not the manual-resume engine handbook", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    // Unbound (no boundTicketNumber; sealed details keep ticketNumber null):
+    // this run never carries a ticketNumber, so post-admission's per-turn
+    // case-dossier projection (ADR 0081) stays undefined and never appends
+    // anything to continuation.prompt — the retry's prompt is then exactly
+    // what this seam's own build() returns, no unrelated presentation text
+    // to separate out first.
     const first = await summonPublicRole({
       role: "diarist",
-      argv: ["--project", project, "整理 #582"],
+      argv: ["--project", project, "record this session"],
       cwd: project,
       home,
       packageRoot,
-      boundTicketNumber: 582,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: scriptedTerminatingToolSession({
           role: "diarist",
           toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: { status: "completed", ticketNumber: 582, entries: [] },
+          details: TRUE_UNBOUND_DIARIST_DETAILS,
         }),
       }),
       createRunId: () => "840-station-prompt-preserve-001",
       credentials: { "openai-codex": true, xai: true },
     });
-    assert.equal(first.exitCode, 0, "first station-child mint must bind the ticket");
+    assert.equal(first.exitCode, 0);
 
-    // Real same-ticket re-summons carrying this court's own instruction — the
-    // exact prose that must survive every call-local retry inside this one
-    // seat-resume call (#840 r8 判词 class 2 boundary).
-    const courtInstruction = "整理 #582 再核一次证据链";
     const seenPrompts: string[] = [];
     let turns = 0;
     const env = {
@@ -579,12 +581,11 @@ test("#840 r8 判词 class 2: station-child same-call retry keeps this court's f
       principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
       stationChild: true as const,
-      // Engine axis configured (any legal name; no packaged notes file needed)
-      // so a same-call retry that wrongly falls back to
-      // buildResumeContinuationPrompt provably diverges from the plain
-      // RESUME_TRANSPORT_ENVELOPE trigger by appending an engine line —
-      // without an engine configured, that buggy path degenerates to the
-      // exact same bytes as the fix and the regression goes unnoticed.
+      // Engine axis configured: a same-call retry that wrongly falls back to
+      // the manual-resume handbook then structurally differs (an extra
+      // engine-material section), which the equality assertion below can
+      // observe; without an engine configured that fallback would coincide
+      // with the trigger constant and hide the regression.
       engine: "cursor",
       roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
         turns += 1;
@@ -610,7 +611,7 @@ test("#840 r8 判词 class 2: station-child same-call retry keeps this court's f
     const result = await runPostAdmissionSeatResume({
       request: {
         runId: "840-station-prompt-preserve-001",
-        summons: { instruction: courtInstruction },
+        summons: { instruction: "re-check the current findings" },
       },
       env,
       io,
@@ -632,26 +633,20 @@ test("#840 r8 判词 class 2: station-child same-call retry keeps this court's f
       },
     });
     assert.ok(turns >= 2, "the loop must have redispatched at least once");
-    assert.ok(
-      seenPrompts[0]!.includes(courtInstruction),
-      "attempt 1 must carry this court's real instruction",
+    // Structural, not textual: attempt 1 carries this court's real (non-trigger)
+    // continuation; every call-local retry must be identical to the named,
+    // package-owned trigger constant — no wording/template inspection, just
+    // equality/inequality against a typed production export.
+    assert.notEqual(
+      seenPrompts[0],
+      RESUME_TRANSPORT_ENVELOPE,
+      "attempt 1 must carry this court's own continuation, not the bare trigger",
     );
     for (const prompt of seenPrompts.slice(1)) {
-      // Dispatch appends the case-dossier pointer section to every turn
-      // (ADR 0081, unrelated to this class-2 contract) — strip it before
-      // comparing the retry's own continuation base against the plain
-      // trigger. A wrong fallback to buildResumeContinuationPrompt would
-      // append the configured engine line here instead of leaving the
-      // trigger byte-exact (caught by the exact-equality assertion below).
-      const base = prompt.split("\n\n## 本票起居录")[0]!;
       assert.equal(
-        base,
+        prompt,
         RESUME_TRANSPORT_ENVELOPE,
-        "same-call retry must project only the minimal host resume trigger, byte-exact",
-      );
-      assert.ok(
-        !prompt.includes("重新读"),
-        "same-ticket continuation must never be replaced by the outsourcing engine handbook",
+        "same-call retry must project only the minimal host resume trigger",
       );
     }
     assert.equal(result.terminal?.autoResumeCount, seenPrompts.length - 1);

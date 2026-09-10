@@ -133,15 +133,3 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     assert.match(stderr.join(""),/dispatch error retention failed/);
   });
 });
-
-// The former third case here ("#840 r9 判词 class 1: a settlement-authority
-// failure after the turn started still switches the real next retry to a
-// resume payload") called dispatchPostAdmissionTurn directly through the
-// now-deleted dispatch-post-admission-fixture.ts and forced the failure via a
-// test-only DurablePrincipalAuthority whose isAvailable() throws on the Nth
-// call — a condition the real pi authority never produces (its isAvailable
-// catches every lstat failure and returns false; #840 r8 判词 class 3). No
-// real entry point can trigger presentControlledFailure's own internals
-// throwing, so the probe's evidence — TurnDispatchedFailure/turnStartedBeforeThrow
-// correctly re-selects a resume payload — is disposed here rather than
-// recreated in another internal-direct-call shape (CLAUDE.md probe lifecycle).
