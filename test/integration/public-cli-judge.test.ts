@@ -48,6 +48,7 @@ import {
   formatTerminalResult,
   recommendationNavigatorFact,
   type TerminalResult,
+  type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
@@ -1150,11 +1151,14 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         terminal.artifacts.find((a) => a.kind === "report")!.path,
         "utf8",
       ),
-    ) as { role: string; runId: string; outcome: { kind: string; status: string } };
+    ) as { role: string; runId: string; outcome: TerminalRoleOutcome };
     assert.equal(report.role, "judge");
     assert.equal(report.runId, "run-cli-judge-001");
     assert.equal(report.outcome.kind, "accepted");
-    assert.equal(report.outcome.status, "converged");
+    // #836: the persisted report carries the role's original payload, not an
+    // invented top-level status — read judgeStatus off the last payload,
+    // same as the live terminal above.
+    assert.equal(payloadStatus(report.outcome), "converged");
 
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");

@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { payloadFacts } from "../helpers/terminal-payload.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
@@ -99,7 +100,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
     assert.equal(resumed.terminal?.roleOutcome.kind,"accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind==="accepted"
-        ?(resumed.terminal.roleOutcome.decisiveFacts as {note?:string}).note
+        ?payloadFacts(resumed.terminal.roleOutcome).note
         :undefined,
       "FIRST-ok",
     );

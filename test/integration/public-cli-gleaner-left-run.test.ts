@@ -139,7 +139,7 @@ test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
     assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>;
+    const facts = payloadFacts(result.terminal.roleOutcome);
     assert.equal(facts.status, "completed");
     assert.deepEqual(facts.findings, []);
 
@@ -194,7 +194,7 @@ test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Ter
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>;
+    const facts = payloadFacts(result.terminal.roleOutcome);
     const findings = facts.findings as readonly {
       pointer: string;
       statement: string;
@@ -290,7 +290,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
       "completed",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      ? payloadFacts(resumed.terminal.roleOutcome)
       : undefined;
     const findings = facts?.findings as readonly { pointer?: string; statement?: string }[] | undefined;
     assert.equal(findings?.[0]?.statement, "RESUMED-弹章");
