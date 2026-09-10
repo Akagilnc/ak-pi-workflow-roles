@@ -297,6 +297,8 @@ export async function summonPublicRole(
       seat,
       ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
     })),
+    // Station child role run (#840): omit automatic navigator attendance.
+    stationChild: true,
     // Host config passthrough only — same face as public CLI (#422 / #675).
     ...(config.autoResumeLimit === undefined
       ? {}

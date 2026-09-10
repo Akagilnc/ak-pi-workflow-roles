@@ -134,6 +134,8 @@ export type PostAdmissionEnv = {
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
   freshSummons?: true;
+  /** Station child role run (#840): omit automatic navigator attendance. */
+  stationChild?: boolean;
 };
 
 /**
@@ -425,6 +427,9 @@ export async function dispatchPostAdmissionTurn<
     // attachments and the seat's own prompt bytes are never rewritten.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
+    if (env.stationChild !== undefined) {
+      turnRequest = { ...turnRequest, stationChild: env.stationChild };
+    }
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
@@ -623,6 +628,7 @@ export function resumeTurnRequestProjectionOptions(
       prompt,
     },
     ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
+    ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
   };
 }
 

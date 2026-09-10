@@ -27,7 +27,7 @@ Exit status reports lifecycle honesty, not business success: every lawful typed 
 
 `ak-role resume <runId> [message]` reopens that run under the **current seat table** for model / host / engine — the same resolution as starting a new leg (`--flag` → persistent seat → package default). Standard chain after a role `escalate`s: take the owner ruling and feed it back with `ak-role resume <runId> "<ruling>"` so the same run continues to a terminal. `[message]` applies only to seats that accept caller instruction: for those seats the optional `message` after `runId` is passed through unchanged as the continuation prompt (opaque: not parsed as flags); omit it to use the package resume envelope. Notary/符宝郎 must omit `message` and derives evidence from the existing source-run/dossier binding. Global `--model` / `--thinking` / `--host` / `--engine` override the table for that resume only — place them before `<runId>` (either before `resume` or between `resume` and `<runId>`, e.g. `ak-role --model xai/grok-4.5 resume 01abc…` or `ak-role resume --model xai/grok-4.5 01abc…`); the one argv after `<runId>` is always the opaque message, never a flag (#471). On a real host switch (live seat host differs from the previous invocation host), prior native records of the previous host are delivered once as context to the target host; same-host resume does not re-inject. Each host writes only its native volume (Pi: `session/session.jsonl`; Grok CLI journals stay in the operator grok home, factory dossier is sitian records on the run), with unified ledger entries recorded in 司天台 (Sitian). Whether to resume is the caller's decision: the command does not require a typed HTTP 429 or a `resumable` state. Unknown run IDs and missing session principals are rejected. Every callable role accepts manual resume; Countersign and Gleaner-Left gained it in #599, Collector, Doctor, Notary, and Inspector in #633.
 
-Judge, coder, fixer, reviewer, and merger also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
+All callable roles also retry a non-lawful LLM call in place (same `runId` and session) up to `autoResumeLimit` times. Unset defaults to 2; `ak-role config set-auto-resume-limit <N>` writes the ceiling (`0` disables). Lawful typed terminals (`accepted`, `audit_escalation`, `no_receipt`) stop immediately. Manual `ak-role resume` stays available.
 
 Seat and Gate-officer configuration:
 
@@ -48,7 +48,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit, navigator, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
+**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
 
 **Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 
@@ -103,7 +103,7 @@ ak-role inspector --attach ./change.patch "Review this material."
 # gatekeeper — direct Gate province review; dispatch an officer or pass
 ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 
-# navigator — direct route advice (ordered next-role candidates); automatic attendance unchanged
+# navigator — direct route advice (ordered next-role candidates); attends automatically on top-level public entry legs only
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
 # diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)

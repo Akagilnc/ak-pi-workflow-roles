@@ -907,6 +907,16 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
       "parent host must not be copied onto court diarist station child",
     );
 
+    const diaristSessionContent = await readFile(
+      join(diaristCoords.runDirectory, "session", "session.jsonl"),
+      "utf8",
+    );
+    assert.equal(
+      diaristSessionContent.includes("ak_navigator_invocation"),
+      false,
+      "court diarist station child session must not attach navigator attendance",
+    );
+
     // Feature observation: materials carry the typed volume paths (not heading/wording).
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.ok(turnPrompt.includes(volume.humanViewFile));
