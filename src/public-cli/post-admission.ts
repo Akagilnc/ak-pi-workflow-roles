@@ -565,10 +565,17 @@ export async function dispatchPostAdmissionTurn<
     // a later bare exit-code / session-inspection signal (trailing nonzero
     // exit, late stderr noise, a stale already-superseded typed-HTTP
     // observation, ...) — but never over a direct current host/runner
-    // failure signal, which stays a real failure with the recorded payload
-    // riding beside it, not replacing it (#836: never kill an already-
-    // recorded leg, but never wash a real failure away either).
-    if (settled !== undefined && shouldPresent(settled) && !directHostFailureSignal) {
+    // failure signal, nor over a real stderr.log durable-write failure
+    // (confirmed infrastructure trouble, not weak/bare evidence), both of
+    // which stay a real failure with the recorded payload riding beside it,
+    // not replacing it (#836: never kill an already-recorded leg, but never
+    // wash a real failure away either).
+    if (
+      settled !== undefined
+      && shouldPresent(settled)
+      && !directHostFailureSignal
+      && stderrLogWriteFailure === undefined
+    ) {
       if (
         settled.roleOutcome.kind === "accepted" &&
         request.courtAttemptId !== undefined &&

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { formatFailureStderrDiagnostic } from "../../src/public-cli/settlement.ts";
@@ -255,7 +256,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
     }
   });
 });
-test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact", async () => {
+test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact; an accepted turn does not silently outrun it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -313,6 +314,76 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
     assert.equal(stdout.length, 1);
     assert.equal(result.terminal !== undefined, true);
+  });
+
+  // A turn that DID seal an accepted submission must not silently outrun a
+  // real durable-write infrastructure failure — the stderr.log mirror is not
+  // "best-effort noise" here; it is a real IO failure and must be presented
+  // loudly, with the already-accepted payload riding beside it (never lost,
+  // never presented as if nothing went wrong).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout } = captureIo();
+    const acceptedDetails = { judgeStatus: "converged", note: "ok" };
+    const result = await runAkRole(
+      ["judge", "--project", project, "accepted then stderr.log blocked"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-stderr-log-eisdir-accepted-001",
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            // stderr.log as a directory makes the post-admission writeFile
+            // raise EISDIR — even though the child accepted a lawful verdict.
+            await mkdir(join(runDir, "stderr.log"), { recursive: true });
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: acceptedDetails,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: { role: "judge" as const, details: acceptedDetails },
+            };
+          },
+        }),
+      },
+    );
+    // Not accepted — the durable-write failure is a real problem, not noise.
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      // The already-sealed payload rides beside the failure, never lost.
+      assert.ok(
+        result.terminal.submissions?.some(
+          (row) =>
+            typeof row === "object" && row !== null &&
+            (row as { judgeStatus?: unknown }).judgeStatus === "converged",
+        ),
+        JSON.stringify(result.terminal.submissions),
+      );
+    }
+    assert.equal(stdout.length, 1);
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {
