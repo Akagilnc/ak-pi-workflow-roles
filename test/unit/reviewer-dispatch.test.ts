@@ -187,9 +187,12 @@ test("production discovery: self-fetch bytes propagate from dispatch entry to re
       { path: "docs/adr/missing-adr.md", status: "missing" },
     ],
   );
+  // #836 删 8: child prompt is axis token only — fetch bytes stay on dispatch.specFetchedMaterial.
   const specPrompt = result.dispatch.legs.find((leg) => leg.axis === "spec")!.prompt;
+  assert.equal(specPrompt, "axis=spec");
+  assert.equal(specPrompt.includes(ISSUE_BODY_WITH_ADR), false);
   const material = reviewerFetchedSpecMaterial(fetched!);
-  assert.equal(specPrompt.includes(material), true);
+  assert.ok(material.length > 0); // helper still formats for non-child consumers if any
   // Single machine payload line inside constructor-owned framing: external
   // issue/ADR bytes must live inside structured field values, never plain sections.
   const materialLines = material.split("\n");
@@ -416,12 +419,8 @@ test("production discovery: tracker unreachable degrades to authorityRefs", asyn
   assert.equal(result.dispatch.specDisposition, "launched");
   assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
   assert.equal(result.dispatch.specFetchedMaterial, undefined);
-  assert.equal(
-    result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(
-      reviewerAuthorityRefsMaterial(refs),
-    ),
-    true,
-  );
+  // #836: discovery keeps refs on dispatch; child prompt is axis token only.
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt, "axis=spec");
 });
 
 test("production discovery: no origin degrades to local path match", async () => {
@@ -495,11 +494,10 @@ test("production discovery: supplied authorityRefs launch Spec with material", a
   assert.equal(result.dispatch.specDisposition, "launched");
   assert.deepEqual(result.dispatch.legs.map((leg) => leg.axis), ["standards", "spec"]);
   assert.deepEqual(result.dispatch.authorityRefs, [...refs]);
-  const material = reviewerAuthorityRefsMaterial(refs);
-  // Spec-only authority-refs material stays off the Standards leg.
-  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt.includes(material), false);
-  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
-  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt.includes(material), true);
+  // #836: authority refs stay on dispatch; child prompts are axis tokens only.
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "standards")?.prompt, "axis=standards");
+  assert.equal(result.dispatch.legs.find((leg) => leg.axis === "spec")?.prompt, "axis=spec");
+  assert.equal(h.execution?.legs.find((leg) => leg.axis === "spec")?.prompt, "axis=spec");
 });
 
 test("production discovery: pinned-target paths match after stripping feat/feature shells", async () => {
@@ -528,33 +526,26 @@ test("production discovery: non-absence Git/I-O failure does not become missing"
   assert.equal(h.execution, undefined);
 });
 
-test("construction builds solely from discovery product (no secondary launch decision)", () => {
+test("construction builds axis tokens only — no child prompt compile (#836)", () => {
   const missing = constructReviewerDispatch({
     identity: "id-missing",
-    canonicalSkill: "review skill",
+    canonicalSkill: "skill",
     target: pin,
     range,
     specAuthority: { status: "missing" },
   });
-  assert.equal(missing.specDisposition, "skipped-missing");
-  assert.deepEqual(missing.legs.map((leg) => leg.axis), ["standards"]);
-  assert.deepEqual(missing.authorityRefs, []);
-
-  const refs = Object.freeze(["docs/feature-login.md"]);
+  assert.equal(missing.legs.length, 1);
+  assert.equal(missing.legs[0]!.axis, "standards");
+  assert.equal(missing.legs[0]!.prompt, "axis=standards");
   const available = constructReviewerDispatch({
-    identity: "id-available",
-    canonicalSkill: "review skill",
+    identity: "id-avail",
+    canonicalSkill: "skill",
     target: pin,
     range,
-    specAuthority: { status: "available", refs },
+    specAuthority: { status: "available", refs: ["https://example.com/s"] },
   });
-  assert.equal(available.specDisposition, "launched");
-  assert.deepEqual(available.legs.map((leg) => leg.axis), ["standards", "spec"]);
-  assert.deepEqual(available.authorityRefs, [...refs]);
-  assert.equal(
-    available.legs.find((leg) => leg.axis === "spec")?.prompt.includes(reviewerAuthorityRefsMaterial(refs)),
-    true,
-  );
+  assert.equal(available.legs.length, 2);
+  assert.deepEqual(available.legs.map((l) => l.prompt), ["axis=standards", "axis=spec"]);
 });
 
 test("targetHead drift prevents child execution", async () => {
@@ -597,12 +588,11 @@ test("constructed legs exclude caller task channel", async () => {
     assert.equal(leg.prompt.includes("supplied task"), false);
     assert.equal(leg.prompt.includes("review task"), false);
     // #836 删 8: JSON range pointer + skill body; no Chinese instruction labels.
+    // #836: axis token only — no skill body, no range compile into child prompt.
     assert.equal(leg.prompt.includes("目标："), false);
     assert.equal(leg.prompt.includes("Canonical-Skill:"), false);
-    assert.equal(leg.prompt.includes("review skill"), true);
-    assert.equal(leg.prompt.includes(range.target), true);
-    assert.equal(leg.prompt.includes(range.base), true);
-    assert.equal(leg.prompt.includes(range.diffCommand), true);
+    assert.equal(leg.prompt.startsWith("axis="), true);
+    assert.equal(leg.prompt.includes(range.diffCommand), false);
   }
   assert.equal("task" in result.dispatch.input, false);
   assert.equal(result.dispatch.input.canonicalSkill, "review skill");

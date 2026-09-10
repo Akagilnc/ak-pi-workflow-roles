@@ -139,6 +139,8 @@ export function constructReviewerDispatch(input: {
   /** Unique discovery product (available+refs material, or missing). */
   specAuthority: ReviewerSpecAuthorityDiscovery;
 }): ConstructedReviewerDispatch {
+  // #836 删 8: no code-compiled child prompt packet. Axis tokens only.
+  // Parent seat invokes code-review skill for real review work.
   const launchSpec = input.specAuthority.status === "available";
   const authorityRefs = Object.freeze(
     input.specAuthority.status === "available" ? [...input.specAuthority.refs] : [],
@@ -148,34 +150,15 @@ export function constructReviewerDispatch(input: {
       ? input.specAuthority.fetched
       : undefined;
   const specDisposition: ReviewerSpecDisposition = launchSpec ? "launched" : "skipped-missing";
-  // #836 删 8: no code-written instruction sentences (目标/基点/固定范围…).
-  // Materials are path/JSON pointers + skill body only; parent seat owns code-review skill.
-  const common = [
-    JSON.stringify({
-      range: input.range,
-      recipe: `${REVIEWER_CONSTRUCTION_RECIPE.recipeId}@${REVIEWER_CONSTRUCTION_RECIPE.version}`,
-      reviewScopeKeys: input.reviewScopeKeys ?? [],
-    }),
-    input.canonicalSkill,
-  ].join("\n");
   const axes: readonly { axis: "standards" | "spec" }[] = launchSpec
     ? [{ axis: "standards" }, { axis: "spec" }]
     : [{ axis: "standards" }];
-  const legs = axes.map((x) => {
-    const parts = [common, `axis=${x.axis}`];
-    if (x.axis === "spec") {
-      if (specFetchedMaterial !== undefined) {
-        parts.push(reviewerFetchedSpecMaterial(specFetchedMaterial));
-      }
-      if (authorityRefs.length > 0) {
-        parts.push(reviewerAuthorityRefsMaterial(authorityRefs));
-      }
-    }
-    return Object.freeze({
+  const legs = axes.map((x) =>
+    Object.freeze({
       axis: x.axis,
-      prompt: `${parts.join("\n")}\n`,
-    });
-  });
+      prompt: `axis=${x.axis}`,
+    }),
+  );
   return Object.freeze({
     identity: input.identity,
     recipe: "reviewer-common-bundle-v1",

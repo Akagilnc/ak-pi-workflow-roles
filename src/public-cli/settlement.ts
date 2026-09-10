@@ -372,15 +372,10 @@ export function formatCliDiagnostic(message: string): string {
  * One concise stderr line for humans. Durable Error Artifact / Terminal keep the
  * full original diagnostic — presentation collapses newlines and flood frames.
  */
+/** #836: full diagnostic on stderr — no first-line clip / flood filter. */
 export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
-  const selected = conciseChildDiagnostic(failure.diagnostic, "failure");
-  // conciseChildDiagnostic already returns one split line; defend fallback paths.
-  const oneLine =
-    selected
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? "failure";
-  return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
+  const text = failure.diagnostic.trim().length > 0 ? failure.diagnostic : "failure";
+  return formatCliDiagnostic(text);
 }
 
 /**
