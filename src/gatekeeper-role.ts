@@ -58,7 +58,7 @@ export type GatekeeperResult =
 /** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "escalate" | "no_receipt" | "transport_failure" }
+  { status: "bounce" | "escalate" | "no_receipt" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {

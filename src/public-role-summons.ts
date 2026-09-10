@@ -440,7 +440,7 @@ export async function summonGateOfficer(options: {
   // Conclusion re-ask keeps sole ownership of reviewReask. New-submission body
   // rides a separate field so first mint never fails the "reask requires prior" gate.
   let gateReviewInstruction: string | undefined;
-  if (options.reask === undefined && options.submission !== undefined) {
+  if (options.submission !== undefined) {
     const { buildGateOfficerReviewInstruction } = await import("./auditor-dossier-tool.ts");
     gateReviewInstruction = buildGateOfficerReviewInstruction({
       submission: options.submission,

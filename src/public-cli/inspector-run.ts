@@ -104,6 +104,7 @@ export async function runPublicInspector(
   if (parentRunPath !== undefined) {
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
+      sourceRunPath: parentRunPath,
       ...(resumeInstruction === undefined
         ? {
             instruction: parsed.instruction,
@@ -127,18 +128,6 @@ export async function runPublicInspector(
         ),
     });
     if (resumed !== undefined) return resumed;
-    // Reask without a prior same-parent run cannot deliver the plain-language ask
-    // on a fresh mint without inventing a second prompt path — fail loud (#753).
-    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint keeps argv 卷宗指针.
-    if (env.reviewReask !== undefined) {
-      presentStructuralRejection(
-        new CliUsageError(
-          "inspector review reask requires a prior same-parent run to resume",
-        ),
-        io,
-      );
-      return { exitCode: 2 };
-    }
   }
 
   let admitted: AdmittedInspectorInvocation;

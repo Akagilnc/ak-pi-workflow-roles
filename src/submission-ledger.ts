@@ -7,7 +7,6 @@ import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 
 import {
-  isTerminatingToolName,
   type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
@@ -22,7 +21,15 @@ export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation"
 export type CorrectableRejectionCode = "typed-bounce";
 export type SubmissionLedgerEvent =
   | { readonly type: "roundContext"; readonly attemptId: string; readonly calls: readonly SubmissionCall[] }
-  | { readonly type: "candidate"; readonly attemptId: string; readonly toolCallId: string; readonly toolName: string; readonly sequence: number }
+  | {
+      readonly type: "candidate";
+      readonly attemptId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly sequence: number;
+      /** LLM tool-call params at call time (#836 原话). */
+      readonly params?: unknown;
+    }
   | {
       readonly type: "outcome";
       readonly attemptId: string;
@@ -30,7 +37,7 @@ export type SubmissionLedgerEvent =
       readonly outcome: SubmissionOutcomeKind;
       readonly diagnostic?: string;
       readonly code?: CorrectableRejectionCode;
-      /** Raw LLM params for audit-escalation submissions (#836 submissions face). */
+      /** Raw LLM params — bounce/infra/audit still keep the original words (#836). */
       readonly accepted?: unknown;
       /** Present for audit-escalation so settlement can project without JSONL rebuild. */
       readonly projection?: Extract<TerminalRoleOutcome, { kind: "audit_escalation" }>;
@@ -227,12 +234,15 @@ export async function readRecordedSubmissions(
     if (record.kind === "outcome") {
       const payload = record.payload as {
         type?: string;
-        outcome?: string;
         accepted?: unknown;
         projection?: { decisiveFacts?: unknown };
       } | undefined;
-      if (payload?.type === "outcome" && payload.outcome === "audit-escalation") {
-        out.push(payload.accepted !== undefined ? payload.accepted : payload.projection?.decisiveFacts);
+      if (payload?.type === "outcome" && payload.accepted !== undefined) {
+        out.push(payload.accepted);
+        continue;
+      }
+      if (payload?.projection?.decisiveFacts !== undefined) {
+        out.push(payload.projection.decisiveFacts);
       }
     }
   }
@@ -384,7 +394,14 @@ export function createSubmissionLedgerHost(
           // #541 / #575: shared infra-declaration fail lives on the ledger seam.
           // #641 chain②: seats may bounce a misdeclared infrastructure failure
           // as correctable (2.1/2.2/2.3 keep paths).
-          append({ type: "candidate", attemptId, toolCallId, toolName: tool.name, sequence: ++state.sequence });
+          append({
+            type: "candidate",
+            attemptId,
+            toolCallId,
+            toolName: tool.name,
+            sequence: ++state.sequence,
+            params,
+          });
           let result: HostToolResult<unknown>;
           try {
             failOnInfrastructureFailureDeclaration(
@@ -408,6 +425,7 @@ export function createSubmissionLedgerHost(
                 outcome: "correctable-rejection",
                 code: "typed-bounce",
                 diagnostic: error instanceof Error ? error.message : String(error),
+                accepted: params,
               });
               throw error;
             } else {
@@ -417,6 +435,7 @@ export function createSubmissionLedgerHost(
                 toolCallId,
                 outcome: "infrastructure",
                 diagnostic: error instanceof Error ? error.message : String(error),
+                accepted: params,
               });
               throw error;
             }
@@ -441,21 +460,7 @@ export function createSubmissionLedgerHost(
             await projectClosure(projection, context);
             return result;
           }
-          // Non-terminating tool results pass through unchanged (no non-terminate reject).
-          if (result.terminate !== true) {
-            return result;
-          }
-          if (!isTerminatingToolName(tool.name)) {
-            append({
-              type: "outcome",
-              attemptId,
-              toolCallId,
-              outcome: "infrastructure",
-              diagnostic: `non-terminating tool ${tool.name}`,
-            });
-            throw new Error("提交账只受理终止工具");
-          }
-          // #836: record LLM params immediately as-is; call N times → N rows; no abort.
+          // Terminating-tool wrap records every call; terminate flag does not withhold params.
           const projection: Extract<TerminalRoleOutcome, { kind: "accepted" }> = {
             kind: "accepted",
             role,
@@ -470,7 +475,6 @@ export function createSubmissionLedgerHost(
             projection,
           });
           await projectClosure(projection, context);
-          // Return the role's own tool result — never rewrite details (#836 B1.3).
           return result;
         },
       });

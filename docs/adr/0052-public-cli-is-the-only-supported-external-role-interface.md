@@ -2,6 +2,8 @@
 
 Status: accepted（Issue #101 `/grill-with-docs`，陛下逐项拍定并确认收官，2026-08-04）
 
+> **Supersession / 修订射程 (#836):** 终局表仍一张，但其「角色结果」块改为账本原 payload（多次交卷逐条）+ 宿主原因；退出码语义不变（lawful typed 终局含 no_receipt 退 0，真失败退非零）。Navigator 过时不候：grace 超时不得扣押已接受的角色结果、不得让侧车把本庭拖死。
+
 外部调用者不再以裸 `pi --ak-role`、Pi 事件流、session JSONL 或收官 grep 使用角色包；唯一受支持的产品入口是 `ak-role`。它以一个公开 executable 加角色子命令接收调用请求，并为每次已受理调用交付一份完整终局结果。裸 Pi 激活仅保留为包开发 session 显式加载的内部接缝：发布安装不自动注册它，公开 help/docs/bin 不展示它；但它不是安全秘密，不设凭据或身份认证，也不阻止知道源码路径的人显式加载。
 
 终局结果对所有调用者使用同一张简洁表格，不探测终端、不区分“人读/机器读”，也不建立第二套 JSON 输出；表格只冻结角色结果、Navigator 与 artifacts 等大块语义，不冻结表头、行序、措辞、边框或目录结构，机器测试不得咬这些呈现。内部 typed Receipt、Navigator facts，以及 #288 所定义的当前 run/attempt 绑定 typed 无回执生命周期记录，是生成结果的事实边界。Navigator 不得扣押已完成的角色结果：它在角色终态后最多获得临时十秒交付宽限（healthy 完成立即返回，不固定等待满窗；#160 拥有精确 CI 调度，并以 #160 之后真实触发频率决定恢复 3s 或保留 10s），超时以诚实 unavailable 进入同一结果。退出码表达 CLI 生命周期是否诚实完成，不表达业务成功：包括 `audit_escalation` 与 #288 typed 无回执终局在内的 lawful typed terminal result 退出零；其它既有结构、语义或基础设施失败仍退出非零。

@@ -102,12 +102,12 @@ export async function requireGatekeeperPass(options: {
     }
     if (gatekeeper.status === "pass") return;
     if (gatekeeper.status === "needs_reask") {
-      // Resume the speaker with plain-language re-ask — never bounce the parent (#753).
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
-    // #836: transport_failure / no_receipt / bounce / escalate all return to parent
-    // as raw non-pass — never failInfrastructure (不杀腿). Parent reads the words.
+    if (gatekeeper.status === "transport_failure") {
+      options.hostActions.failInfrastructure(new Error(gatekeeper.reason), options.context, options.toolCallId);
+    }
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

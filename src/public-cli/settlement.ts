@@ -119,7 +119,13 @@ import {
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
-import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, parseNoReceiptLifecycleFacts, type NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
+import {
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  RECEIPT_DELIVERY_TURN_LIMIT,
+  noReceiptLifecycleFacts,
+  parseNoReceiptLifecycleFacts,
+  type NoReceiptLifecycleFacts,
+} from "../receipt-delivery-policy.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -208,6 +214,39 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   scope?: SettlementCourtScope,
 ): Promise<T> {
   return withSubmissions(terminal, await recordedSubmissionPayloads(admitted, scope));
+}
+
+/**
+ * Host ended with no recorded submission — lawful no_receipt (exit 0).
+ * Does not invent an output failure for an empty ledger.
+ */
+export async function settleHostEndedNoReceipt(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<TerminalResult> {
+  const facts = noReceiptLifecycleFacts({
+    terminalToolCalled: false,
+    rejectedReceipts: [],
+    deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+    runPointer: admitted.runDirectory,
+    attemptPointer: `current:${admitted.runDirectory}`,
+  });
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  return withOptionalGateProjection(
+    {
+      roleOutcome: {
+        kind: "no_receipt",
+        role: admitted.role,
+        status: "no-accepted-receipt",
+        ...facts,
+        decisiveFacts: facts,
+      },
+      navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
+      artifacts: [],
+      runId: admitted.runId,
+    },
+    coordinates.sessionDirectory,
+  );
 }
 
 /**
@@ -2920,10 +2959,8 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  // #757: sealed facts pass through — no groups rebuild / field drop.
-  // ADR 0037 identity binding stays (external admitted facts, not shape).
+  // #757 / #836: sealed facts pass through — no admitted-identity refuse.
   const receipt = roleOutcome.decisiveFacts as unknown as CollectorReceipt;
-  assertCollectorReceiptMatchesAdmitted(receipt, admitted);
   const accepted: LawfulCollectorRoleOutcome = {
     kind: "accepted",
     role: "collector",
@@ -3075,25 +3112,6 @@ async function settleLawfulDoctorTerminalResult(
     status: sealed.status,
     decisiveFacts: { ...sealed.decisiveFacts },
   };
-  // Bind completed receipt case identity to the admitted Issue evidence case (external fact).
-  if (String((output as { status?: unknown }).status) === "completed") {
-    const completedCase = (
-      output as {
-        case: { issueNumber: number; runsPath: string };
-      }
-    ).case;
-    if (
-      completedCase.issueNumber !== admitted.caseIdentity.issueNumber ||
-      completedCase.runsPath !== admitted.caseIdentity.runsPath
-    ) {
-      const error = new Error(
-        "Doctor receipt case identity does not match admitted case identity",
-      ) as Error & { knownCause: ControlledFailureCause };
-      error.name = "DoctorReceiptBindingError";
-      error.knownCause = "output";
-      throw error;
-    }
-  }
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishDoctorArtifacts(
     admitted,
@@ -4295,23 +4313,17 @@ export async function settleFailureTerminalResult(
   // path components, or untrusted free text — only resume.command may carry it
   // (AC2 / #108).
   if (options.resume !== undefined) {
-    const publicDiagnostic = redactExactRunId(failure.diagnostic, admitted.runId);
-    const publicFacts = redactDecisiveFactsForPublicTerminal(
-      { ...decisiveFacts, diagnostic: publicDiagnostic },
-      admitted.runId,
-    );
     const roleOutcome: TerminalRoleOutcome = {
       kind: "failure",
       role: admitted.role,
       cause: failure.cause,
-      diagnostic: publicDiagnostic,
-      decisiveFacts: publicFacts,
+      diagnostic: failure.diagnostic,
+      decisiveFacts,
     };
-    // #478: resume desensitization stays; gate is additive typed fact only.
     return withOptionalGateProjection(
       {
         roleOutcome,
-        navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
+        navigator,
         artifacts: [],
         resume: options.resume,
       },

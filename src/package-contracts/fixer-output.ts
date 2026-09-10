@@ -55,30 +55,7 @@ export function validateFixerOutput(value: unknown, _phase?: FixerPhase): FixerO
   return value as FixerOutput;
 }
 
-function safeProperty(value: unknown, property: string): unknown {
-  if (value === null || typeof value !== "object") return undefined;
-  try {
-    return (value as Record<string, unknown>)[property];
-  } catch {
-    return undefined;
-  }
-}
-
-/** Bind recognizable prerequisite blockers to the packet declaration. */
-export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixerInvocationInput): FixerOutput {
-  const output = validateFixerOutput(value, phase);
-  const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
-  const topLevelBlocker = safeProperty(output, "blocker");
-  const classResults = safeProperty(output, "classResults");
-  const blockers = topLevelBlocker === undefined
-    ? (Array.isArray(classResults) ? classResults.map((entry) => safeProperty(entry, "blocker")) : [])
-    : [topLevelBlocker];
-  for (const blocker of blockers) {
-    if (safeProperty(blocker, "cause") !== "prerequisite_unmet") continue;
-    const prerequisiteId = safeProperty(blocker, "prerequisiteId");
-    if (typeof prerequisiteId === "string" && !declaredIds.has(prerequisiteId)) {
-      throw new Error("Fixer output violates blocker.prerequisiteId declared-prerequisite constraint");
-    }
-  }
-  return output;
+/** #836 删 9: packet binding is not a code reject. Record the payload as-is. */
+export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, _packet: FixerInvocationInput): FixerOutput {
+  return validateFixerOutput(value, phase);
 }

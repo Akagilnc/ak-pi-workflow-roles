@@ -146,18 +146,6 @@ export async function runPublicNotary(
         ),
     });
     if (resumed !== undefined) return resumed;
-    // Reask without a prior same-parent run cannot deliver the plain-language ask
-    // on a fresh mint without inventing a second prompt path — fail loud (#753).
-    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint ignores it.
-    if (env.reviewReask !== undefined) {
-      presentStructuralRejection(
-        new CliUsageError(
-          "notary review reask requires a prior same-parent run to resume",
-        ),
-        io,
-      );
-      return { exitCode: 2 };
-    }
   }
 
   let admitted: AdmittedNotaryInvocation;

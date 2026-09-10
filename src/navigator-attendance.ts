@@ -621,15 +621,18 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       let output: PrepareOutput | undefined;
       let prepareBatchRejected = false;
       outputSink = (value) => {
-        if (prepareBatchRejected || output !== undefined) {
-          // Tool executions in one assistant response are provisional until the
-          // whole response is known to contain exactly one submission. A
-          // duplicate invalidates the batch, including its first call.
-          output = undefined;
-          prepareBatchRejected = true;
-          throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+        // #836: extra prepare calls append; they do not void the first batch.
+        if (output === undefined) {
+          output = value;
+          return;
         }
-        output = value;
+        const prior = output.candidates;
+        const next = value.candidates;
+        const merged = [
+          ...(Array.isArray(prior) ? prior : prior === undefined ? [] : [prior]),
+          ...(Array.isArray(next) ? next : next === undefined ? [] : [next]),
+        ];
+        output = { ...value, candidates: merged };
       };
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
       if (session === undefined) {
@@ -676,7 +679,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
-        .slice(-8)
         .map((entry) => entry.data as NavigatorSettlementFact);
       const projection: NavigatorContextProjection = {
         subjectKey,

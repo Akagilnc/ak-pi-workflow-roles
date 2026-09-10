@@ -148,14 +148,14 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   const stripped = projectAuditEscalation(decision).details;
   assert.equal(stripped.note, undefined);
 
-  // Officer-owned facts cannot be filled by colliding parent-role fields.
+  // #836: role fields stay; audit-owned keys overlay without deleting the rest.
   const officer = projectAuditEscalation(
     { status: "escalate", officer: "notary" },
     delivered,
   ).details;
   assert.equal(officer.officer, "notary");
-  assert.equal(Object.hasOwn(officer, "reason"), false);
-  assert.equal(Object.hasOwn(officer, "findings"), false);
+  assert.equal(officer.reason, "role reason");
+  assert.deepEqual(officer.findings, ["role finding"]);
 });
 
 test("escalate face keeps role decisionGate and audit gate side by side", async () => {

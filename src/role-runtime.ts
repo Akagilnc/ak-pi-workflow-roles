@@ -7,7 +7,7 @@ import {
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
-import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
+
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
@@ -119,9 +119,6 @@ import {
 } from "./reviewer-role.ts";
 import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-import {
-  type ReviewerSpecDisposition,
-} from "./reviewer-construction.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -239,24 +236,13 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
 function assembleReviewerParentSystemPrompt(input: {
   baseSystemPrompt: string;
   soul: string;
-  specDisposition?: ReviewerSpecDisposition;
 }): string {
-  const specDispositionNote =
-    input.specDisposition === "skipped-missing"
-      ? [
-          "",
-          "<reviewer_spec_disposition>",
-          "权威 Spec 不存在；未启动 Spec 取证腿。",
-          "</reviewer_spec_disposition>",
-        ]
-      : [];
   return [
     input.baseSystemPrompt,
     "",
     "<reviewer_soul>",
     input.soul,
     "</reviewer_soul>",
-    ...specDispositionNote,
   ].join("\n");
 }
 import {
@@ -471,31 +457,10 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
-    case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
-      // Envelope owns flag decode inside the activation stage (trace + fail-closed path).
+    case "reviewer": return { id: "load-and-install", run: async () => {
       const admitted = runtime.decodeReviewerAdmitted();
       const activation = await runtime.reviewer.activate(runtime.context, admitted);
       runtime.bindReviewerParent(activation);
-      const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
-      if (result.status !== "accepted") {
-        const rejection = new ExplicitInternalActivationError(
-          `Fixed Reviewer dispatch was not accepted: ${result.status}: ${result.diagnostic}`,
-          {
-            knownCause: "activation",
-            name: "ReviewerDispatchRejectionError",
-          },
-        );
-        // Pi stderr cannot carry the structured violations. Do not mask a durable
-        // write failure: its infrastructure cause is truer than the unwritten page.
-        const runDir = process.env.AK_ROLE_RUN_DIR;
-        if (typeof runDir === "string" && runDir.trim() !== "") {
-          recordReviewerDispatchRejectionSync(runDir, {
-            diagnostic: rejection.message,
-            violations: result.violations,
-          });
-        }
-        throw rejection;
-      }
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
@@ -1002,61 +967,26 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
-
-        // LLM cannot identify the court target — escalate without machine facts.
-        // Strip sitian (锚定宪法) and ticketNumber (must not leak into
-        // caller-visible admitted typed key via decisiveFacts mirror).
-        if (submitted?.status === "escalate") {
-          if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
-            return submitted;
-          }
-          const stripped = { ...submitted };
-          delete stripped.sitian;
-          delete stripped.ticketNumber;
-          return stripped;
-        }
-
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates();
-
-        // Already bound before the turn (typed handoff / resume): skip re-recognition
-        // and commit under that identity (ADR 0075 已绑定 ticket 优先).
         const ticketNumber =
           coords.boundTicketNumber !== undefined
             ? coords.boundTicketNumber
             : assertion.kind === "ticket"
               ? assertion.ticketNumber
               : undefined;
-
-        // true-unbound → 无录 (no volume). Cannot-identify must arrive as
-        // status=escalate above — never as silent unbound.
-        if (ticketNumber === undefined) {
-          if (submitted === undefined || !("sitian" in submitted)) {
-            return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };
+        if (ticketNumber !== undefined) {
+          if (coords.boundTicketNumber === undefined) {
+            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
-          const stripped: Record<string, unknown> = {
-            ...submitted,
-            ticketNumber: null,
-          };
-          delete stripped.sitian;
-          return stripped;
+          await commitDiaristEntries({
+            ticketNumber,
+            cwd: coords.projectRoot,
+            home: coords.home,
+            entries: projectDiaristEntries(parameters),
+          });
         }
-
-        if (coords.boundTicketNumber === undefined) {
-          await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
-        }
-
-        const facts = await commitDiaristEntries({
-          ticketNumber,
-          cwd: coords.projectRoot,
-          home: coords.home,
-          entries: projectDiaristEntries(parameters),
-        });
-        return {
-          ...(submitted ?? { receipt: parameters }),
-          ticketNumber,
-          sitian: facts,
-        };
+        return parameters;
       },
     },
     dependencies,
@@ -1215,7 +1145,8 @@ export function createRoleRuntimeExtension(
           };
           pendingNavigatorPresentation = { event, report };
         }
-        await attendance.dispose();
+        // 过时不候: do not await sidecar teardown — parent court must close.
+        void Promise.resolve(attendance.dispose()).catch(() => undefined);
       })();
       pendingNavigatorSettlement = pending;
       await pending;
@@ -1268,75 +1199,30 @@ export function createRoleRuntimeExtension(
         // Soft session_start placeholders (no materials yet) recover here; hard
         // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
-          const subject = event.prompt.trim();
-          if (subject !== "") {
-            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
-            const priorAuthority = navigatorWorkContext.authority;
-            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
-              ? priorAuthority
-              : subject;
-            navigatorWorkContext = {
-              subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
-              subject,
-              authority,
-              subjectProvenance,
-            };
-            await navigatorAttendance.setWorkContext(navigatorWorkContext);
-          }
+          // #836 A7.10: do not rewrite work subject from prompt bytes.
         }
       }
       navigatorAttendance?.prepare();
       // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
       if (role === "reviewer" && activeReviewerParent !== undefined) {
         if (!reviewerExpansionCaptured) {
-          if (
-            reviewerOriginalRequest === undefined
-            || activeReviewerParent.skillBinding.captureExpansion(
+          if (reviewerOriginalRequest !== undefined) {
+            activeReviewerParent.skillBinding.captureExpansion(
               roleHost.capabilities?.skillExpansion(event.prompt),
               reviewerOriginalRequest,
-            ) === undefined
-          ) {
-            failInfrastructure(
-              new Error("Canonical code-review Skill expansion did not match the captured request"),
-              ctx,
             );
           }
           reviewerExpansionCaptured = true;
         }
-        const specDisposition = activeReviewerParent.getSpecDisposition();
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
             soul: activeReviewerParent.soul,
-            ...(specDisposition === undefined ? {} : { specDisposition }),
           }),
         };
       }
       // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
       if (role === "collector" && activeCollector !== undefined) {
-        const options = event.systemPromptOptions;
-        if (options.skills && options.skills.length > 0) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 skills"),
-            ctx,
-          );
-        }
-        if (options.contextFiles && options.contextFiles.length > 0) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 context files"),
-            ctx,
-          );
-        }
-        if (
-          typeof options.appendSystemPrompt === "string"
-          && options.appendSystemPrompt.trim().length > 0
-        ) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到 appendSystemPrompt 漂移"),
-            ctx,
-          );
-        }
         if (!collectorFirstDispatchDone) {
           collectorFirstDispatchDone = true;
           activeCollector.ledger.recordActivation(activeCollector.clock);
@@ -1381,7 +1267,7 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { details: infrastructureDetails, isError: true };
+        return { isError: true };
       }
       // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.

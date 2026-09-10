@@ -233,6 +233,7 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       toolCallId: "failure",
       outcome: "infrastructure",
       diagnostic: "typed seam unavailable",
+      accepted: {},
     });
     assert.equal(await readSealedSubmission(f.root, "run-ledger", f.root), undefined);
   });

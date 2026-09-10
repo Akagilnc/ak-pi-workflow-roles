@@ -670,15 +670,8 @@ export function createCollectorRoleRuntime(
         label: "通进司输出",
         description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
         promptSnippet: "提交通进司回执",
-        bounceInfrastructureDeclaration(params) {
-          const activation = getActivation();
-          if (activation === undefined) return undefined;
-          try {
-            buildCollectorReceipt(activation.ledger, params, activation.clock);
-          } catch {
-            return undefined;
-          }
-          return new CollectorNormalCompletionDeclarationError();
+        bounceInfrastructureDeclaration() {
+          return undefined;
         },
         parameters: outputSchema,
         async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -686,13 +679,6 @@ export function createCollectorRoleRuntime(
           if (activation === undefined) throw new Error("通进司未激活");
           try {
             activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
-            // #836 B6.1/2.20: LLM params are the role payload — never replace with
-            // code-assembled receipt or refuse on assembly gates.
-            try {
-              buildCollectorReceipt(activation.ledger, params, activation.clock);
-            } catch {
-              // Assembly failure is not a role rejection.
-            }
             activation.ledger.recordOutputCandidate();
             return {
               content: [{

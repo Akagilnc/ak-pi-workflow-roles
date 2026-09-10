@@ -16,7 +16,7 @@ export type { CountersignVerdict };
 export const countersignVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
-      countersignStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate" }),
+      countersignStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate。非三态时请重读后重交，勿改标。" }),
       fix: Type.Optional(
         Type.Object(
           { summary: Type.String({ minLength: 1, description: "退回摘要" }) },

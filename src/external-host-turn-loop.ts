@@ -128,6 +128,7 @@ export async function driveExternalRoleTurnRounds(
 ): Promise<RoleTurnResult> {
   let prompt = promptWithPriorNativePaths(prepared.prompt, request);
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
+  let stderr = "";
 
   for (let attempt = 0; attempt < EXTERNAL_ROLE_TURN_ROUND_LIMIT; attempt += 1) {
     if (abortSignal?.aborted) return settleHostAborted(prepared, driver.currentSessionId());
@@ -139,14 +140,19 @@ export async function driveExternalRoleTurnRounds(
       if (isHostAbortedError(error)) return settleHostAborted(prepared, driver.currentSessionId());
       throw error;
     }
-    if (round.status === "terminal") return round.result;
+    if (round.status === "terminal") {
+      const result = round.result;
+      const combined = `${stderr}${result.stderr}`;
+      return combined === result.stderr ? result : { ...result, stderr: combined };
+    }
+    if (round.stderr !== undefined && round.stderr.length > 0) stderr += round.stderr;
 
     const closure = await prepared.closeRound();
     if (closure.accepted) {
       await driver.afterAccepted?.();
-      return { code: 0, stderr: "", timedOut: false };
+      return { code: 0, stderr, timedOut: false };
     }
-    if ("failure" in closure) return asFailure(closure.failure, round.stderr ?? "");
+    if ("failure" in closure) return asFailure(closure.failure, stderr);
     prompt = closure.retry.message;
     driver.afterRetry?.();
   }

@@ -87,15 +87,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const SOURCE_KINDS = new Set<string>([
-  "cc-session",
-  "issue-body-comment",
-  "adr-decision-key",
-  "ticket-decree-block",
-]);
-
-const BASIS_METHODS = new Set<string>(["llm-semantic"]);
-
 const DIAGNOSTIC_KINDS = new Set<string>([
   "collector-failed",
   "issue-source-failed",
@@ -149,10 +140,10 @@ export function projectTicketProvenanceEntry(
     return undefined;
   }
   if (!isRecord(value.basis)) return undefined;
-  if (typeof value.basis.method !== "string" || !BASIS_METHODS.has(value.basis.method)) {
+  if (typeof value.basis.method !== "string") {
     return undefined;
   }
-  if (typeof value.sourceKind !== "string" || !SOURCE_KINDS.has(value.sourceKind)) {
+  if (typeof value.sourceKind !== "string") {
     return undefined;
   }
   if (!isRecord(value.sourceRef)) return undefined;
@@ -166,25 +157,13 @@ export function projectTicketProvenanceEntry(
   const basis: TicketProvenanceBasis = {
     method: value.basis.method as TicketProvenanceBasisMethod,
     ...(Array.isArray(value.basis.anchors)
-      ? {
-          anchors: value.basis.anchors.filter(
-            (item): item is string => typeof item === "string",
-          ),
-        }
+      ? { anchors: value.basis.anchors as readonly string[] }
       : {}),
     ...(typeof value.basis.note === "string" ? { note: value.basis.note } : {}),
   };
 
   const sourceRef: TicketProvenanceSourceRef = {
-    ...(typeof value.sourceRef.sessionFile === "string"
-      ? { sessionFile: value.sourceRef.sessionFile }
-      : {}),
-    ...(typeof value.sourceRef.entryId === "string" ||
-    typeof value.sourceRef.entryId === "number"
-      ? { entryId: value.sourceRef.entryId }
-      : {}),
-    ...(typeof value.sourceRef.path === "string" ? { path: value.sourceRef.path } : {}),
-    ...(typeof value.sourceRef.url === "string" ? { url: value.sourceRef.url } : {}),
+    ...(value.sourceRef as TicketProvenanceSourceRef),
   };
 
   return {

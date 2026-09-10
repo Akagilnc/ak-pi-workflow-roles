@@ -2,6 +2,8 @@
 
 Status: accepted（母票 #630；owner 2026-09-03 grill 收口「可以」；实施分票 #634）
 
+> **Supersession / 修订 `summons-pointer-input` (#836):** 指针仍唯一输入，改为整个父 run 目录；删 reask/gateReviewInstruction 互斥、偏好持久化 gate leaf、最后 toolCall leaf 即交卷。同席 resume 传召开场加「请重读」。
+
 本 ADR 是 #630 三项一体改造的薄决策页；历史 ADR 正文不回改，承继与修正关系记于本页。
 
 ## Decision keys

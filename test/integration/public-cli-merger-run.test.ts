@@ -596,8 +596,7 @@ test("host-neutral typed turns record every terminating submission without sole 
 
 test("public-cli shared entry covers post-seal, no-receipt, and infrastructure", { timeout: 120_000 }, async () => {
   await withSharedHome(async (home, project) => {
-    // #836: recording is immediate on execute — no_receipt only when host ends with zero submissions.
-    // stopAfterCandidate after execute now yields accepted (candidate is already recorded).
+    // Zero submissions: host ends cleanly → no_receipt, exit 0.
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -613,18 +612,15 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
             role: "judge",
             runId: "run-table-no-receipt",
             details: { judgeStatus: "converged" },
-            stopAfterCandidate: "end",
+            turns: [],
           }),
         },
       );
       assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
-      // Immediate record on execute → accepted (no longer pending-without-seal).
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(result.terminal?.roleOutcome.status, "converged");
-      assert.ok(await readSealedSubmission(project, "run-table-no-receipt", home));
+      assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
     }
 
-    // infrastructure: output candidate exists, then the host fails before typed closure
+    // Host fails after a recorded submission: failure + original payload coexist.
     {
       const { io } = captureIo();
       const result = await runAkRole(
@@ -644,10 +640,12 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           }),
         },
       );
-      // #836: execute already recorded the submission before host failure.
-      // Recorded payload survives; host failure may still surface depending on settle order.
+      assert.equal(result.exitCode, 1, JSON.stringify(result.terminal?.roleOutcome));
+      assert.equal(result.terminal?.roleOutcome.kind, "failure");
       assert.ok(await readSealedSubmission(project, "run-table-infrastructure", home));
-      assert.ok(result.terminal);
+      assert.ok(result.terminal?.submissions?.some((row) =>
+        typeof row === "object" && row !== null && (row as { report?: unknown }).report === "candidate before failure",
+      ), JSON.stringify(result.terminal?.submissions));
       process.exitCode = undefined;
     }
 

@@ -70,7 +70,6 @@ import {
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
-import { readSealedSubmission } from "../submission-ledger.ts";
 import {
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
@@ -85,6 +84,7 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
+  settleHostEndedNoReceipt,
   sealedAcceptanceRedispatchDisposition,
   attachRecordedSubmissions,
 } from "./settlement.ts";
@@ -472,29 +472,11 @@ export async function dispatchPostAdmissionTurn<
         result.stderr,
         "utf8",
       );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
-
-    let settled: T | undefined;
-    // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
-    // prior sealed pass cannot wash this turn's missing/escalated/failed result.
-    const courtScope =
-      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-        ? undefined
-        : { courtAttemptId: request.courtAttemptId };
-    try {
-      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      // #836:终局承载该次范围内全部原始交卷（调几次记几次）.
-      if (settled !== undefined) {
-        settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
-      }
     } catch (error) {
-      // Settle throw is a real failure fact — never swallow into undefined.
       return (await presentControlledFailure(
         admitted,
         {
-          timedOut: false,
+          timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
           thrown: error,
@@ -504,24 +486,11 @@ export async function dispatchPostAdmissionTurn<
         io,
       )) as { exitCode: number; admitted: A; terminal: T };
     }
-    if (settled !== undefined && shouldPresent(settled)) {
-      // This court sealed — drop open-court pointer (bare resume no longer continues it).
-      if (
-        settled.roleOutcome.kind === "accepted" &&
-        request.courtAttemptId !== undefined &&
-        request.courtAttemptId.length > 0
-      ) {
-        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-      }
-      await markRunTerminal(admitted.runDirectory);
-      io.stdout(formatTerminalResult(settled));
-      return {
-        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
-        admitted,
-        terminal: settled,
-      };
-    }
 
+    const courtScope =
+      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+        ? undefined
+        : { courtAttemptId: request.courtAttemptId };
     const sessionFile =
       admitted.principal !== undefined
         ? env.principalAuthority.decode(admitted.principal).sessionFile
@@ -541,18 +510,79 @@ export async function dispatchPostAdmissionTurn<
       credential: credentialFailure,
       runDirectory: admitted.runDirectory,
     });
-    return (await presentControlledFailure(
+    const hostSignalFailed =
+      result.timedOut
+      || result.knownFailure !== undefined
+      || runnerKnownFailure !== undefined
+      || credentialFailure !== undefined
+      || (result.code !== null && result.code !== 0);
+
+    let settled: T | undefined;
+    try {
+      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
+      if (settled !== undefined) {
+        settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
+      }
+    } catch (error) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: result.code,
+          stderr: result.stderr,
+          thrown: error,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+
+    // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
+    if (hostSignalFailed) {
+      return (await presentControlledFailure(
+        admitted,
+        {
+          timedOut: result.timedOut,
+          code: result.code,
+          stderr: result.stderr,
+          ...controlledFailureInputFromResolution(resolution),
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: A; terminal: T };
+    }
+
+    if (settled !== undefined && shouldPresent(settled)) {
+      if (
+        settled.roleOutcome.kind === "accepted" &&
+        request.courtAttemptId !== undefined &&
+        request.courtAttemptId.length > 0
+      ) {
+        await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+      }
+      await markRunTerminal(admitted.runDirectory);
+      io.stdout(formatTerminalResult(settled));
+      return {
+        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+        admitted,
+        terminal: settled,
+      };
+    }
+
+    const noReceipt = await attachRecordedSubmissions(
       admitted,
-      {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      },
-      adapters,
-      env.principalAuthority,
-      io,
-    )) as { exitCode: number; admitted: A; terminal: T };
+      await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
+      courtScope,
+    );
+    await markRunTerminal(admitted.runDirectory);
+    io.stdout(formatTerminalResult(noReceipt));
+    return {
+      exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
+      admitted,
+      terminal: noReceipt,
+    };
   } finally {
     await lease.release();
   }
@@ -582,19 +612,32 @@ export function resumeTurnRequestProjectionOptions(
     readonly attachments: readonly { frozenPath: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
+  const officerSourcePath = request.summons?.sourceRunPath;
+  const withReread = (body: string): string => {
+    if (
+      officerSourcePath === undefined
+      || (admitted.role !== "notary"
+        && admitted.role !== "inspector"
+        && admitted.role !== "auditor")
+    ) {
+      return body;
+    }
+    if (body.startsWith("请重读")) return body;
+    return `请重读\n${body}`;
+  };
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + optional paths.
       // Attachments are not a gate: message-only summons must stay plain too.
-      prompt = buildInstructionTransportPrompt({
+      prompt = withReread(buildInstructionTransportPrompt({
         instruction: request.message,
         instructionEmpty: false,
         attachments: summonsPrepared.attachments,
-      });
+      }));
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
-      prompt = request.message;
+      prompt = withReread(request.message);
     } else {
       // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
@@ -605,7 +648,7 @@ export function resumeTurnRequestProjectionOptions(
     }
   } else if (summonsPrepared !== undefined) {
     // #755: same-ticket review summons — instruction/attachments only.
-    prompt = buildInstructionTransportPrompt(summonsPrepared);
+    prompt = withReread(buildInstructionTransportPrompt(summonsPrepared));
   } else if (request.summons !== undefined) {
     // #755: same-ticket summons with no instruction/attachments (e.g. notary
     // source-run pointer). #836: officer resume opening adds「请重读」+ path pointer.
@@ -774,41 +817,23 @@ export async function runPostAdmissionSeatResume<
         // court materials ride). Settlement identity stays on the outer admitted.
         let admittedForBuild = loaded.admitted;
 
-        // Bare resume: read + seal-judge + bound clear only under the held lease.
+        // Bare resume: open-court pointer is the continue signal (not ledger seal).
         if (request.summons === undefined) {
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
-            const sealedForOpen = await readSealedSubmission(
-              admittedForBuild.projectRoot,
-              admittedForBuild.runId,
-              {
-                home: homeFromRunDirectory(admittedForBuild.runDirectory),
-                attemptId: openCourt.courtAttemptId,
-              },
-            );
-            if (sealedForOpen === undefined) {
-              // Continue open court: same summons materials + existing courtAttemptId.
-              // Caller message (if any) stays on the request — projection keeps it.
-              openCourtAttemptId = openCourt.courtAttemptId;
-              request = {
-                runId: request.runId,
-                ...(request.message === undefined
-                  ? {}
-                  : { message: request.message }),
-                ...(openCourt.summons === undefined
-                  ? {}
-                  : { summons: openCourt.summons }),
-              };
-              if (openCourt.summons !== undefined) {
-                const reloaded = await input.load(request);
-                admittedForBuild = reloaded.admitted;
-              }
-            } else {
-              // Open court already sealed — clear only the court id just judged.
-              await clearCurrentCourt(
-                admittedForBuild.runDirectory,
-                openCourt.courtAttemptId,
-              );
+            openCourtAttemptId = openCourt.courtAttemptId;
+            request = {
+              runId: request.runId,
+              ...(request.message === undefined
+                ? {}
+                : { message: request.message }),
+              ...(openCourt.summons === undefined
+                ? {}
+                : { summons: openCourt.summons }),
+            };
+            if (openCourt.summons !== undefined) {
+              const reloaded = await input.load(request);
+              admittedForBuild = reloaded.admitted;
             }
           }
         }

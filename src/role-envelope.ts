@@ -58,7 +58,7 @@ export function buildSkillExpansion(
   return Object.freeze({
     name,
     location: method.path,
-    content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
+    content: method.body,
     // Non-pi typed chain keeps original task bytes (ticket #822 r3); no consumer trim.
     userMessage: prompt,
   });
@@ -648,9 +648,12 @@ export async function prepareRoleEnvelope(options: {
       systemPrompt: methodPrompt,
       systemPromptOptions: {},
     });
-    const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
-      typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
-      ?? methodPrompt;
+    const systemPromptParts = promptResults.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      if (!("systemPrompt" in value) || typeof value.systemPrompt !== "string") return [];
+      return [value.systemPrompt];
+    });
+    const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
     // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
     // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
     const readingMaterials: unknown[] = [];

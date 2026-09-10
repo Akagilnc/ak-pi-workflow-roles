@@ -57,7 +57,6 @@ export async function commitDiaristEntries(input: {
     const entry = projectTicketProvenanceEntry({
       basis: {
         method: "llm-semantic",
-        anchors: [`#${ticketNumber}`],
         ...(submitted.note === undefined ? {} : { note: submitted.note }),
       },
       sourceKind: submitted.sourceKind,

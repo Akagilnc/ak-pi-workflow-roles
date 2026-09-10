@@ -681,17 +681,6 @@ export function createCollectorLedger(
 
     bindTarget(prNumber) {
       assertNotFatal();
-      if (outputCandidate || pendingOutputCallId !== undefined) {
-        throw new Error("通进司已产出输出候选，本局不再受理目标绑定");
-      }
-      if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
-        throw new Error("通进司绑定目标要求正安全整数 PR 号");
-      }
-      if (config.prNumber !== undefined && config.prNumber !== prNumber) {
-        throw new Error(
-          `通进司目标已绑定 PR ${config.prNumber}，不可改绑为 ${prNumber}`,
-        );
-      }
       config.prNumber = prNumber;
       appendJournal("ak-collector-target-bound", {
         prNumber,
@@ -701,12 +690,6 @@ export function createCollectorLedger(
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (
-        toolName !== COLLECTOR_OUTPUT_TOOL &&
-        (outputCandidate || pendingOutputCallId !== undefined)
-      ) {
-        throw new Error("通进司已产出输出候选，本局不再受理操作");
-      }
       if (toolName === COLLECTOR_OUTPUT_TOOL) {
         pendingOutputCallId = toolCallId;
         return;

@@ -19,13 +19,13 @@ export type ComplianceReceived = {
   readonly usage?: Usage;
 };
 export type ComplianceDecision =
-  | { status: "pass"; usage?: Usage }
-  | { status: "bounce"; violations: readonly unknown[]; usage?: Usage }
-  | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
+  | { status: "pass"; receipt?: unknown; usage?: Usage }
+  | { status: "bounce"; violations: readonly unknown[]; receipt?: unknown; usage?: Usage }
+  | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; receipt?: unknown; usage?: Usage }
   | ComplianceNoReceipt
   | ComplianceReceived;
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
-export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
+export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
@@ -60,11 +60,12 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
   }
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
-  if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "bounce") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
+  if (status === "pass") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
+  if (status === "bounce") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
     return {
       status,
+      receipt: arguments_,
       ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}),
       ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}),
       ...(usage === undefined ? {} : { usage }),
@@ -180,7 +181,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
           auditSubject,
           "--source-run",
           sourceRunDirectory,
-          AUDITOR_DOSSIER_PROMPT,
+          `${AUDITOR_DOSSIER_PROMPT}${sourceRunDirectory}`,
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,

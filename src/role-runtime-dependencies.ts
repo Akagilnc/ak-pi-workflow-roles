@@ -9,7 +9,6 @@ import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
-import { createPerDispatchReviewerAgent } from "./reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
 import { createReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import { loadAuditorSoulFromSubjectInput } from "./auditor-soul.ts";
@@ -25,7 +24,6 @@ const collectorHandbookSeedPath = fileURLToPath(
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
 export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const doctorAuditor = createPiDoctorAuditor();
-  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
@@ -63,8 +61,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     },
     // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
     auditDoctorCompliance: (options) => doctorAuditor(options),
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
-    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
       context: options.context,
       role: options.role,

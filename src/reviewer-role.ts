@@ -5,10 +5,8 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
-import { type ReviewerSpecDisposition } from "./reviewer-construction.ts";
-import { createReviewerDispatcher, type AcceptedReviewerDispatch, type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome } from "./reviewer-execution-ledger.ts";
+import { type AcceptedReviewerExecution, type ReviewerIssueFetcher, type ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import { type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -48,20 +46,17 @@ export type ReviewerRoleDependencies = {
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   /** Injected issue-fetch capability; shared seam owns gh lifecycle. */
   fetchIssue?: ReviewerIssueFetcher;
-  runDispatch(execution: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  runDispatch?(execution: AcceptedReviewerExecution, options: { context: HostContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
 
 export type ReviewerActivation = Readonly<{
-  dispatcher: ReturnType<typeof createReviewerDispatcher>;
   fixedBaseRevision: string;
   soul: string;
   /** Frozen code-review binding — envelope owns expansion capture against this data. */
   skillBinding: CanonicalSkillBinding<"code-review">;
-  /** Honest Spec disposition after accepted dispatch, for envelope parent prompt assembly. */
-  getSpecDisposition(): ReviewerSpecDisposition | undefined;
 }>;
 
 /**
@@ -72,101 +67,43 @@ export type ReviewerActivation = Readonly<{
 export function createReviewerRoleRuntime(
   pi: RoleHost,
   dependencies: ReviewerRoleDependencies,
-  hostActions: ReviewerRoleHostActions,
+  _hostActions: ReviewerRoleHostActions,
 ): {
   activate(ctx: HostContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
 } {
   let soul: string | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
-  let reader: ReviewerPinnedGitReader | undefined;
-  let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
   let registered = false;
   let fixedBaseRevision: string | undefined;
-  let acceptedDispatch: AcceptedReviewerDispatch | undefined;
-  const ledger = createReviewerExecutionLedger();
 
   return {
     async activate(_ctx, admitted) {
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
-      // Behavior layer receives frozen admitted inputs only — no pi.getFlag.
       fixedBaseRevision = admitted.baseRevision;
-      const reviewScopeKeys = admitted.reviewScopeKeys;
-      const authorityRefs = admitted.authorityRefs;
-      const ticketNumber = admitted.ticketNumber;
       const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
       if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
       binding = loaded;
-      reader = await dependencies.createPinnedGitReader();
-
-      acceptedDispatch = undefined;
-      const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
-        const dispatch = acceptedDispatch;
-        if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
-        const { context, signal } = invocation as { context: HostContext; signal?: AbortSignal };
-        ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
-        try {
-          const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
-          projectReviewerDispatchOutcome(ledger, dispatch, result);
-          return result;
-        } catch (error) {
-          if (error instanceof ReviewerDispatchExecutionError) {
-            try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
-            catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
-            throw error;
-          }
-          throw ledger.recordInfrastructureFailure(error);
-        }
-      };
-      dispatcher = createReviewerDispatcher({
-        canonicalSkill: binding.snapshot.raw,
-        reader,
-        ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
-        ...(authorityRefs === undefined ? {} : { authorityRefs }),
-        ...(ticketNumber === undefined ? {} : { ticketNumber }),
-        ...(dependencies.fetchIssue === undefined ? {} : { fetchIssue: dependencies.fetchIssue }),
-        decisionEvidence(decision) {
-          try {
-            if (decision.disposition === "accepted") {
-              ledger.append(projectAcceptedDispatch(decision.dispatch));
-              acceptedDispatch = decision.dispatch;
-            } else ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
-          } catch (error) {
-            throw ledger.recordInfrastructureFailure(error);
-          }
-        },
-        run: executeAndProjectDispatch,
-      });
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "Standards/Spec 评审腿由 runtime 以取证子会话代跑，本席收腿报告后交薄回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
-          async execute(id: string, parameters: unknown, _signal: AbortSignal | undefined, _update: unknown, toolCtx: HostContext): Promise<HostToolResult<unknown>> {
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 code-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+          async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
-            // #836: 删 8/7.6 — do not refuse on ledger axes or reassemble receipt.
-            // LLM params are the role payload; runtime child facts stay off this face.
-            // Parent seat invokes code-review skill itself (陛下「父session自己调用code review skill」).
-            try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
             return {
               content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
               details: parameters,
               terminate: true as const,
             };
           } });
-        // Skill invocation transform + agent_start expansion/prompt lifecycle: shared envelope (ADR 0018).
-        pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
       }
       const activatedSoul = soul;
       const activatedBase = fixedBaseRevision;
       const activatedBinding = binding;
       return Object.freeze({
-        dispatcher,
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
         skillBinding: activatedBinding,
-        getSpecDisposition() {
-          return acceptedDispatch?.specDisposition;
-        },
       });
     },
   };

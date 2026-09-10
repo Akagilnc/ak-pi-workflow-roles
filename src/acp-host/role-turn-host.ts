@@ -7,7 +7,7 @@ import {
   driveExternalRoleTurnRounds,
   raceAgainstHostAbort,
 } from "../external-host-turn-loop.ts";
-import { retainDiagnosticTail } from "../diagnostic-tail.ts";
+
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   renderSystemPromptOverride,
@@ -22,6 +22,8 @@ export interface AcpConnection {
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
   /** Subscribe to agent→client notifications (session/update stream, etc.). */
   onNotification?(handler: (method: string, params: Readonly<Record<string, unknown>>) => void): void;
+  /** Full process stderr accumulated so far (#836). */
+  stderr?(): string;
   close(): Promise<void>;
 }
 
@@ -93,7 +95,7 @@ export function connectAcpStdio(options: {
     child.kill("SIGTERM");
   };
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-    stderr = retainDiagnosticTail(stderr + chunk);
+    stderr += chunk;
   });
   child.on("error", (error) => settleClosed(acpError("acp-process-error", `ACP process error: ${error.message}`, error)));
   createInterface({ input: child.stdout }).on("line", (line) => {
@@ -158,6 +160,9 @@ export function connectAcpStdio(options: {
     },
     onNotification(handler) {
       notificationHandlers.push(handler);
+    },
+    stderr() {
+      return stderr;
     },
     async close() {
       if (closed) return;
@@ -316,7 +321,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 result: failure("output", "AcpRefusal", "refusal", { sessionId }),
               };
             }
-            return { status: "delivered" };
+            return { status: "delivered", stderr: activeConnection.stderr?.() ?? "" };
           },
           async afterAccepted() {
             await rpc("session/close", { sessionId: activeSessionId });

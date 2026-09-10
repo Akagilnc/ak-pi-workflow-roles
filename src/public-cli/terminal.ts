@@ -345,5 +345,12 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
+  // Typed submissions[] is the machine face; rows are human presentation of the same array.
+  if (result.submissions !== undefined) {
+    for (const payload of result.submissions) {
+      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+      lines.push(`submission\t${encodeTerminalField(rendered)}`);
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
