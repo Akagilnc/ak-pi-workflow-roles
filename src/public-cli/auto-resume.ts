@@ -537,7 +537,9 @@ export async function runWithAutoResumeLoop<
     }
 
     autoResumeAttempts++;
-    if (result === undefined || result.turnDispatched === true) {
+    // Resume payload only after a host turn actually started. Pre-turn throws
+    // and beforeDispatch failures retry the initial payload (#840 / #416).
+    if (result?.turnDispatched === true) {
       currentPayload = options.buildResumePayload();
     }
     isFirst = false;

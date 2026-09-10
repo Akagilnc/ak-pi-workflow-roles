@@ -680,6 +680,28 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+/**
+ * Hold the writer lease through after-lease build, then hand off to dispatch.
+ * Builder (or any throw before dispatch) must release here — dispatch's finally
+ * only runs after this handoff (manual resume and station-child auto-resume).
+ */
+async function dispatchAfterWriterLease<T>(input: {
+  lease: RunWriterLease;
+  build: () => Promise<RoleTurnRequest>;
+  dispatch: (request: RoleTurnRequest) => Promise<T>;
+}): Promise<T> {
+  let handedOffToDispatch = false;
+  try {
+    const request = await input.build();
+    handedOffToDispatch = true;
+    return await input.dispatch(request);
+  } finally {
+    if (!handedOffToDispatch) {
+      await input.lease.release();
+    }
+  }
+}
+
 function isAlreadyFrozenSummonsAttachment(
   runDirectory: string,
   attachmentPath: string,
@@ -899,50 +921,55 @@ export async function runPostAdmissionSeatResume<
       let firstTurn: RoleTurnRequest | undefined;
       const engine = input.effectiveEngine ?? input.env.engine;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
+      type StationChildAttempt = { readonly resumeTurn: boolean };
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: input.env.principalAuthority,
         io: input.io,
         sessionAppender: input.env.sessionAppender,
         autoResumeLimit: input.env.autoResumeLimit,
-        buildInitialPayload: () => undefined,
-        buildResumePayload: () => undefined,
+        buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
+        buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
         // redispatch brake (#833). New-court station-child turns still auto-resume.
-        dispatch: async (_payload, lease, isFirst, attemptIo) => {
-          let turnRequest: RoleTurnRequest;
-          if (isFirst || firstTurn === undefined) {
-            turnRequest = await buildRequestAfterLease();
-            firstTurn = turnRequest;
-          } else {
-            turnRequest = {
-              ...firstTurn,
-              continuation: {
-                kind: "resume",
-                prompt: buildResumeContinuationPrompt({
-                  packageRoot: input.env.packageRoot,
-                  ...(engine === undefined ? {} : { engine }),
-                }),
-              },
-            };
-          }
-          return dispatchPostAdmissionTurn({
-            admitted: loaded.admitted,
-            env: {
-              ...input.env,
-              ...(loaded.admitted.correlationId === undefined
-                ? {}
-                : { correlationId: loaded.admitted.correlationId }),
-            },
-            io: attemptIo,
-            request: turnRequest,
+        dispatch: async (payload, lease, _isFirst, attemptIo) =>
+          dispatchAfterWriterLease({
             lease,
-            adapters: stationAdapters,
-            ...(input.effectiveEngine === undefined
-              ? {}
-              : { effectiveEngine: input.effectiveEngine }),
-          });
-        },
+            build: async () => {
+              if (payload.resumeTurn && firstTurn !== undefined) {
+                return {
+                  ...firstTurn,
+                  continuation: {
+                    kind: "resume",
+                    prompt: buildResumeContinuationPrompt({
+                      packageRoot: input.env.packageRoot,
+                      ...(engine === undefined ? {} : { engine }),
+                    }),
+                  },
+                };
+              }
+              const turnRequest = await buildRequestAfterLease();
+              firstTurn = turnRequest;
+              return turnRequest;
+            },
+            dispatch: (turnRequest) =>
+              dispatchPostAdmissionTurn({
+                admitted: loaded.admitted,
+                env: {
+                  ...input.env,
+                  ...(loaded.admitted.correlationId === undefined
+                    ? {}
+                    : { correlationId: loaded.admitted.correlationId }),
+                },
+                io: attemptIo,
+                request: turnRequest,
+                lease,
+                adapters: stationAdapters,
+                ...(input.effectiveEngine === undefined
+                  ? {}
+                  : { effectiveEngine: input.effectiveEngine }),
+              }),
+          }),
       });
     }
     return await runPostAdmissionManualResume({
@@ -1062,6 +1089,7 @@ export async function runPostAdmissionResumable<
  * Manual resume: lease + dispatch. Pass-through to the host — no sealed-accepted
  * short-circuit (#833 / #416). Court open (summons / message / open court) is
  * built under lease when using buildRequestAfterLease; sole-final stays per-attempt.
+ * After-lease build shares dispatchAfterWriterLease with station-child auto-resume.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -1121,48 +1149,43 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
-  // Court open/recovery under held lease until dispatch owns release (finally
-  // below). Builder and any throw on this seam must release here — dispatch's
-  // finally only runs after handoff.
-  let handedOffToDispatch = false;
-  try {
-    if (request === undefined) {
-      if (buildRequestAfterLease === undefined) {
-        throw new Error(
-          "runPostAdmissionManualResume requires request or buildRequestAfterLease",
-        );
+  const result = await dispatchAfterWriterLease({
+    lease,
+    build: async () => {
+      if (request === undefined) {
+        if (buildRequestAfterLease === undefined) {
+          throw new Error(
+            "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+          );
+        }
+        request = await buildRequestAfterLease();
       }
-      request = await buildRequestAfterLease();
-    }
-
-    handedOffToDispatch = true;
-    const result = await dispatchPostAdmissionTurn({
-      admitted,
-      env: {
-        ...env,
-        ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-        ...(admitted.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId }),
-      },
-      io,
-      request,
-      lease,
-      adapters,
-      ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-    });
-    if (result.terminal !== undefined) {
-      (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-    }
-    return {
-      ...result,
-      ...(staleWriterLeaseReclaimed === true
-        ? { staleWriterLeaseReclaimed: true as const }
-        : {}),
-    };
-  } finally {
-    if (!handedOffToDispatch) {
-      await lease.release();
-    }
+      return request;
+    },
+    dispatch: (turnRequest) =>
+      dispatchPostAdmissionTurn({
+        admitted,
+        env: {
+          ...env,
+          ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+          ...(admitted.correlationId === undefined
+            ? {}
+            : { correlationId: admitted.correlationId }),
+        },
+        io,
+        request: turnRequest,
+        lease,
+        adapters,
+        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+      }),
+  });
+  if (result.terminal !== undefined) {
+    (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
+  return {
+    ...result,
+    ...(staleWriterLeaseReclaimed === true
+      ? { staleWriterLeaseReclaimed: true as const }
+      : {}),
+  };
 }
