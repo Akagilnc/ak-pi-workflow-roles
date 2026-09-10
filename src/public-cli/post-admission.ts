@@ -36,6 +36,15 @@ import type {
 } from "../host-contracts.ts";
 import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
 
+/** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
+function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { name: error.name, message: error.message, ...(code === undefined ? {} : { code }) };
+  }
+  return { message: String(error) };
+}
+
 /** Append one system section to a continuation prompt, keeping its kind. */
 function appendContinuationSection(
   continuation: RoleTurnContinuation,
@@ -464,20 +473,26 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
 
-    // Best-effort mirror only — `result.stderr` stays live in memory for the
-    // real classification below regardless. A write failure here (unwritable
-    // run directory, stderr.log occupied as a directory, ...) must never
-    // become THE controlling failure and wash out the primary child signal
-    // that already arrived on `result` (#836: a secondary failure must not
-    // overwrite an already-known cause).
+    // `result.stderr` stays live in memory for the real classification below
+    // regardless of whether this durable mirror write succeeds. A write
+    // failure here (unwritable run directory, stderr.log occupied as a
+    // directory, ...) is a real infrastructure problem and must never be
+    // dropped silently (catch-and-continue with no trace is a defect) — but
+    // it also must never become THE controlling failure and wash out a
+    // primary child signal that already arrived on `result`, or an
+    // already-sealed accepted payload (#836: a secondary failure must not
+    // overwrite an already-known cause or an already-recorded leg). It rides
+    // beside whatever the real classification below determines, and only
+    // becomes the reported failure itself when nothing else is wrong.
+    let stderrLogWriteFailure: unknown;
     try {
       await writeFile(
         join(admitted.runDirectory, "stderr.log"),
         result.stderr,
         "utf8",
       );
-    } catch {
-      // Swallowed by design — see comment above.
+    } catch (error) {
+      stderrLogWriteFailure = error;
     }
 
     const courtScope =
@@ -572,13 +587,31 @@ export async function dispatchPostAdmissionTurn<
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
     if (hostSignalFailed) {
+      const resolutionInput = controlledFailureInputFromResolution(resolution);
+      const stderrLogWriteDetails =
+        stderrLogWriteFailure === undefined
+          ? undefined
+          : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
-          ...controlledFailureInputFromResolution(resolution),
+          ...resolutionInput,
+          // Secondary fact only — never the cause. Rides on whichever channel
+          // classification actually reads (knownFailure.details owns it when
+          // a knownFailure exists; the top-level knownDetails otherwise).
+          ...(stderrLogWriteDetails === undefined
+            ? {}
+            : resolutionInput.knownFailure !== undefined
+              ? {
+                knownFailure: {
+                  ...resolutionInput.knownFailure,
+                  details: { ...(resolutionInput.knownFailure.details ?? {}), ...stderrLogWriteDetails },
+                },
+              }
+              : { knownDetails: stderrLogWriteDetails }),
         },
         adapters,
         env.principalAuthority,
@@ -586,31 +619,17 @@ export async function dispatchPostAdmissionTurn<
       )) as { exitCode: number; admitted: A; terminal: T };
     }
 
-    // No accepted row and no typed/host failure signal — lawful no_receipt
-    // requires that nothing real happened either (host never gave the role a
-    // genuine turn, but the admitted session file is present and blank).
-    // A session file that is simply absent means the admitted run never got
-    // a transcript at all (a session-read problem, distinct from a role that
-    // was dispatched and produced nothing lawful). A session with real
-    // content (the role was dispatched, wrote something) but never produced
-    // an accepted result is a true output failure, not a lawful absence —
-    // the shape of what it wrote is never judged here, only whether the
-    // session exists and whether anything was written into it at all.
-    const sessionActivity =
-      sessionFile === ""
-        ? ("blank" as const)
-        : await readFile(sessionFile, "utf8").then(
-            (text) => (text.trim().length > 0 ? ("content" as const) : ("blank" as const)),
-            () => "missing" as const,
-          );
-    if (sessionActivity !== "blank") {
+    // Nothing else was wrong, but the durable stderr mirror itself failed to
+    // write — that is the real (infrastructure) problem in this case, not a
+    // lawful absence of a receipt. Honest and loud, not silently no_receipt.
+    if (stderrLogWriteFailure !== undefined) {
       return (await presentControlledFailure(
         admitted,
         {
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
-          knownCause: sessionActivity === "missing" ? "session" : "output",
+          thrown: stderrLogWriteFailure,
         },
         adapters,
         env.principalAuthority,

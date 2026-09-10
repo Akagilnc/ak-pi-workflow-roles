@@ -82,6 +82,32 @@ function runIdFromDirectory(runDirectory: string): string {
   return at === -1 ? base : base.slice(0, at);
 }
 
+/**
+ * Find a frozen attachment file by content under a run's attachments tree.
+ * #836: presenting a same-parent no-new-seal court as accepted (ledger
+ * honesty) clears currentCourt immediately — the admission-time attachment
+ * freeze itself already happened and is durable on disk regardless, so its
+ * identity is recovered from the tree directly rather than from
+ * currentCourt.summons.attachmentPaths (gone once the court clears).
+ */
+async function findFrozenAttachmentWithContent(
+  dir: string,
+  content: string,
+): Promise<string | undefined> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await findFrozenAttachmentWithContent(full, content);
+      if (nested !== undefined) return nested;
+    } else {
+      const text = await readFile(full, "utf8").catch(() => undefined);
+      if (text === content) return full;
+    }
+  }
+  return undefined;
+}
+
 async function listBookRunDirs(home: string): Promise<string[]> {
   const booksRoot = join(home, ".ak-roles", "books");
   const books = await readdir(booksRoot).catch(() => [] as string[]);
@@ -320,11 +346,22 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
         createRunId: () => "01a063700-0000-7000-8000-00000000n002",
       },
     );
-    assert.notEqual(second.exitCode, 0, "same-parent court without seal must not exit as success");
-    assert.notEqual(
+    // #836: courtAttempt is a recording tag, not a visibility gate — a
+    // same-parent court that dispatches without recording a new submission
+    // still honestly presents whatever the run's ledger already holds (the
+    // first court's sealed pass), not an invented "not accepted" status.
+    assert.equal(second.exitCode, 0, "same-parent court without a new seal still presents the run's ledger honestly");
+    assert.equal(
       second.terminal?.roleOutcome.kind,
       "accepted",
-      "same-parent court must not present the first sealed pass",
+      "ledger still holds the first court's accepted payload",
+    );
+    assert.equal(
+      second.terminal?.roleOutcome.kind === "accepted"
+        ? payloadStatus(second.terminal.roleOutcome)
+        : undefined,
+      "pass",
+      "presented payload is the first court's pass — never re-invented for the new court",
     );
     assert.equal(turn, 3, "same-parent court must dispatch a real turn");
     assert.equal(seen.length, 3, "same-parent court must dispatch one turn after cross-parent mint");
@@ -389,10 +426,16 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       firstRunDirectory,
       "bare resume stays on the same run directory",
     );
+    // #836: presenting the same-parent court's dispatch as accepted (step 4)
+    // already cleared that court's current-court marker — same as any other
+    // accepted presentation does. This bare resume therefore reaches the
+    // host as a plain post-terminal pass-through (#833), not a continuation
+    // of a still-open court; courtAttemptId is a recording tag, not a
+    // continuity invariant code enforces.
     assert.equal(
       seen[3]!.courtAttemptId,
-      openCourtAttemptId,
-      "bare resume must continue the open courtAttemptId, not mint a new court",
+      undefined,
+      "bare resume after an already-presented-accepted court is a pass-through, not an open-court continuation",
     );
     assert.equal(
       seen[3]!.sourceRun,
@@ -440,7 +483,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   }
 });
 
-test("#637 public inspector: freeze-once currentCourt + bare resume message keeps open court", async () => {
+test("#637 public inspector: freeze-once attachment identity survives a no-seal court and a fresh resume-with-message court", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
   const priorPath = process.env.PATH;
@@ -570,7 +613,11 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
         createRunId: () => "01a063700-0000-7000-8000-00000000i002",
       },
     );
-    assert.notEqual(second.exitCode, 0, "same-parent court without seal must not succeed");
+    // #836: courtAttempt is a recording tag, not a visibility gate — a
+    // same-parent court that dispatches without recording a new submission
+    // still honestly presents whatever the run's ledger already holds.
+    assert.equal(second.exitCode, 0, "same-parent court without a new seal still presents the run's ledger honestly");
+    assert.equal(second.terminal?.roleOutcome.kind, "accepted", "ledger still holds the first court's accepted payload");
     assert.equal(seen.length, 3);
     assert.equal(seen[2]!.kind, "resume");
     assert.equal(seen[2]!.runDirectory, runDirectory);
@@ -579,21 +626,26 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     );
     const openCourtAttemptId = seen[2]!.courtAttemptId!;
 
-    const openCourt = await readCurrentCourt(runDirectory);
-    assert.ok(openCourt !== undefined, "unsealed same-parent court must persist currentCourt");
-    assert.equal(openCourt!.courtAttemptId, openCourtAttemptId);
-    const frozenPaths = openCourt!.summons?.attachmentPaths ?? [];
-    assert.equal(frozenPaths.length, 1, "currentCourt must carry this court\'s attachment identity");
+    // #836: presenting the same-parent court's dispatch as accepted already
+    // cleared its current-court marker (same as any other accepted
+    // presentation). The admission-time attachment freeze itself already
+    // happened and is durable on disk regardless — recover its identity from
+    // the tree directly rather than from currentCourt (now gone).
+    assert.equal(
+      await readCurrentCourt(runDirectory),
+      undefined,
+      "presenting the ledger's accepted payload clears currentCourt, same as any other accepted presentation",
+    );
+    const frozenPath = await findFrozenAttachmentWithContent(
+      join(runDirectory, "attachments"),
+      "court-material-v1\n",
+    );
+    assert.ok(frozenPath !== undefined, "admission-time freeze must be durable on disk");
     assert.ok(
-      frozenPaths[0]!.startsWith(join(runDirectory, "attachments")),
-      "currentCourt attachmentPaths must be the in-run freeze identity",
+      frozenPath!.startsWith(join(runDirectory, "attachments")),
+      "frozen attachment must be the in-run freeze identity",
     );
-    assert.notEqual(
-      frozenPaths[0],
-      external,
-      "currentCourt must not keep the external original path",
-    );
-    assert.equal(await readFile(frozenPaths[0]!, "utf8"), "court-material-v1\n");
+    assert.notEqual(frozenPath, external, "frozen attachment must not keep the external original path");
 
     const freezeDirsAfterOpen = await readdir(join(runDirectory, "attachments"));
     // birth admit freeze + one summons freeze directory
@@ -603,7 +655,10 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     await writeFile(external, "external-changed-after-freeze\n", "utf8");
     await rm(external, { force: true });
 
-    // 4) Bare resume with caller message continues open court on frozen materials.
+    // 4) Resume with a caller message after an already-presented-accepted
+    // court dispatches a new court (#833) — the prior court already closed
+    // when step 3 presented its accepted payload, so this mints its own
+    // fresh courtAttemptId rather than continuing the closed one.
     const resumed = await runAkRole(["resume", runId, "caller-resume-message"], {
       home,
       packageRoot,
@@ -612,16 +667,20 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
       io,
       roleTurnHost: host,
     });
-    assert.equal(turn, 4, "bare resume with message must dispatch a real turn");
+    assert.equal(turn, 4, "resume with message must dispatch a real turn");
     assert.equal(seen.length, 4);
     assert.equal(seen[3]!.kind, "resume");
-    assert.equal(
+    assert.ok(
+      typeof seen[3]!.courtAttemptId === "string" && seen[3]!.courtAttemptId.length > 0,
+      "resume with message mints its own court",
+    );
+    assert.notEqual(
       seen[3]!.courtAttemptId,
       openCourtAttemptId,
-      "caller message resume must continue the open courtAttemptId",
+      "the closed court from step 3 is not reopened — this is a fresh court",
     );
     assert.equal(seen[3]!.runDirectory, runDirectory);
-    assert.equal(resumed.exitCode, 0, "open-court resume on frozen materials must accept");
+    assert.equal(resumed.exitCode, 0, "new-court resume on frozen materials must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
     // Reuse must not mint another summons freeze directory from the missing external path.
@@ -629,17 +688,17 @@ test("#637 public inspector: freeze-once currentCourt + bare resume message keep
     assert.equal(
       freezeDirsAfterResume.length,
       freezeDirsAfterOpen.length,
-      "bare resume must reuse frozen paths; no additional freeze directory",
+      "resume must reuse frozen paths; no additional freeze directory",
     );
     assert.equal(
-      await readFile(frozenPaths[0]!, "utf8"),
+      await readFile(frozenPath!, "utf8"),
       "court-material-v1\n",
       "accepted freeze snapshot bytes must remain",
     );
     assert.equal(
       await readCurrentCourt(runDirectory),
       undefined,
-      "sealed open court clears currentCourt",
+      "sealed new court clears currentCourt",
     );
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
@@ -777,7 +836,11 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
         createRunId: () => "01a067500-0000-7000-8000-00000000a002",
       },
     );
-    assert.notEqual(second.exitCode, 0, "second court without seal must not succeed");
+    // #836: courtAttempt is a recording tag, not a visibility gate — a
+    // same-parent court that dispatches without recording a new submission
+    // still honestly presents whatever the run's ledger already holds.
+    assert.equal(second.exitCode, 0, "second court without a new seal still presents the run's ledger honestly");
+    assert.equal(second.terminal?.roleOutcome.kind, "accepted", "ledger still holds the first court's accepted payload");
     assert.equal(turn, 2, "second auditor summons must dispatch a real turn");
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume", "same-parent auditor re-summons must resume");

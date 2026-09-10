@@ -8,10 +8,7 @@ import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-c
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
-import {
-  createSubmissionLedgerHost,
-  hasRecordedSubmission,
-} from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
 
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
@@ -94,7 +91,13 @@ async function driveLedgerProducer(input: {
   }
 }
 
-/** Seal an accepted projection through the production ledger host. */
+/**
+ * Seal an accepted projection through the production ledger host.
+ * #836: the submission tool records every call — callers decide whether a
+ * given turn provides `sealedAcceptance` at all; this producer never
+ * second-guesses that by skipping a call because something was already
+ * recorded (调几次记几次, no dedup gate here).
+ */
 export async function sealAcceptedSubmission(input: {
   readonly cwd: string;
   readonly runId: string;
@@ -106,15 +109,6 @@ export async function sealAcceptedSubmission(input: {
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
 }): Promise<void> {
-  // Read under the same machine home the producer writes (not ambient process HOME).
-  // A new court attempt may seal again after a prior sealed attempt — only skip when
-  // this exact court turn would collide with an already-present latest seal without id.
-  if (
-    input.courtAttemptId === undefined &&
-    (await hasRecordedSubmission(input.cwd, input.runId, input.home))
-  ) {
-    return;
-  }
   await driveLedgerProducer({
     cwd: input.cwd,
     runId: input.runId,

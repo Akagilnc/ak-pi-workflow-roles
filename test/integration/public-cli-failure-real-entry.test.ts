@@ -325,22 +325,24 @@ test("public report publication failures retain typed errno identity", async () 
     });
   }
 });
-// Post-admission child failure matrix: admission succeeded, the pi child exits
-// zero without a lawful terminal — one shared shape, three classified causes.
-test("zero-exit post-admission failures classify typed causes via public entry", async () => {
+// Post-admission zero-exit matrix: admission succeeded, the pi child exits
+// zero, and no accepted ledger row exists — a missing session transcript, or
+// an unsealed toolResult with a status code does not recognize. #836: none
+// of these is a code-side rejection of what the role said; with no typed
+// host/runner failure signal either, every shape settles as the same honest
+// no_receipt (lawful, exit 0) — never an invented session/output failure.
+test("zero-exit post-admission runs with no accepted row settle honestly as no_receipt", async () => {
   const rows = [
     {
-      label: "missing session → cause=session",
+      label: "missing session",
       argv: (project: string) => ["judge", "--project", project, "no session bytes"],
       runId: "run-session-missing-001",
       seedSession: async (_sessionFile: string) => {
         // Admitted session directory exists but holds no transcript.
       },
-      expectedCause: "session" as const,
-      expectedRole: undefined,
     },
     {
-      label: "invalid coder details → coder identity fallback",
+      label: "unsealed coder toolResult with a status coder does not recognize",
       argv: (project: string) => ["coder", "apply", "--project", project, "bogus details"],
       runId: "run-coder-output-bogus-001",
       seedSession: async (sessionFile: string) => {
@@ -358,11 +360,9 @@ test("zero-exit post-admission failures classify typed causes via public entry",
           "utf8",
         );
       },
-      expectedCause: "output" as const,
-      expectedRole: "coder" as const,
     },
     {
-      label: "invalid judge details → cause=output",
+      label: "unsealed judge toolResult with a status judge does not recognize",
       argv: (project: string) => ["judge", "--project", project, "bogus details"],
       runId: "run-output-bogus-001",
       seedSession: async (sessionFile: string) => {
@@ -380,8 +380,6 @@ test("zero-exit post-admission failures classify typed causes via public entry",
           "utf8",
         );
       },
-      expectedCause: "output" as const,
-      expectedRole: undefined,
     },
   ] as const;
   for (const row of rows) {
@@ -407,19 +405,10 @@ test("zero-exit post-admission failures classify typed causes via public entry",
         },
         }),
       });
-      await assertPublicFailureSettlement({
-        result,
-        stdout,
-        stderr,
-        expectedCause: row.expectedCause,
-      });
-      if (row.expectedRole !== undefined) {
-        assert.equal(result.terminal?.roleOutcome.role, row.expectedRole, row.label);
-        const errorRef = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-        assert.ok(errorRef, row.label);
-        const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as { role: string };
-        assert.equal(errorBody.role, row.expectedRole, row.label);
-      }
+      assert.equal(result.exitCode, 0, row.label);
+      assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", row.label);
+      assert.equal(stdout.length, 1, row.label);
+      assert.equal(stderr.length, 0, row.label);
     });
   }
 });

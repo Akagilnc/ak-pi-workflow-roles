@@ -541,7 +541,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     assert.ok(stderr.length > 0);
   });
 });
-test("real Coder/Fixer runs require a legal execution status before accepted settlement", async () => {
+test("real Coder/Fixer runs settle on the recorded status, or honestly no_receipt when unsealed", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -634,12 +634,12 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
 
         assert.ok(result.terminal, `${row.role}:${status} terminal`);
         if (status === "missing") {
-          assert.notEqual(result.exitCode, 0, `${row.role}: missing status`);
-          assert.notEqual(result.terminal!.roleOutcome.kind, "accepted", row.role);
-          assert.equal(result.terminal!.roleOutcome.kind, "failure", row.role);
-          if (result.terminal!.roleOutcome.kind === "failure") {
-            assert.equal(result.terminal!.roleOutcome.cause, "output", row.role);
-          }
+          // #836: an unsealed toolResult in the raw session is not a code-side
+          // rejection — the submission ledger has no accepted row for this
+          // role, and the host ended cleanly, so this settles as an honest
+          // no_receipt (lawful, exit 0) — never an invented "output" failure.
+          assert.equal(result.exitCode, 0, `${row.role}: missing status`);
+          assert.equal(result.terminal!.roleOutcome.kind, "no_receipt", row.role);
         } else {
           assert.equal(result.exitCode, 0, `${row.role}:${status}`);
           assert.equal(result.terminal!.roleOutcome.kind, "accepted", `${row.role}:${status}`);
@@ -649,7 +649,7 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
     }
   });
 });
-test("unbound output failure remains nonzero even after an older provider error (#288)", async () => {
+test("no lawful output after an older provider error settles honestly as no_receipt, not a revived stale error (#288)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -720,11 +720,13 @@ test("unbound output failure remains nonzero even after an older provider error 
           }),
       },
     );
-    assert.notEqual(result.exitCode, 0);
-    assert.equal(stdout.length, 1, "exactly one failure Terminal emission");
-    assert.equal(stderr.length, 1);
-    assert.match(stderr[0]!, /without a lawful typed terminal result/);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
+    // #836: no accepted ledger row and no typed host/runner failure signal —
+    // the host ended cleanly, so this settles as an honest no_receipt.
+    // The older, superseded provider error is not revived as the failure
+    // (that was #288's point) — and code does not invent an "output" failure
+    // for it either. No_receipt is itself the answer: nothing was accepted.
+    assert.equal(result.exitCode, 0);
+    assert.equal(stdout.length, 1, "exactly one Terminal emission");
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
   });
 });
