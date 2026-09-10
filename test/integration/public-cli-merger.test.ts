@@ -676,10 +676,9 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        // Pi adapter prefixes single method onto resume envelope (#822).
         assert.equal(
           args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
-          true,
+          false,
         );
         assert.equal(
           args.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),

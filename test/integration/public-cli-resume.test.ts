@@ -1148,7 +1148,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           assert.equal(args.includes("--continue"), false);
           // Must not resubmit original instruction as a new prompt payload.
           assert.equal(args.includes(instruction), false);
-          assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+          assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), false);
           // Exact model override for this resume only.
           assert.equal(args[args.indexOf("--provider") + 1], "xai");
           assert.equal(args[args.indexOf("--model") + 1], "grok-4.5");
@@ -2456,7 +2456,7 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
       // Pi adapter prefixes single forced method onto resume argv (#822); judge/coder-plan/fixer plain.
-      const rawPrompt = c.message === undefined ? RESUME_TRANSPORT_ENVELOPE : c.message;
+      const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedLast =
         c.role === "reviewer"
           ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)

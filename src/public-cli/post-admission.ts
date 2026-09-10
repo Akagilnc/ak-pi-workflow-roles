@@ -12,7 +12,6 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   buildResumeContinuationPrompt,
   GATE_DOSSIER_POINTER_PREFIX,
-  RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
@@ -660,8 +659,14 @@ export function resumeTurnRequestProjectionOptions(
         admitted.role === "auditor")
     ) {
       prompt = `请重读\n${GATE_DOSSIER_POINTER_PREFIX}${path}`;
+    } else if (
+      admitted.role === "notary" ||
+      admitted.role === "inspector" ||
+      admitted.role === "auditor"
+    ) {
+      prompt = "请重读";
     } else {
-      prompt = RESUME_TRANSPORT_ENVELOPE;
+      prompt = "";
     }
   } else {
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).

@@ -388,8 +388,8 @@ test("engine-suffixed resume envelope keeps first-attempt auditor retention boun
       packageRoot,
       engine: "kimi",
     });
-    assert.notEqual(engineResumePrompt, RESUME_TRANSPORT_ENVELOPE);
-    assert.equal(engineResumePrompt.startsWith(`${RESUME_TRANSPORT_ENVELOPE}\n`), true);
+    assert.equal(engineResumePrompt.includes(RESUME_TRANSPORT_ENVELOPE), false);
+    assert.match(engineResumePrompt, /engine:/);
 
     const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
       // text-string form (message.content string)

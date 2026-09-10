@@ -1066,9 +1066,13 @@ async function loadBoundAuditorVolumes(
   // treat those prose lines as a real user turn or key on their shape.
   const isResumeEnvelopeBytes = (value: unknown): boolean => {
     if (typeof value !== "string") return false;
+    if (value.length === 0) return true;
     const nl = value.indexOf("\n");
     const firstLine = nl === -1 ? value : value.slice(0, nl);
-    return firstLine === RESUME_ENVELOPE;
+    // Historical token (no longer injected) or engine-pointer-only continuation.
+    if (firstLine === RESUME_ENVELOPE) return true;
+    const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
+    return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
   };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;

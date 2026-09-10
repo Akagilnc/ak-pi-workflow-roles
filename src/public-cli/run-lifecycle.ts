@@ -115,7 +115,10 @@ export type RoleRunRecord = {
   readonly resumable?: TypedHttp429Observation;
 };
 
-/** Package-owned turn trigger for resume. Not caller instruction and not semantic task content. */
+/**
+ * Historical resume token. Kept to recognize old session user-turns in settlement.
+ * #836: do not inject this string as a new LLM prompt (A4.1).
+ */
 export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
 
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
@@ -178,8 +181,8 @@ export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  return appendEngineSessionMaterial([base], engineMaterial).join("\n");
+  const lines = message !== undefined ? [message] : [];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**

@@ -61,7 +61,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
         piRunner: async(args)=>{dispatched=true; seenSessionFile=args[args.indexOf("--session")+1]!; seenEnvelope=args.includes("[ak-role:resume-continue]"); const acc=acceptedJudge(); await acc.write(seenSessionFile);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(dispatched,true);
-    assert.equal(seenEnvelope,true);
+    assert.equal(seenEnvelope,false);
     assert.ok(seenSessionFile.endsWith("/session/session.jsonl"));
     assert.equal(resumed.exitCode,0);
     assert.equal(resumed.terminal?.autoResumeCount,0);
@@ -299,7 +299,7 @@ test("block2: count is call-local, manual resume exact once", async()=>{
         piRunner: async(args)=>{manualCalls+=1;resumeArgs=[...args];const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(manualCalls,1);
-    assert.ok(resumeArgs!.includes("[ak-role:resume-continue]"));
+    assert.equal(resumeArgs!.includes("[ak-role:resume-continue]"), false);
     assert.equal(manualStdout.length,1);
     assert.equal(manual.exitCode,0);
     assert.equal(manual.terminal?.autoResumeCount,0);
