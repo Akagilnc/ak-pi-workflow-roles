@@ -206,11 +206,6 @@ function officerPayloads(terminal: TerminalResult | undefined): readonly unknown
   return terminal?.submissions ?? [];
 }
 
-function queueStatus(value: unknown): string | undefined {
-  const record = readRecord(value);
-  return record !== undefined && typeof record.status === "string" ? record.status : undefined;
-}
-
 function projectOfficerPayloads(
   officer: GateOfficer,
   payloads: readonly unknown[],
@@ -219,23 +214,19 @@ function projectOfficerPayloads(
   if (payloads.length === 0) {
     return projectOfficerDecision(officer, undefined, fallbackStatus);
   }
-  if (payloads.length === 1) {
-    return projectOfficerDecision(officer, payloads[0], fallbackStatus);
+  // Present every recorded payload; queue only the latest conclusion so a reask
+  // can converge (#836 呈现 ≠ 排队).
+  const queued = projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
+  if (payloads.length === 1) return queued;
+  if (
+    queued.status === "pass"
+    || queued.status === "bounce"
+    || queued.status === "escalate"
+    || queued.status === "needs_reask"
+  ) {
+    return { ...queued, receipt: payloads };
   }
-  const statuses = payloads.map(queueStatus);
-  const three = new Set(
-    statuses.filter((status): status is "pass" | "bounce" | "escalate" =>
-      status === "pass" || status === "bounce" || status === "escalate"),
-  );
-  // Any non-three-state payload → resume the speaker. Do not filter then unique-pass.
-  if (statuses.some((status) => status !== "pass" && status !== "bounce" && status !== "escalate")) {
-    return { status: "needs_reask", officer, receipt: payloads };
-  }
-  if (three.size === 1) {
-    const status = [...three][0]!;
-    return { status, officer, receipt: payloads };
-  }
-  return { status: "needs_reask", officer, receipt: payloads };
+  return queued;
 }
 
 function projectOfficerTerminal(

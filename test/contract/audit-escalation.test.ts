@@ -278,3 +278,60 @@ test("runComplianceAudit keeps host failure beside recorded auditor payloads", a
     },
   );
 });
+
+test("#836 auditor non-three-state then pass converges; both original rows kept", async () => {
+  let summons = 0;
+  const decision = await runComplianceAudit({
+    subject: "doctor",
+    context: { cwd: process.cwd() } as never,
+    runDirectory: "/tmp/parent-run",
+    summonAuditor: async (_subject, _dir, _signal, reask) => {
+      summons += 1;
+      if (summons === 1) {
+        assert.equal(reask, undefined);
+        return {
+          exitCode: 0,
+          terminal: {
+            roleOutcome: {
+              kind: "accepted",
+              role: "auditor",
+              status: "other",
+              decisiveFacts: { status: "other" },
+            },
+            navigator: { disposition: "no-advice" },
+            artifacts: [],
+            runId: "auditor-run",
+            submissions: [{ status: "other", note: "first" }],
+          },
+        };
+      }
+      assert.equal(typeof reask, "string");
+      return {
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "auditor",
+            status: "pass",
+            decisiveFacts: { status: "pass" },
+          },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "auditor-run",
+          submissions: [
+            { status: "other", note: "first" },
+            { status: "pass" },
+          ],
+        },
+      };
+    },
+  });
+  assert.equal(summons, 2);
+  assert.equal(decision.status, "pass");
+  if (decision.status === "pass") {
+    assert.deepEqual(decision.receipt, [
+      { status: "other", note: "first" },
+      { status: "pass" },
+    ]);
+  }
+});

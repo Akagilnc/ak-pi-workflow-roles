@@ -160,20 +160,22 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   }
   if (outcome.kind === "accepted") {
     const rows = summoned.terminal?.submissions ?? [];
-    if (rows.length === 1) {
-      return readComplianceCandidate(rows[0], usage);
+    if (rows.length === 0) {
+      return readComplianceCandidate({
+        status: outcome.status,
+        ...outcome.decisiveFacts,
+      }, usage);
     }
-    if (rows.length > 1) {
-      return {
-        status: "received",
-        reply: rows,
-        ...(usage === undefined ? {} : { usage }),
-      };
+    // Queue the latest conclusion; keep every original row on the receipt/reply face.
+    const decision = readComplianceCandidate(rows[rows.length - 1], usage);
+    if (rows.length === 1) return decision;
+    if (decision.status === "pass" || decision.status === "bounce" || decision.status === "escalate") {
+      return { ...decision, receipt: rows };
     }
-    return readComplianceCandidate({
-      status: outcome.status,
-      ...outcome.decisiveFacts,
-    }, usage);
+    if (decision.status === "received") {
+      return { ...decision, reply: rows };
+    }
+    return decision;
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {

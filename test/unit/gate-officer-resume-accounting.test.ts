@@ -256,7 +256,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
   }
 });
 
-test("#836 multiple recorded officer payloads are all kept — not last-wins", async () => {
+test("#836 all recorded payloads kept; queue reads the latest conclusion", async () => {
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -283,11 +283,47 @@ test("#836 multiple recorded officer payloads are all kept — not last-wins", a
       },
     }),
   });
-  assert.equal(projected.result.status, "needs_reask");
-  if (projected.result.status === "needs_reask") {
+  assert.equal(projected.result.status, "bounce");
+  if (projected.result.status === "bounce") {
     assert.deepEqual(projected.result.receipt, [
       { status: "pass", findings: ["first"] },
       { status: "bounce", findings: ["second"] },
+    ]);
+  }
+});
+
+test("#836 non-three-state then lawful pass converges; both payloads remain", async () => {
+  const projected = await projectGatekeeperRun({
+    context: {
+      cwd: process.cwd(),
+      sessionManager: { getSessionFile: () => "/tmp/unused" },
+    } as never,
+    subject: { kind: "countersign_verdict" },
+    runDirectory: "/tmp/parent-run",
+    summonOfficer: async () => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "notary",
+          status: "pass",
+          decisiveFacts: { status: "pass" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "officer-run",
+        submissions: [
+          { status: "other", note: "first" },
+          { status: "pass", findings: ["ok"] },
+        ],
+      },
+    }),
+  });
+  assert.equal(projected.result.status, "pass");
+  if (projected.result.status === "pass") {
+    assert.deepEqual(projected.result.receipt, [
+      { status: "other", note: "first" },
+      { status: "pass", findings: ["ok"] },
     ]);
   }
 });
