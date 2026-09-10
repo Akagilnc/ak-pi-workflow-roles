@@ -858,7 +858,8 @@ export async function runPostAdmissionSeatResume<
 }
 
 /**
- * Shared post-admission one-shot path: writer lease, then turn dispatch.
+ * Shared post-admission one-shot path: folds into runPostAdmissionResumable (#840 / #416).
+ * All callable roles share the single auto-resume loop.
  * Initial facades own the durable admitted mark (markRunAdmitted) before
  * entering; manual resume never re-admits.
  */
@@ -877,29 +878,24 @@ export async function runPostAdmissionOneShot<
   admitted?: A;
   terminal?: T;
 }> {
-  const { admitted, env, io, request, adapters, effectiveEngine } = input;
-
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic) =>
-      io.stderr(diagnostic),
-    );
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2, admitted };
-    }
-    throw error;
-  }
-
-  return await dispatchPostAdmissionTurn({
-    admitted,
-    env,
-    io,
-    request,
-    lease,
-    adapters,
-    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  const engine = input.effectiveEngine ?? input.env.engine;
+  return await runPostAdmissionResumable({
+    admitted: input.admitted,
+    env: input.env,
+    io: input.io,
+    buildInitialRequest: () => input.request,
+    buildResumeRequest: () => ({
+      ...input.request,
+      continuation: {
+        kind: "resume",
+        prompt: buildResumeContinuationPrompt({
+          packageRoot: input.env.packageRoot,
+          ...(engine === undefined ? {} : { engine }),
+        }),
+      },
+    }),
+    adapters: input.adapters,
+    ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
   });
 }
 

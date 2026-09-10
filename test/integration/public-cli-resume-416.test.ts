@@ -14,7 +14,10 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
@@ -305,3 +308,154 @@ test("block2: count is call-local, manual resume exact once", async()=>{
     assert.equal(manual.terminal?.autoResumeCount,0);
   });
 });
+
+test("A2: auto-resume shared middle seam covers non-judge roles (diarist), autoResumeCount reflects retries without capping budget", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // 1. Non-lawful failure retries up to autoResumeLimit (default 2 -> 3 calls)
+    const runId1 = "416-auto-diarist-001";
+    let calls1 = 0;
+    const { io: io1 } = captureIo();
+    const result1 = await runAkRole(["diarist", "--project", project, "auto-retry-test"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => runId1,
+      io: io1,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          calls1 += 1;
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          const sf = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sf,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+          return { code: 1, stderr: `fail ${calls1}\n`, timedOut: false, args: [...args] };
+        },
+      }),
+    });
+    assert.equal(calls1, 3, "auto-resume must retry non-lawful diarist run up to budget (3 calls)");
+    assert.equal(result1.exitCode, 1);
+    assert.equal(result1.terminal?.autoResumeCount, 2, "terminal records actual retries (2)");
+
+    // 2. Second attempt success needs only 1 auto-resume
+    const runId2 = "416-auto-diarist-002";
+    let calls2 = 0;
+    const { io: io2 } = captureIo();
+    const result2 = await runAkRole(["diarist", "--project", project, "auto-retry-success"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => runId2,
+      io: io2,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          calls2 += 1;
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          const sf = args[args.indexOf("--session") + 1]!;
+          if (calls2 === 2) {
+            return scriptedTerminatingToolSession({
+              role: "diarist",
+              toolName: "ak_diarist_output",
+              details: { status: "completed", ticketNumber: null, entries: [] },
+            })(args, options);
+          }
+          await writeFile(
+            sf,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+          return { code: 1, stderr: "fail\n", timedOut: false, args: [...args] };
+        },
+      }),
+    });
+    assert.equal(calls2, 2, "stops retrying upon lawful success (2 calls)");
+    assert.equal(result2.exitCode, 0);
+    assert.equal(result2.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(result2.terminal?.autoResumeCount, 1, "terminal records 1 retry before success");
+
+    // 3. Lawful success on initial attempt does not retry (0 auto-resumes)
+    const runId3 = "416-auto-diarist-003";
+    let calls3 = 0;
+    const { io: io3 } = captureIo();
+    const result3 = await runAkRole(["diarist", "--project", project, "initial-success"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => runId3,
+      io: io3,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          calls3 += 1;
+          return scriptedTerminatingToolSession({
+            role: "diarist",
+            toolName: "ak_diarist_output",
+            details: { status: "completed", ticketNumber: null, entries: [] },
+          })(args, options);
+        },
+      }),
+    });
+    assert.equal(calls3, 1, "lawful initial run does not retry (1 call)");
+    assert.equal(result3.exitCode, 0);
+    assert.equal(result3.terminal?.autoResumeCount, 0, "autoResumeCount is 0 when no retry occurred");
+
+    // 4. Budget is call-local; autoResumeCount is observation only and does not cap budget
+    assert.equal(result1.terminal?.autoResumeCount, 2);
+    // Setting autoResumeCount high artificially on prior terminal does not affect next invocation
+    (result1.terminal as { autoResumeCount?: number }).autoResumeCount = 999;
+    let calls4 = 0;
+    const runId4 = "416-auto-diarist-004";
+    const result4 = await runAkRole(["diarist", "--project", project, "fresh-budget"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => runId4,
+      io: captureIo().io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          calls4 += 1;
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          const sf = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sf,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+          return { code: 1, stderr: "fail\n", timedOut: false, args: [...args] };
+        },
+      }),
+    });
+    assert.equal(calls4, 3, "new call still gets full budget regardless of prior counts");
+    assert.equal(result4.terminal?.autoResumeCount, 2);
+  });
+});
+
