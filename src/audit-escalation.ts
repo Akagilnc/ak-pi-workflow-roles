@@ -4,6 +4,7 @@ import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
+import { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -141,6 +142,10 @@ export type ComplianceDecisionHandlers<T> = {
   ) => T | PromiseLike<T>;
   bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
+  /** Host failure beside any recorded auditor payloads — parent is not accepted. */
+  transportFailure?: (
+    facts: Extract<ComplianceDecision, { status: "transport_failure" }>,
+  ) => T | PromiseLike<T>;
 };
 
 /**
@@ -180,5 +185,15 @@ export async function disposeComplianceDecision<T>(
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),
       );
+    case "transport_failure":
+      if (handlers.transportFailure !== undefined) {
+        return await handlers.transportFailure(decision);
+      }
+      throw new GatekeeperDecisionError({
+        status: "transport_failure",
+        stage: "auditor",
+        reason: decision.diagnostic,
+        submission: decision.submissions ?? decision.terminal,
+      });
   }
 }

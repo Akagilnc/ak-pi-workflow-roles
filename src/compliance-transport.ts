@@ -18,12 +18,21 @@ export type ComplianceReceived = {
   readonly reply: unknown;
   readonly usage?: Usage;
 };
+/** Host/engine/record failure — not a role three-state, not `received` (#836 A.3). */
+export type ComplianceTransportFailure = {
+  readonly status: "transport_failure";
+  readonly diagnostic: string;
+  readonly submissions?: readonly unknown[];
+  readonly terminal?: unknown;
+  readonly usage?: Usage;
+};
 export type ComplianceDecision =
   | { status: "pass"; receipt?: unknown; usage?: Usage }
   | { status: "bounce"; violations: readonly unknown[]; receipt?: unknown; usage?: Usage }
   | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; receipt?: unknown; usage?: Usage }
   | ComplianceNoReceipt
-  | ComplianceReceived;
+  | ComplianceReceived
+  | ComplianceTransportFailure;
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
 
@@ -137,11 +146,12 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    // Host failure stays loud; recorded payloads ride on the original terminal (#836 A.3).
-    // Do not throw (that kills the parent) and do not reclassify as bounce/pass.
+    const rows = summoned.terminal?.submissions ?? [];
     return {
-      status: "received",
-      reply: summoned.terminal,
+      status: "transport_failure",
+      diagnostic: outcome.diagnostic,
+      ...(rows.length > 0 ? { submissions: rows } : {}),
+      ...(summoned.terminal === undefined ? {} : { terminal: summoned.terminal }),
       ...(usage === undefined ? {} : { usage }),
     };
   }

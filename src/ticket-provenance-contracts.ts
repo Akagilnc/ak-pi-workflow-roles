@@ -134,26 +134,8 @@ export function projectTicketProvenanceEntry(
   if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
     return undefined;
   }
-  const basisRecord = isRecord(value.basis) ? value.basis : undefined;
-  const basis: TicketProvenanceBasis = {
-    method: (typeof basisRecord?.method === "string" ? basisRecord.method : "llm-semantic") as TicketProvenanceBasisMethod,
-    ...(basisRecord !== undefined && Array.isArray(basisRecord.anchors)
-      ? { anchors: basisRecord.anchors as readonly string[] }
-      : {}),
-    ...(basisRecord !== undefined && typeof basisRecord.note === "string" ? { note: basisRecord.note } : {}),
-  };
-  const sourceRef: TicketProvenanceSourceRef = isRecord(value.sourceRef)
-    ? { ...(value.sourceRef as TicketProvenanceSourceRef) }
-    : {};
-  const transcript = typeof value.transcript === "string" && value.transcript.length > 0
-    ? value.transcript
-    : JSON.stringify(value);
-  const timestamp = typeof value.timestamp === "string" ? value.timestamp : "";
-  return {
-    basis,
-    sourceKind: typeof value.sourceKind === "string" ? value.sourceKind : "unprojected",
-    sourceRef,
-    transcript,
-    timestamp,
-  };
+  if (value.unprojected === true) {
+    return undefined;
+  }
+  return value as TicketProvenanceEntry;
 }

@@ -15,6 +15,7 @@ import {
   ticketProvenanceEntryIdentity,
   ticketProvenanceSubject,
 } from "../../src/ticket-provenance.ts";
+import { projectDiaristEntries } from "../../src/diarist-contracts.ts";
 
 test("ticket-provenance subject is the ticket number string", () => {
   assert.equal(ticketProvenanceSubject(582), "582");
@@ -64,6 +65,16 @@ test("projectTicketProvenanceEntry keeps original entries; only non-objects are 
     transcript: "x",
     timestamp: "t",
   });
+  const extra = {
+    basis: { method: "llm-semantic" },
+    sourceKind: "cc-session",
+    sourceRef: { path: "/x", extraRef: 9 },
+    transcript: "hello",
+    timestamp: "t",
+    extra: { kept: true },
+  };
+  assert.deepEqual(projectTicketProvenanceEntry(extra), extra);
+  assert.equal(projectTicketProvenanceEntry({ original: "raw-row", unprojected: true }), undefined);
 });
 
 test("diagnostic projection: recordClass payload only; forged disguise rejected", () => {
@@ -111,4 +122,20 @@ test("diagnostic projection: recordClass payload only; forged disguise rejected"
     transcript: "old fail",
     timestamp: "2026-08-31T00:00:00.000Z",
   });
+});
+
+test("projectDiaristEntries keeps original rows including extra fields and non-objects", () => {
+  const rows = [
+    {
+      sourceKind: "cc-session",
+      sourceRef: { path: "/a", extraRef: 1 },
+      transcript: "t",
+      timestamp: "ts",
+      extra: "kept",
+    },
+    "bare-string",
+    7,
+  ];
+  assert.deepEqual(projectDiaristEntries({ entries: rows, ignored: true }), rows);
+  assert.deepEqual(projectDiaristEntries({}), []);
 });

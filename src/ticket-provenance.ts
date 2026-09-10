@@ -56,25 +56,51 @@ export function ticketProvenanceEntryIdentity(
 
 export type AppendTicketProvenanceInput = {
   readonly ticketNumber: number;
-  readonly entry: TicketProvenanceEntry;
   readonly cwd: string;
+  /** Original diarist row (or `{ original, unprojected: true }` envelope). */
+  readonly payload: unknown;
   /** Explicit package home (tests / admitted run); never process.env.HOME (#604). */
   readonly home?: string;
   readonly host?: string;
   readonly source?: string;
 };
 
-/** Append one transcribed block; returns existing pointer on identity hit. */
+function identityFromPayload(ticketNumber: number, payload: unknown): string {
+  if (
+    typeof payload === "object"
+    && payload !== null
+    && !Array.isArray(payload)
+  ) {
+    const record = payload as Record<string, unknown>;
+    if (typeof record.sourceKind === "string" && typeof record.transcript === "string") {
+      const sourceRef = typeof record.sourceRef === "object" && record.sourceRef !== null && !Array.isArray(record.sourceRef)
+        ? record.sourceRef as TicketProvenanceIdentityInput["sourceRef"]
+        : {};
+      return ticketProvenanceEntryIdentity({
+        ticketNumber,
+        sourceKind: record.sourceKind,
+        sourceRef,
+        transcript: record.transcript,
+      });
+    }
+  }
+  return createHash("sha256")
+    .update(`${String(ticketNumber)}\u0000${JSON.stringify(payload)}`, "utf8")
+    .digest("hex");
+}
+
+/** Append one original row; returns existing pointer on identity hit. */
 export function appendTicketProvenanceEntry(
   input: AppendTicketProvenanceInput,
 ): RecordPointer {
   const subject = ticketProvenanceSubject(input.ticketNumber);
-  const identity = ticketProvenanceEntryIdentity({
-    ticketNumber: input.ticketNumber,
-    sourceKind: input.entry.sourceKind,
-    sourceRef: input.entry.sourceRef,
-    transcript: input.entry.transcript,
-  });
+  const identity = identityFromPayload(input.ticketNumber, input.payload);
+  const record = typeof input.payload === "object" && input.payload !== null && !Array.isArray(input.payload)
+    ? input.payload as Record<string, unknown>
+    : undefined;
+  const sourceRef = record !== undefined && typeof record.sourceRef === "object" && record.sourceRef !== null && !Array.isArray(record.sourceRef)
+    ? record.sourceRef as { sessionFile?: unknown; entryId?: unknown }
+    : undefined;
   return sitianReport({
     level: "event",
     kind: TICKET_PROVENANCE_KIND,
@@ -84,13 +110,14 @@ export function appendTicketProvenanceEntry(
     ...(input.home === undefined ? {} : { home: input.home }),
     host: input.host ?? "diarist",
     source: input.source ?? "diarist",
-    payload: input.entry,
+    payload: input.payload,
     raw:
-      input.entry.sourceRef.sessionFile !== undefined &&
-      input.entry.sourceRef.entryId !== undefined
+      sourceRef !== undefined
+      && typeof sourceRef.sessionFile === "string"
+      && (typeof sourceRef.entryId === "string" || typeof sourceRef.entryId === "number")
         ? {
-            sessionFile: input.entry.sourceRef.sessionFile,
-            entryId: input.entry.sourceRef.entryId,
+            sessionFile: sourceRef.sessionFile,
+            entryId: sourceRef.entryId,
           }
         : undefined,
   });
@@ -223,9 +250,10 @@ export function renderTicketProvenanceMarkdown(input: {
       lines.push(`- sourceRef: ${refParts.join(" · ")}`);
     }
     lines.push("");
-    const fence = markdownFenceFor(entry.transcript);
+    const transcript = typeof entry.transcript === "string" ? entry.transcript : JSON.stringify(entry);
+    const fence = markdownFenceFor(transcript);
     lines.push(fence);
-    lines.push(entry.transcript);
+    lines.push(transcript);
     lines.push(fence);
     lines.push("");
   }

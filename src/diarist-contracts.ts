@@ -64,47 +64,8 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   throw new Error("Diarist output has no execution discriminator");
 }
 
-/**
- * Lenient projection of submitted entries (第 0 条: shape is not an admission
- * gate). Rows that cannot form a lawful volume entry are dropped from the
- * commit, never bounced back at the role. This is write-seam self-check only —
- * not quote/ticket/relevance judgment of LLM content (#779).
- */
-export function projectDiaristEntries(value: unknown): DiaristEntrySubmission[] {
+/** Entries array as the diarist wrote it — no field rewrite (#836 B6.8/B6.9). */
+export function projectDiaristEntries(value: unknown): unknown[] {
   const rows = (value as { entries?: unknown } | null)?.entries;
-  if (!Array.isArray(rows)) return [];
-  const out: DiaristEntrySubmission[] = [];
-  for (const row of rows) {
-    if (row === null || typeof row !== "object" || Array.isArray(row)) {
-      out.push({
-        sourceKind: "unprojected",
-        sourceRef: {},
-        transcript: JSON.stringify(row),
-        timestamp: "",
-      });
-      continue;
-    }
-    const record = row as Record<string, unknown>;
-    const ref = record.sourceRef !== null && typeof record.sourceRef === "object" && !Array.isArray(record.sourceRef)
-      ? record.sourceRef as Record<string, unknown>
-      : {};
-    const sourceRef: TicketProvenanceSourceRef = {
-      ...(typeof ref.sessionFile === "string" ? { sessionFile: ref.sessionFile } : {}),
-      ...(typeof ref.entryId === "string" || typeof ref.entryId === "number"
-        ? { entryId: ref.entryId }
-        : {}),
-      ...(typeof ref.path === "string" ? { path: ref.path } : {}),
-      ...(typeof ref.url === "string" ? { url: ref.url } : {}),
-    };
-    out.push({
-      sourceKind: typeof record.sourceKind === "string" ? record.sourceKind : "unprojected",
-      sourceRef,
-      transcript: typeof record.transcript === "string" && record.transcript.length > 0
-        ? record.transcript
-        : JSON.stringify(record),
-      timestamp: typeof record.timestamp === "string" ? record.timestamp : "",
-      ...(typeof record.note === "string" ? { note: record.note } : {}),
-    });
-  }
-  return out;
+  return Array.isArray(rows) ? [...rows] : [];
 }

@@ -10,6 +10,8 @@ import {
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
 import type { ComplianceNoReceipt } from "../../src/compliance-transport.ts";
+import { runComplianceAudit } from "../../src/compliance-transport.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   AcceptedDetailsContractError,
@@ -229,4 +231,50 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
   assert.equal(result.auditNoReceipt.deliveryTurns, 2);
   assert.equal(result.auditNoReceipt.rejectedReceipts[0]?.reason, "未观察到 commit");
   assert.equal(result.auditNoReceipt.attemptPointer, "attempt-1");
+});
+
+test("runComplianceAudit keeps host failure beside recorded auditor payloads", async () => {
+  const bounce = { status: "bounce", violations: ["keep-me"] };
+  const decision = await runComplianceAudit({
+    subject: "doctor",
+    context: { cwd: process.cwd() } as never,
+    runDirectory: "/tmp/parent-run",
+    summonAuditor: async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "auditor",
+          cause: "output",
+          diagnostic: "This operation was aborted",
+          decisiveFacts: { cause: "output" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "auditor-run",
+        submissions: [bounce],
+      },
+    }),
+  });
+  assert.equal(decision.status, "transport_failure");
+  if (decision.status === "transport_failure") {
+    assert.match(decision.diagnostic, /This operation was aborted/);
+    assert.deepEqual(decision.submissions, [bounce]);
+  }
+  await assert.rejects(
+    disposeComplianceDecision(decision, {
+      pass: () => { throw new Error("pass"); },
+      bounce: () => { throw new Error("bounce"); },
+      escalate: () => { throw new Error("escalate"); },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "transport_failure");
+      if (error.result.status === "transport_failure") {
+        assert.match(error.result.reason, /This operation was aborted/);
+        assert.deepEqual(error.result.submission, [bounce]);
+      }
+      return true;
+    },
+  );
 });
