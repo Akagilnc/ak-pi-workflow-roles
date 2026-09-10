@@ -151,27 +151,30 @@ function runArtifactsDirectory(runDirectory: string): string {
 /**
  * #182-A hardened path identity, mirrored from settlement.ts's
  * ensureAuditEvidenceDirectory: a planted symlink at the run directory or the
- * artifacts path must not receive the dispatch error dump (O_NOFOLLOW only
+ * artifacts path must not receive a durable run artifact (O_NOFOLLOW only
  * protects the final file name; recursive mkdir would accept a symlinked
- * parent). Fails loudly with the true cause instead.
+ * parent). Fails loudly with the true cause instead. Shared by every caller
+ * that needs a durable run-artifacts write independent of session/dossier
+ * health — dispatch-error retention here, and post-admission's best-effort
+ * cleanup diagnostic (#840 bounce class 2).
  */
-async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
+export async function ensureRealArtifactsDirectory(runDirectory: string): Promise<string> {
   const runStat = await lstat(runDirectory);
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
-    throw new Error("dispatch error retention: run directory is not a real directory");
+    throw new Error("run artifact retention: run directory is not a real directory");
   }
   const artifactsDir = runArtifactsDirectory(runDirectory);
   try {
     const existing = await lstat(artifactsDir);
     if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error("dispatch error retention: artifacts path is not a real directory");
+      throw new Error("run artifact retention: artifacts path is not a real directory");
     }
   } catch (error) {
     if (!isMissingPathError(error)) throw error;
     await mkdir(artifactsDir, { recursive: true });
     const created = await lstat(artifactsDir);
     if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw new Error("dispatch error retention: artifacts directory is not a real directory");
+      throw new Error("run artifact retention: artifacts directory is not a real directory");
     }
   }
   return artifactsDir;

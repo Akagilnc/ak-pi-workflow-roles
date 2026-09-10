@@ -3,9 +3,12 @@
  * (src/public-cli/post-admission.ts): one admitted judge run seeded through
  * the real markRunAdmitted seam, plus the default initial RoleTurnRequest
  * and PostAdmissionEnv every case needs. Callers override only what varies.
- * Used by #840 r9 判词 class 1/2 regressions in
+ * Used by #840 r9 判词 class 2 regressions in
  * test/integration/public-cli-dispatch-post-admission-turn-boundary.test.ts
  * and test/integration/public-cli-auto-resume-dispatch-throw.test.ts.
+ * courtAttemptId-bearing scenarios (clearCurrentCourt) moved to a real
+ * `ak-role resume` tracer at test/integration/public-cli-same-ticket-resume.test.ts —
+ * this fixture no longer needs to seed an open court.
  */
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -20,8 +23,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { PostAdmissionEnv } from "../../src/public-cli/post-admission.ts";
-import { markRunAdmitted, recordCurrentCourt } from "../../src/public-cli/run-lifecycle.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { markRunAdmitted } from "../../src/public-cli/run-lifecycle.ts";
 import { packageRoot } from "./pi-test-harness.ts";
 import { fixturePrincipal } from "./admitted-principal-fixture.ts";
 
@@ -35,7 +37,7 @@ export function seedGitProject(root: string): void {
 export async function buildFixture(
   home: string,
   runId: string,
-  options?: { readonly ticketNumber?: number; readonly courtAttemptId?: string },
+  options?: { readonly ticketNumber?: number },
 ) {
   const project = join(home, "proj");
   await mkdir(project, { recursive: true });
@@ -65,9 +67,6 @@ export async function buildFixture(
   // only) — markRunRunning's recordEffectiveInvocationModel merges into an
   // already-existing page, matching the real admission facade's write order.
   await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
-  if (options?.courtAttemptId !== undefined) {
-    await recordCurrentCourt(runDirectory, { courtAttemptId: options.courtAttemptId });
-  }
   const request: RoleTurnRequest = {
     principal: admitted.principal,
     activation: { role: "judge" },
@@ -77,7 +76,6 @@ export async function buildFixture(
     home,
     agentDir: join(runDirectory, "agent"),
     runDirectory,
-    ...(options?.courtAttemptId === undefined ? {} : { courtAttemptId: options.courtAttemptId }),
   };
   return { admitted, project, runDirectory, request };
 }
@@ -102,15 +100,5 @@ export function buildEnv(
     principalAuthority: overrides?.principalAuthority ?? piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
     ...(overrides?.host === undefined ? {} : { host: overrides.host }),
-  };
-}
-
-/** Fixed accepted terminal used by tests that need a lawful settlement. */
-export function acceptedTerminal(runId: string): TerminalResult {
-  return {
-    roleOutcome: { kind: "accepted", role: "judge", status: "converged", decisiveFacts: {} },
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId,
   };
 }
