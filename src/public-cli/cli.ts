@@ -44,14 +44,16 @@ import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
-import { packagedExternalHostNames } from "../host-descriptions.ts";
-import { createLazyProductionExternalHost } from "./load-production-external-host.ts";
+import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 import {
-  createPiRoleTurnHost,
-  appendPiSessionCustomEntry,
-} from "../pi/role-turn-host.ts";
+  composeRoleTurnHostAdapters,
+  formatHostSelectionFailure,
+  HostSelectionError,
+  selectRoleTurnHost,
+  type HostSelectionFailure,
+  type NamedRoleTurnHostAdapter,
+} from "./role-turn-host-resolution.ts";
 import {
-  observeLaunchedRolePackageIdentity,
   parseAnalystArgv,
   parseCoderArgv,
   parseCollectorArgv,
@@ -68,8 +70,6 @@ import {
   parseAuditorArgv,
   parseNotaryArgv,
   parseReviewerArgv,
-  recordLaunchedPiIdentity,
-  recordLaunchedRolePackageIdentity,
 } from "./invocation.ts";
 import {
   createTypedOptionConsumer,
@@ -237,24 +237,7 @@ function takePublicGlobalFlag(
   return undefined;
 }
 
-export type HostSelectionFailure = {
-  readonly kind: "host-unregistered" | "host-model-mismatch";
-  readonly host: string;
-  readonly seat: PublicCallableRole;
-  readonly model: string;
-  readonly registeredHosts: readonly string[];
-};
-
-export type NamedRoleTurnHostAdapter = {
-  readonly name: string;
-  readonly create: (input: { role: PublicCallableRole; model: EffectiveSeat["selection"] }) =>
-    | { readonly ok: true; readonly host: RoleTurnHost }
-    | { readonly ok: false };
-};
-
-class HostSelectionError extends Error {
-  constructor(readonly failure: HostSelectionFailure) { super(failure.kind); }
-}
+export type { HostSelectionFailure, NamedRoleTurnHostAdapter };
 
 export type CliEnv = {
   home?: string;
@@ -315,59 +298,7 @@ export type CliEnv = {
   freshSummons?: true;
 };
 
-/** Compose the Pi turn host for one role dispatch (sole public-cli → pi contact). */
-function resolveRoleTurnHost(
-  env: CliEnv,
-  options: {
-    role: PublicCallableRole;
-    seat: EffectiveSeat;
-    principalAuthority: DurablePrincipalAuthority;
-    extraPiArgs?: readonly string[];
-    timeoutMs?: number;
-  },
-): RoleTurnHost {
-  const piHost = env.roleTurnHost ?? createPiRoleTurnHost({
-    packageRoot: env.packageRoot,
-    principalAuthority: options.principalAuthority,
-    ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    recordLaunchedPiIdentity,
-    recordLaunchedRolePackageIdentity,
-    observeLaunchedRolePackageIdentity,
-  });
-  // Composition-root adapter table: pi (in-process default) + one lazy external host per description-table key (#820).
-  const adapters: readonly NamedRoleTurnHostAdapter[] = env.hostAdapters ?? [
-    { name: "pi", create: () => ({ ok: true as const, host: piHost }) },
-    ...packagedExternalHostNames().map((name) => ({
-      name,
-      create: () => ({
-        ok: true as const,
-        // Factory loads outside the public bin static graph (ADR 0052 peer-free discovery).
-        host: createLazyProductionExternalHost({
-          packageRoot: env.packageRoot,
-          hostName: name,
-          principalAuthority: options.principalAuthority,
-        }),
-      }),
-    })),
-  ];
-  const hostName = options.seat.host;
-  const adapter = adapters.find((candidate) => candidate.name === hostName);
-  const model = options.seat.selection === undefined ? "unconfigured" : `${options.seat.selection.provider}/${options.seat.selection.model}`;
-  const registeredHosts = adapters.map(({ name }) => name);
-  if (adapter === undefined) {
-    throw new HostSelectionError(
-      { kind: "host-unregistered", host: hostName, seat: options.role, model, registeredHosts },
-    );
-  }
-  const selected = adapter.create({ role: options.role, model: options.seat.selection });
-  if (!selected.ok) {
-    throw new HostSelectionError(
-      { kind: "host-model-mismatch", host: hostName, seat: options.role, model, registeredHosts },
-    );
-  }
-  return selected.host;
-}
+
 
 type RoleEnvironmentOptions = {
   role: PublicCallableRole;
@@ -426,12 +357,21 @@ function createRoleEnvironment(
   // #788 expectation 2: select a registered host first; only then project the
   // host-facing provider (table > unique directory > fail). Bad host never
   // reaches model resolution.
-  const roleTurnHost = resolveRoleTurnHost(env, {
+  // Nested summons reuse this table and select by the child seat — never the
+  // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+  const hostAdapters = composeRoleTurnHostAdapters(
+    {
+      packageRoot: env.packageRoot,
+      ...(env.roleTurnHost === undefined ? {} : { roleTurnHost: env.roleTurnHost }),
+      ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+      ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    },
+    env.principalAuthority!,
+  );
+  const roleTurnHost = selectRoleTurnHost(hostAdapters, {
     role,
     seat: options.seat,
-    principalAuthority: env.principalAuthority!,
-    ...(extraPiArgs === undefined ? {} : { extraPiArgs }),
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   const hostFacingSelection =
     options.seat.selection === undefined
@@ -449,6 +389,7 @@ function createRoleEnvironment(
     sessionAppender: appendPiSessionCustomEntry,
     packageRoot: env.packageRoot,
     roleTurnHost,
+    hostAdapters,
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
@@ -1606,8 +1547,7 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof HostSelectionError) {
-      const registered = error.failure.registeredHosts.join(", ");
-      io.stderr(formatCliDiagnostic(`${error.failure.kind}: ${error.failure.host}; registered: ${registered}`));
+      io.stderr(formatCliDiagnostic(formatHostSelectionFailure(error.failure)));
       return { exitCode: 1, hostFailure: error.failure };
     }
     if (error instanceof CliUsageError) {

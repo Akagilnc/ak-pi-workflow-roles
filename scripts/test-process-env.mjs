@@ -57,7 +57,11 @@ function redirectHomeEnv(env, home) {
 export function isolatedTestProcessEnv(options = {}) {
   const env = {
     ...(options.env ?? process.env),
+    // Role-envelope parent injections (run dir + court attempt). A factory
+    // leg that spawns test:all must not leak its own attempt identity into
+    // ledger tests (#840 / #637).
     AK_ROLE_RUN_DIR: undefined,
+    AK_ROLE_COURT_ATTEMPT: undefined,
     PI_CODING_AGENT_DIR: undefined,
   };
   const home = options.home !== undefined ? options.home : defaultIsolatedTestHome();
@@ -76,6 +80,8 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   else process.env.PATH = next.PATH;
   if (next.AK_ROLE_RUN_DIR === undefined) delete process.env.AK_ROLE_RUN_DIR;
   else process.env.AK_ROLE_RUN_DIR = next.AK_ROLE_RUN_DIR;
+  if (next.AK_ROLE_COURT_ATTEMPT === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+  else process.env.AK_ROLE_COURT_ATTEMPT = next.AK_ROLE_COURT_ATTEMPT;
   if (next.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
 }

@@ -183,6 +183,8 @@ export type RoleTurnRequest = {
    * and resume-with-message set this; bare resume without an open court omits it.
    */
   readonly courtAttemptId?: string;
+  /** Station child role run (#840): omit automatic navigator attendance. */
+  readonly stationChild?: boolean;
 };
 
 /** Turn result — only fields upper layers currently consume. */

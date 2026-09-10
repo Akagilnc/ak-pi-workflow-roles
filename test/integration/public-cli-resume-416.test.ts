@@ -14,11 +14,33 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts } from "../helpers/terminal-payload.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import {
+  lookupHeadlessHostDescription,
+  lookupHostDescription,
+} from "../../src/host-descriptions.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { summonPublicRole } from "../../src/public-role-summons.ts";
+import {
+  createMinimalHost,
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
-import { runAkRole } from "../../src/public-cli/cli.ts";
-import { loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { buildDiaristTurnRequest } from "../../src/public-cli/diarist-run.ts";
+import {
+  prepareSummonsResumeMaterials,
+  resumeTurnRequestProjectionOptions,
+  runPostAdmissionSeatResume,
+} from "../../src/public-cli/post-admission.ts";
+import {
+  loadResumableDiaristRun,
+  loadResumableJudgeRun,
+  readRoleRunState,
+} from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -304,5 +326,281 @@ test("block2: count is call-local, manual resume exact once", async()=>{
     assert.equal(manualStdout.length,1);
     assert.equal(manual.exitCode,0);
     assert.equal(manual.terminal?.autoResumeCount,0);
+  });
+});
+
+test("A2: non-judge public seat enters the shared auto-resume loop", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "416-auto-diarist-001";
+    let calls = 0;
+    const { io } = captureIo();
+    const result = await runAkRole(["diarist", "--project", project, "auto-retry-test"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => runId,
+      io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          calls += 1;
+          const sd = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sd, { recursive: true });
+          const sf = args[args.indexOf("--session") + 1]!;
+          await writeFile(
+            sf,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+          return { code: 1, stderr: `fail ${calls}\n`, timedOut: false, args: [...args] };
+        },
+      }),
+    });
+    assert.equal(calls, 3, "non-judge seat retries non-lawful run up to shared budget");
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.autoResumeCount, 2);
+  });
+});
+
+test("A2: station-child same-ticket resume enters the shared auto-resume loop", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    let calls = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        calls += 1;
+        if (calls === 1) {
+          return scriptedTerminatingToolSession({
+            role: "diarist",
+            toolName: DIARIST_OUTPUT_TOOL_NAME,
+            details: { status: "completed", ticketNumber: 582, entries: [] },
+          })(args, options);
+        }
+        const sd = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sd, { recursive: true });
+        const sf = args[args.indexOf("--session") + 1]!;
+        await writeFile(
+          sf,
+          JSON.stringify({
+            type: "message",
+            message: { role: "user", content: [{ type: "text", text: "go" }] },
+          }) + "\n",
+          "utf8",
+        );
+        return { code: 1, stderr: `fail ${calls}\n`, timedOut: false, args: [...args] };
+      },
+    });
+    const first = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "整理 #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: host,
+      createRunId: () => "416-station-child-001",
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(first.exitCode, 0, "first station-child mint must bind the ticket");
+    const resumed = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "refresh #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: host,
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(calls, 4, "same-ticket station-child resume retries up to shared budget");
+    assert.equal(resumed.exitCode, 1);
+    assert.equal(resumed.terminal?.autoResumeCount, 2);
+
+    const again = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "refresh again #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: host,
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(
+      calls,
+      7,
+      "prior autoResumeCount observation must not shrink the next call-local budget",
+    );
+    assert.equal(again.exitCode, 1);
+    assert.equal(again.terminal?.autoResumeCount, 2);
+  });
+});
+
+test("A2: station-child after-lease build failure releases the lock and retries the initial turn", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const first = await summonPublicRole({
+      role: "diarist",
+      argv: ["--project", project, "整理 #582"],
+      cwd: project,
+      home,
+      packageRoot,
+      boundTicketNumber: 582,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: scriptedTerminatingToolSession({
+          role: "diarist",
+          toolName: DIARIST_OUTPUT_TOOL_NAME,
+          details: { status: "completed", ticketNumber: 582, entries: [] },
+        }),
+      }),
+      createRunId: () => "416-station-child-lease-001",
+      credentials: { "openai-codex": true, xai: true },
+    });
+    assert.equal(first.exitCode, 0);
+    let turns = 0;
+    const env = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      stationChild: true as const,
+      roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
+        turns += 1;
+        const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
+          request.principal,
+        );
+        await mkdir(sessionDirectory, { recursive: true });
+        await writeFile(
+          sessionFile,
+          JSON.stringify({
+            type: "message",
+            message: { role: "user", content: [{ type: "text", text: "go" }] },
+          }) + "\n",
+          "utf8",
+        );
+        return { code: 1, stderr: `fail ${turns}\n`, timedOut: false };
+      }),
+    };
+    let builds = 0;
+    let preTurnFails = 0;
+    const { io } = captureIo();
+    const result = await runPostAdmissionSeatResume({
+      request: {
+        runId: "416-station-child-lease-001",
+        summons: { instruction: "refresh after lease #582" },
+      },
+      env,
+      io,
+      load: (effective) =>
+        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
+      buildTurnRequest: async (admitted, effective) => {
+        builds += 1;
+        if (builds === 1) throw new Error("after-lease boom");
+        const summonsPrepared = await prepareSummonsResumeMaterials(
+          admitted.runDirectory,
+          effective.summons,
+        );
+        return buildDiaristTurnRequest(
+          admitted,
+          resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
+        );
+      },
+      adapters: {
+        trySettle: async () => undefined,
+        shouldPresentSettled: () => true,
+        beforeDispatch: async () => {
+          preTurnFails += 1;
+          if (preTurnFails === 1) throw new Error("pre-turn boom");
+        },
+      },
+    });
+    assert.equal(builds, 3, "after-lease throw must release the lock; pre-turn fail must retry the initial builder");
+    assert.equal(turns, 1);
+    assert.notEqual(result.exitCode, 2);
+    assert.equal(result.terminal?.autoResumeCount, 2);
+  });
+});
+
+test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    for (const hostName of ["pi", "grok-build", "claude"] as const) {
+      const calls = { n: 0 };
+      // Each stand-in host persists its OWN real resumable-session binding
+      // shape (#840 r8 判词 class 3) — never a shared fake. pi's binding is
+      // the transcript session.jsonl (DurablePrincipalAuthority#isAvailable);
+      // ACP/headless hosts persist a native session id under their own
+      // session-identity binding file (host-descriptions.ts) instead and
+      // never touch session.jsonl. Writing the same file for every host would
+      // mask exactly the native-binding gap this suite guards against.
+      const failingHost = createMinimalHost(async (request: RoleTurnRequest) => {
+        calls.n += 1;
+        if (hostName === "pi") {
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
+            request.principal,
+          );
+          await mkdir(sessionDirectory, { recursive: true });
+          await writeFile(
+            sessionFile,
+            JSON.stringify({
+              type: "message",
+              message: { role: "user", content: [{ type: "text", text: "go" }] },
+            }) + "\n",
+            "utf8",
+          );
+        } else {
+          const description =
+            lookupHostDescription(hostName) ?? lookupHeadlessHostDescription(hostName);
+          assert.ok(description, `host description registered for ${hostName}`);
+          await createSessionIdentityAuthority(
+            piDurablePrincipalAuthority,
+            description!.sessionBindingFile,
+          ).bind(request.principal, `native-session-${hostName}-${calls.n}`);
+        }
+        return { code: 1, stderr: `fail ${calls.n}\n`, timedOut: false };
+      });
+      const hostAdapters: NamedRoleTurnHostAdapter[] = (
+        ["pi", "grok-build", "claude"] as const
+      ).map((name) => ({
+        name,
+        create: () => ({ ok: true as const, host: failingHost }),
+      }));
+      const { io } = captureIo();
+      const result = await runAkRole(
+        ["diarist", "--host", hostName, "--project", project, "auto-retry-test"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => `416-auto-host-${hostName}`,
+          io,
+          hostAdapters,
+        },
+      );
+      assert.equal(calls.n, 3, `${hostName} must retry through the shared auto-resume loop`);
+      assert.equal(result.exitCode, 1, hostName);
+      assert.equal(result.terminal?.autoResumeCount, 2, hostName);
+    }
   });
 });

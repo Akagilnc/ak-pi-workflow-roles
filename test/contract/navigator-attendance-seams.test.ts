@@ -1,5 +1,6 @@
 // #420 整改拆分：接缝与恢复家族
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -14,21 +15,35 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
+import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
+import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
+import { projectActivationFlags } from "../../src/role-activation-flags.ts";
+import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
 import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
-import type { RoleEnvelopeHost, RoleHost } from "../../src/host-contracts.ts";
+import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
   candidate,
   sessionHarness,
   attendance,
   settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
+import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
+import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
@@ -600,6 +615,220 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     else process.env.AK_ROLE_RUN_DIR = previousRunDir; }
     );
   });
+});
+
+test("station-child shared lifecycle omits Navigator attendance; top-level still creates it", async () => {
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    await withActivationHome({ prefix: "ak-nav-station-child-" }, async ({ home }) => {
+      async function attendanceCreatedFromTurn(request: RoleTurnRequest): Promise<boolean> {
+        const runDir = request.runDirectory;
+        await mkdir(join(runDir, "session"), { recursive: true });
+        process.env.AK_ROLE_RUN_DIR = runDir;
+        let created = false;
+        const flags = projectActivationFlags(request);
+        const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+        const tools: unknown[] = [];
+        const pi = {
+          registerFlag() {},
+          getFlag(name: string) {
+            return flags.get(name);
+          },
+          on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+            handlers.set(name, handler);
+          },
+          registerTool(tool: unknown) {
+            tools.push(tool);
+          },
+          getAllTools() {
+            return tools;
+          },
+          setActiveTools() {},
+          getActiveTools() {
+            return tools;
+          },
+          appendEntry() {},
+        };
+        const envelopeHost: RoleEnvelopeHost = {
+          host: pi as RoleHost,
+          appendEntry: pi.appendEntry,
+          sendMessage() {},
+          startKeepalive() {},
+          stopKeepalive() {},
+        };
+        createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "JUDGE LAW",
+          loadCountersignSoul: async () => "COUNTERSIGN LAW",
+          loadDiaristSoul: async () => "DIARIST LAW",
+          loadNotarySoul: async () => "NOTARY LAW",
+          loadNotarySourceRun: async (path: string) => ({
+            runDirectory: path,
+            runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
+            role: "judge" as const,
+          }),
+          loadNavigatorWorkContext: async () => ({
+            subjectKey: `${runDir}/work`,
+            subject: "work",
+            authority: "authority",
+            subjectProvenance: "role_input" as const,
+          }),
+          createNavigatorAttendance: () => {
+            created = true;
+            return {
+              prepare() {},
+              setWorkContext() {},
+              warmHelp() {},
+              isPreparing: () => false,
+              settle: async () => {},
+              dispose() {},
+            };
+          },
+        })(envelopeHost);
+        const sessionManager = SessionManager.create(home, join(runDir, "session"));
+        await handlers.get("session_start")?.({}, {
+          cwd: home,
+          sessionManager,
+          abort() {},
+        });
+        return created;
+      }
+
+      const project = join(home, "project");
+      await mkdir(project, { recursive: true });
+      seedGitRepository(project);
+      execFileSync(
+        "git",
+        ["remote", "add", "origin", "git@github.com:Akagilnc/ak-pi-workflow-roles.git"],
+        { cwd: project },
+      );
+      ensureTicketProvenanceVolume(582, project, home);
+
+      const captured: RoleTurnRequest[] = [];
+      const recordingHost = (scripted: ReturnType<typeof roleTurnHostFromLegacyPiRunner>) => ({
+        async executeTurn(request: RoleTurnRequest) {
+          captured.push(request);
+          return scripted.executeTurn(request);
+        },
+      });
+
+      const countersignBase = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          const roleIndex = args.indexOf("--ak-role");
+          const role = roleIndex >= 0 ? args[roleIndex + 1] : undefined;
+          if (role === "diarist") {
+            return scriptedTerminatingToolSession({
+              role: "diarist",
+              toolName: DIARIST_OUTPUT_TOOL_NAME,
+              details: { status: "completed", ticketNumber: 582, entries: [] },
+            })(args, options);
+          }
+          return scriptedTerminatingToolSession({
+            role: "countersign",
+            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+            details: { countersignStatus: "converged", note: "署" },
+          })(args, options);
+        },
+      });
+      const countersignHost = recordingHost(countersignBase);
+      const hostAdapters = [
+        { name: "pi" as const, create: () => ({ ok: true as const, host: countersignHost }) },
+        { name: "grok-build" as const, create: () => ({ ok: true as const, host: countersignHost }) },
+      ];
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const countersignResult = await runPublicCountersign(
+        ["裁：继续审票 #582 是否足以开工。"],
+        {
+          home,
+          agentDir: join(home, ".pi"),
+          packageRoot,
+          cwd: project,
+          principalAuthority: piDurablePrincipalAuthority,
+          sessionAppender: appendPiSessionCustomEntry,
+          credentials: { "openai-codex": true, xai: true },
+          roleTurnHost: countersignHost,
+          hostAdapters,
+          createRunId: () => "01a0sign00-0000-7000-8000-00000000a1b",
+        },
+        { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) },
+        parseCountersignArgv,
+      );
+      assert.equal(countersignResult.exitCode, 0, stderr.join("") || stdout.join(""));
+      const topLevel = captured.find((request) => request.activation.role === "countersign");
+      const diaristChild = captured.find((request) => request.activation.role === "diarist");
+      assert.ok(topLevel, "countersign public entry must dispatch a top-level turn");
+      assert.ok(diaristChild, "countersign court station must dispatch a diarist child turn");
+
+      captured.length = 0;
+      const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 582 });
+      const notaryBase = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: scriptedTerminatingToolSession({
+          role: "notary",
+          toolName: NOTARY_OUTPUT_TOOL_NAME,
+          details: { status: "pass", findings: [] },
+        }),
+      });
+      const notaryHost = recordingHost(notaryBase);
+      const projected = await projectGatekeeperRun({
+        context: {
+          cwd: project,
+          sessionManager: {
+            getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+            getEntries: () => [
+              {
+                type: "message",
+                message: {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "toolCall",
+                      id: "call-a1b",
+                      name: "ak_countersign_output",
+                      arguments: { countersignStatus: "converged", note: "seat" },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        } as never,
+        subject: { kind: "countersign_verdict" },
+        runDirectory: sourceRunPath,
+        home,
+        packageRoot,
+        roleTurnHost: notaryHost,
+        createRunId: () => "01a082100-0000-7000-8000-0000000na1b",
+      });
+      assert.equal(projected.result.status, "pass");
+      const notaryChild = captured.find((request) => request.activation.role === "notary");
+      assert.ok(notaryChild, "inner-gate summons must dispatch a notary child turn");
+
+      assert.equal(
+        await attendanceCreatedFromTurn(topLevel),
+        true,
+        "top-level public activation must construct Navigator attendance",
+      );
+      assert.equal(
+        await attendanceCreatedFromTurn(diaristChild),
+        false,
+        "court diarist station child must not construct Navigator attendance",
+      );
+      assert.equal(
+        await attendanceCreatedFromTurn(notaryChild),
+        false,
+        "inner-gate station child must not construct Navigator attendance",
+      );
+    });
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+  }
 });
 
 test("host-neutral envelope drives shared registration and session lifecycle", async () => {

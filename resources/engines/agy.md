@@ -15,7 +15,7 @@ sandboxed print mode with the prompt as the positional/print argument and a
 log file for diagnostics:
 
 ```bash
-agy --sandbox --dangerously-skip-permissions --print-timeout 30m --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
+agy --sandbox --dangerously-skip-permissions --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
 ```
 
 `--dangerously-skip-permissions` is required in headless labor: the CLI's
@@ -31,18 +31,10 @@ current Gemini Flash release — that default is the owner's standing choice.
 List the ids this host offers with `agy models` when an order names one.
 
 ```bash
-agy --sandbox --dangerously-skip-permissions --print-timeout 30m --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
+agy --sandbox --dangerously-skip-permissions --print 'YOUR_LABOR_PROMPT' --log-file /tmp/agy-labor.log
 ```
 
 When the dispatch order names a model, pass it verbatim via `--model`; an
 unknown model id is an engine-process failure (typed failure, stop — per
 `../engine-dispatch.md`). Never copy a model id from this note or from a
 previous run — ids here would go stale.
-
-## Print-mode timeout
-
-`--print-timeout` defaults to 5m0s — too short for labor turns; a full apply
-labor exceeded it (host-verified 2026-08-26, run 01a03dae-5635@coder,
-"timeout waiting for response"). Labor invocations pass `--print-timeout 30m`.
-A timeout that still fires is an engine-process failure: typed failure and
-STOP per `../engine-dispatch.md`.

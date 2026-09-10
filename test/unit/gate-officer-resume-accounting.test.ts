@@ -17,6 +17,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
@@ -335,6 +336,17 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 821 });
 
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      publicCliConfigPath(home),
+      `${JSON.stringify({
+        seats: { notary: { provider: "openai-codex", model: "gpt-5.6-sol", host: "pi" } },
+      })}\n`,
+      "utf8",
+    );
+    await mkdir(join(home, ".pi", "agent"), { recursive: true });
+    await writeFile(join(home, ".pi", "agent", "auth.json"), `${JSON.stringify({ "openai-codex": {} })}\n`, "utf8");
+
     // Parent live --host differs from the officer seat default (pi).
     await writeFile(
       join(sourceRunPath, "invocation.json"),
@@ -396,7 +408,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
     const nestedInvocation = JSON.parse(
       await readFile(join(projected.summoned!.runDirectory!, "invocation.json"), "utf8"),
-    ) as { host?: string };
+    ) as { host?: string; model?: string; provider?: string };
     assert.equal(
       nestedInvocation.host,
       "pi",
@@ -407,5 +419,12 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
       "claude",
       "parent invocation host must not be forced onto the nested officer",
     );
+    assert.equal(nestedInvocation.provider, "openai-codex");
+    assert.equal(
+      nestedInvocation.model,
+      "gpt-5.6-sol",
+      "nested officer must record own seat model, not parent invocation model",
+    );
+    assert.notEqual(nestedInvocation.model, "sonnet");
   });
 });

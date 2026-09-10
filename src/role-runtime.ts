@@ -171,6 +171,14 @@ const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
   }),
 ] as const);
 
+export const STATION_CHILD_FLAG = Object.freeze({
+  name: "ak-station-child",
+  definition: Object.freeze({
+    description: "Station-child role run (omit automatic navigator attendance; #840)",
+    type: "boolean" as const,
+  }),
+} as const);
+
 /**
  * Decode private transport flags into frozen admitted inputs.
  * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
@@ -1056,6 +1064,8 @@ export function createRoleRuntimeExtension(
     for (const flag of COLLECTOR_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
+    // Station-child identity (#840): omit navigator attendance. One flag.
+    roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
 
     let admitted = false;
     let selectedRole: string | undefined;
@@ -1867,13 +1877,15 @@ export function createRoleRuntimeExtension(
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
-        // Same public activation face for every role (#675 / owner 09-06): no nested-env
-        // skip, no work-role whitelist. Attendance attaches when the envelope supplies it.
+        // Station children (court diarist, inner-gate summons) omit navigator sidecar (#840).
+        // Top-level public entry legs still attend automatically.
         // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
         // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
+        const isStationChild = roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
         if (
           dependencies.createNavigatorAttendance !== undefined
           && entry.role !== "navigator"
+          && !isStationChild
         ) {
           let work: NavigatorWorkContext;
           let contextError: unknown;

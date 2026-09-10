@@ -10,6 +10,9 @@ import { packagedRoleInputFlag, packagedRolePhaseFlag } from "./packaged-role-re
 export function projectActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
   const activation = request.activation;
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
+  if (request.stationChild === true) {
+    flags.set("ak-station-child", true);
+  }
   const inputFlag = packagedRoleInputFlag(activation.role);
   const phaseFlag = packagedRolePhaseFlag(activation.role);
   if ("phase" in activation && phaseFlag !== undefined) flags.set(phaseFlag, activation.phase);

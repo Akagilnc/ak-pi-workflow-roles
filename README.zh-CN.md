@@ -27,7 +27,7 @@ ak-role judge --attach ./plan.md "Review this plan." > result.txt
 
 `ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（调用旗 → 席位持久 → 包默认）。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。`[message]` 只适用于接收 caller instruction 的席位：对这些席位，`runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略则用包自带 resume envelope。Notary/符宝郎必须省略 `message`，仅从既有 source-run/案卷绑定自取证。全局 `--model` / `--thinking` / `--host` / `--engine` 仅覆盖本次 resume——须置于 `<runId>` 之前（放 `resume` 之前或 `resume` 与 `<runId>` 之间均可，例如 `ak-role --model xai/grok-4.5 resume 01abc…` 或 `ak-role resume --model xai/grok-4.5 01abc…`）；`<runId>` 之后的那一个 argv 恒为原样透传的 message，绝非旗位（#471）。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`；Grok CLI 原始会话留在操作员 grok 家，工厂卷宗为该 run 的司天台记录），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、察院始于 #633。
 
-大理寺、将作监、修内司、御史台、校书郎在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
+全部可调用角色在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
 席位与官席配置：
 
@@ -48,7 +48,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、游奕使、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
+**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
@@ -97,7 +97,7 @@ ak-role inspector --attach ./change.patch "Review this material."
 # 门下省——直调省审：派官或放行
 ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
 
-# 游奕使——直调路线建议（有序的下一步角色候选）；自动出席不变
+# 游奕使——直调路线建议（有序的下一步角色候选）；随公开入口顶层腿自动出席
 ak-role navigator "刚完成 coder apply 收敛，下一步？"
 
 # 给事中——票庭五问；票号经由 instruction 识别；受理内先自动起居郎再本席（#742，调用者无感）
@@ -133,7 +133,7 @@ ak-role resume <runId> "<裁定>"
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；无进行中合并、无活可干或遇到无法自行决定之处，则升级。 |
-| **游奕使** | navigator（自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
+| **游奕使** | navigator（随公开入口顶层腿自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
 | **起居郎** | diarist（`ak-role diarist` 单独传召；给事中受理内自动先起，#742） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 自行搜集、整理、认票（#779 后无机械验真，机械只做 IO；起居录供符宝郎读录核旨）。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md) `diarist-is-role`、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
 
 其余席位：
