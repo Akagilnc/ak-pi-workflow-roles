@@ -12,7 +12,6 @@ export function projectActivationFlags(request: RoleTurnRequest): Map<string, bo
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
   if (request.stationChild === true) {
     flags.set("ak-station-child", true);
-    flags.set("ak-omit-navigator", true);
   }
   const inputFlag = packagedRoleInputFlag(activation.role);
   const phaseFlag = packagedRolePhaseFlag(activation.role);

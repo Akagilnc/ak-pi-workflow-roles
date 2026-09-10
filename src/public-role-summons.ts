@@ -16,6 +16,7 @@ import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
 import type { RoleTurnHost } from "./host-contracts.ts";
+import type { NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
@@ -67,10 +68,15 @@ export type PublicSummonRequest = {
    */
   readonly gateReviewInstruction?: string;
   /**
-   * Offline test inject — same face as public CLI env.roleTurnHost. Production
-   * summons leave this unset and use the seat-resolved host.
+   * Pi-adapter inject (tests). Used only as the `pi` row when composing the
+   * adapter table — never as an override of the child seat's selected host.
    */
   readonly roleTurnHost?: RoleTurnHost;
+  /**
+   * Composition-root adapter table (tests / parent CLI env). Child seat selects
+   * from this table. Production leaves unset and composes the default table.
+   */
+  readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Offline test inject for deterministic run ids (same face as public CLI). */
   readonly createRunId?: () => string;
   /** Typed ticket number handoff for diarist child run (#840). */
@@ -181,59 +187,30 @@ async function createSummonEnv(options: {
   readonly credentials: CredentialProviders;
   readonly seat: EffectiveSeat;
   readonly extraPiArgs?: readonly string[];
+  readonly roleTurnHost?: RoleTurnHost;
+  readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
 }) {
-  const [{ piDurablePrincipalAuthority }, { appendPiSessionCustomEntry, createPiRoleTurnHost }] =
+  const [{ piDurablePrincipalAuthority }, { appendPiSessionCustomEntry }, { resolveRoleTurnHost }] =
     await Promise.all([
       import("./pi/durable-principal.ts"),
       import("./pi/role-turn-host.ts"),
+      import("./public-cli/role-turn-host-resolution.ts"),
     ]);
   const principalAuthority = piDurablePrincipalAuthority;
-  // package root is request-scoped only — never leave process.env residue (#675).
-  const piRecords = {
-    async recordLaunchedPiIdentity(runDirectory: string, identity: unknown) {
-      const { recordLaunchedPiIdentity } = await import("./public-cli/invocation.ts");
-      return recordLaunchedPiIdentity(runDirectory, identity as never);
-    },
-    async recordLaunchedRolePackageIdentity(runDirectory: string, identity: unknown) {
-      const { recordLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
-      return recordLaunchedRolePackageIdentity(runDirectory, identity as never);
-    },
-    async observeLaunchedRolePackageIdentity(root: string, roleEntry: string) {
-      const { observeLaunchedRolePackageIdentity } = await import("./public-cli/invocation.ts");
-      return observeLaunchedRolePackageIdentity(root, roleEntry);
-    },
-  } as const;
-  const piHost = createPiRoleTurnHost({
-    packageRoot: options.packageRoot,
-    principalAuthority,
-    ...(options.extraPiArgs === undefined || options.extraPiArgs.length === 0
-      ? {}
-      : { extraPiArgs: options.extraPiArgs }),
-    ...piRecords,
-  });
-  // Same host axis table as public CLI (#617 DK-3 / #675 / #729): seat.host is
-  // a description-table key; pi stays the in-process default adapter.
-  const hostName = options.seat.host ?? "pi";
-  let roleTurnHost = piHost;
-  if (hostName !== "pi") {
-    const { lookupHostFamily } = await import("./host-descriptions.ts");
-    const { createLazyProductionExternalHost } = await import(
-      "./public-cli/load-production-external-host.ts"
-    );
-    // #729 / #645: description tables are the sole host authority — family
-    // dispatch (ACP vs headless) is data-driven. Unregistered keys fail closed.
-    if (lookupHostFamily(hostName) === undefined) {
-      throw new Error(
-        `public role summons host unregistered: host=${hostName} seat=${options.role}`,
-      );
-    }
-    // Same lazy external host face as public CLI (#820) — one builder, two callers.
-    roleTurnHost = createLazyProductionExternalHost({
+  // Same host axis table as public CLI (#617 DK-3 / #675 / #840): child seat
+  // selects; injected roleTurnHost is the pi adapter only.
+  const roleTurnHost = resolveRoleTurnHost(
+    {
       packageRoot: options.packageRoot,
-      hostName,
-      principalAuthority,
-    });
-  }
+      ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+      ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+      ...(options.extraPiArgs === undefined || options.extraPiArgs.length === 0
+        ? {}
+        : { extraPiArgs: options.extraPiArgs }),
+    },
+    { role: options.role, seat: options.seat, principalAuthority },
+  );
+  const hostName = options.seat.host ?? "pi";
   // #788: host is registered above; only then project host-facing provider.
   const { loadHostProvidersTable, projectHostFacingProvider } = await import(
     "./public-cli/host-providers.ts"
@@ -296,6 +273,8 @@ export async function summonPublicRole(
       credentials,
       seat,
       ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
+      ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+      ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     })),
     // Station child role run (#840): omit automatic navigator attendance.
     stationChild: true,
@@ -314,8 +293,7 @@ export async function summonPublicRole(
     ...(options.boundTicketNumber === undefined
       ? {}
       : { boundTicketNumber: options.boundTicketNumber }),
-    // Offline test injects — same faces as public CLI env (production leaves unset).
-    ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+    // createRunId is the only remaining env overlay — host is seat-selected above.
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
@@ -445,8 +423,9 @@ export async function summonGateOfficer(options: {
    * when reask is absent (#786). Never a path pointer substitute.
    */
   readonly submission?: unknown;
-  /** Offline test inject — forwarded to summonPublicRole. */
+  /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
   readonly roleTurnHost?: RoleTurnHost;
+  readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Offline test inject — forwarded to summonPublicRole. */
   readonly createRunId?: () => string;
 }): Promise<PublicSummonResult> {
@@ -478,6 +457,7 @@ export async function summonGateOfficer(options: {
       ? {}
       : { gateReviewInstruction }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+    ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
   if (options.officer === "notary") {

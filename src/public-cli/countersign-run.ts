@@ -29,7 +29,6 @@ import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
-  parseDiaristArgv,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -139,7 +138,9 @@ async function invokeCourtDiarist(input: {
     ...(input.boundTicketNumber === undefined
       ? {}
       : { boundTicketNumber: input.boundTicketNumber }),
-    ...(env.roleTurnHost === undefined ? {} : { roleTurnHost: env.roleTurnHost }),
+    // Child seat selects from the composition-root table. Do not pass the
+    // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
   });
 
   const roleOutcome = result.terminal?.roleOutcome;

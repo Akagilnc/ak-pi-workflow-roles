@@ -88,6 +88,7 @@ import {
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
+import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
 } from "./terminal.ts";
@@ -113,6 +114,11 @@ export type PostAdmissionEnv = {
   cwd: string;
   correlationId?: string;
   roleTurnHost: RoleTurnHost;
+  /**
+   * Composition-root adapter table. Nested summons select by the child seat
+   * from this table — they must not inherit the already-selected parent host.
+   */
+  hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   model?: SeatModelConfig;
   engine?: string;
   /** Effective main-session host for this run (#595 admission / #617 resume seat). */

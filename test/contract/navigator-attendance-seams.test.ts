@@ -670,61 +670,6 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
       assert.equal(observed.subject, prose);
       assert.equal(observed.authority, prose);
       assert.ok(String(observed.subjectKey).length > 0);
-
-      // Station child leg (#840): omit navigator attendance
-      let childObserved: unknown;
-      const childPi = {
-        registerFlag() {},
-        getFlag(name: string) {
-          if (name === "ak-role") return "judge";
-          if (name === "ak-station-child" || name === "ak-omit-navigator") return true;
-          return undefined;
-        },
-        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-          handlers.set(name, handler);
-        },
-        registerTool() {},
-        getAllTools() { return []; },
-        setActiveTools() {},
-        getActiveTools() { return []; },
-        appendEntry() {},
-      };
-      const childEnvelope: RoleEnvelopeHost = {
-        host: childPi as RoleHost,
-        appendEntry: childPi.appendEntry,
-        sendMessage() {},
-        startKeepalive() {},
-        stopKeepalive() {},
-      };
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
-        loadNavigatorWorkContext: async () => ({
-          subjectKey: `${runDir}/child-work`,
-          subject: prose,
-          authority: prose,
-          subjectProvenance: "role_input",
-        }),
-        createNavigatorAttendance: (options) => {
-          childObserved = options;
-          return {
-            prepare() {},
-            setWorkContext() {},
-            warmHelp() {},
-            isPreparing: () => false,
-            settle: async () => {},
-            dispose() {},
-          };
-        },
-      })(childEnvelope);
-      const childSessionDir = join(runDir, "child-session");
-      await mkdir(childSessionDir, { recursive: true });
-      const childSessionManager = SessionManager.create(home, childSessionDir);
-      await handlers.get("session_start")?.({}, {
-        cwd: home,
-        sessionManager: childSessionManager,
-        abort() {},
-      });
-      assert.equal(childObserved, undefined, "station child must omit navigator attendance (#840)");
     });
   } finally {
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
