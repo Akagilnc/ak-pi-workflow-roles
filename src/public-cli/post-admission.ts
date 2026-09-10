@@ -91,6 +91,7 @@ import type { AdmittedRoleInvocation } from "./invocation.ts";
 import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
+  type TerminalRoleName,
 } from "./terminal.ts";
 import { persistReturnedRunState, runWithAutoResumeLoop } from "./auto-resume.ts";
 
@@ -117,6 +118,38 @@ function withOnceSuccessfulBeforeDispatch<
       await hook(admitted);
       succeeded = true;
     },
+  };
+}
+
+/**
+ * Pure, I/O-free failure terminal for a dispatch-scoped exception that
+ * escaped every more specific handler in dispatchPostAdmissionTurn (#840 r9
+ * 判词 class 1 boundary: "覆盖 executeTurn 已启动后至返回带 turnDispatched
+ * 结果前的全部异常,不限于 clearCurrentCourt 实例"). This is the backstop
+ * catch's only tool, so it must never itself throw.
+ */
+function synthesizeDispatchExceptionTerminal(
+  admitted: { readonly runId: string; readonly role: TerminalRoleName },
+  error: unknown,
+): TerminalResult {
+  const diagnostic = `dispatch settlement threw after the host turn started: ${describeErrorIdentity(error)}`;
+  const decisiveFacts: Record<string, unknown> = { cause: "unrecognized", diagnostic };
+  const candidate = error as { name?: unknown; code?: unknown };
+  if (typeof candidate?.name === "string") decisiveFacts.errorName = candidate.name;
+  if (typeof candidate?.code === "string" || typeof candidate?.code === "number") {
+    decisiveFacts.errorCode = candidate.code;
+  }
+  return {
+    roleOutcome: {
+      kind: "failure",
+      role: admitted.role,
+      cause: "unrecognized",
+      diagnostic,
+      decisiveFacts,
+    },
+    navigator: { disposition: "no-advice" },
+    artifacts: [],
+    runId: admitted.runId,
   };
 }
 
@@ -533,127 +566,178 @@ export async function dispatchPostAdmissionTurn<
       return { ...settled, turnDispatched: true as const, ...deferredPersist };
     }
 
+    // Everything below runs after the host turn genuinely started. The outer
+    // catch is a last-resort net (#840 r9 判词 class 1 boundary — "覆盖
+    // executeTurn 已启动后至返回带 turnDispatched 结果前的全部异常,不限于
+    // clearCurrentCourt 实例"): every specific handler below already returns
+    // rather than rethrows, so only a failure inside one of those handlers
+    // themselves (e.g. presentControlledFailure's own settlement/observation
+    // reads) can still reach it.
     try {
-      await writeFile(
-        join(admitted.runDirectory, "stderr.log"),
-        result.stderr,
-        "utf8",
-      );
-    } catch {
-      // continue to lawful / controlled-failure settlement
-    }
+      try {
+        await writeFile(
+          join(admitted.runDirectory, "stderr.log"),
+          result.stderr,
+          "utf8",
+        );
+      } catch (error) {
+        // Best-effort: the turn's own stderr capture is secondary to lawful /
+        // controlled-failure settlement below, but the failure itself must
+        // still leave a trace (失败诚实宪法 真因必须落痕), not a silent catch.
+        io.stderr(
+          formatCliDiagnostic(
+            `stderr.log write failed (best-effort continue): ${describeErrorIdentity(error)}`,
+          ),
+        );
+      }
 
-    let settled: T | undefined;
-    // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
-    // prior sealed pass cannot wash this turn's missing/escalated/failed result.
-    const courtScope =
-      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-        ? undefined
-        : { courtAttemptId: request.courtAttemptId };
-    try {
-      settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-    } catch (error) {
-      // Settle throw is a real failure fact — never swallow into undefined.
-      const settledFailure = (await presentControlledFailure(
-        admitted,
-        {
+      let settled: T | undefined;
+      // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
+      // prior sealed pass cannot wash this turn's missing/escalated/failed result.
+      const courtScope =
+        request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+          ? undefined
+          : { courtAttemptId: request.courtAttemptId };
+      try {
+        settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
+      } catch (error) {
+        // Settle throw is a real failure fact — never swallow into undefined.
+        const settledFailure = (await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: result.code,
+            stderr: result.stderr,
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T };
+        return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
+      }
+      if (settled !== undefined && shouldPresent(settled)) {
+        // This court sealed — drop open-court pointer (bare resume no longer continues it).
+        if (
+          settled.roleOutcome.kind === "accepted" &&
+          request.courtAttemptId !== undefined &&
+          request.courtAttemptId.length > 0
+        ) {
+          try {
+            await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
+          } catch (error) {
+            // Settlement already sealed accepted — a cleanup failure here must
+            // not erase that fact or make the caller replay this court's
+            // summons over already-delivered work (#840 r9 判词 class 1 已交劳动
+            // 只整理终局不重做). A later bare resume self-heals: buildRequestAfterLease
+            // finds the open court already sealed and clears it then (documented
+            // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
+            // 必须落痕).
+            io.stderr(
+              formatCliDiagnostic(
+                `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+              ),
+            );
+          }
+        }
+        // Lawful persist + present is the caller's stop seam (auto-resume loop /
+        // manual resume), not this retried host-turn function.
+        return {
+          exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+          admitted,
+          terminal: settled,
+          turnDispatched: true as const,
+          ...deferredPersist,
+        };
+      }
+
+      // Any exception while resolving the failure facts below — including the
+      // session-file decode itself — still happened after the host turn
+      // genuinely started (#840 r9 判词 class 1). Fold it into the same single
+      // controlled-failure settlement instead of losing turnDispatched to an
+      // uncaught throw.
+      let failureInput: ControlledFailureInput;
+      try {
+        const sessionFile =
+          admitted.principal !== undefined
+            ? env.principalAuthority.decode(admitted.principal).sessionFile
+            : "";
+        const runnerKnownFailure =
+          adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
+            ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
+            : result.knownFailure;
+        const credentialFailure = postRunMissingCredentialFailure(
+          result,
+          env.model,
+          env.credentials,
+        );
+        const resolution = await resolveAuditedRunnerFailureResolution({
+          runner: runnerKnownFailure,
+          sessionFile,
+          credential: credentialFailure,
+          runDirectory: admitted.runDirectory,
+        });
+        failureInput = {
+          timedOut: result.timedOut,
+          code: result.code,
+          stderr: result.stderr,
+          ...controlledFailureInputFromResolution(resolution),
+        };
+      } catch (error) {
+        failureInput = {
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
           thrown: error,
-        },
+        };
+      }
+      const failed = (await presentControlledFailure(
+        admitted,
+        failureInput,
         adapters,
         env.principalAuthority,
         io,
         persistRunState,
       )) as { exitCode: number; admitted: A; terminal: T };
-      return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
-    }
-    if (settled !== undefined && shouldPresent(settled)) {
-      // This court sealed — drop open-court pointer (bare resume no longer continues it).
-      if (
-        settled.roleOutcome.kind === "accepted" &&
-        request.courtAttemptId !== undefined &&
-        request.courtAttemptId.length > 0
-      ) {
+      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+    } catch (error) {
+      // Last-resort net: pure synthesis plus a best-effort persist attempt —
+      // no further fallible step may run here, or the dispatch fact could be
+      // lost one level up again (#840 r9 判词 class 1).
+      if (persistRunState) {
         try {
-          await clearCurrentCourt(admitted.runDirectory, request.courtAttemptId);
-        } catch (error) {
-          // Settlement already sealed accepted — a cleanup failure here must
-          // not erase that fact or make the caller replay this court's
-          // summons over already-delivered work (#840 r9 判词 class 1 已交劳动
-          // 只整理终局不重做). A later bare resume self-heals: buildRequestAfterLease
-          // finds the open court already sealed and clears it then (documented
-          // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
-          // 必须落痕).
-          io.stderr(
-            formatCliDiagnostic(
-              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
-            ),
-          );
+          await persistReturnedRunState(admitted, env.principalAuthority);
+        } catch {
+          // best-effort — the terminal below still carries the true cause.
         }
       }
-      // Lawful persist + present is the caller's stop seam (auto-resume loop /
-      // manual resume), not this retried host-turn function.
+      const terminal = synthesizeDispatchExceptionTerminal(admitted, error);
+      presentFailureTerminal(terminal, io);
       return {
-        exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+        exitCode: 1,
         admitted,
-        terminal: settled,
+        terminal: terminal as T,
         turnDispatched: true as const,
         ...deferredPersist,
       };
     }
-
-    const sessionFile =
-      admitted.principal !== undefined
-        ? env.principalAuthority.decode(admitted.principal).sessionFile
-        : "";
-    // Any exception while resolving the failure facts below still happened
-    // after the host turn genuinely started (#840 r9 判词 class 1) — fold it
-    // into the same single controlled-failure settlement below instead of
-    // losing turnDispatched to an uncaught throw.
-    let failureInput: ControlledFailureInput;
-    try {
-      const runnerKnownFailure =
-        adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
-          ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
-          : result.knownFailure;
-      const credentialFailure = postRunMissingCredentialFailure(
-        result,
-        env.model,
-        env.credentials,
-      );
-      const resolution = await resolveAuditedRunnerFailureResolution({
-        runner: runnerKnownFailure,
-        sessionFile,
-        credential: credentialFailure,
-        runDirectory: admitted.runDirectory,
-      });
-      failureInput = {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      };
-    } catch (error) {
-      failureInput = {
-        timedOut: false,
-        code: result.code,
-        stderr: result.stderr,
-        thrown: error,
-      };
-    }
-    const failed = (await presentControlledFailure(
-      admitted,
-      failureInput,
-      adapters,
-      env.principalAuthority,
-      io,
-      persistRunState,
-    )) as { exitCode: number; admitted: A; terminal: T };
-    return { ...failed, turnDispatched: true as const, ...deferredPersist };
   } finally {
-    await lease.release();
+    try {
+      await lease.release();
+    } catch (error) {
+      // lease.release() is documented best-effort and never rejects in the
+      // production acquireRunWriterLease implementation (createWriterLease
+      // reports cleanup failures via callback, never throws) — this guard is
+      // structural only: an uncaught throw from a finally block silently
+      // replaces whatever the try already returned, including a properly
+      // tagged turnDispatched:true result (#840 r9 判词 class 1 boundary).
+      io.stderr(
+        formatCliDiagnostic(
+          `writer lease release failed unexpectedly (best-effort continue): ${describeErrorIdentity(error)}`,
+        ),
+      );
+    }
   }
 }
 

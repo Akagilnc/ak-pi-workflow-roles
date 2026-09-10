@@ -571,14 +571,19 @@ export async function markRunAdmitted(
 }
 
 /**
- * Shared dispatch execution seam: record the effective launch model (initial or
- * resume override) and the authoritative seat engine/host onto invocation.json,
- * then transition to running.
+ * Shared dispatch execution seam: transition to running, then record the
+ * effective launch model (initial or resume override) and the authoritative
+ * seat engine/host onto invocation.json.
  * Role runners must not coordinate lifecycle ledger writes themselves.
  * Engine axis is authoritative here (#617): present string is written; omit/undefined
  * clears any prior engine key so unset-engine + resume does not keep a stale value.
  * (Non-authoritative partial updates still use recordEffectiveInvocationModel directly
  * with `engine: undefined` to preserve.)
+ * Host-page write is deliberately the last step (#840 r9 判词 class 2): this
+ * function is not atomic, and a caller retrying after it throws must not see
+ * the new host already committed while the run-state transition itself never
+ * completed — the run-state write happens first, so any failure past that
+ * point still leaves the prior invocation host in place for the retry.
  */
 export async function markRunRunning(
   runDirectory: string,
@@ -586,13 +591,6 @@ export async function markRunRunning(
   effectiveEngine?: string,
   effectiveHost?: string,
 ): Promise<void> {
-  await recordEffectiveInvocationModel(
-    runDirectory,
-    effectiveModel,
-    // Authoritative seat projection: absent engine ⇒ null (delete).
-    effectiveEngine === undefined ? null : effectiveEngine,
-    effectiveHost,
-  );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
     throw new Error("cannot mark running: run state missing");
@@ -611,6 +609,13 @@ export async function markRunRunning(
     ...(current.phase === undefined ? {} : { phase: current.phase }),
     ...(current.currentCourt === undefined ? {} : { currentCourt: current.currentCourt }),
   });
+  await recordEffectiveInvocationModel(
+    runDirectory,
+    effectiveModel,
+    // Authoritative seat projection: absent engine ⇒ null (delete).
+    effectiveEngine === undefined ? null : effectiveEngine,
+    effectiveHost,
+  );
 }
 
 /** @deprecated #416: 429-only resumable marker; kept for historical runs. */
