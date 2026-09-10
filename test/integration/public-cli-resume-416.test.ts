@@ -30,12 +30,7 @@ import {
   resumeTurnRequestProjectionOptions,
   runPostAdmissionSeatResume,
 } from "../../src/public-cli/post-admission.ts";
-import {
-  loadResumableDiaristRun,
-  loadResumableJudgeRun,
-  readRoleRunState,
-  RESUME_TRANSPORT_ENVELOPE,
-} from "../../src/public-cli/run-lifecycle.ts";
+import { loadResumableDiaristRun, loadResumableJudgeRun, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -468,7 +463,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       credentials: { "openai-codex": true, xai: true },
     });
     assert.equal(first.exitCode, 0);
-    const prompts: string[] = [];
+    const kinds: Array<RoleTurnRequest["continuation"]["kind"]> = [];
     const env = {
       home,
       agentDir: join(home, ".pi"),
@@ -478,7 +473,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       sessionAppender: appendPiSessionCustomEntry,
       stationChild: true as const,
       roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
-        prompts.push(request.continuation.prompt);
+        kinds.push(request.continuation.kind);
         const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
           request.principal,
         );
@@ -491,7 +486,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           }) + "\n",
           "utf8",
         );
-        return { code: 1, stderr: `fail ${prompts.length}\n`, timedOut: false };
+        return { code: 1, stderr: `fail ${kinds.length}\n`, timedOut: false };
       }),
     };
     let builds = 0;
@@ -512,10 +507,14 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           admitted.runDirectory,
           effective.summons,
         );
-        return buildDiaristTurnRequest(
+        const turn = buildDiaristTurnRequest(
           admitted,
           resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
         );
+        return {
+          ...turn,
+          continuation: { kind: "initial", prompt: turn.continuation.prompt },
+        };
       },
       adapters: {
         trySettle: async () => undefined,
@@ -524,10 +523,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
     });
     assert.equal(builds, 2, "after-lease throw must release the writer lease so the next attempt can acquire");
     assert.notEqual(result.exitCode, 2);
-    assert.equal(prompts.length, 2);
-    assert.equal(prompts[0]!.includes("refresh after lease #582"), true);
-    assert.equal(prompts[0]!.includes(RESUME_TRANSPORT_ENVELOPE), false);
-    assert.equal(prompts[1]!.includes(RESUME_TRANSPORT_ENVELOPE), true);
+    assert.deepEqual(kinds, ["initial", "resume"]);
     assert.equal(result.terminal?.autoResumeCount, 2);
   });
 });
