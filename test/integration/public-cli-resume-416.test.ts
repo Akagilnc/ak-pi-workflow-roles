@@ -463,7 +463,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       credentials: { "openai-codex": true, xai: true },
     });
     assert.equal(first.exitCode, 0);
-    const kinds: Array<RoleTurnRequest["continuation"]["kind"]> = [];
+    let turns = 0;
     const env = {
       home,
       agentDir: join(home, ".pi"),
@@ -473,7 +473,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       sessionAppender: appendPiSessionCustomEntry,
       stationChild: true as const,
       roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
-        kinds.push(request.continuation.kind);
+        turns += 1;
         const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
           request.principal,
         );
@@ -486,10 +486,11 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           }) + "\n",
           "utf8",
         );
-        return { code: 1, stderr: `fail ${kinds.length}\n`, timedOut: false };
+        return { code: 1, stderr: `fail ${turns}\n`, timedOut: false };
       }),
     };
     let builds = 0;
+    let preTurnFails = 0;
     const { io } = captureIo();
     const result = await runPostAdmissionSeatResume({
       request: {
@@ -507,23 +508,23 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           admitted.runDirectory,
           effective.summons,
         );
-        const turn = buildDiaristTurnRequest(
+        return buildDiaristTurnRequest(
           admitted,
           resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
         );
-        return {
-          ...turn,
-          continuation: { kind: "initial", prompt: turn.continuation.prompt },
-        };
       },
       adapters: {
         trySettle: async () => undefined,
         shouldPresentSettled: () => true,
+        beforeDispatch: async () => {
+          preTurnFails += 1;
+          if (preTurnFails === 1) throw new Error("pre-turn boom");
+        },
       },
     });
-    assert.equal(builds, 2, "after-lease throw must release the writer lease so the next attempt can acquire");
+    assert.equal(builds, 3, "after-lease throw must release the lock; pre-turn fail must retry the initial builder");
+    assert.equal(turns, 1);
     assert.notEqual(result.exitCode, 2);
-    assert.deepEqual(kinds, ["initial", "resume"]);
     assert.equal(result.terminal?.autoResumeCount, 2);
   });
 });
