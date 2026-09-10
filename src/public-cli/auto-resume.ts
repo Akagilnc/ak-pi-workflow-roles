@@ -26,6 +26,7 @@ import {
   describeErrorIdentity,
   acquireRunWriterLease,
   markRunTerminal,
+  RoleRunStatePersistenceError,
   RunWriterLeaseHeldError,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
@@ -394,6 +395,11 @@ export async function runWithAutoResumeLoop<
     try {
       result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
+      // Run-state persistence is not a host-turn failure. Retrying synthesizes a
+      // fake terminal and hides the original write error (#517 / #840 one-shot fold).
+      if (error instanceof RoleRunStatePersistenceError) {
+        throw error;
+      }
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
       // pointer); recording failure must not break the retry path (PR #418

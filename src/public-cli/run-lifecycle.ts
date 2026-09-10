@@ -251,16 +251,31 @@ export function renderResumeCommand(runId: string): string {
   return `ak-role resume ${runId}`;
 }
 
+/**
+ * Durable run-state.json could not be read or written.
+ * Not a host-turn failure: auto-resume must not retry it into a synthetic terminal.
+ */
+export class RoleRunStatePersistenceError extends Error {
+  override readonly name = "RoleRunStatePersistenceError";
+}
+
+async function persistRoleRunStateFile(path: string, payload: unknown): Promise<void> {
+  try {
+    await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch (error) {
+    throw new RoleRunStatePersistenceError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+
 export async function writeRoleRunState(
   runDirectory: string,
   record: Omit<RoleRunRecord, "runDirectory">,
 ): Promise<void> {
   const payload: RoleRunRecord = { ...record, runDirectory };
-  await writeFile(
-    join(runDirectory, RUN_STATE_FILE),
-    `${JSON.stringify(payload, null, 2)}\n`,
-    "utf8",
-  );
+  await persistRoleRunStateFile(join(runDirectory, RUN_STATE_FILE), payload);
 }
 
 /**
@@ -473,11 +488,7 @@ async function writeRoleRunStateDisk(
     ...(disk.resumable === undefined ? {} : { resumable: disk.resumable }),
     ...(disk.currentCourt === undefined ? {} : { currentCourt: disk.currentCourt }),
   };
-  await writeFile(
-    join(runDirectory, RUN_STATE_FILE),
-    `${JSON.stringify(payload, null, 2)}\n`,
-    "utf8",
-  );
+  await persistRoleRunStateFile(join(runDirectory, RUN_STATE_FILE), payload);
 }
 
 /** One authority.decode of the uninterpreted wire → record + opaque principal (frozen wire itself). */
@@ -595,7 +606,7 @@ export async function markRunRunning(
   );
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
-    throw new Error("cannot mark running: run state missing");
+    throw new RoleRunStatePersistenceError("cannot mark running: run state missing");
   }
   // Omit resumable while a writer is active. Principal wire is passed through uninterpreted.
   // Preserve open currentCourt across running transitions (#637).
@@ -620,7 +631,7 @@ export async function markRunResumable(
 ): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
-    throw new Error("cannot mark resumable: run state missing");
+    throw new RoleRunStatePersistenceError("cannot mark resumable: run state missing");
   }
   await writeRoleRunStateDisk(runDirectory, {
     ...current,
@@ -632,7 +643,7 @@ export async function markRunResumable(
 export async function markRunTerminal(runDirectory: string): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
-    throw new Error("cannot mark terminal: run state missing");
+    throw new RoleRunStatePersistenceError("cannot mark terminal: run state missing");
   }
   // Preserve open currentCourt: terminal after a failed/incomplete court must still
   // let bare resume continue that court (#637).
@@ -665,7 +676,7 @@ export async function recordCurrentCourt(
 ): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
-    throw new Error("cannot record current court: run state missing");
+    throw new RoleRunStatePersistenceError("cannot record current court: run state missing");
   }
   await writeRoleRunStateDisk(runDirectory, {
     ...current,

@@ -809,6 +809,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
 
   assert.deepEqual(new Set(harness.flags.keys()), new Set([
     "ak-role",
+    "ak-station-child",
     "ak-fix-packet",
     "ak-fixer-prerequisites",
     "ak-fixer-phase",
@@ -829,7 +830,8 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-gleaner-left-base",
   ]));
   for (const [name, options] of harness.flags) {
-    assert.equal((options as { type?: unknown }).type, "string", name);
+    const expectedType = name === "ak-station-child" ? "boolean" : "string";
+    assert.equal((options as { type?: unknown }).type, expectedType, name);
   }
   assert.deepEqual(new Set(harness.handlers.keys()), new Set([
     "input",
