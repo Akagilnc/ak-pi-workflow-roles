@@ -129,8 +129,8 @@ function withOnceSuccessfulBeforeDispatch<
  * Session custom-entry type for a best-effort post-dispatch cleanup
  * diagnostic (#840 r9 判词 class 1). Every auto-resume attempt dispatches
  * with dummyIo (src/public-cli/auto-resume.ts), so an io.stderr-only
- * diagnostic never reaches a real caller — the dossier is one of the two
- * durable channels that do (失败诚实宪法 真因必须落痕).
+ * diagnostic never reaches a real caller — the dossier is the durable
+ * channel that does (失败诚实宪法 真因必须落痕).
  */
 export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
   "ak_post_admission_cleanup_diagnostic" as const;
@@ -138,15 +138,13 @@ export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
 /**
  * Best-effort post-dispatch diagnostic that must still leave a real trace
  * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
- * Two independent durable channels, both attempted: a plain run-artifacts
- * file (same hardened real-directory check auto-resume.ts's dispatch-error
- * retention already uses — needs neither a session principal nor a healthy
- * session file) and a dossier custom entry via sessionAppender. Either one
- * surviving gives this diagnostic a real trace; only if *both* fail does this
- * loudly say so via io.stderr — a single channel's routine hiccup, with the
- * other having already landed, is not surfaced as noise (#840 bounce class 2:
- * a lone `catch {}` here would have left this diagnostic with zero durable
- * trace whenever the session was unavailable or unhealthy).
+ * Single authoritative durable channel — a dossier custom entry via
+ * sessionAppender — not a standing duplicate. Only when that one write
+ * itself fails does this fall back to a plain run-artifacts file (reusing
+ * auto-resume.ts's existing dispatch-error retention helper — no new
+ * mechanism), so an unhealthy session never leaves this diagnostic with
+ * zero durable trace (#840 bounce class 2); a healthy session never gets a
+ * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
  */
 async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvocation>(
   admitted: A,
@@ -156,17 +154,6 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
 ): Promise<void> {
   io.stderr(formatCliDiagnostic(diagnostic));
   const payload = { diagnostic, recordedAt: new Date().toISOString() };
-  let artifactError: unknown;
-  try {
-    const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-    await writeFile(
-      join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
-      `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
-  } catch (error) {
-    artifactError = error;
-  }
   try {
     await env.sessionAppender(
       env.principalAuthority,
@@ -174,11 +161,19 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
       POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
       payload,
     );
+    return;
   } catch (appendError) {
-    if (artifactError !== undefined) {
+    try {
+      const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+      await writeFile(
+        join(artifactsDir, `post-admission-diagnostic-${randomUUID()}.json`),
+        `${JSON.stringify({ version: 1, ...payload }, null, 2)}\n`,
+        { encoding: "utf8", flag: "wx" },
+      );
+    } catch (artifactError) {
       io.stderr(
         formatCliDiagnostic(
-          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): artifact=${describeErrorIdentity(artifactError)}; dossier=${describeErrorIdentity(appendError)}`,
+          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`,
         ),
       );
     }
