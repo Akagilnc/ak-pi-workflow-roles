@@ -92,7 +92,7 @@ import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
 } from "./terminal.ts";
-import { persistReturnedRunState, runWithAutoResumeLoop } from "./auto-resume.ts";
+import { persistReturnedRunState, runWithAutoResumeLoop, TurnDispatchedFailure } from "./auto-resume.ts";
 
 /**
  * Nested station-child role already finished its own call-local loop.
@@ -358,6 +358,42 @@ export async function presentControlledFailure<
   };
 }
 
+/**
+ * presentControlledFailure, called only where the host turn has already
+ * genuinely started (#840 r9 判词 class 1 boundary). If presentControlledFailure
+ * itself fails, this never fabricates a replacement terminal (ADR 0080
+ * single-settlement-disposition — presentControlledFailure /
+ * settleFailureTerminalResult stays the one authority); it re-throws a
+ * TurnDispatchedFailure so runWithAutoResumeLoop still learns the turn
+ * started and selects a resume payload on the next attempt, while settling
+ * the true cause through its own existing dispatch-exception machinery once
+ * the retry budget is exhausted.
+ */
+async function settleAfterTurnStarted<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(
+  admitted: A,
+  failureInput: ControlledFailureInput,
+  adapters: PostAdmissionAdapters<A, T>,
+  authority: DurablePrincipalAuthority,
+  io: CliIo,
+  persistRunState: boolean,
+): Promise<{ exitCode: number; admitted: A; terminal: T }> {
+  try {
+    return (await presentControlledFailure(
+      admitted,
+      failureInput,
+      adapters,
+      authority,
+      io,
+      persistRunState,
+    )) as { exitCode: number; admitted: A; terminal: T };
+  } catch (error) {
+    throw new TurnDispatchedFailure(error);
+  }
+}
+
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -517,7 +553,7 @@ export async function dispatchPostAdmissionTurn<
     try {
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
-      const settled = (await presentControlledFailure(
+      const settled = await settleAfterTurnStarted(
         admitted,
         {
           timedOut: false,
@@ -529,23 +565,25 @@ export async function dispatchPostAdmissionTurn<
         env.principalAuthority,
         io,
         persistRunState,
-      )) as { exitCode: number; admitted: A; terminal: T };
+      );
       return { ...settled, turnDispatched: true as const, ...deferredPersist };
     }
 
-    // Everything below runs after the host turn genuinely started. Each
-    // fallible step here is protected individually and routes any failure
-    // through the single existing settlement authority (presentControlledFailure
-    // / settleFailureTerminalResult) rather than a second one (ADR 0080
+    // Everything below runs after the host turn genuinely started (#840 r9
+    // 判词 class 1 boundary — 覆盖 executeTurn 已启动后至返回带 turnDispatched
+    // 结果前的全部异常). Each fallible step routes any failure through the
+    // single existing settlement authority (presentControlledFailure /
+    // settleFailureTerminalResult) rather than a second one (ADR 0080
     // single-settlement-disposition) — never by fabricating a terminal here.
     // A cleanup step that runs only after a real settlement (clearCurrentCourt)
     // is protected by logging and keeping that already-obtained result, never
-    // by discarding it (#840 r9 判词 class 1 已交劳动只整理终局不重做). A
-    // failure inside the settlement authority itself (presentControlledFailure's
-    // own reads) is left to escape honestly — synthesizing a replacement
-    // terminal there would be the exact violation this round's judgment
-    // rejected; the loop-level sealed-acceptance check and dispatch-exception
-    // retry already own that residual case without inventing a new one.
+    // by discarding it (#840 已交劳动只整理终局不重做). A failure inside the
+    // settlement authority itself (presentControlledFailure's own reads) goes
+    // through settleAfterTurnStarted: still no fabricated terminal, but the
+    // re-thrown TurnDispatchedFailure still tells runWithAutoResumeLoop the
+    // turn genuinely started, so the next retry sends a resume payload — the
+    // true cause settles through the loop's own existing dispatch-exception
+    // machinery once the retry budget is exhausted.
     try {
       await writeFile(
         join(admitted.runDirectory, "stderr.log"),
@@ -574,7 +612,7 @@ export async function dispatchPostAdmissionTurn<
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
     } catch (error) {
       // Settle throw is a real failure fact — never swallow into undefined.
-      const settledFailure = (await presentControlledFailure(
+      const settledFailure = await settleAfterTurnStarted(
         admitted,
         {
           timedOut: false,
@@ -586,7 +624,7 @@ export async function dispatchPostAdmissionTurn<
         env.principalAuthority,
         io,
         persistRunState,
-      )) as { exitCode: number; admitted: A; terminal: T };
+      );
       return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
     }
     if (settled !== undefined && shouldPresent(settled)) {
@@ -664,14 +702,14 @@ export async function dispatchPostAdmissionTurn<
         thrown: error,
       };
     }
-    const failed = (await presentControlledFailure(
+    const failed = await settleAfterTurnStarted(
       admitted,
       failureInput,
       adapters,
       env.principalAuthority,
       io,
       persistRunState,
-    )) as { exitCode: number; admitted: A; terminal: T };
+    );
     return { ...failed, turnDispatched: true as const, ...deferredPersist };
   } finally {
     try {

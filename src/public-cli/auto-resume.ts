@@ -115,6 +115,31 @@ export type AutoResumeDispatchResult = {
   needsPersist?: true;
 };
 
+/**
+ * Thrown by dispatchPostAdmissionTurn when a failure happens inside its own
+ * settlement authority (presentControlledFailure) after the host turn
+ * genuinely started — never to fabricate a replacement terminal (ADR 0080
+ * single-settlement-disposition: settlement stays exactly presentControlledFailure
+ * / settleFailureTerminalResult, or — once the retry budget is exhausted —
+ * this loop's own dispatchExceptionFailureTerminal). Its only job is to carry
+ * the "turn already started" fact across the throw boundary so this loop
+ * selects a resume payload on the next attempt instead of replaying the
+ * initial one (#840 r9 判词 class 1 boundary — 覆盖 executeTurn 已启动后至
+ * 返回带 turnDispatched 结果前的全部异常). `cause` is the true failure;
+ * retention below serializes it whole via the standard Error.cause chain.
+ */
+export class TurnDispatchedFailure extends Error {
+  override readonly name = "TurnDispatchedFailure";
+  constructor(cause: unknown) {
+    super(
+      `settlement failed after the host turn genuinely started: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause },
+    );
+  }
+}
+
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
 export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
 
@@ -427,6 +452,11 @@ export async function runWithAutoResumeLoop<
     }
 
     let result: T | undefined;
+    // Set only when the caught throw is a TurnDispatchedFailure (#840 r9 判词
+    // class 1): the host turn genuinely started this attempt even though
+    // dispatch produced no result — the next payload must still be a resume,
+    // not a replay of the initial one.
+    let turnStartedBeforeThrow = false;
     try {
       result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
@@ -436,6 +466,7 @@ export async function runWithAutoResumeLoop<
       // diagnostic-sink-isolation precedent). The dispatcher owns lease release
       // in its own finally, so the retry round starts with the lock free.
       lastThrownError = error;
+      turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
       const attempt = dispatchOrdinal;
       try {
         // Track the file as soon as it is durably written (#426 review):
@@ -595,9 +626,11 @@ export async function runWithAutoResumeLoop<
     }
 
     autoResumeAttempts++;
-    // Resume payload only after a host turn actually started. Pre-turn throws
-    // and beforeDispatch failures retry the initial payload (#840 / #416).
-    if (result?.turnDispatched === true) {
+    // Resume payload only after a host turn actually started — either a
+    // returned result says so, or the attempt threw a TurnDispatchedFailure
+    // after genuinely starting the turn (#840 r9 判词 class 1). Pre-turn
+    // throws and beforeDispatch failures retry the initial payload (#840 / #416).
+    if (result?.turnDispatched === true || turnStartedBeforeThrow) {
       currentPayload = options.buildResumePayload();
     }
     isFirst = false;
