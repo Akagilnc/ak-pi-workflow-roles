@@ -1302,9 +1302,10 @@ export function createRoleRuntimeExtension(
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
-        // Provider failure/abort has no tool_result event; classify it here so the
-        // receipt policy cannot turn infrastructure death into an exit-0 lifecycle.
-        receiptDelivery.stopForInfrastructure();
+        // Abort after an already-recorded receipt must not un-accept or催交.
+        if (receiptDelivery.nextAction() !== "accepted") {
+          receiptDelivery.stopForInfrastructure();
+        }
         return;
       }
       if (receiptDelivery.nextAction() === "request-delivery") {

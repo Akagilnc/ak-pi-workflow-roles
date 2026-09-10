@@ -137,11 +137,17 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    // Real failure (process/provider/disk) — keep loud. No shape-unreadable diversion.
+    const rows = summoned.terminal?.submissions;
+    const recorded = rows !== undefined && rows.length > 0 ? rows[rows.length - 1] : undefined;
+    if (recorded !== undefined) {
+      return readComplianceCandidate(recorded, usage);
+    }
     throw new Error(outcome.diagnostic);
   }
   if (outcome.kind === "accepted") {
-    const candidate = {
+    const rows = summoned.terminal?.submissions;
+    const recorded = rows !== undefined && rows.length > 0 ? rows[rows.length - 1] : undefined;
+    const candidate = recorded ?? {
       status: outcome.status,
       ...outcome.decisiveFacts,
     };

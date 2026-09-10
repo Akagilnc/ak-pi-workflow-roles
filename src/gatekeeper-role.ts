@@ -210,12 +210,19 @@ function projectOfficerDecision(
  * Lifecycle facts (no_receipt / transport) stay loud; conclusion reads only
  * the status field. No unusable/unreadable judgment (#753).
  */
+function latestOfficerPayload(terminal: TerminalResult | undefined): unknown {
+  const rows = terminal?.submissions;
+  if (rows === undefined || rows.length === 0) return undefined;
+  return rows[rows.length - 1];
+}
+
 function projectOfficerTerminal(
   officer: GateOfficer,
   summoned: PublicSummonResult,
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
+  const recorded = latestOfficerPayload(terminal);
   if (outcome === undefined) {
     const detail = summoned.stderr?.trim();
     return {
@@ -236,7 +243,10 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "failure") {
-    // Real provider/engine/disk failure — keep loud. Not a shape judgment.
+    // Host abort after a recorded officer receipt: queue the words, do not empty-bounce.
+    if (recorded !== undefined) {
+      return projectOfficerDecision(officer, recorded);
+    }
     return {
       status: "transport_failure",
       stage: officer,
@@ -254,9 +264,7 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "accepted") {
-    // Prefer the officer's own decisiveFacts as the receipt body. outcome.status is
-    // only a fallback when facts have no status key (missing-args sentinel stays intact).
-    const facts = outcome.decisiveFacts;
+    const facts = recorded ?? outcome.decisiveFacts;
     if (isRecord(facts) && Object.keys(facts).length > 0) {
       return projectOfficerDecision(officer, facts, outcome.status);
     }
