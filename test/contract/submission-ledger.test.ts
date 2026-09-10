@@ -102,13 +102,17 @@ async function ledgerRecords(root: string): Promise<SitianRecord[]> {
 
 async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>>) => Promise<void>) {
   const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   const f = await fixture();
   process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
+  delete process.env.AK_ROLE_COURT_ATTEMPT;
   await withPrimaryAwareCleanup(
     () => run(f),
     async () => {
       if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = priorRun;
+      if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+      else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
     },
     async () => {
       await rm(f.root, { recursive: true, force: true });
