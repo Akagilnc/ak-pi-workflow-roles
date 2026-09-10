@@ -26,7 +26,6 @@ import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectActivationFlags } from "./role-activation-flags.ts";
 import {
   isCorrectableExecuteError,
-  mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
 } from "./submission-correctable-error.ts";
 import {
@@ -183,9 +182,8 @@ export async function prepareRoleEnvelope(options: {
       },
     },
     abort() {
-      // Lawful abort (non-sole rejection / seal / audit-escalation in submission-ledger)
-      // must not poison ACP retry prompts (#593 r1). hostAbort is armed only by typed
-      // infra: rememberInfrastructureFailure and non-correctable MCP catch.
+      // #836: hostAbort is armed only by typed infra (rememberInfrastructureFailure
+      // and non-correctable MCP catch). Submission does not abort the turn.
     },
   };
   const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {
@@ -207,13 +205,8 @@ export async function prepareRoleEnvelope(options: {
   };
 
   const host: RoleHost = {
-    deliverSubmissionRejection(value) {
-      // Mechanical round rejection has no officer receipt; shared resume text is the fact (#813).
-      rejection = {
-        code: value.code,
-        toolCallIds: value.toolCallIds,
-        message: mechanicalSubmissionRejectionResumeMessage(value.code),
-      };
+    deliverSubmissionRejection(_value) {
+      // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
     },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {

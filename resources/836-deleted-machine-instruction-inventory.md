@@ -11,6 +11,7 @@
 | `collector-role.ts` bounceInfrastructure | `请省略该字段后重新提交。` | 代码打回推翻自报已删。 |
 | `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | 改为「本席自调 code-review skill」。方法步骤在 `resources/methods/code-review/SKILL.md`。 |
 | `run-lifecycle.ts` A4.2 | `重新读 <path>` | 前轮已删改写。 |
+| `submission-correctable-error.ts` A4.5 | `终局交卷并非本轮唯一工具调用。` | 删。Pi/ACP `deliverSubmissionRejection` 不再注入该句。 |
 | `role-runtime.ts` 催交 | `本会话尚无已接受的 typed 回执。` | **留**（轮次/预算，Q2）。 |
 
 催交句与 2.1–2.3 打回文、重问三句不在删除列。

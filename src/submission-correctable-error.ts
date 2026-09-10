@@ -6,20 +6,6 @@ import {
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
 
-/**
- * Mechanical non-sole resume text — one shared authority for Pi followUp and
- * ACP/headless closeRound retry (#813). Officer bounce/escalate use projected
- * receipt text instead; this string is only the round-shape correction.
- */
-export const NON_SOLE_ROUND_RESUME_MESSAGE =
-  "终局交卷并非本轮唯一工具调用。";
-
-/** Resume text for mechanical deliverSubmissionRejection codes (no officer receipt). */
-export function mechanicalSubmissionRejectionResumeMessage(code: string): string {
-  if (code === "non-sole-round") return NON_SOLE_ROUND_RESUME_MESSAGE;
-  return code;
-}
-
 /** Shared, unforgeable identity for submission errors that the same session may correct. */
 const correctableSubmissionErrorBrand = Symbol("ak-roles.correctable-submission-error");
 
