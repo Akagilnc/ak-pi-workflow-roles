@@ -46,11 +46,9 @@ export type DoctorOutput = DoctorSubmission;
 export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
-// #836 class 1: nonblank used to carry a regex `pattern` constraint that the
-// provider's own tool-schema validation actually enforces against the role's
-// own output — a real shape rejection of the role's submission before the
-// handler ever records it (CLAUDE.md 第0条). Same fix as fixer-output.ts's
-// nonblankTransportString: keep minLength as declared guidance, drop pattern.
+// #836 r13 class 1: pattern was a real provider-enforced shape rejection on
+// the role's own output — delete it; minLength stays as declared guidance
+// (same fix as fixer-output.ts's nonblankTransportString).
 const nonblank = Type.String({ minLength: 1 });
 const evidenceIds = Type.Array(nonblank, { minItems: 1 });
 const guardrail = Type.Object({ answer: Type.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });

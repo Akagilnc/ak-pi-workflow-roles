@@ -801,15 +801,11 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     );
 
     // #836: seal no longer blocks; non-lawful throw path records then fails.
-    // Host wrapper counts 1 outer dispatch. The throw-after-seal settlement
-    // itself defers its own run-state persist (needsPersist), and that
-    // deferred write hits the same poisoned run-state.json again — a second,
-    // genuine infra failure. #836 r13 class 2: that second failure must
-    // settle loudly through the same authority and stop the loop immediately
-    // (autoResumeCount 0), never retry through it silently (the pre-r13
-    // defect swallowed it and let the loop redispatch to budget exhaustion,
-    // resumesUsed=2, while dispatches() still stayed 1 since the run was
-    // already sealed).
+    // The deferred run-state persist this settlement defers hits the same
+    // poisoned run-state.json again — a second genuine infra failure. #836
+    // r13 class 2: it must settle loudly and stop the loop immediately
+    // (autoResumeCount 0), not retry through it silently to budget
+    // exhaustion (the pre-r13 value here was 2).
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
@@ -928,72 +924,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     }
   });
 
-});
-
-test("#836 r13 class 2: non-lawful deferred run-state persist failure settles loudly through the real authority and stops auto-resume instead of retrying under the loop's no-op attempt io", async () => {
-  // dispatchPostAdmissionTurn defers its own run-state persist
-  // (persistRunState: false) to the auto-resume loop's own
-  // settleDeferredPersist, called with the loop's per-attempt `attemptIo` —
-  // a stdout/stderr no-op `dummyIo` (auto-resume.ts). A real host-turn throw
-  // settles here as a non-lawful `failure` terminal without persisting; when
-  // the deferred persist write itself then also fails for real (run-state.json
-  // poisoned into a directory), that second real failure used to be traced
-  // only to that no-op io and silently discarded, letting the loop redispatch
-  // as if nothing happened. It must instead settle through the same loud
-  // authority as a lawful persist failure does, and stop the loop.
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-nonlawful-persist-fail-001";
-    const { io } = captureIo();
-    let executeTurnCalls = 0;
-
-    const result = await runAkRole(
-      ["judge", "--project", project, "force a real host turn failure"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: {
-          executeTurn: async (request) => {
-            executeTurnCalls += 1;
-            // run-state.json already exists (markRunAdmitted / markRunRunning
-            // wrote it before this call); poison it into a directory so the
-            // loop's deferred persist write also fails for real, then let
-            // the turn itself fail — the non-lawful settlement branch.
-            const statePath = join(request.runDirectory, "run-state.json");
-            await rm(statePath, { force: true });
-            await mkdir(statePath);
-            throw new Error("host turn genuinely failed");
-          },
-        },
-      },
-    );
-
-    // Buggy behavior swallowed the persist failure and let the loop
-    // redispatch (a second, third, ... executeTurn call up to budget).
-    // Fixed behavior settles loudly on the very first attempt and stops.
-    assert.equal(
-      executeTurnCalls,
-      1,
-      "a real deferred-persist failure must stop auto-resume immediately, never redispatch silently",
-    );
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      // The reported cause is the persist write's own real failure (EISDIR on
-      // the poisoned run-state.json) — proof it was actually settled through
-      // the authority, not just traced to the loop's no-op attempt io.
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
-      assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
-    }
-  });
 });
 
 test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
