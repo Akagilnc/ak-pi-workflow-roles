@@ -221,15 +221,50 @@ export async function runPublicCoderResume(
   admitted?: AdmittedCoderInvocation;
   terminal?: TerminalResult;
 }> {
-  // Method provenance is package-root only; load before seat path. Phase-gated
-  // apply material is resolved after load inside adapters via optional provenance
-  // — seat resume owns court open under lease (#833).
-  let methodProvenance: PackagedMethodSkillProvenance | undefined;
+  // Method material failure face needs admitted (same shape as initial).
+  // Seat resume still owns court open under lease (#833).
+  let loaded;
   try {
-    const material = await loadPackagedMethodSkillMaterial(env.packageRoot, "tdd");
-    methodProvenance = material.provenance;
-  } catch {
-    // Leave undefined; plan-phase resume does not need it, apply settle stays closed.
+    loaded = await loadResumableCoderRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  let methodProvenance: PackagedMethodSkillProvenance | undefined;
+  if (loaded.admitted.phase === "apply") {
+    try {
+      const material = await loadPackagedMethodSkillMaterial(
+        env.packageRoot,
+        "tdd",
+      );
+      methodProvenance = material.provenance;
+    } catch (error) {
+      return (await presentControlledFailure(
+        loaded.admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation",
+        },
+        coderAdapters(),
+        env.principalAuthority,
+        io,
+      )) as {
+        exitCode: number;
+        admitted: AdmittedCoderInvocation;
+        terminal: TerminalResult;
+      };
+    }
   }
 
   return await runPostAdmissionSeatResume({
@@ -243,10 +278,7 @@ export async function runPublicCoderResume(
         admitted,
         resumeTurnRequestProjectionOptions(admitted, effective, env),
       ),
-    adapters: coderAdapters(
-      // Apply-only method; plan resume ignores provenance.
-      methodProvenance,
-    ),
+    adapters: coderAdapters(methodProvenance),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

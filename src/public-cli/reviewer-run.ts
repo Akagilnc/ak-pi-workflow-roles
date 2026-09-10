@@ -243,8 +243,44 @@ export async function runPublicReviewerResume(
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 }> {
-  // Package-root method material; seat resume owns court open under lease (#833).
-  const methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+  // Method material failure face needs admitted (same shape as initial).
+  // Seat resume still owns court open under lease (#833).
+  let loaded;
+  try {
+    loaded = await loadResumableReviewerRun(
+      env.home,
+      request.runId,
+      env.principalAuthority,
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
+  let methodMaterial: PackagedMethodSkillMaterial;
+  try {
+    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    return (await presentControlledFailure(
+      loaded.admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      reviewerAdapters(env.packageRoot),
+      env.principalAuthority,
+      io,
+    )) as {
+      exitCode: number;
+      admitted: AdmittedReviewerInvocation;
+      terminal: TerminalResult;
+    };
+  }
 
   return await runPostAdmissionSeatResume({
     request,
