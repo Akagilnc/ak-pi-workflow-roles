@@ -23,6 +23,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
@@ -321,6 +322,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     await seedDoctorIssueRuns(home, bookKey, 40);
     const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
+    // #836: captured from the same real `loadDoctorCase`/role payload the
+    // piRunner uses, so the later report.receipt/report.cost assertions check
+    // against the actual values rather than hand-authored duplicates.
+    let candidateCost: unknown;
+    let candidateDetails: unknown;
     const completedIo = captureIo();
     const completed = await runAkRole(
       ["doctor", "--issue", "40", "--project", project, "inspect"],
@@ -339,9 +345,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           assert.equal(options.env.AK_CORRELATION_ID, "corr-doctor-113");
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
+          candidateCost = patient.cost;
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);
+          candidateDetails = details;
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -352,6 +360,13 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 isError: false,
                 details,
               },
+            })}\n${JSON.stringify({
+              // #836: the audit candidate entry carries runtime cost beside
+              // (never merged into) the role's testimony — settlement reads
+              // it from here to publish the independent report.cost field.
+              type: "custom",
+              customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+              data: { version: 1, testimony: details, cost: patient.cost },
             })}\n`,
             "utf8",
           );
@@ -384,10 +399,17 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
       receipt: { status: string; case: { issueNumber: number } };
+      cost: unknown;
     };
     assert.equal(report.role, "doctor");
     assert.equal(report.receipt.status, "completed");
     assert.equal(report.receipt.case.issueNumber, 40);
+    // #836: settlement.ts extractDoctorCandidateCostFact/publishDoctorArtifacts
+    // must read the audit candidate entry and publish machine cost as an
+    // independent report field beside — not merged into — the role's original
+    // payload, which the public report.receipt must still equal exactly.
+    assert.deepEqual(report.receipt, candidateDetails);
+    assert.deepEqual(report.cost, candidateCost);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
