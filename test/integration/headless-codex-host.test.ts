@@ -35,6 +35,7 @@ appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
 const isResume = args[0] === "exec" && args[1] === "resume";
 const thread = isResume ? args[2] : "thread-fake-1";
 const report = isResume ? "resumed-ok" : "first-ok";
+const omitTerminal = args.includes("missing-terminal");
 const lines = [
   JSON.stringify({ type: "thread.started", thread_id: thread }),
   JSON.stringify({ type: "turn.started" }),
@@ -42,7 +43,7 @@ const lines = [
     type: "item.completed",
     item: { id: "item_1", type: "agent_message", text: JSON.stringify({ status: "completed", report }) },
   }),
-  JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }),
+  ...(omitTerminal ? [] : [JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } })]),
 ];
 process.stdout.write(lines.join("\\n") + "\\n");
 process.exit(0);
@@ -69,7 +70,7 @@ process.exit(0);
         },
         resolveSessionFile: () => join(root, "session", "session.jsonl"),
       },
-      prepare: async () => ({
+      prepare: async (request) => ({
         mcpServers: [
           {
             name: "ak-probe",
@@ -79,7 +80,7 @@ process.exit(0);
           },
         ],
         systemPrompt: { body: "sys", materials: [] },
-        prompt: "do-work",
+        prompt: request.continuation.prompt,
         jsonSchema: {
           type: "object",
           properties: { status: { type: "string" }, report: { type: "string" } },
@@ -185,6 +186,12 @@ process.exit(0);
     assert.equal(resumeArgv.includes("--sandbox"), false);
     assert.ok(resumeArgv.some((a) => a.startsWith("sandbox_mode=")));
     assert.ok(resumeArgv.some((a) => a === "mcp_servers.ak-probe.required=true"));
+
+    const missingTerminal = await host.executeTurn({
+      ...baseRequest,
+      continuation: { kind: "initial", prompt: "missing-terminal" },
+    });
+    assert.equal(missingTerminal.knownFailure?.identity?.code, "codex-missing-terminal-event");
   } finally {
     ledger.dispose();
   }

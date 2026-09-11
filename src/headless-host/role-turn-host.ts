@@ -649,6 +649,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
+            if (!observation.turnCompleted) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-missing-terminal-event" },
+                diagnostic: "codex exec exited without turn.completed",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+
             if (observation.finalMessage === undefined) {
               return terminalFromSpawned(spawned, {
                 cause: "output",
