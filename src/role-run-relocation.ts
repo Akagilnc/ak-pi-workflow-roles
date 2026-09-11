@@ -176,7 +176,7 @@ function rewriteSourceRunLocator(
   );
 }
 
-/** Same-ticket summons materials carrying typed source-run pointers. */
+/** Same-ticket summons materials: typed source-run + frozen attachment pointers. */
 function rewriteSummonsMaterials(
   value: unknown,
   rewrites: readonly RunDirectoryPathRewrite[],
@@ -188,6 +188,12 @@ function rewriteSummonsMaterials(
     rewrites,
   );
   rewriteSourceRunLocator(value.sourceRun, rewrites);
+  // Bare-resume frozen attachment pointers (string[]), not free text / bytes.
+  if (Array.isArray(value.attachmentPaths)) {
+    value.attachmentPaths = value.attachmentPaths.map((path) =>
+      rewriteRunDirectoryPathValueAgainstRewrites(path, rewrites),
+    );
+  }
 }
 
 async function rewriteJsonObjectFile(
@@ -386,9 +392,9 @@ async function rewriteNestedMachinePathPages(
 }
 
 /**
- * Rewrite admitted-request / invocation / run-state path fields (and attachment
- * frozenPath pointers only), then nested package-owned session seams, after the
- * run directory has already been moved or copied.
+ * Rewrite admitted-request / invocation / run-state path fields (attachment
+ * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
+ * session seams, after the run directory has already been moved or copied.
  * `pagesDirectory` is where the pages now live; path strings still naming an
  * old run directory become the matching new directory. `crossRunRewrites`
  * covers officer/parent pointers that landed under a different final placement.
@@ -474,7 +480,7 @@ export async function rewriteRoleRunDurablePages(input: {
         rewrites,
       );
     }
-    // Open court summons carries the same typed source-run locator family.
+    // Open court summons: source-run locators + frozen attachment path pointers.
     if (isPlainObject(page.currentCourt)) {
       rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
     }
