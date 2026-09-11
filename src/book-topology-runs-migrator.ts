@@ -13,11 +13,13 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
-import { rewriteRoleRunDurablePages } from "./role-run-relocation.ts";
-import { readRunTicketNumber } from "./run-ticket-number.ts";
+import {
+  rewriteRoleRunDurablePages,
+  type RunDirectoryPathRewrite,
+} from "./role-run-relocation.ts";
+import { MIGRATION_TICKET_DERIVATION_PAGE } from "./run-ticket-number.ts";
 
 const RUNS_PARTITION = "runs";
-const DERIVATION_PAGE = "migration-ticket-derivation.json";
 
 const RUN_LEAF =
   /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
@@ -34,6 +36,16 @@ type TicketAttribution =
       readonly basename: string;
     }
   | { readonly kind: "unbound" };
+
+type PlannedRunMove = {
+  readonly sourcePath: string;
+  readonly sourceIdentity: string;
+  readonly isDirectory: boolean;
+  readonly attribution: TicketAttribution;
+  readonly targetPath: string;
+  /** Path as durable pages still record it (pre-rename books/ location). */
+  readonly historicalRunDirectory: string;
+};
 
 function parseRunLeaf(name: string): RunLeaf | undefined {
   const match = RUN_LEAF.exec(name);
@@ -87,8 +99,40 @@ async function readProjectRoot(
   return undefined;
 }
 
+/**
+ * Board ticket only for placement attribution. readRunTicketNumber also sees
+ * derivation pages, but legacy flat sources have none yet; after migration the
+ * derivation page must not re-drive placement. Read board pages directly here.
+ */
+async function readBoardTicketNumber(
+  runDirectory: string,
+): Promise<number | undefined> {
+  for (const page of ["admitted-request.json", "invocation.json"] as const) {
+    try {
+      const raw: unknown = JSON.parse(
+        await readFile(join(runDirectory, page), "utf8"),
+      );
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        continue;
+      }
+      const ticketNumber = (raw as { ticketNumber?: unknown }).ticketNumber;
+      if (
+        typeof ticketNumber === "number" &&
+        Number.isSafeInteger(ticketNumber) &&
+        ticketNumber >= 1
+      ) {
+        return ticketNumber;
+      }
+    } catch (error) {
+      if (isEnoent(error)) continue;
+      throw error;
+    }
+  }
+  return undefined;
+}
+
 async function attributeRun(runDirectory: string): Promise<TicketAttribution> {
-  const boardTicket = await readRunTicketNumber(runDirectory);
+  const boardTicket = await readBoardTicketNumber(runDirectory);
   if (boardTicket !== undefined) {
     return { kind: "board", ticketNumber: boardTicket };
   }
@@ -121,7 +165,7 @@ async function writeDerivationPage(
     },
   };
   await writeFile(
-    join(targetRunDirectory, DERIVATION_PAGE),
+    join(targetRunDirectory, MIGRATION_TICKET_DERIVATION_PAGE),
     `${JSON.stringify(page, null, 2)}\n`,
     "utf8",
   );
@@ -194,6 +238,53 @@ async function copyRunTree(
   await cp(source, target, { preserveTimestamps: true });
 }
 
+async function planBookMoves(
+  backupBooksDirectory: string,
+  booksDirectory: string,
+  bookKey: string,
+): Promise<readonly PlannedRunMove[]> {
+  const sourceRunsDirectory = join(backupBooksDirectory, bookKey, "runs");
+  const planned: PlannedRunMove[] = [];
+  for (const leaf of await listRunLeaves(sourceRunsDirectory)) {
+    const sourcePath = join(sourceRunsDirectory, leaf.name);
+    const sourceIdentity = relative(backupBooksDirectory, sourcePath)
+      .split(sep)
+      .join("/");
+
+    // Only <runId>@<role> directories can occupy ticket placement; everything
+    // else still lands under unbound/runs/ and is never discarded.
+    const leafIdentity = leaf.isDirectory ? parseRunLeaf(leaf.name) : undefined;
+    const attribution =
+      leafIdentity === undefined
+        ? ({ kind: "unbound" } as const)
+        : await attributeRun(sourcePath);
+
+    const targetPath = targetRunDirectoryFor(
+      booksDirectory,
+      bookKey,
+      leaf.name,
+      attribution,
+    );
+    // Historical path as pages still record it (pre-rename books/ location).
+    const historicalRunDirectory = join(
+      booksDirectory,
+      bookKey,
+      "runs",
+      leaf.name,
+    );
+
+    planned.push({
+      sourcePath,
+      sourceIdentity,
+      isDirectory: leaf.isDirectory,
+      attribution,
+      targetPath,
+      historicalRunDirectory,
+    });
+  }
+  return planned;
+}
+
 export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
   partition: RUNS_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {
@@ -201,51 +292,39 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
     const { backupBooksDirectory, booksDirectory } = context;
 
     for (const bookKey of await listBookKeys(backupBooksDirectory)) {
-      const sourceRunsDirectory = join(backupBooksDirectory, bookKey, "runs");
-      for (const leaf of await listRunLeaves(sourceRunsDirectory)) {
-        const sourcePath = join(sourceRunsDirectory, leaf.name);
-        const sourceIdentity = relative(
-          backupBooksDirectory,
-          sourcePath,
-        ).split(sep).join("/");
+      const planned = await planBookMoves(
+        backupBooksDirectory,
+        booksDirectory,
+        bookKey,
+      );
 
-        // Only <runId>@<role> directories can occupy ticket placement; everything
-        // else still lands under unbound/runs/ and is never discarded.
-        const leafIdentity = leaf.isDirectory ? parseRunLeaf(leaf.name) : undefined;
-        const attribution =
-          leafIdentity === undefined
-            ? ({ kind: "unbound" } as const)
-            : await attributeRun(sourcePath);
+      // Full historical→final map so cross-run pointers rewrite to each peer's
+      // final placement, not only the current run's own move.
+      const crossRunRewrites: RunDirectoryPathRewrite[] = planned
+        .filter((move) => move.isDirectory)
+        .map((move) => ({
+          oldRunDirectory: move.historicalRunDirectory,
+          newRunDirectory: move.targetPath,
+        }));
 
-        const targetPath = targetRunDirectoryFor(
-          booksDirectory,
-          bookKey,
-          leaf.name,
-          attribution,
-        );
-        // Historical path as pages still record it (pre-rename books/ location).
-        const historicalRunDirectory = join(
-          booksDirectory,
-          bookKey,
-          "runs",
-          leaf.name,
-        );
-
-        await copyRunTree(sourcePath, targetPath, leaf.isDirectory);
-        if (leaf.isDirectory) {
+      for (const move of planned) {
+        await copyRunTree(move.sourcePath, move.targetPath, move.isDirectory);
+        if (move.isDirectory) {
           await rewriteRoleRunDurablePages({
-            pagesDirectory: targetPath,
-            oldRunDirectory: historicalRunDirectory,
-            newRunDirectory: targetPath,
+            pagesDirectory: move.targetPath,
+            oldRunDirectory: move.historicalRunDirectory,
+            newRunDirectory: move.targetPath,
+            crossRunRewrites,
           });
-          if (attribution.kind === "worktree-basename") {
-            await writeDerivationPage(targetPath, attribution);
+          if (move.attribution.kind === "worktree-basename") {
+            await writeDerivationPage(move.targetPath, move.attribution);
           }
         }
 
         outcomes.push({
-          disposition: attribution.kind === "unbound" ? "unbound" : "placed",
-          source: sourceIdentity,
+          disposition:
+            move.attribution.kind === "unbound" ? "unbound" : "placed",
+          source: move.sourceIdentity,
         });
       }
     }
