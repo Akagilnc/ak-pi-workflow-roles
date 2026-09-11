@@ -6,7 +6,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
-  mkdir,
   readFile,
   realpath,
   writeFile,
@@ -21,6 +20,10 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  ensureRoleRunPlacement,
+  roleRunPlacement,
+} from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -259,11 +262,13 @@ export type AdmissionPlacement = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
+  readonly artifactsDirectory: string;
+  readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly bookKey: string;
 };
 
-/** Issue principal + derive ledger placement through the injected authority only. */
+/** Issue a principal from the single authoritative role-run placement. */
 export function issueAdmissionPlacement(
   authority: DurablePrincipalAuthority,
   request: {
@@ -273,16 +278,18 @@ export function issueAdmissionPlacement(
     readonly home?: string;
   },
 ): AdmissionPlacement {
-  const principal = authority.issue(request);
-  const { sessionDirectory, sessionFile } = authority.decode(principal);
-  const runDirectory = join(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
+  const placement = roleRunPlacement(ledgerHome, {
+    bookKey,
+    subject: { unbound: true },
+    runId: request.runId,
+    role: request.role,
+  });
+  ensureRoleRunPlacement(ledgerHome, placement);
   return {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
+    principal: authority.seal(placement),
+    ...placement,
     ledgerHome,
     bookKey,
   };
@@ -1128,6 +1135,7 @@ async function admitStandardMaterialInvocation<
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1136,9 +1144,6 @@ async function admitStandardMaterialInvocation<
     role,
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   const correlationFields =
@@ -1316,6 +1321,7 @@ export async function admitCountersignInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1324,9 +1330,6 @@ export async function admitCountersignInvocation(
     role: "countersign",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
@@ -1410,9 +1413,7 @@ export async function loadAdmittedJudgeRequest(
 }
 
 export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  const dir = join(runDirectory, "artifacts");
-  await mkdir(dir, { recursive: true });
-  return dir;
+  return join(runDirectory, "artifacts");
 }
 
 export type AdmitCoderInvocationOptions = {
@@ -1456,6 +1457,7 @@ export async function admitCoderInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1464,9 +1466,6 @@ export async function admitCoderInvocation(
     role: "coder",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
@@ -1603,6 +1602,7 @@ export async function admitFixerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1611,9 +1611,6 @@ export async function admitFixerInvocation(
     role: "fixer",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
@@ -1910,6 +1907,7 @@ export async function admitCollectorInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -1918,9 +1916,6 @@ export async function admitCollectorInvocation(
     role: "collector",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // #676 A: freeze task materials BEFORE target resolution so the role receives
   // real instruction + attachments. Admission binds only explicit --pr or unique
@@ -2209,6 +2204,7 @@ export async function admitDoctorInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -2258,9 +2254,6 @@ export async function admitDoctorInvocation(
     );
   }
 
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
 
@@ -2421,6 +2414,7 @@ export async function admitNotaryInvocation(options: {
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -2429,7 +2423,6 @@ export async function admitNotaryInvocation(options: {
     role: "notary",
     home: options.home,
   });
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   const ticketFields = ticketAdmissionFields(
     await readRunTicketNumber(sourceRun.runDirectory),
   );
@@ -2574,6 +2567,7 @@ export async function admitGleanerLeftInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -2582,7 +2576,6 @@ export async function admitGleanerLeftInvocation(
     role: "gleaner-left",
     home: options.home,
   });
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -2738,6 +2731,7 @@ export async function admitReviewerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -2746,9 +2740,6 @@ export async function admitReviewerInvocation(
     role: "reviewer",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // Public parse already rejects attachments; keep freeze loop for structural symmetry.
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
@@ -2947,6 +2938,7 @@ export async function admitMergerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
@@ -2955,9 +2947,6 @@ export async function admitMergerInvocation(
     role: "merger",
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
