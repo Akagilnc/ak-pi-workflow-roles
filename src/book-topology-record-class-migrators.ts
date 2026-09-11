@@ -10,7 +10,7 @@
  * - misplaced: any foreign jsonl whose kind is one of the three classes
  */
 import { createHash } from "node:crypto";
-import { appendFile, copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 
 import {
@@ -186,11 +186,12 @@ async function listVolumeRecordFiles(partitionDir: string): Promise<string[]> {
 }
 
 /**
- * Paths already closed by the three home migrators or owned by the runs migrator.
- * Criterion (not a partition name list): root record-class volumes, nested ticket
- * provenance, and anything under a runs/ tree.
+ * Paths already closed by the three home migrators.
+ * Criterion (not a partition name list): root record-class volumes and nested
+ * ticket-provenance. Run trees are NOT blanket-skipped — wrong-kind rows inside
+ * a run must still rehome by content (#866 / #852 §落错).
  */
-function isHomeOrRunOwnedRelativePath(relPosix: string): boolean {
+function isHomeRecordClassRelativePath(relPosix: string): boolean {
   const parts = relPosix.split("/");
   if (parts[0] === TICKET_PROVENANCE || parts[0] === SUBMISSION_LEDGER || parts[0] === ATTEMPT_HISTORY) {
     return true;
@@ -198,7 +199,31 @@ function isHomeOrRunOwnedRelativePath(relPosix: string): boolean {
   if (parts.length >= 2 && isTicketNumberString(parts[0]!) && parts[1] === TICKET_PROVENANCE) {
     return true;
   }
-  return parts.includes("runs");
+  return false;
+}
+
+/** Canonical nested path for a run-owned record class; ticket-provenance is never run-nested. */
+function isCanonicalRunNestedRecordFile(relPosix: string, recordClass: RecordClass): boolean {
+  if (recordClass === TICKET_PROVENANCE) return false;
+  const needle = `/session/${recordClass}/records.jsonl`;
+  return relPosix.endsWith(needle) || relPosix.endsWith(needle.slice(1));
+}
+
+function runCoordsFromRelativePath(relPosix: string): { readonly runId: string; readonly role: string } | undefined {
+  const parts = relPosix.split("/");
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
+  const leaf = parts[runsIndex + 1]!;
+  const at = leaf.indexOf("@");
+  if (at <= 0 || at === leaf.length - 1) return undefined;
+  return { runId: leaf.slice(0, at), role: leaf.slice(at + 1) };
+}
+
+function relativePathWithinRun(relPosix: string): string | undefined {
+  const parts = relPosix.split("/");
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 0 || runsIndex + 2 >= parts.length) return undefined;
+  return parts.slice(runsIndex + 2).join("/");
 }
 
 function unboundCategoryFile(
@@ -451,9 +476,40 @@ async function migrateHomePartitionBook(
   }
 }
 
+/** Rewrite dest file without the given identities (drop wrong-nest copies after rehome). */
+async function scrubIdentitiesFromFile(
+  recordFile: string,
+  identities: ReadonlySet<string>,
+): Promise<void> {
+  if (identities.size === 0) return;
+  const lines = await readJsonlLines(recordFile);
+  if (lines.length === 0) return;
+  const kept: string[] = [];
+  let changed = false;
+  for (const raw of lines) {
+    if (raw.trim() === "") continue;
+    const parsed = parseJsonlLine(raw);
+    if (
+      parsed.ok
+      && typeof parsed.value.identity === "string"
+      && identities.has(parsed.value.identity)
+    ) {
+      changed = true;
+      continue;
+    }
+    kept.push(raw.endsWith("\n") ? raw : `${raw}\n`);
+  }
+  if (!changed) return;
+  await ensureDir(dirname(recordFile));
+  await writeFile(recordFile, kept.join(""), "utf8");
+}
+
 /**
  * Foreign jsonl rows whose typed kind is one of the three record classes.
- * Range = whole book tree minus home volumes and runs/ (criterion, not a name list).
+ * Range = whole book minus home volumes. Inside runs/: skip only rows already
+ * sitting at the canonical session/<class>/records.jsonl nest (those travel with
+ * #865); every other typed row rehomes by content, and any dest copy of the
+ * wrong nest is scrubbed so #865's recursive cp does not leave a duplicate lie.
  */
 async function migrateMisplacedBook(
   context: BookTopologyMigrationContext,
@@ -463,11 +519,13 @@ async function migrateMisplacedBook(
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
+  // backupRelPath → identities rehomed out of a non-canonical nest
+  const scrubPlans = new Map<string, Set<string>>();
+
   for (const filePath of files) {
     const rel = sourceRelative(context.backupBooksDirectory, filePath);
-    // rel is bookKey/...
     const withinBook = rel.split("/").slice(1).join("/");
-    if (isHomeOrRunOwnedRelativePath(withinBook)) continue;
+    if (isHomeRecordClassRelativePath(withinBook)) continue;
 
     const lines = await readJsonlLines(filePath);
     for (let index = 0; index < lines.length; index += 1) {
@@ -477,6 +535,12 @@ async function migrateMisplacedBook(
       if (!parsed.ok) continue;
       const recordClass = recordClassOfKind(parsed.value.kind);
       if (recordClass === undefined) continue;
+
+      // Already at the sole correct run-nested seat — #865 carries the file.
+      if (withinBook.includes("/runs/") || withinBook.startsWith("runs/")) {
+        if (isCanonicalRunNestedRecordFile(withinBook, recordClass)) continue;
+      }
+
       const source = lineSource(context.backupBooksDirectory, filePath, index);
       if (recordClass === TICKET_PROVENANCE) {
         outcomes.push(await placeTicketProvenanceLine(context, bookKey, writes, source, raw, parsed.value));
@@ -485,7 +549,29 @@ async function migrateMisplacedBook(
           await placeRunOwnedLine(context, bookKey, writes, recordClass, source, raw, parsed.value),
         );
       }
+
+      if (
+        (withinBook.includes("/runs/") || withinBook.startsWith("runs/"))
+        && typeof parsed.value.identity === "string"
+      ) {
+        let set = scrubPlans.get(withinBook);
+        if (set === undefined) {
+          set = new Set<string>();
+          scrubPlans.set(withinBook, set);
+        }
+        set.add(parsed.value.identity);
+      }
     }
+  }
+
+  // If #865 already copied the run, drop rehomed identities from the wrong nest in dest.
+  for (const [withinBook, identities] of scrubPlans) {
+    const coords = runCoordsFromRelativePath(withinBook);
+    const withinRun = relativePathWithinRun(withinBook);
+    if (coords === undefined || withinRun === undefined) continue;
+    const destRun = await findBookRunDirectory(join(context.booksDirectory, bookKey), coords.runId);
+    if (destRun === undefined) continue;
+    await scrubIdentitiesFromFile(join(destRun.runDirectory, withinRun), identities);
   }
 }
 
