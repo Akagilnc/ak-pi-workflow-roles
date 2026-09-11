@@ -700,6 +700,8 @@ export class RunWriterLeaseHeldError extends Error {
 
 export type RunWriterLease = {
   readonly lockPath: string;
+  /** Keep lease cleanup anchored when its run is relocated while held. */
+  relocate(runDirectory: string): void;
   release(): Promise<void>;
 };
 
@@ -841,19 +843,27 @@ async function createWriterLease(
     throw error;
   }
   let released = false;
+  let currentRunDirectory = runDirectory;
+  let currentLockPath = lockPath;
   return {
-    lockPath,
+    get lockPath() {
+      return currentLockPath;
+    },
+    relocate(nextRunDirectory: string) {
+      currentRunDirectory = nextRunDirectory;
+      currentLockPath = join(nextRunDirectory, WRITER_LOCK_FILE);
+    },
     async release() {
       if (released) return;
       released = true;
       await handle.close().catch(() => undefined);
       try {
-        await unlink(lockPath);
+        await unlink(currentLockPath);
       } catch (error) {
         if (errorCodeOf(error) === "EACCES") {
           try {
-            await chmod(runDirectory, 0o755);
-            await unlink(lockPath);
+            await chmod(currentRunDirectory, 0o755);
+            await unlink(currentLockPath);
           } catch (retryError) {
             reportCleanupFailure(retryError);
           }

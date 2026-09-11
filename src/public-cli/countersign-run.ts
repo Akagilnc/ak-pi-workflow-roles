@@ -47,6 +47,7 @@ import {
   markRunAdmitted,
   markRunTerminal,
   type PublicResumeRequest,
+  type RunWriterLease,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
@@ -341,7 +342,8 @@ export async function runPublicCountersign(
     // unbound and continue (true-unbound face). Escalate / typed failure above;
     // bound refresh still fails honest via runCountersignCourtDiaristStation.
     if (outcome.identity.kind === "ticket") {
-      typedTicket = outcome.identity.ticketNumber;
+      const assertedTicket = outcome.identity.ticketNumber;
+      typedTicket = assertedTicket;
       const summons: SameTicketSummonsMaterials = {
         instruction: parsed.instruction,
         instructionEmpty: parsed.instruction.trim() === "",
@@ -355,7 +357,10 @@ export async function runPublicCountersign(
         freshSummons: env.freshSummons,
         summons,
         resume: async (runId, materials) => {
-          // Resume selected: abandon mint first so a throw cannot leave it admitted.
+          // Resume selected: file the provisional run under the asserted ticket
+          // before abandoning it, so typed identity never leaves an unbound row.
+          await bindAdmittedTicketNumber(admitted, assertedTicket);
+          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
           await markRunTerminal(admitted.runDirectory);
           // Identity 起居郎 asserted unbound (no issue face). Resume still runs
           // the bound refresh station under the typed key (refresh-every-court).
@@ -410,7 +415,7 @@ export async function runPublicCountersign(
     io,
     request: turnRequest,
     adapters: countersignAdapters({
-      beforeDispatch: async (admittedSeat) => {
+      beforeDispatch: async (admittedSeat, lease) => {
         // Dossier pointer delivery rides post-admission after this hook (#709).
         if (!identityDiaristRan) {
           // Test seam (or any deferred identity): station owns assert + bind.
@@ -418,6 +423,11 @@ export async function runPublicCountersign(
         } else if (typedTicket !== undefined) {
           await runCountersignCourtDiaristStation(admittedSeat, env, io);
         }
+        await relocateAdmittedRunToTicket(
+          admittedSeat,
+          env.principalAuthority,
+          lease,
+        );
         Object.assign(
           turnRequest,
           buildCountersignTurnRequest(admittedSeat, turnProjection),
@@ -433,6 +443,7 @@ export async function runPublicCountersign(
 function countersignAdapters(options?: {
   beforeDispatch?: (
     admitted: AdmittedCountersignInvocation,
+    lease: RunWriterLease,
   ) => void | Promise<void>;
 }) {
   return {

@@ -495,6 +495,7 @@ export async function bindAdmittedTicketNumber(
 export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
+  heldLease?: { relocate(runDirectory: string): void },
 ): Promise<void> {
   if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
   const oldRunDirectory = admitted.runDirectory;
@@ -507,6 +508,7 @@ export async function relocateAdmittedRunToTicket(
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
   await rename(oldRunDirectory, target.runDirectory);
+  heldLease?.relocate(target.runDirectory);
 
   const replaceRunPrefix = (value: unknown): unknown => {
     if (typeof value === "string") {
