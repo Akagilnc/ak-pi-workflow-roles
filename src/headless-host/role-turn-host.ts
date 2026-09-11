@@ -153,56 +153,53 @@ export type CodexExecTurnObservation = Readonly<{
   turnCompleted: boolean;
 }>;
 
-export function parseCodexExecJsonl(stdout: string): CodexExecTurnObservation {
+export function createCodexExecTurnObserver(): {
+  readonly observe: (event: unknown) => void;
+  readonly result: () => CodexExecTurnObservation;
+} {
   let threadId: string | undefined;
   let finalMessage: string | undefined;
   let failureDiagnostic: string | undefined;
   let turnCompleted = false;
 
+  return {
+    observe(value) {
+      if (!isPlainObject(value)) return;
+      const type = typeof value.type === "string" ? value.type : undefined;
+      if (type === "thread.started" && typeof value.thread_id === "string" && value.thread_id !== "") {
+        threadId = value.thread_id;
+      } else if (type === "item.completed" && isPlainObject(value.item)) {
+        if (value.item.type === "agent_message" && typeof value.item.text === "string") {
+          finalMessage = value.item.text;
+        }
+      } else if (type === "turn.completed") {
+        turnCompleted = true;
+        failureDiagnostic = undefined;
+      } else if (type === "turn.failed") {
+        turnCompleted = false;
+        failureDiagnostic = formatCodexFailurePayload(value.error ?? value);
+      }
+      // Top-level `error` is non-terminal; exit/receipt handling remains downstream.
+    },
+    result() {
+      return {
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(finalMessage === undefined ? {} : { finalMessage }),
+        ...(failureDiagnostic === undefined ? {} : { failureDiagnostic }),
+        turnCompleted,
+      };
+    },
+  };
+}
+
+export function parseCodexExecJsonl(stdout: string): CodexExecTurnObservation {
+  const observer = createCodexExecTurnObserver();
   for (const line of stdout.split("\n")) {
     const text = line.trim();
     if (text === "") continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
-    const event = value as Record<string, unknown>;
-    const type = typeof event.type === "string" ? event.type : undefined;
-    if (type === "thread.started" && typeof event.thread_id === "string" && event.thread_id !== "") {
-      threadId = event.thread_id;
-      continue;
-    }
-    if (type === "item.completed" && isPlainObject(event.item)) {
-      const item = event.item;
-      if (item.type === "agent_message" && typeof item.text === "string") {
-        finalMessage = item.text;
-      }
-      continue;
-    }
-    if (type === "turn.completed") {
-      turnCompleted = true;
-      // Successful terminal event wins over any earlier non-terminal noise.
-      failureDiagnostic = undefined;
-      continue;
-    }
-    if (type === "turn.failed") {
-      turnCompleted = false;
-      failureDiagnostic = formatCodexFailurePayload(event.error ?? event);
-      continue;
-    }
-    // Top-level `error` is non-terminal (e.g. "Reconnecting... 1/5"). Ignore for
-    // failureDiagnostic; nonzero exit / missing receipt still fail downstream.
+    try { observer.observe(JSON.parse(text) as unknown); } catch { /* non-JSON stdout noise */ }
   }
-
-  return {
-    ...(threadId === undefined ? {} : { threadId }),
-    ...(finalMessage === undefined ? {} : { finalMessage }),
-    ...(failureDiagnostic === undefined ? {} : { failureDiagnostic }),
-    turnCompleted,
-  };
+  return observer.result();
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -278,13 +275,6 @@ function spawnHeadlessTurn(options: {
   readonly timeoutMs?: number;
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
-  /**
-   * Retain the full stdout stream instead of the rolling last-result-candidate
-   * line. Codex `exec --json` JSONL needs multiple event types (thread_id,
-   * item.completed, turn.completed/failed) from across the whole stream; the
-   * Claude/ACP live-record path keeps the memory-bounded single-line default.
-   */
-  readonly retainFullStdout?: boolean;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -313,12 +303,8 @@ function spawnHeadlessTurn(options: {
       reject(error instanceof Error ? error : new Error(String(error)));
     };
     const emitStdoutLine = (line: string): void => {
-      if (options.retainFullStdout === true) {
-        resultStdout += resultStdout === "" ? line : `\n${line}`;
-      } else {
-        const candidate = resultCandidateText(line);
-        if (candidate !== undefined) resultStdout = candidate;
-      }
+      const candidate = resultCandidateText(line);
+      if (candidate !== undefined) resultStdout = candidate;
       if (options.onStdoutLine === undefined) return;
       try {
         options.onStdoutLine(line);
@@ -562,6 +548,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             };
           }
 
+          const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
           try {
             spawned = await spawnHeadlessTurn({
@@ -571,29 +558,26 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               env,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-              ...(codex
-                ? { retainFullStdout: true }
-                : {
-                  onStdoutLine(line) {
-                    const trimmed = line.trim();
-                    if (trimmed === "") return;
-                    let event: unknown;
-                    try {
-                      event = JSON.parse(trimmed) as unknown;
-                    } catch {
-                      // Non-JSON noise on stdout is not a host structured event.
-                      return;
-                    }
-                    // Sitian write failures propagate → spawn rejects → session failure.
-                    reportHostSessionEvent({
-                      host: config.hostName,
-                      cwd: request.cwd,
-                      sessionParent,
-                      source: "headless-host",
-                      event,
-                    });
-                  },
-                }),
+              onStdoutLine(line) {
+                const trimmed = line.trim();
+                if (trimmed === "") return;
+                let event: unknown;
+                try {
+                  event = JSON.parse(trimmed) as unknown;
+                } catch {
+                  // Non-JSON noise on stdout is not a host structured event.
+                  return;
+                }
+                // One bounded live seam owns both recording and host-specific reduction.
+                reportHostSessionEvent({
+                  host: config.hostName,
+                  cwd: request.cwd,
+                  sessionParent,
+                  source: "headless-host",
+                  event,
+                });
+                codexObserver?.observe(event);
+              },
             });
           } catch (error) {
             if (isHostAbortedError(error)) throw error;
@@ -634,11 +618,17 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           if (codex) {
-            const observation = parseCodexExecJsonl(spawned.stdout);
-            if (observation.threadId !== undefined && observation.threadId !== "") {
-              sessionId = observation.threadId;
-              await config.sessionIdentity.bind(request.principal, sessionId);
+            const observation = codexObserver!.result();
+            if (observation.threadId === undefined || observation.threadId === "") {
+              return terminalFromSpawned(spawned, {
+                cause: "session",
+                identity: { name: "HeadlessMissingThreadId", code: "missing-thread-id" },
+                diagnostic: "codex exec emitted no thread.started thread_id",
+                details: { sessionId, exitCode: spawned.code },
+              });
             }
+            sessionId = observation.threadId;
+            await config.sessionIdentity.bind(request.principal, sessionId);
 
             if (observation.failureDiagnostic !== undefined) {
               return terminalFromSpawned(spawned, {

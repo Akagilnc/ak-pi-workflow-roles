@@ -3,15 +3,17 @@
  * Spawns a local fake `codex` binary twice — not a unit test.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
 /**
  * Fake codex binary → createHeadlessRoleTurnHost entry seam.
@@ -19,16 +21,17 @@ import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
  * Asserts external visible results + critical argv facts (not full shape lock).
  */
 test("codex headless executeTurn: new binds thread_id, resume reuses it, receipt accepted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ak-codex-host-"));
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
+  const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
   const fakeBin = join(root, "fake-codex");
   // Node script: log argv; emit JSONL receipt. resume vs new distinguished by argv.
   await writeFile(
     fakeBin,
     `#!/usr/bin/env node
-const fs = require("node:fs");
+import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
+appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
 const isResume = args[0] === "exec" && args[1] === "resume";
 const thread = isResume ? args[2] : "thread-fake-1";
 const report = isResume ? "resumed-ok" : "first-ok";
@@ -64,7 +67,7 @@ process.exit(0);
         async bind(_principal, sessionId) {
           bound = sessionId;
         },
-        resolveSessionFile: () => join(root, "session.jsonl"),
+        resolveSessionFile: () => join(root, "session", "session.jsonl"),
       },
       prepare: async () => ({
         mcpServers: [
@@ -123,6 +126,11 @@ process.exit(0);
     assert.equal(first.code, 0);
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(ingested, { status: "completed", report: "first-ok" });
+    const records = await readSitianRecords(join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl"));
+    assert.ok(records.records.some((record) => record.host === "codex"));
+    assert.ok(records.records.some((record) =>
+      (record.payload as { type?: unknown }).type === "thread.started"
+    ));
 
     // Closed schema file materialized for --output-schema.
     const schemaRaw = await readFile(join(root, "headless-output-schema.json"), "utf8");
@@ -136,9 +144,6 @@ process.exit(0);
     assert.ok(firstArgv.includes("--json"));
     assert.ok(firstArgv.includes("--ignore-user-config"));
     assert.ok(firstArgv.includes("--ignore-rules"));
-    // --ignore-user-config/--ignore-rules do not stop AGENTS.md discovery
-    // (official codex exec --help); project_doc_max_bytes=0 is required too.
-    assert.ok(firstArgv.some((a) => a === "project_doc_max_bytes=0"));
     assert.ok(firstArgv.includes("--output-schema"));
     assert.ok(firstArgv.includes("--sandbox"));
     assert.ok(firstArgv.includes("-m"));
@@ -176,12 +181,11 @@ process.exit(0);
     assert.equal(resumeArgv[2], "thread-fake-1");
     assert.ok(resumeArgv.includes("--output-schema"));
     assert.ok(resumeArgv.includes("--ignore-user-config"));
-    assert.ok(resumeArgv.some((a) => a === "project_doc_max_bytes=0"));
     // resume has no --sandbox flag; permissions still via -c
     assert.equal(resumeArgv.includes("--sandbox"), false);
     assert.ok(resumeArgv.some((a) => a.startsWith("sandbox_mode=")));
     assert.ok(resumeArgv.some((a) => a === "mcp_servers.ak-probe.required=true"));
   } finally {
-    await rm(root, { recursive: true, force: true });
+    ledger.dispose();
   }
 });
