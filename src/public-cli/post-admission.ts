@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -64,39 +64,14 @@ function isOfficerReviewSeat(role: string): boolean {
 
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only. Case materials ride an independent artifact — never wrap
- * the continuation prompt (#879 content/binding split; ADR 0081 delivery kept).
+ * peer words only. Case materials ride RoleTurnRequest.materials → existing
+ * systemPrompt.materials fold — never wrap continuation.prompt (#879).
  */
 function isStationChildOfficerDialogue(
   role: string,
   env: { readonly stationChild?: boolean },
 ): boolean {
   return env.stationChild === true && isOfficerReviewSeat(role);
-}
-
-/** Run-relative leaf for ADR 0081 case-dossier pointers on officer gate turns. */
-const CASE_DOSSIER_ARTIFACT_FILE = "case-dossier-pointer.md" as const;
-
-/**
- * ADR 0081 case materials as an independent run artifact (not prompt text).
- * Same pointer section bytes; officer finds them under artifacts/ (dossier tool).
- * No-op when unbound (projectCaseDossierPointerSection returns undefined).
- */
-async function deliverCaseDossierAsIndependentArtifact(input: {
-  readonly ticketNumber: number | undefined;
-  readonly projectRoot: string;
-  readonly home: string;
-  readonly runDirectory: string;
-}): Promise<void> {
-  const section = await projectCaseDossierPointerSection({
-    ticketNumber: input.ticketNumber,
-    projectRoot: input.projectRoot,
-    home: input.home,
-  });
-  if (section === undefined) return;
-  const dir = join(input.runDirectory, "artifacts");
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, CASE_DOSSIER_ARTIFACT_FILE), `${section}\n`, "utf8");
 }
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
@@ -703,20 +678,19 @@ export async function dispatchPostAdmissionTurn<
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
-    if (isStationChildOfficerDialogue(admitted.role, env)) {
-      await deliverCaseDossierAsIndependentArtifact({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-        runDirectory: admitted.runDirectory,
-      });
-    } else {
-      const dossierSection = await projectCaseDossierPointerSection({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-      });
-      if (dossierSection !== undefined) {
+    const dossierSection = await projectCaseDossierPointerSection({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+    });
+    if (dossierSection !== undefined) {
+      if (isStationChildOfficerDialogue(admitted.role, env)) {
+        // #879: existing materials seam — independent of dialogue content bytes.
+        turnRequest = {
+          ...turnRequest,
+          materials: [...(turnRequest.materials ?? []), dossierSection],
+        };
+      } else {
         turnRequest = {
           ...turnRequest,
           continuation: appendContinuationSection(

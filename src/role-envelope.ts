@@ -648,7 +648,8 @@ export async function prepareRoleEnvelope(options: {
       return [value.systemPrompt];
     });
     const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
-    // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
+    // Typed reading materials from agent-start handlers + optional turn-request
+    // materials (machine face; independent of continuation.prompt dialogue bytes).
     // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
     const readingMaterials: unknown[] = [];
     for (const value of promptResults) {
@@ -656,6 +657,12 @@ export async function prepareRoleEnvelope(options: {
       if (!("readingMaterial" in value)) continue;
       const material = (value as { readingMaterial?: unknown }).readingMaterial;
       if (material !== undefined) readingMaterials.push(material);
+    }
+    // #879: post-admission may attach ADR 0081 case dossier here — never into user prompt.
+    if (request.materials !== undefined) {
+      for (const material of request.materials) {
+        if (material !== undefined) readingMaterials.push(material);
+      }
     }
 
     priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;

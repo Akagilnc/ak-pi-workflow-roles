@@ -142,6 +142,7 @@ test("#879 projectGatekeeperRun relays each parent payload verbatim on officer d
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
 
     const prompts: string[] = [];
+    const materialsByTurn: Array<readonly unknown[] | undefined> = [];
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -154,6 +155,7 @@ test("#879 projectGatekeeperRun relays each parent payload verbatim on officer d
     const host = {
       async executeTurn(request: RoleTurnRequest) {
         prompts.push(request.continuation.prompt);
+        materialsByTurn.push(request.materials);
         return baseHost.executeTurn(request);
       },
     };
@@ -218,6 +220,18 @@ test("#879 projectGatekeeperRun relays each parent payload verbatim on officer d
       assert.equal(resumePrompt.includes("请重读"), false);
       assert.equal(resumePrompt.includes("本票起居录"), false);
       assert.equal(resumePrompt.includes("卷宗指针"), false);
+      // ADR 0081 case materials ride existing materials seam (host-visible),
+      // independent of dialogue content.
+      const turnMaterials = materialsByTurn[i + 1];
+      assert.ok(turnMaterials !== undefined && turnMaterials.length > 0,
+        `round ${i + 1} host must receive case materials on request.materials`);
+      const materialText = turnMaterials!.map((m) =>
+        typeof m === "string" ? m : JSON.stringify(m),
+      ).join("\n");
+      assert.ok(
+        materialText.includes("本票起居录") || materialText.includes("#879"),
+        `round ${i + 1} materials must carry case-dossier pointer`,
+      );
       assert.ok(
         projected.summoned?.runDirectory,
         "officer run binding must remain (pointer channel independent of content)",
