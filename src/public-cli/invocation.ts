@@ -21,6 +21,7 @@ import {
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
+  ensureRoleRunDirectory,
   ensureRoleRunPlacement,
   roleRunPlacement,
 } from "../role-run-placement.ts";
@@ -1413,7 +1414,11 @@ export async function loadAdmittedJudgeRequest(
 }
 
 export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  return join(runDirectory, "artifacts");
+  const directory = join(runDirectory, "artifacts");
+  return ensureRoleRunDirectory(
+    resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
+    directory,
+  );
 }
 
 export type AdmitCoderInvocationOptions = {

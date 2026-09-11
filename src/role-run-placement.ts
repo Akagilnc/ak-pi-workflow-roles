@@ -46,7 +46,14 @@ export function roleRunPlacement(
   };
 }
 
-/** Create every standard run directory at the placement authority. */
+/** The placement seam owns creation for both new runs and resumed legacy runs. */
+export function ensureRoleRunDirectory(
+  ledgerHome: string,
+  directory: string,
+): string {
+  return ensureRealDirectoryTree(ledgerHome, directory);
+}
+
 export function ensureRoleRunPlacement(
   ledgerHome: string,
   placement: RoleRunPlacement,
@@ -56,6 +63,6 @@ export function ensureRoleRunPlacement(
     placement.artifactsDirectory,
     placement.attachmentsDirectory,
   ]) {
-    ensureRealDirectoryTree(ledgerHome, directory);
+    ensureRoleRunDirectory(ledgerHome, directory);
   }
 }
