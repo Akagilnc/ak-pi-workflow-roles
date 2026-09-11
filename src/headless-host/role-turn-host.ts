@@ -30,6 +30,7 @@ import {
   headlessTurnArgs,
   isClaudePrintDescription,
   isCodexExecDescription,
+  isPlainObject,
   type HeadlessHostDescription,
 } from "./description.ts";
 
@@ -192,10 +193,6 @@ function createCodexExecTurnObserver(): {
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function formatCodexFailurePayload(payload: unknown): string {
   if (typeof payload === "string" && payload.trim() !== "") return payload;
   if (isPlainObject(payload)) {
@@ -222,23 +219,34 @@ function cwdIsGitWorkTree(cwd: string): boolean {
 
 /**
  * Absolute git common dir for workspace-write extra roots (worktree index.lock).
- * Uses `git rev-parse --git-common-dir` once; empty when not a git work tree.
+ * When cwd is not a git work tree → undefined (caller skips extra roots).
+ * When cwd is a git work tree, git non-zero / empty stdout / spawn failure
+ * must fail loud with the real cause — never wash into "no common dir".
  */
 function resolveGitCommonDir(cwd: string): string | undefined {
   if (!cwdIsGitWorkTree(cwd)) return undefined;
+  let result: { status: number | null; stdout: string; stderr: string; error?: Error };
   try {
-    const result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
+    result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
       cwd,
       encoding: "utf8",
     });
-    if (result.status !== 0) return undefined;
-    const raw = (result.stdout ?? "").trim();
-    if (raw === "") return undefined;
-    const absolute = isAbsolute(raw) ? raw : resolve(cwd, raw);
-    return absolute;
-  } catch {
-    return undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`git rev-parse --git-common-dir failed: ${message}`);
   }
+  if (result.error !== undefined) {
+    throw new Error(`git rev-parse --git-common-dir failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || `exit ${String(result.status)}`;
+    throw new Error(`git rev-parse --git-common-dir failed: ${detail}`);
+  }
+  const raw = result.stdout.trim();
+  if (raw === "") {
+    throw new Error("git rev-parse --git-common-dir returned empty stdout");
+  }
+  return isAbsolute(raw) ? raw : resolve(cwd, raw);
 }
 
 function spawnHeadlessTurn(options: {

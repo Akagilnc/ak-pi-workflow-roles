@@ -168,11 +168,11 @@ const CODEX_JSON_VALUE_SCHEMA = Object.freeze({
  * Derive a Codex/OpenAI-strict transport schema from the package open schema.
  * Legal open schema is untouched; this is a host-only transmission projection
  * (#646 / 0057 法意 / 0054 strict): every object closes, every property is
- * required, optionality is expressed as a null union (official guidance).
- * Nested open-tool anyOf wrappers are flattened so every branch carries `type`
- * (strict rejects untyped intermediate anyOf nodes).
- * Type.Unknown / description-only leaves become a free JSON $ref, not string.
- * Package code still does not validate or reject the receipt against schema.
+ * required, and only originally-optional fields become a null union (official
+ * guidance: emulate optional via type|null). Originally-required fields stay
+ * non-nullable. Nested open-tool anyOf wrappers are flattened so every branch
+ * carries `type`. Type.Unknown / description-only leaves become a free JSON
+ * $ref. Package code still does not validate or reject the receipt.
  */
 export function closeJsonSchemaForCodex(
   schema: Readonly<Record<string, unknown>>,
@@ -190,7 +190,8 @@ export function closeJsonSchemaForCodex(
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/** Shared plain-object guard for headless host schema/event reduction. */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -202,7 +203,7 @@ function isNullTypeSchema(value: unknown): boolean {
 }
 
 /**
- * Flatten nested anyOf/oneOf wrappers into concrete leaf schemas.
+ * Flatten nested anyOf wrappers into concrete leaf schemas.
  * Open-tool unions often wrap leaves in description-only anyOf shells that
  * lack `type`; strict structured output rejects those intermediate nodes.
  */
@@ -211,25 +212,23 @@ function flattenUnionLeaves(schema: unknown): unknown[] {
   if (Array.isArray(schema.anyOf)) {
     return schema.anyOf.flatMap(flattenUnionLeaves);
   }
-  if (Array.isArray(schema.oneOf)) {
-    return schema.oneOf.flatMap(flattenUnionLeaves);
-  }
   return [schema];
 }
 
-/** Drop null leaves; they are re-added once at the property edge. */
+/** Drop null leaves; optional edges re-add null once. */
 function nonNullLeaves(schema: unknown): unknown[] {
   return flattenUnionLeaves(schema).filter((leaf) => !isNullTypeSchema(leaf));
 }
 
 /**
- * Property edge: closed leaf(s) + null, as a single anyOf.
- * One leaf → anyOf:[leaf, null]; many leaves → anyOf:[...leaves, null].
+ * Property edge under strict transport.
+ * Required → closed non-null leaf(s). Optional → closed leaf(s) + null.
  */
-function closePropertySchema(schema: unknown): unknown {
+function closePropertySchema(schema: unknown, optional: boolean): unknown {
   const leaves = nonNullLeaves(schema).map(closeSchemaNode);
-  if (leaves.length === 0) {
-    return { type: "null" };
+  if (leaves.length === 0) return { type: "null" };
+  if (!optional) {
+    return leaves.length === 1 ? leaves[0] : { anyOf: leaves };
   }
   return { anyOf: [...leaves, { type: "null" }] };
 }
@@ -245,7 +244,7 @@ function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknow
   if (isPlainObject(schema.properties) || schema.additionalProperties !== undefined) {
     return { ...schema, type: "object" };
   }
-  if (schema.items !== undefined || Array.isArray(schema.prefixItems)) {
+  if (schema.items !== undefined) {
     return { ...schema, type: "array" };
   }
   if (schema.const !== undefined) {
@@ -265,6 +264,11 @@ function ensureTypedLeaf(schema: Record<string, unknown>): Record<string, unknow
   return { $ref: CODEX_JSON_VALUE_REF };
 }
 
+function originalRequiredNames(node: Record<string, unknown>): ReadonlySet<string> {
+  if (!Array.isArray(node.required)) return new Set();
+  return new Set(node.required.filter((item): item is string => typeof item === "string"));
+}
+
 function closeSchemaNode(node: unknown): unknown {
   if (!isPlainObject(node)) return node;
 
@@ -272,7 +276,7 @@ function closeSchemaNode(node: unknown): unknown {
   if (typeof node.$ref === "string") return node;
 
   // Union node: flatten then close each concrete leaf (do not keep untyped shells).
-  if (Array.isArray(node.anyOf) || Array.isArray(node.oneOf)) {
+  if (Array.isArray(node.anyOf)) {
     const leaves = nonNullLeaves(node).map(closeSchemaNode);
     if (leaves.length === 0) return { type: "null" };
     if (leaves.length === 1) return leaves[0];
@@ -281,24 +285,12 @@ function closeSchemaNode(node: unknown): unknown {
 
   let out: Record<string, unknown> = { ...node };
 
-  if (Array.isArray(node.allOf)) {
-    // Strict generators often reject allOf; close members in place.
-    out.allOf = node.allOf.map(closeSchemaNode);
-  }
   if (node.items !== undefined) {
     out.items = closeSchemaNode(node.items);
-  }
-  if (Array.isArray(node.prefixItems)) {
-    out.prefixItems = node.prefixItems.map(closeSchemaNode);
   }
   if (isPlainObject(node.$defs)) {
     out.$defs = Object.fromEntries(
       Object.entries(node.$defs).map(([key, value]) => [key, closeSchemaNode(value)]),
-    );
-  }
-  if (isPlainObject(node.definitions)) {
-    out.definitions = Object.fromEntries(
-      Object.entries(node.definitions).map(([key, value]) => [key, closeSchemaNode(value)]),
     );
   }
 
@@ -311,11 +303,12 @@ function closeSchemaNode(node: unknown): unknown {
 
   if (hasProperties) {
     const props = node.properties as Record<string, unknown>;
+    const wasRequired = originalRequiredNames(node);
     const closedProps: Record<string, unknown> = {};
     const required: string[] = [];
     for (const [name, propSchema] of Object.entries(props)) {
       required.push(name);
-      closedProps[name] = closePropertySchema(propSchema);
+      closedProps[name] = closePropertySchema(propSchema, !wasRequired.has(name));
     }
     out.properties = closedProps;
     out.required = required;
@@ -323,7 +316,6 @@ function closeSchemaNode(node: unknown): unknown {
     if (out.type === undefined) out.type = "object";
     // Object nodes must not also carry residual anyOf from the open copy.
     delete out.anyOf;
-    delete out.oneOf;
   } else if (isObjectType) {
     out.additionalProperties = false;
     if (!Array.isArray(out.required)) out.required = [];
