@@ -323,6 +323,7 @@ export function createSubmissionLedgerHost(
       payload: event,
       source: "role-runtime",
       cwd: context.cwd,
+      sessionParent: context.sessionManager.getSessionFile(),
       ...(home !== undefined ? { home } : {}),
     });
     state.prior = pointer;

@@ -42,6 +42,7 @@ export type DiaristCommitFacts = {
 export async function commitDiaristEntries(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly sessionParent: string;
   readonly home?: string;
   readonly entries: readonly unknown[];
 }): Promise<DiaristCommitFacts> {
@@ -59,6 +60,7 @@ export async function commitDiaristEntries(input: {
     appendTicketProvenanceEntry({
       ticketNumber,
       cwd,
+      sessionParent: input.sessionParent,
       ...homeOpt,
       payload: submitted,
       source: "diarist",

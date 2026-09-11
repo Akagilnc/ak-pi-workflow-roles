@@ -11,11 +11,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
-  activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
   physicallyContainedIn,
@@ -204,14 +202,6 @@ export function resolveSitianVolumeCategory(kind: string): string {
   return kind;
 }
 
-function safeBookKey(cwd: string): string {
-  try {
-    return resolveBookKeyFromGit(cwd);
-  } catch {
-    return basename(resolve(cwd)) || "default";
-  }
-}
-
 type SitianRecordPath = {
   readonly sessionDir: string;
   readonly recordFile: string;
@@ -223,31 +213,15 @@ export function resolveSitianRecordPathInLedger(
   input: SitianRecordInput,
   ledgerHome: string,
 ): SitianRecordPath {
-  const cwd = input.cwd ?? process.cwd();
   const category = resolveSitianVolumeCategory(input.kind);
-
-  let sessionDir: string;
-
-  if (input.sessionParent !== undefined && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
-    sessionDir = join(dirname(input.sessionParent), category);
-  } else {
-    const bookKey = safeBookKey(cwd);
-    const bookDir = activationBookDirectory(ledgerHome, bookKey);
-    if (input.subject !== undefined) {
-      let subjectStr: string;
-      if (typeof input.subject === "string") {
-        subjectStr = input.subject;
-      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
-        subjectStr = input.subject.runId;
-      } else {
-        subjectStr = JSON.stringify(input.subject);
-      }
-      const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
-      sessionDir = join(bookDir, category, digest);
-    } else {
-      sessionDir = join(bookDir, category);
-    }
+  if (
+    input.sessionParent === undefined
+    || input.sessionParent.length === 0
+    || !physicallyContainedIn(ledgerHome, input.sessionParent)
+  ) {
+    throw new Error("Sitian record ownership requires a parent session inside the ledger home");
   }
+  const sessionDir = join(dirname(input.sessionParent), category);
 
   const recordFile = join(sessionDir, "records.jsonl");
   return { sessionDir, recordFile, ledgerHome };
