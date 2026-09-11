@@ -195,11 +195,27 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isNullTypeSchema(value: unknown): boolean {
+/** Pure null leaf only — composite type|null is stripped in-leaf, not dropped whole. */
+function isPureNullTypeSchema(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
   if (value.type === "null") return true;
-  if (Array.isArray(value.type) && value.type.includes("null")) return true;
+  if (Array.isArray(value.type) && value.type.length > 0 && value.type.every((t) => t === "null")) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * Within a leaf, remove null members from type arrays.
+ * Required edges keep the non-null type(s); optional edges re-add null once.
+ */
+function stripNullFromLeafType(leaf: unknown): unknown {
+  if (!isPlainObject(leaf) || !Array.isArray(leaf.type)) return leaf;
+  const nonNull = leaf.type.filter((t) => t !== "null");
+  if (nonNull.length === leaf.type.length) return leaf;
+  if (nonNull.length === 0) return { ...leaf, type: "null" };
+  if (nonNull.length === 1) return { ...leaf, type: nonNull[0] };
+  return { ...leaf, type: nonNull };
 }
 
 /**
@@ -215,9 +231,11 @@ function flattenUnionLeaves(schema: unknown): unknown[] {
   return [schema];
 }
 
-/** Drop null leaves; optional edges re-add null once. */
+/** Drop pure-null leaves after in-leaf null stripping; optional edges re-add null once. */
 function nonNullLeaves(schema: unknown): unknown[] {
-  return flattenUnionLeaves(schema).filter((leaf) => !isNullTypeSchema(leaf));
+  return flattenUnionLeaves(schema)
+    .map(stripNullFromLeafType)
+    .filter((leaf) => !isPureNullTypeSchema(leaf));
 }
 
 /**

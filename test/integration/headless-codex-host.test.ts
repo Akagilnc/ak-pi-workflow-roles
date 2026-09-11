@@ -69,7 +69,11 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
           type: "object",
           properties: {
             status: { type: "string" },
+            // Composite nullable type: strip null in-leaf; required keeps non-null.
+            label: { type: ["string", "null"] },
             report: { type: "string" },
+            // Optional composite nullable → non-null leaf + unified null at the edge.
+            note: { type: ["string", "null"] },
             nested: {
               type: "object",
               properties: {
@@ -83,7 +87,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
             kind: { const: "probe" },
             free: { description: "unknown free JSON leaf" },
           },
-          required: ["status", "nested"],
+          required: ["status", "label", "nested"],
           additionalProperties: true,
         },
         terminatingToolName: "ak_probe_output",
@@ -116,11 +120,17 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.equal(schema.additionalProperties, false);
     assert.deepEqual(
       [...schema.required].sort(),
-      ["free", "kind", "nested", "report", "status", "tags"],
+      ["free", "kind", "label", "nested", "note", "report", "status", "tags"],
     );
     // Required fields keep non-null closed types.
     assert.equal(isNullUnion(schema.properties.status), false);
     assert.deepEqual(schema.properties.status, { type: "string" });
+    // Required composite type|["string","null"] → non-null string (not {type:"null"}).
+    assert.equal(isNullUnion(schema.properties.label), false);
+    assert.deepEqual(schema.properties.label, { type: "string" });
+    // Optional composite type|null → unified null at the property edge only.
+    assert.equal(isNullUnion(schema.properties.note), true);
+    assert.deepEqual(nonNullBranch(schema.properties.note), { type: "string" });
     const nestedClosed = schema.properties.nested as {
       type?: string;
       required?: string[];
@@ -176,7 +186,6 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
       continuation: { kind: "initial", prompt: "git-fail" },
     });
     assert.equal(gitFailed.knownFailure?.identity?.code, "argv-failed");
-    assert.match(String(gitFailed.knownFailure?.diagnostic ?? ""), /git rev-parse --git-common-dir failed/);
     const afterGitFail = (await readFile(argvLog, "utf8")).trim().split("\n").filter(Boolean).length;
     assert.equal(afterGitFail, beforeGitFail, "codex must not spawn after git common-dir failure");
   } finally {

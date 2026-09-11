@@ -81,7 +81,7 @@ export type HeadlessCliResult = Readonly<{
  * envelope without stream-json `type`). Intermediate stream-json events are not.
  */
 function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!isPlainObject(value)) return false;
   const record = value as HeadlessCliResult & { type?: unknown };
   return record.type === undefined
     || record.type === "result"
@@ -111,7 +111,7 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
     if (text === "") continue;
     try {
       const value = JSON.parse(text) as unknown;
-      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+      if (!isPlainObject(value)) continue;
       const record = value as HeadlessCliResult & { type?: unknown };
       // Multi-line stream: only explicit result / structured_output lines (not bare objects).
       if (record.type === "result" || record.structured_output !== undefined) {
