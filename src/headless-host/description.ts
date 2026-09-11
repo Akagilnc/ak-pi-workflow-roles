@@ -122,17 +122,17 @@ export function headlessTurnArgs(options: {
  * TOML string literal for `codex -c key=<value>` (values are TOML-parsed).
  * Double-quoted form; escapes backslash and quote only.
  */
-export function codexTomlString(value: string): string {
+function codexTomlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /** TOML array of strings for `-c key=["a","b"]`. */
-export function codexTomlStringArray(values: readonly string[]): string {
+function codexTomlStringArray(values: readonly string[]): string {
   return `[${values.map(codexTomlString).join(",")}]`;
 }
 
 /** TOML inline table of string→string for `-c key={a="b"}`. */
-export function codexTomlStringTable(entries: Readonly<Record<string, string>>): string {
+function codexTomlStringTable(entries: Readonly<Record<string, string>>): string {
   const parts = Object.entries(entries).map(
     ([key, value]) => `${key}=${codexTomlString(value)}`,
   );
@@ -339,7 +339,19 @@ function closeSchemaNode(node: unknown): unknown {
  * Project shared-envelope MCP rows into `codex -c mcp_servers.<name>.*` argv pairs.
  * Dot-path + TOML values per official config-advanced; spawn argv (no shell).
  */
-export function codexMcpConfigArgs(
+function stringEnvironment(value: unknown): Record<string, string> | undefined {
+  const entries = Array.isArray(value)
+    ? value.flatMap((item) => {
+        if (!isPlainObject(item) || typeof item.name !== "string" || typeof item.value !== "string") return [];
+        return [[item.name, item.value] as const];
+      })
+    : isPlainObject(value)
+      ? Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      : [];
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+function codexMcpConfigArgs(
   mcpServers: readonly Readonly<Record<string, unknown>>[],
 ): string[] {
   const args: string[] = [];
@@ -356,24 +368,7 @@ export function codexMcpConfigArgs(
     if (Array.isArray(row.args) && row.args.every((item): item is string => typeof item === "string")) {
       args.push("-c", `${prefix}.args=${codexTomlStringArray(row.args)}`);
     }
-    let env: Record<string, string> | undefined;
-    if (Array.isArray(row.env)) {
-      env = {};
-      for (const item of row.env) {
-        if (typeof item !== "object" || item === null) continue;
-        const record = item as { name?: unknown; value?: unknown };
-        if (typeof record.name === "string" && typeof record.value === "string") {
-          env[record.name] = record.value;
-        }
-      }
-      if (Object.keys(env).length === 0) env = undefined;
-    } else if (typeof row.env === "object" && row.env !== null && !Array.isArray(row.env)) {
-      env = {};
-      for (const [key, value] of Object.entries(row.env as Record<string, unknown>)) {
-        if (typeof value === "string") env[key] = value;
-      }
-      if (Object.keys(env).length === 0) env = undefined;
-    }
+    const env = stringEnvironment(row.env);
     if (env !== undefined) {
       args.push("-c", `${prefix}.env=${codexTomlStringTable(env)}`);
     }
@@ -471,19 +466,8 @@ export function headlessMcpConfigDocument(
     if (name === undefined || name === "" || command === undefined || command === "") continue;
     const entry: Record<string, unknown> = { command };
     if (Array.isArray(row.args)) entry.args = row.args;
-    if (Array.isArray(row.env)) {
-      const env: Record<string, string> = {};
-      for (const item of row.env) {
-        if (typeof item !== "object" || item === null) continue;
-        const record = item as { name?: unknown; value?: unknown };
-        if (typeof record.name === "string" && typeof record.value === "string") {
-          env[record.name] = record.value;
-        }
-      }
-      if (Object.keys(env).length > 0) entry.env = env;
-    } else if (typeof row.env === "object" && row.env !== null && !Array.isArray(row.env)) {
-      entry.env = row.env;
-    }
+    const env = stringEnvironment(row.env);
+    if (env !== undefined) entry.env = env;
     servers[name] = entry;
   }
   return Object.freeze({ mcpServers: Object.freeze(servers) });

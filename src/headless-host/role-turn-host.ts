@@ -153,7 +153,7 @@ export type CodexExecTurnObservation = Readonly<{
   turnCompleted: boolean;
 }>;
 
-export function createCodexExecTurnObserver(): {
+function createCodexExecTurnObserver(): {
   readonly observe: (event: unknown) => void;
   readonly result: () => CodexExecTurnObservation;
 } {
@@ -209,22 +209,8 @@ function formatCodexFailurePayload(payload: unknown): string {
   return String(payload);
 }
 
-/**
- * Parse the final agent_message text as the structured receipt JSON.
- * Does not validate against schema (#750 code-never-judges-role-replies).
- */
-export function parseCodexStructuredReceipt(finalMessage: string): unknown | undefined {
-  const trimmed = finalMessage.trim();
-  if (trimmed === "") return undefined;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
 /** cwd or an ancestor has a `.git` entry (file or directory). */
-export function cwdIsGitWorkTree(cwd: string): boolean {
+function cwdIsGitWorkTree(cwd: string): boolean {
   let dir = cwd;
   for (;;) {
     if (existsSync(join(dir, ".git"))) return true;
@@ -238,7 +224,7 @@ export function cwdIsGitWorkTree(cwd: string): boolean {
  * Absolute git common dir for workspace-write extra roots (worktree index.lock).
  * Uses `git rev-parse --git-common-dir` once; empty when not a git work tree.
  */
-export function resolveGitCommonDir(cwd: string): string | undefined {
+function resolveGitCommonDir(cwd: string): string | undefined {
   if (!cwdIsGitWorkTree(cwd)) return undefined;
   try {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
@@ -386,13 +372,7 @@ function terminalFromSpawned(
   };
 }
 
-type TurnAttemptPlan = Readonly<{
-  args: readonly string[];
-  /** Whether this attempt already has a package-bound session id to resume. */
-  sessionKind: "new" | "resume";
-}>;
-
-function buildTurnAttempt(options: {
+function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly prompt: string;
   readonly systemPromptPath: string;
@@ -406,68 +386,38 @@ function buildTurnAttempt(options: {
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
   readonly writableRoots?: readonly string[];
-}): TurnAttemptPlan {
+}): readonly string[] {
   if (isCodexExecDescription(options.description)) {
-    const writable =
-      options.writableRoots === undefined || options.writableRoots.length === 0
-        ? {}
-        : { writableRoots: options.writableRoots };
-    if (options.sessionKind === "resume") {
-      if (options.sessionId === undefined || options.sessionId === "") {
-        throw new Error("codex resume requires a bound thread_id");
-      }
-      return {
-        sessionKind: "resume",
-        args: codexTurnArgs({
-          prompt: options.prompt,
-          systemPromptPath: options.systemPromptPath,
-          outputSchemaPath: options.outputSchemaPath,
-          mcpServers: options.mcpServers,
-          ...(options.model === undefined ? {} : { model: options.model }),
-          ...(options.effort === undefined ? {} : { effort: options.effort }),
-          session: { kind: "resume", id: options.sessionId },
-          skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
-          ...writable,
-        }),
-      };
+    if (options.sessionKind === "resume" && !options.sessionId) {
+      throw new Error("codex resume requires a bound thread_id");
     }
-    return {
-      sessionKind: "new",
-      args: codexTurnArgs({
-        prompt: options.prompt,
-        systemPromptPath: options.systemPromptPath,
-        outputSchemaPath: options.outputSchemaPath,
-        mcpServers: options.mcpServers,
-        ...(options.model === undefined ? {} : { model: options.model }),
-        ...(options.effort === undefined ? {} : { effort: options.effort }),
-        session: { kind: "new" },
-        skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
-        ...writable,
-      }),
-    };
-  }
-
-  if (!isClaudePrintDescription(options.description)) {
-    throw new Error(`unsupported headless host protocol`);
-  }
-  if (options.sessionId === undefined || options.sessionId === "") {
-    throw new Error("claude print-mode requires a session id");
-  }
-  return {
-    sessionKind: options.sessionKind,
-    args: headlessTurnArgs({
-      description: options.description,
+    return codexTurnArgs({
       prompt: options.prompt,
       systemPromptPath: options.systemPromptPath,
-      jsonSchema: options.jsonSchema,
-      mcpConfigPath: options.mcpConfigPath,
+      outputSchemaPath: options.outputSchemaPath,
+      mcpServers: options.mcpServers,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.effort === undefined ? {} : { effort: options.effort }),
-      session: options.sessionKind === "new"
-        ? { kind: "new", id: options.sessionId }
-        : { kind: "resume", id: options.sessionId },
-    }),
-  };
+      session: options.sessionKind === "resume"
+        ? { kind: "resume", id: options.sessionId! }
+        : { kind: "new" },
+      skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
+      ...(!options.writableRoots?.length ? {} : { writableRoots: options.writableRoots }),
+    });
+  }
+
+  if (!isClaudePrintDescription(options.description)) throw new Error("unsupported headless host protocol");
+  if (!options.sessionId) throw new Error("claude print-mode requires a session id");
+  return headlessTurnArgs({
+    description: options.description,
+    prompt: options.prompt,
+    systemPromptPath: options.systemPromptPath,
+    jsonSchema: options.jsonSchema,
+    mcpConfigPath: options.mcpConfigPath,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+    session: { kind: options.sessionKind, id: options.sessionId },
+  });
 }
 
 /** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema/output-schema mount. */
@@ -512,10 +462,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         currentSessionId: () => sessionId,
         afterRetry() { sessionKind = "resume"; },
         async runRound({ prompt, abortSignal }) {
-          let plan: TurnAttemptPlan;
+          let args: readonly string[];
           try {
             const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
-            plan = buildTurnAttempt({
+            args = buildTurnArgs({
               description: config.description,
               prompt,
               systemPromptPath,
@@ -543,7 +493,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           try {
             spawned = await spawnHeadlessTurn({
               binary: config.binary,
-              args: plan.args,
+              args,
               cwd: request.cwd,
               env,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
@@ -657,10 +607,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
-            const receipt = parseCodexStructuredReceipt(observation.finalMessage);
-            if (receipt === undefined) {
-              // Not JSON: typed output miss. Content judgment is not package code's job
-              // (#750); unreadable structured receipt is a parse/transport fact.
+            let receipt: unknown;
+            try {
+              receipt = JSON.parse(observation.finalMessage);
+            } catch {
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
