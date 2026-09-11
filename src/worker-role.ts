@@ -1,5 +1,4 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
-import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
@@ -49,23 +48,25 @@ export type { WorkerOutput };
 // no code branches on their length. `reason` alone keeps minLength: the worker
 // gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
 // (src/worker-submission-gates.ts:159-163,297-302).
+// #836 (2026-09-11 御批 / ADR 0003 Amendment): a closed provider-registered
+// value domain rejects an unknown status before the submission ledger ever
+// records it. `status` is kept open (Type.Unknown, one shared description so
+// no variant's guidance is dropped when openToolObjectFromUnion collapses
+// identical declarations); downstream code (assertAcceptableThroughHost /
+// WORKER_DONE_STATUSES) still reads whatever string the role wrote.
+const CODER_STATUS_DESCRIPTION =
+  "planned | completed | refused | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
     report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: stringEnum(["completed", "refused"] as const, {
-      description:
-        "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
-    }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
     report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: stringEnum(["unfinished"] as const, {
-      description:
-        "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
-    }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
     report: Type.String({ description: "如实结果报告" }),
     remainingScope: Type.String({ description: "本局后剩余工作" }),
     reason: Type.Optional(Type.String({
@@ -153,6 +154,17 @@ export type WorkerRoleRuntime = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the accepted receipt's own `status` word as submitted (#836: `status`
+ * stays an open Type.Unknown provider field, so FixerOutput's Static type no
+ * longer narrows it to a literal union — code still just reads whatever
+ * string the role wrote; a non-string status reads as "" and simply misses
+ * every known-status gate below, same as any other unrecognized status).
+ */
+function workerStatusOf(output: WorkerOutput): string {
+  return typeof output.status === "string" ? output.status : "";
 }
 
 function deepFreeze<T>(value: T): T {
@@ -268,13 +280,13 @@ export function createFixerRoleRuntime(
             const output = deepFreeze(validateFixerOutput(parameters, phase));
             assertAcceptableThroughHost(
               submissionGate,
-              output.status,
+              workerStatusOf(output),
               output,
               hostActions,
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(output.status)) {
+            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion" },
@@ -406,13 +418,13 @@ export function createCoderRoleRuntime(
             // Skill still ships with the package (ADR 0052); code no longer refuses on it.
             assertAcceptableThroughHost(
               submissionGate,
-              output.status,
+              workerStatusOf(output),
               output,
               hostActions,
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(output.status)) {
+            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion" },

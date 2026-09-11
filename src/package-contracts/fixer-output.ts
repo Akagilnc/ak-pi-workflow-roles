@@ -38,13 +38,22 @@ const refusedClassResultSchema = Type.Object({
 const classResultSchema = Type.Union([completedClassResultSchema, refusedClassResultSchema]);
 const completedClassResultsSchema = Type.Array(completedClassResultSchema);
 
+// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
+// top-level machine discriminator (worker-submission-gates.ts reads it for
+// WORKER_DONE_STATUSES gating). A closed provider-registered value domain
+// would reject an unknown status before the submission ledger ever records
+// it. Kept open (Type.Unknown, one shared description across every variant
+// so openToolObjectFromUnion's identical-declaration collapse loses no
+// guidance) like every other gate-queue status field in this package.
+const FIXER_STATUS_DESCRIPTION =
+  "planned | completed | refused | unfinished | partially_completed — 形状指引，非 schema 闸；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const fixerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("planned", { description: "planned — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }) }),
-  Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), remainingScope: Type.String({ description: "依法不能完成的工作范围" }), blocker: Type.Unsafe({ ...blockerSchema, description: "合法阻断完成的 blocker" }) }),
-  Type.Object({ status: Type.Literal("unfinished", { description: "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。" }), report: Type.String({ description: "如实结果报告" }), remainingScope: Type.String({ description: "本局后剩余工作" }), reason: Type.Optional(Type.String({ minLength: 1, description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。" })), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "本局已完成的 class 结算" })), testEvidence: Type.Optional(testEvidenceSchema) }),
-  Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "已完成的 class 结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
-  Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类拒绝结算" }) }),
-  Type.Object({ status: Type.Literal("partially_completed", { description: "partially_completed — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类完成或拒绝结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), remainingScope: Type.String({ description: "依法不能完成的工作范围" }), blocker: Type.Unsafe({ ...blockerSchema, description: "合法阻断完成的 blocker" }) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), remainingScope: Type.String({ description: "本局后剩余工作" }), reason: Type.Optional(Type.String({ minLength: 1, description: "阻断原因：缺前置或违宪约束。缺待决 owner 决定或答复属缺前置。" })), classResults: Type.Optional(Type.Unsafe({ ...completedClassResultsSchema, description: "本局已完成的 class 结算" })), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "已完成的 class 结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类拒绝结算" }) }),
+  Type.Object({ status: Type.Unknown({ description: FIXER_STATUS_DESCRIPTION }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类完成或拒绝结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
 ]);
 export const fixerOutputSchema = withInfrastructureFailureDeclaration(
   openToolObjectFromUnion(fixerOutputVariants),

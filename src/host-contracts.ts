@@ -1,4 +1,4 @@
-import { Type, type Static, type TLiteral, type TSchema } from "typebox";
+import type { Static, TSchema } from "typebox";
 import type { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
@@ -468,10 +468,5 @@ export interface InstitutionalSessionHost {
   openInstitutionalSession(
     options: HostInstitutionalSessionOptions,
   ): Promise<HostInstitutionalSessionHandle>;
-}
-
-/** Local replacement for Pi AI's convenience constructor. */
-export function stringEnum<const V extends readonly string[]>(values: V, options: Record<string, unknown> = {}) {
-  return Type.Union(values.map((value) => Type.Literal(value)) as [TLiteral<V[number]>, ...TLiteral<V[number]>[]], options);
 }
 

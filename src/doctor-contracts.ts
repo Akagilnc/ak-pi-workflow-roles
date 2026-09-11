@@ -70,14 +70,22 @@ const finding = Type.Union([
   Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), assetEvidence: Type.Optional(Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), evidenceId: nonblank }, { additionalProperties: true })), ...findingBody }, { additionalProperties: true }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Optional(Type.Integer()), runsPath: nonblank }, { additionalProperties: true });
+// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
+// top-level machine discriminator. A closed provider-registered value domain
+// would reject an unknown status before the submission ledger ever records
+// it. Kept open (Type.Unknown, one shared description across both variants
+// so openToolObjectFromUnion's identical-declaration collapse loses no
+// guidance) like every other gate-queue status field in this package.
+const DOCTOR_STATUS_DESCRIPTION =
+  "completed | refused — 形状指引，非 schema 闸；completed 允许空 findings；refused 仅当证据不足以支撑如实案证词" as const;
 const doctorSubmissionVariants = Type.Union([
   Type.Object({
-    status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸；允许空 findings" }),
+    status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),
     case: Type.Unsafe({ ...caseIdentity, description: "留存太医署案身份" }),
     findings: Type.Array(finding, { description: "可空或仅含非处方案观察；缺可复用资产或 bounded-bite 证据只排除对应资产处方" }),
   }, { additionalProperties: false, description: "单案证词，不要求任何处方或可复用 finding" }),
   Type.Object({
-    status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸；仅当证据不足以支撑如实案证词" }),
+    status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),
     reason: Type.String({ description: "证据不足以支撑如实证词的原因" }),
     missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: evidenceIds }, { additionalProperties: true }), { description: "如实证词所需而尚缺的证据" }),
   }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),

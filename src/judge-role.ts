@@ -1,5 +1,4 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
-import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
@@ -23,10 +22,16 @@ export type { JudgeVerdict };
 // content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
 // or nested presence. `judgeStatus` alone is the machine discriminator the
 // queue reads to pick pass/bounce/escalate (src/judge-role.ts:90-125).
+// #836 (2026-09-11 御批 / ADR 0003 Amendment): a closed provider-registered
+// value domain rejects an unknown judgeStatus before it reaches the
+// submission ledger, defeating 读不出三态→resume 说话者本人 (the rawStatus
+// check + ParentQueueReaskError below never runs). Kept open (Type.Unknown)
+// like the other gate-queue status fields in this package; the reask below
+// is still code's job, not the transport's.
 export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
-      judgeStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
+      judgeStatus: Type.Unknown({ description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
       fix: Type.Optional(
         Type.Object(
           { summary: Type.Optional(Type.String({ description: "continue 时的补救摘要" })) },

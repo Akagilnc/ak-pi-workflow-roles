@@ -17,9 +17,16 @@ export const mergerInputSchema = Type.Object({
 // #836 r16 class 1: attemptId/report/diagnosis are LLM/human-read narrative
 // content (candidate stored as submitted) — no code branches on their length.
 // mergerInputSchema (host-authored material, not role output) is out of scope.
+// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
+// top-level machine discriminator. A closed provider-registered value domain
+// would reject an unknown status before the submission ledger ever records
+// it. Kept open (Type.Unknown, one shared description across both variants
+// so openToolObjectFromUnion's identical-declaration collapse loses no
+// guidance) like every other gate-queue status field in this package.
+const MERGER_STATUS_DESCRIPTION = "completed | escalate — 形状指引，非 schema 闸" as const;
 const mergerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("escalate", { description: "escalate — 形状指引，非 schema 闸" }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),
 ]);
 export const mergerOutputSchema = withInfrastructureFailureDeclaration(openToolObjectFromUnion(mergerOutputVariants));
 
