@@ -8,8 +8,8 @@ import { BOOK_TOPOLOGY_T11_MIGRATORS } from "./book-topology-migrators-t11.ts";
  * T11 (#867) registration order: auditor-roles, issues, deprecated-kinds,
  * deprecated-run-pages, navigator, collector-handbook, manual-archives.
  * auditor-roles prefers a run already placed by T9 when that nest exists.
- * deprecated-run-pages must run after the runs migrator (T9): it scrubs
- * destination pages and exports copyRunDirectoryForMigration for T9 to use.
+ * deprecated-run-pages must run after the runs migrator (T9): it deletes
+ * matching pages from already-placed destination runs.
  */
 export const BOOK_TOPOLOGY_PARTITION_MIGRATORS: readonly BookTopologyPartitionMigrator[] = [
   ...BOOK_TOPOLOGY_T11_MIGRATORS,

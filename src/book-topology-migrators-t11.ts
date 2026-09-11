@@ -514,30 +514,6 @@ export const bookTopologyDeprecatedKindsMigrator: BookTopologyPartitionMigrator 
   },
 };
 
-/**
- * Copy one legacy run directory into the new tree while omitting deprecated
- * top-level pages. T9 must use this (or equivalent isDeprecatedRunPage filter)
- * when placing whole runs; the deprecated-run-pages migrator also scrubs any
- * leftover destination pages so the external contract holds after the full
- * partition sequence.
- */
-export async function copyRunDirectoryForMigration(
-  sourceRunDirectory: string,
-  destinationRunDirectory: string,
-): Promise<void> {
-  await mkdir(destinationRunDirectory, { recursive: true });
-  for (const entry of await listDirents(sourceRunDirectory)) {
-    if (entry.isFile() && isDeprecatedRunPage(entry.name)) continue;
-    const src = join(sourceRunDirectory, entry.name);
-    const dest = join(destinationRunDirectory, entry.name);
-    if (entry.isDirectory()) {
-      await cp(src, dest, { recursive: true, preserveTimestamps: true });
-    } else if (entry.isFile()) {
-      await cp(src, dest, { preserveTimestamps: true });
-    }
-  }
-}
-
 async function unlinkIfPresent(path: string): Promise<void> {
   try {
     await unlink(path);
@@ -546,38 +522,11 @@ async function unlinkIfPresent(path: string): Promise<void> {
   }
 }
 
-/** Remove deprecated pages from every run already present under destination books. */
-async function scrubDestinationDeprecatedRunPages(booksDirectory: string): Promise<void> {
-  for (const bookKey of await listBookKeys(booksDirectory)) {
-    const bookRoot = join(booksDirectory, bookKey);
-    for (const subject of await listDirents(bookRoot)) {
-      if (!subject.isDirectory()) continue;
-      const runsRoot = join(bookRoot, subject.name, "runs");
-      if (!(await directoryExists(runsRoot))) continue;
-      for (const run of await listDirents(runsRoot)) {
-        if (!run.isDirectory()) continue;
-        const runDirectory = join(runsRoot, run.name);
-        for (const page of await listDirents(runDirectory)) {
-          if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
-          await unlinkIfPresent(join(runDirectory, page.name));
-        }
-      }
-    }
-    // Legacy flat runs/ under a book (if a migrator staged there) — scrub too.
-    const flatRuns = join(bookRoot, "runs");
-    if (await directoryExists(flatRuns)) {
-      for (const run of await listDirents(flatRuns)) {
-        if (!run.isDirectory()) continue;
-        const runDirectory = join(flatRuns, run.name);
-        for (const page of await listDirents(runDirectory)) {
-          if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
-          await unlinkIfPresent(join(runDirectory, page.name));
-        }
-      }
-    }
-  }
-}
-
+/**
+ * Count each backup deprecated run page as discarded, and delete the same page
+ * from the destination run when T9 has already placed it. One rule, one place:
+ * isDeprecatedRunPage names the pages; this migrator applies the discard.
+ */
 export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrator = {
   partition: DEPRECATED_RUN_PAGES_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {
@@ -595,7 +544,6 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
             disposition: "discarded",
             source: sourceIdentity(backupBooksDirectory, join(runDirectory, page.name)),
           });
-          // If T9 already placed this run, strip the page from the destination now.
           const placed = await findPlacedRunDirectory(booksDirectory, bookKey, run.name);
           if (placed !== undefined) {
             await unlinkIfPresent(join(placed, page.name));
@@ -603,9 +551,6 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
         }
       }
     }
-
-    // Full-tree scrub so the external contract holds even if a run copier used raw cp.
-    await scrubDestinationDeprecatedRunPages(booksDirectory);
 
     return reconcileMigrationPartition(DEPRECATED_RUN_PAGES_PARTITION, "entries", outcomes);
   },
