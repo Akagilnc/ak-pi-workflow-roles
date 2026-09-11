@@ -721,7 +721,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(history[1]!.data.sequence, 2);
 
     // report/evidence stay last-write-wins views of the final accepted attempt.
-    const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "runs", "run-419-pointer-overwrite-001@judge");
+    const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
     const report = JSON.parse(await readFile(join(runDirectory, "artifacts", "report.json"), "utf8")) as { outcome?: TerminalRoleOutcome };
     assert.equal(report.outcome?.kind, "accepted");
     // #836: the persisted report carries the role's original payload, not an

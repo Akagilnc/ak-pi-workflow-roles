@@ -320,7 +320,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
         ".ak-roles",
         "books",
         bookKey,
-        "runs",
+        "unbound", "runs",
         "run-reviewer-admit-001@reviewer",
       ),
     );
@@ -634,7 +634,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         ".ak-roles",
         "books",
         bookKey,
-        "runs",
+        "unbound", "runs",
         "run-cli-reviewer-blank-ok@reviewer",
       );
       await access(join(runDirectory, "admitted-request.json"));
@@ -735,7 +735,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             ".ak-roles",
             "books",
             bookKey,
-            "runs",
+            "unbound", "runs",
             "run-cli-reviewer-ok@reviewer",
             "artifacts",
             "evidence.json",
@@ -846,7 +846,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@reviewer`,
     );
     const sessionDirectory = join(runDirectory, "session");

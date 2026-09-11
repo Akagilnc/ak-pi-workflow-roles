@@ -53,7 +53,7 @@ function readRoleInvocation(
 ): Record<string, unknown> {
   return JSON.parse(
     readFileSync(
-      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@${role}`, "invocation.json"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@${role}`, "invocation.json"),
       "utf8",
     ),
   ) as Record<string, unknown>;
