@@ -533,18 +533,7 @@ export async function relocateAdmittedRunToTicket(
       attachment.frozenPath,
     ) as string;
   }
-  const sealedPrincipal = authority.seal(target);
-  const priorPrincipal = admitted.principal;
-  const principal =
-    priorPrincipal !== null &&
-    typeof priorPrincipal === "object" &&
-    sealedPrincipal !== null &&
-    typeof sealedPrincipal === "object"
-      ? Object.assign(priorPrincipal as Record<string, unknown>, {
-          sessionDirectory: target.sessionDirectory,
-          sessionFile: target.sessionFile,
-        }) as DurablePrincipal
-      : sealedPrincipal;
+  const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   const admittedPath = join(target.runDirectory, "admitted-request.json");
