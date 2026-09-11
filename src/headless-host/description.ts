@@ -495,4 +495,3 @@ export function headlessMcpConfigDocument(
   }
   return Object.freeze({ mcpServers: Object.freeze(servers) });
 }
-
