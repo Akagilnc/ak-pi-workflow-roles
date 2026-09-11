@@ -8,7 +8,7 @@ Status: accepted（票 #594；owner 2026-09-02 裁定；#717 owner 2026-09-06 �
 
 历史 ADR 正文不回改；承继与修正关系按 [ADR 0075](0075-ticket-provenance-diarist-pipeline.md) 修订案通道先例由本 ADR 记载。
 
-本 ADR 坚决**重申** [ADR 0048](0048-ledger-one-home-many-books-dirname-key-git-only.md)「session 直接写进家、不设归档搬运」的直写律——各宿主会话卷宗统一收录的实现必须是**直写**（direct write），落入该 run 的 books 目录拓扑内（`runDirectory`），绝不设事后归档、搬运或另起 parallel tee 机制。
+本 ADR 坚决**重申** [ADR 0048](0048-ledger-one-home-many-books-dirname-key-git-only.md)「session 直接写进家、不设归档搬运」的直写律——各宿主会话卷宗统一收录的实现必须是**直写**（direct write），落入 [卷宗拓扑](../dossier-topology.md) 定义的该 run 目录，绝不设事后归档、搬运或另起 parallel tee 机制。
 
 ## Decision keys（逐条绑 owner 原话；真源票面 #594 / #717）
 
@@ -23,7 +23,7 @@ Status: accepted（票 #594；owner 2026-09-02 裁定；#717 owner 2026-09-06 �
 
 ## 机制与拓扑（垂直切片）
 
-- **直写拓扑（司天台 run 目录）**：Pi 宿主原生将会话卷宗直写至该 run 的 `session/session.jsonl`。Grok 宿主的 CLI 原始会话留在操作员 grok 家；该 run 的工厂卷宗是司天台记录，不把 grok 原始数据搬进 books、不另起受控 home。
+- **直写拓扑（司天台 run 目录）**：路径形状引用 [卷宗拓扑](../dossier-topology.md)，本 ADR 不另存路径副本。Pi 宿主原生直写该 run 的 session；Grok 宿主的 CLI 原始会话留在操作员 grok 家；该 run 的工厂卷宗是司天台记录，不把 grok 原始数据搬进 books、不另起受控 home。
 - **实时活性与卡死取证**：运行中（live）与终局后（settled），该 run 的司天台记录在 books 目录内直接可读；卡死取证、日志排查与监控哨兵读司天台记录，不盯 CLI 自己的家，也不依赖临时目录。
 - **凭据**：grok CLI 使用操作员自己的凭据（`~/.grok/auth.json`）；工厂不拷贝、不擦除、不把凭据写入 run 目录。
 - **二进制解析**：grok 二进制仍自操作者 home 解析（`~/.grok/bin/grok`）。
