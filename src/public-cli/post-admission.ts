@@ -219,6 +219,8 @@ export type PostAdmissionEnv = {
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   model?: SeatModelConfig;
   engine?: string;
+  /** Labor-engine model id from the live seat table (#883). */
+  engineModel?: string;
   /** Effective main-session host for this run (#595 admission / #617 resume seat). */
   host?: string;
   credentials?: CredentialProviders;
@@ -680,7 +682,13 @@ export async function dispatchPostAdmissionTurn<
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
     // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
-    await markRunRunning(admitted.runDirectory, env.model, effectiveEngine, env.host);
+    await markRunRunning(
+      admitted.runDirectory,
+      env.model,
+      effectiveEngine,
+      env.host,
+      env.engineModel,
+    );
 
     let result: RoleTurnResult;
     try {
@@ -1110,6 +1118,7 @@ export function resumeTurnRequestProjectionOptions(
       prompt = buildResumeContinuationPrompt({
         packageRoot: env.packageRoot,
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         message: request.message,
       });
     }
@@ -1141,6 +1150,7 @@ export function resumeTurnRequestProjectionOptions(
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
       ...(env.engine === undefined ? {} : { engine: env.engine }),
+      ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
     });
   }
   return {
@@ -1149,6 +1159,7 @@ export function resumeTurnRequestProjectionOptions(
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}

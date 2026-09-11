@@ -122,6 +122,7 @@ export async function runPublicJudge(
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -132,6 +133,7 @@ export async function runPublicJudge(
             admitted,
             engineSessionMaterialFromOptions({
               ...(env.engine === undefined ? {} : { engine: env.engine }),
+              ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
               packageRoot: env.packageRoot,
             }),
           ),
@@ -144,6 +146,7 @@ export async function runPublicJudge(
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -153,6 +156,7 @@ export async function runPublicJudge(
           prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
           }),
         },
       }),

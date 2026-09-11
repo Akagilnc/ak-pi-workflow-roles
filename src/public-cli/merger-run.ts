@@ -123,6 +123,7 @@ function mergerTurnOptions(
   agentDir: string;
   model?: import("./config.ts").SeatModelConfig;
   engine?: string;
+  engineModel?: string;
   timeoutMs?: number;
   correlationId?: string;
 } {
@@ -132,6 +133,7 @@ function mergerTurnOptions(
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}
@@ -222,6 +224,7 @@ export async function runPublicMerger(
             admitted,
             engineSessionMaterialFromOptions({
               ...(env.engine === undefined ? {} : { engine: env.engine }),
+              ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
               packageRoot: env.packageRoot,
             }),
           ),
@@ -234,6 +237,7 @@ export async function runPublicMerger(
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -243,6 +247,7 @@ export async function runPublicMerger(
           prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
           }),
         },
       }),

@@ -371,9 +371,9 @@ async function writeRoleInvocationLedger(
  * identity page (resume / temporary override path — same field shape as admission).
  * Bare model clears any prior thinking key so absence stays honest.
  *
- * Engine axis (#617 Scope 1): `string` writes, `null` deletes (authoritative seat
- * projection when the live table has no engine), `undefined` preserves any existing
- * key for non-authoritative partial updates.
+ * Engine axis (#617 Scope 1 / #883): `string` writes, `null` deletes (authoritative
+ * seat projection when the live table has no engine/model), `undefined` preserves
+ * any existing key for non-authoritative partial updates.
  * Host stays write-if-present (`string` only).
  */
 export async function recordEffectiveInvocationModel(
@@ -381,6 +381,7 @@ export async function recordEffectiveInvocationModel(
   model?: InvocationEffectiveModel,
   engine?: string | null,
   host?: string,
+  engineModel?: string | null,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
@@ -401,6 +402,11 @@ export async function recordEffectiveInvocationModel(
     delete next.engine;
   } else if (engine !== undefined) {
     next.engine = engine;
+  }
+  if (engineModel === null) {
+    delete next.engineModel;
+  } else if (engineModel !== undefined) {
+    next.engineModel = engineModel;
   }
   if (host !== undefined) {
     next.host = host;

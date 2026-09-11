@@ -26,6 +26,8 @@ export type RoleTurnRequestProjectionOptions = {
   agentDir: string;
   model?: SeatModelConfig;
   engine?: string;
+  /** Labor-engine model id (#883); projected onto the turn when present. */
+  engineModel?: string;
   timeoutMs?: number;
   correlationId?: string;
   continuation: RoleTurnRequest["continuation"];
@@ -65,6 +67,7 @@ export function projectRoleTurnRequest(
     continuation: options.continuation,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.engine === undefined ? {} : { engine: options.engine }),
+    ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
     cwd,
     home: options.home,
     agentDir: options.agentDir,

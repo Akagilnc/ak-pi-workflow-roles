@@ -170,6 +170,7 @@ export async function runPublicCoder(
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -180,6 +181,7 @@ export async function runPublicCoder(
             admitted,
             engineSessionMaterialFromOptions({
               ...(env.engine === undefined ? {} : { engine: env.engine }),
+              ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
               packageRoot: env.packageRoot,
             }),
           ),
@@ -192,6 +194,7 @@ export async function runPublicCoder(
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
         ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -201,6 +204,7 @@ export async function runPublicCoder(
           prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
           }),
         },
       }),

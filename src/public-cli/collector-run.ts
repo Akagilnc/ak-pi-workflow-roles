@@ -104,13 +104,21 @@ export async function runPublicCollector(
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}
       : { correlationId: admitted.correlationId ?? env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildCollectorTransportPrompt(admitted, engineSessionMaterialFromOptions({ ...(env.engine === undefined ? {} : { engine: env.engine }), packageRoot: env.packageRoot })),
+      prompt: buildCollectorTransportPrompt(
+        admitted,
+        engineSessionMaterialFromOptions({
+          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+          packageRoot: env.packageRoot,
+        }),
+      ),
     },
   });
 

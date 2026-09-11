@@ -176,13 +176,17 @@ export function selectResumeContinuationPrompt(
 export function buildResumeContinuationPrompt(options: {
   packageRoot: string;
   engine?: string;
+  engineModel?: string;
   message?: string;
 }): string {
   return selectResumeContinuationPrompt(
     options.message,
     engineSessionMaterialFromOptions({
-      ...(options.engine === undefined ? {} : { engine: options.engine }),
       packageRoot: options.packageRoot,
+      ...(options.engine === undefined ? {} : { engine: options.engine }),
+      ...(options.engineModel === undefined
+        ? {}
+        : { engineModel: options.engineModel }),
     }),
   );
 }
@@ -559,6 +563,7 @@ export async function markRunRunning(
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
   effectiveHost?: string,
+  effectiveEngineModel?: string,
 ): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
@@ -584,6 +589,12 @@ export async function markRunRunning(
     // Authoritative seat projection: absent engine ⇒ null (delete).
     effectiveEngine === undefined ? null : effectiveEngine,
     effectiveHost,
+    // Authoritative with engine: absent model ⇒ null (delete) when engine axis is written.
+    effectiveEngine === undefined
+      ? null
+      : effectiveEngineModel === undefined
+        ? null
+        : effectiveEngineModel,
   );
 }
 

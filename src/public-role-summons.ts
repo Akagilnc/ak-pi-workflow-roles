@@ -163,9 +163,15 @@ async function resolveSummonHome(options: PublicSummonRequest): Promise<string> 
   return packageMachineHome();
 }
 
-/** Seat axes only — no parent-env fallback (#675 / #617 DK-3). */
-function projectSeatEngine(seat: EffectiveSeat): { engine?: string } {
-  return seat.engine === undefined ? {} : { engine: seat.engine };
+/** Seat axes only — no parent-env fallback (#675 / #617 DK-3 / #883). */
+function projectSeatEngine(seat: EffectiveSeat): {
+  engine?: string;
+  engineModel?: string;
+} {
+  return {
+    ...(seat.engine === undefined ? {} : { engine: seat.engine }),
+    ...(seat.engineModel === undefined ? {} : { engineModel: seat.engineModel }),
+  };
 }
 
 function projectSeatHost(seat: EffectiveSeat): { host?: string } {

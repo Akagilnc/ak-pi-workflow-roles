@@ -96,6 +96,7 @@ export async function runPublicGleanerLeft(
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
@@ -106,6 +107,7 @@ export async function runPublicGleanerLeft(
         admitted,
         engineSessionMaterialFromOptions({
           ...(env.engine === undefined ? {} : { engine: env.engine }),
+          ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
           packageRoot: env.packageRoot,
         }),
       ),
