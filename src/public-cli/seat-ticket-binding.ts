@@ -1,7 +1,7 @@
 /**
  * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747 / #771).
  *
- * ADR 0075 `diarist-resolves-ticket-llm-layer`: the seat's LLM recognizes the
+ * ADR 0075 `diarist-resolves-ticket-llm-layer`: the diarist LLM recognizes the
  * court target; recognized ticket → provenance, truly unbound → no provenance,
  * or escalate when it cannot recognize one. Code does not re-judge the ticket
  * (锚定宪法; owner 2026-09-08: 代码不准做判断). Other seats reuse a typed
