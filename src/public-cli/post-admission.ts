@@ -1509,6 +1509,7 @@ export async function runPostAdmissionOneShot<
   terminal?: T;
 }> {
   const engine = input.effectiveEngine ?? input.env.engine;
+  const engineModel = input.env.engineModel;
   return await runPostAdmissionResumable({
     admitted: input.admitted,
     env: input.env,
@@ -1521,6 +1522,7 @@ export async function runPostAdmissionOneShot<
         prompt: buildResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
           ...(engine === undefined ? {} : { engine }),
+          ...(engineModel === undefined ? {} : { engineModel }),
         }),
       },
     }),

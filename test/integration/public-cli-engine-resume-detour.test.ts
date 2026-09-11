@@ -307,6 +307,77 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
   });
 });
 
+test("#883 engineModel stays effective across the auto-resume loop (request + continuation)", async () => {
+  await withHermeticHome({ prefix: "ak-engine-model-auto-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const ENGINE_MODEL = "cursor-grok-4.6-high";
+    {
+      const { io, stderr } = captureIo();
+      await runAkRole(["config", "set-auto-resume-limit", "2"], { packageRoot, home, io });
+      await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], { packageRoot, home, io });
+      await runAkRole(
+        ["config", "set-engine", "judge", "cursor", ENGINE_MODEL],
+        { packageRoot, home, io },
+      );
+      assert.equal(stderr.join(""), "");
+    }
+
+    const capturedModels: Array<string | undefined> = [];
+    const capturedPrompts: string[] = [];
+    let first = true;
+    const { io, stdout, stderr } = captureIo();
+    await runAkRole(["judge", "--project", project, "engine model auto proof"], {
+      packageRoot,
+      home,
+      cwd: project,
+      io,
+      credentials: { "openai-codex": true, xai: true },
+      createRunId: () => "run-engine-model-auto",
+      principalAuthority: piDurablePrincipalAuthority,
+      roleTurnHost: createMinimalHost(async (request) => {
+        capturedModels.push(request.engineModel);
+        capturedPrompts.push(request.continuation.prompt ?? "");
+        if (first) {
+          first = false;
+          await seedPrincipalSession(request);
+          await observeTyped429ViaProductionHandler({
+            runDirectory: request.runDirectory,
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false };
+        }
+        const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+        await seedTerminalSession({
+          seat: "judge",
+          sessionFile,
+          cwd: request.cwd,
+          home: request.home,
+          runId: "run-engine-model-auto",
+          runDirectory: request.runDirectory,
+        });
+        return { code: 0, stderr: "", timedOut: false };
+      }),
+    });
+    assert.ok(
+      capturedModels.length >= 2,
+      `auto-resume must re-dispatch; stderr=${stderr.join("")} stdout=${stdout.join("")}`,
+    );
+    assert.ok(
+      capturedModels.every((m) => m === ENGINE_MODEL),
+      `every auto-resume typed request keeps engineModel; got ${JSON.stringify(capturedModels)}`,
+    );
+    // Continuation prompt on the auto-resume leg must still carry the model coordinate
+    // (one-shot shared path; not only the initial request body).
+    assert.equal(
+      capturedPrompts[1]?.includes(`- engineModel: ${ENGINE_MODEL}`),
+      true,
+      `auto-resume continuation must keep engineModel coordinate; prompt=${JSON.stringify(capturedPrompts[1])}`,
+    );
+  });
+});
+
 test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
     const project = join(home, "work");
