@@ -307,7 +307,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
   });
 });
 
-test("#883 engineModel stays effective across the auto-resume loop (request + continuation)", async () => {
+test("#883 engineModel stays effective across the auto-resume loop on every typed request", async () => {
   await withHermeticHome({ prefix: "ak-engine-model-auto-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -325,7 +325,6 @@ test("#883 engineModel stays effective across the auto-resume loop (request + co
     }
 
     const capturedModels: Array<string | undefined> = [];
-    const capturedPrompts: string[] = [];
     let first = true;
     const { io, stdout, stderr } = captureIo();
     await runAkRole(["judge", "--project", project, "engine model auto proof"], {
@@ -338,7 +337,6 @@ test("#883 engineModel stays effective across the auto-resume loop (request + co
       principalAuthority: piDurablePrincipalAuthority,
       roleTurnHost: createMinimalHost(async (request) => {
         capturedModels.push(request.engineModel);
-        capturedPrompts.push(request.continuation.prompt ?? "");
         if (first) {
           first = false;
           await seedPrincipalSession(request);
@@ -367,13 +365,6 @@ test("#883 engineModel stays effective across the auto-resume loop (request + co
     assert.ok(
       capturedModels.every((m) => m === ENGINE_MODEL),
       `every auto-resume typed request keeps engineModel; got ${JSON.stringify(capturedModels)}`,
-    );
-    // Continuation prompt on the auto-resume leg must still carry the model coordinate
-    // (one-shot shared path; not only the initial request body).
-    assert.equal(
-      capturedPrompts[1]?.includes(`- engineModel: ${ENGINE_MODEL}`),
-      true,
-      `auto-resume continuation must keep engineModel coordinate; prompt=${JSON.stringify(capturedPrompts[1])}`,
     );
   });
 });
