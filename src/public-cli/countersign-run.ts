@@ -375,6 +375,11 @@ export async function runPublicCountersign(
     }
   }
 
+  if (identityDiaristRan && typedTicket !== undefined) {
+    await bindAdmittedTicketNumber(admitted, typedTicket);
+    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  }
+
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
     home: env.home,
@@ -411,9 +416,6 @@ export async function runPublicCountersign(
           // Test seam (or any deferred identity): station owns assert + bind.
           await runCountersignCourtDiaristStation(admittedSeat, env, io);
         } else if (typedTicket !== undefined) {
-          // Production identity asserted unbound; bind typed key, then bound
-          // refresh so freeze loads issue face (typed handoff, not prose match).
-          await bindAdmittedTicketNumber(admittedSeat, typedTicket);
           await runCountersignCourtDiaristStation(admittedSeat, env, io);
         }
         Object.assign(

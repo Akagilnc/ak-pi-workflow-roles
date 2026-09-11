@@ -100,9 +100,13 @@ export async function resolveNotarySourceRunLocator(options: {
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename(real))!;
 
-  const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
+  const bookIdentity = physicalPathIdentity(activationBookDirectory(ledgerHome, bookKey));
   const parentIdentity = physicalPathIdentity(dirname(real));
-  if (parentIdentity !== runsRootIdentity) {
+  const subjectBookIdentity = physicalPathIdentity(dirname(dirname(dirname(real))));
+  if (
+    parentIdentity !== physicalPathIdentity(bookRunsRoot) &&
+    !(basename(dirname(real)) === "runs" && subjectBookIdentity === bookIdentity)
+  ) {
     throw new NotarySourceRunError(
       "notary --source-run must resolve to a retained run under the project machine-ledger book",
     );

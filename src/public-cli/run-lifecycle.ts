@@ -1079,35 +1079,46 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly parentRunPath?: string;
 }): Promise<string | undefined> {
   const ledgerHome = resolveActivationLedgerHome(input.home);
-  const runsDir = join(
-    activationBookDirectory(ledgerHome, input.bookKey),
-    input.ticketNumber === undefined ? "" : String(input.ticketNumber),
-    "runs",
-  );
-  let entries: string[];
-  try {
-    entries = await readdir(runsDir);
-  } catch (error) {
-    if (errorCodeOf(error) === "ENOENT") return undefined;
-    throw error;
+  const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
+  let runsDirs: string[];
+  if (input.ticketNumber !== undefined) {
+    runsDirs = [join(bookDir, String(input.ticketNumber), "runs"), join(bookDir, "runs")];
+  } else if (input.parentRunPath !== undefined) {
+    let subjects: string[];
+    try {
+      subjects = await readdir(bookDir);
+    } catch (error) {
+      if (errorCodeOf(error) === "ENOENT") return undefined;
+      throw error;
+    }
+    runsDirs = [join(bookDir, "runs"), ...subjects.map((subject) => join(bookDir, subject, "runs"))];
+  } else {
+    return undefined;
   }
   const suffix = `@${input.role}`;
   let best: string | undefined;
-  for (const entry of entries) {
-    if (!entry.endsWith(suffix)) continue;
-    const runId = entry.slice(0, entry.length - suffix.length);
-    if (runId.length === 0) continue;
-    const runDirectory = join(runsDir, entry);
-    if (input.parentRunPath !== undefined) {
-      const parentPath = await readRunParentPath(runDirectory);
-      if (parentPath !== input.parentRunPath) continue;
-    } else if (input.ticketNumber !== undefined) {
-      const ticketNumber = await readRunTicketNumber(runDirectory);
-      if (ticketNumber !== input.ticketNumber) continue;
-    } else {
-      continue;
+  for (const runsDir of runsDirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(runsDir);
+    } catch (error) {
+      if (errorCodeOf(error) === "ENOENT") continue;
+      throw error;
     }
-    if (best === undefined || runId > best) best = runId;
+    for (const entry of entries) {
+      if (!entry.endsWith(suffix)) continue;
+      const runId = entry.slice(0, entry.length - suffix.length);
+      if (runId.length === 0) continue;
+      const runDirectory = join(runsDir, entry);
+      if (input.parentRunPath !== undefined) {
+        const parentPath = await readRunParentPath(runDirectory);
+        if (parentPath !== input.parentRunPath) continue;
+      } else if (input.ticketNumber !== undefined) {
+        const ticketNumber = await readRunTicketNumber(runDirectory);
+        if (ticketNumber !== input.ticketNumber) continue;
+      }
+      if (best === undefined || runId > best) best = runId;
+    }
   }
   return best;
 }

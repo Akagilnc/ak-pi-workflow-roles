@@ -373,6 +373,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         details: { status: "pass", findings: [] },
       }),
     });
+    const notaryIo = captureIo();
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -390,10 +391,10 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         },
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
-      captureIo().io,
+      notaryIo.io,
       parseNotaryArgv,
     );
-    assert.equal(result.exitCode, 0);
+    assert.equal(result.exitCode, 0, notaryIo.stderr.join(""));
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
     assert.ok(turnPrompt.includes(volume.humanViewFile));
