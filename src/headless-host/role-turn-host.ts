@@ -230,7 +230,6 @@ function resolveGitCommonDir(cwd: string): string | undefined {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
       cwd,
       encoding: "utf8",
-      timeout: 5_000,
     });
     if (result.status !== 0) return undefined;
     const raw = (result.stdout ?? "").trim();
@@ -378,8 +377,8 @@ function buildTurnArgs(options: {
   readonly systemPromptPath: string;
   readonly jsonSchema: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
-  readonly mcpConfigPath: string;
-  readonly outputSchemaPath: string;
+  readonly mcpConfigPath?: string;
+  readonly outputSchemaPath?: string;
   readonly model?: string;
   readonly effort?: string;
   readonly sessionId: string | undefined;
@@ -391,6 +390,7 @@ function buildTurnArgs(options: {
     if (options.sessionKind === "resume" && !options.sessionId) {
       throw new Error("codex resume requires a bound thread_id");
     }
+    if (options.outputSchemaPath === undefined) throw new Error("codex requires an output schema path");
     return codexTurnArgs({
       prompt: options.prompt,
       systemPromptPath: options.systemPromptPath,
@@ -408,6 +408,7 @@ function buildTurnArgs(options: {
 
   if (!isClaudePrintDescription(options.description)) throw new Error("unsupported headless host protocol");
   if (!options.sessionId) throw new Error("claude print-mode requires a session id");
+  if (options.mcpConfigPath === undefined) throw new Error("claude print-mode requires an MCP config path");
   return headlessTurnArgs({
     description: options.description,
     prompt: options.prompt,
@@ -443,17 +444,20 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
       const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
       await writeFile(systemPromptPath, systemPrompt, "utf8");
-      const mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
-      await writeFile(
-        mcpConfigPath,
-        `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-        "utf8",
-      );
-      // Codex --output-schema needs a closed transport projection on disk.
-      const outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
+      let mcpConfigPath: string | undefined;
+      let outputSchemaPath: string | undefined;
       if (codex) {
+        // Codex --output-schema needs a closed transport projection on disk.
+        outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
         await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
+      } else {
+        mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
+        await writeFile(
+          mcpConfigPath,
+          `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
+          "utf8",
+        );
       }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
@@ -471,8 +475,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               systemPromptPath,
               jsonSchema: prepared.jsonSchema,
               mcpServers: prepared.mcpServers,
-              mcpConfigPath,
-              outputSchemaPath,
+              ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
+              ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
               ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
               ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
               sessionId,
