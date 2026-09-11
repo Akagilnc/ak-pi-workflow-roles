@@ -23,6 +23,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  roleRunArtifactsDirectory,
   roleRunPlacement,
 } from "../role-run-placement.ts";
 import type {
@@ -1414,7 +1415,7 @@ export async function loadAdmittedJudgeRequest(
 }
 
 export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  const directory = join(runDirectory, "artifacts");
+  const directory = roleRunArtifactsDirectory(runDirectory);
   return ensureRoleRunDirectory(
     resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
     directory,

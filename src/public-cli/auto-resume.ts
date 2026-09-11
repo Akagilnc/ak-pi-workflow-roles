@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
+import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -142,11 +143,6 @@ export class TurnDispatchedFailure extends Error {
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
 export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
 
-/** Artifacts subdirectory of a run directory (established run-artifacts location). */
-function runArtifactsDirectory(runDirectory: string): string {
-  return join(runDirectory, "artifacts");
-}
-
 /**
  * #182-A hardened path identity, mirrored from settlement.ts's
  * ensureAuditEvidenceDirectory: a planted symlink at the run directory or the
@@ -162,7 +158,7 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
   if (runStat.isSymbolicLink() || !runStat.isDirectory()) {
     throw new Error("run artifact retention: run directory is not a real directory");
   }
-  const artifactsDir = runArtifactsDirectory(runDirectory);
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
   try {
     const existing = await lstat(artifactsDir);
     if (existing.isSymbolicLink() || !existing.isDirectory()) {

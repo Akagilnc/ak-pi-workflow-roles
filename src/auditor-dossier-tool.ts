@@ -2,6 +2,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
+import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
 import { Type } from "typebox";
 
 export const AUDITOR_DOSSIER_TOOL_NAME = "ak_get_run_dossier" as const;
@@ -45,7 +46,7 @@ export function createAuditorDossierTool(
         admittedRequest: join(runDirectory, "admitted-request.json"),
         parentSessionCandidate: join(runDirectory, "session", "session.jsonl"),
         attachments: join(runDirectory, "attachments"),
-        artifacts: join(runDirectory, "artifacts"),
+        artifacts: roleRunArtifactsDirectory(runDirectory),
       };
       return {
         content: [{ type: "text", text: JSON.stringify(details) }],

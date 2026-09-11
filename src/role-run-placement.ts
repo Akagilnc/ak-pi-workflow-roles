@@ -41,9 +41,14 @@ export function roleRunPlacement(
     runDirectory,
     sessionDirectory,
     sessionFile: join(sessionDirectory, "session.jsonl"),
-    artifactsDirectory: join(runDirectory, "artifacts"),
+    artifactsDirectory: roleRunArtifactsDirectory(runDirectory),
     attachmentsDirectory: join(runDirectory, "attachments"),
   };
+}
+
+/** The single artifacts subpath definition for new and resumed role runs. */
+export function roleRunArtifactsDirectory(runDirectory: string): string {
+  return join(runDirectory, "artifacts");
 }
 
 /** The placement seam owns creation for both new runs and resumed legacy runs. */

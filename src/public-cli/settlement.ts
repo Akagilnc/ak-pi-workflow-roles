@@ -131,6 +131,7 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
+import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
   ensureRunArtifactsDir,
   homeFromRunDirectory,
@@ -3819,7 +3820,7 @@ function uniqueFailureFallbackDirs(
 async function resolveFailureArtifactsBase(
   runDirectory: string,
 ): Promise<{ baseDir: string; attempt?: PublicationAttempt }> {
-  const artifactsDir = join(runDirectory, "artifacts");
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -3911,7 +3912,7 @@ export async function publishFailureArtifacts(
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
   // from stranding the original failure outside settlement. Include the ledger
   // runs/ parent so a locked run directory (EACCES) cannot exhaust durability.
-  const underArtifacts = baseDir === join(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === roleRunArtifactsDirectory(admitted.runDirectory);
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir,
