@@ -210,8 +210,13 @@ export async function runPublicDiarist(
         if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
           await bindAdmittedTicketNumber(admitted, raw);
           await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-          if (result.admitted !== admitted && result.admitted.ticketNumber === undefined) {
-            (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+          if (result.admitted !== admitted) {
+            Object.assign(result.admitted, {
+              ticketNumber: raw,
+              runDirectory: admitted.runDirectory,
+              admittedRequestPath: admitted.admittedRequestPath,
+              principal: admitted.principal,
+            });
           }
         }
       }

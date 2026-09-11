@@ -510,27 +510,84 @@ export async function relocateAdmittedRunToTicket(
   await rename(oldRunDirectory, target.runDirectory);
   heldLease?.relocate(target.runDirectory);
 
-  const replaceRunPrefix = (value: unknown): unknown => {
-    if (typeof value === "string") {
-      return value === oldRunDirectory || value.startsWith(`${oldRunDirectory}${sep}`)
-        ? `${target.runDirectory}${value.slice(oldRunDirectory.length)}`
-        : value;
-    }
-    if (Array.isArray(value)) return value.map(replaceRunPrefix);
-    if (value !== null && typeof value === "object") {
-      for (const [key, child] of Object.entries(value)) {
-        (value as Record<string, unknown>)[key] = replaceRunPrefix(child);
+  const relocatedPath = (value: unknown): unknown =>
+    typeof value === "string" &&
+    (value === oldRunDirectory || value.startsWith(`${oldRunDirectory}${sep}`))
+      ? `${target.runDirectory}${value.slice(oldRunDirectory.length)}`
+      : value;
+  const relocateFields = (record: Record<string, unknown>, fields: readonly string[]): void => {
+    for (const field of fields) record[field] = relocatedPath(record[field]);
+  };
+  const admittedRecord = admitted as unknown as Record<string, unknown>;
+  relocateFields(admittedRecord, [
+    "runDirectory",
+    "admittedRequestPath",
+    "taskPath",
+    "packetPath",
+    "prerequisitesPath",
+    "requestManifestPath",
+    "mergerInputPath",
+  ]);
+  for (const attachment of admitted.attachments) {
+    (attachment as { frozenPath: string }).frozenPath = relocatedPath(
+      attachment.frozenPath,
+    ) as string;
+  }
+  const sealedPrincipal = authority.seal(target);
+  const priorPrincipal = admitted.principal;
+  const principal =
+    priorPrincipal !== null &&
+    typeof priorPrincipal === "object" &&
+    sealedPrincipal !== null &&
+    typeof sealedPrincipal === "object"
+      ? Object.assign(priorPrincipal as Record<string, unknown>, {
+          sessionDirectory: target.sessionDirectory,
+          sessionFile: target.sessionFile,
+        }) as DurablePrincipal
+      : sealedPrincipal;
+  (admitted as { principal: DurablePrincipal }).principal = principal;
+
+  const admittedPath = join(target.runDirectory, "admitted-request.json");
+  if (existsSync(admittedPath)) {
+    const page = JSON.parse(await readFile(admittedPath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, [
+      "runDirectory",
+      "admittedRequestPath",
+      "sessionDirectory",
+      "sessionFile",
+      "taskPath",
+      "packetPath",
+      "prerequisitesPath",
+      "requestManifestPath",
+      "mergerInputPath",
+    ]);
+    if (Array.isArray(page.attachments)) {
+      for (const attachment of page.attachments) {
+        if (attachment !== null && typeof attachment === "object") {
+          relocateFields(attachment as Record<string, unknown>, ["frozenPath"]);
+        }
       }
     }
-    return value;
-  };
-  replaceRunPrefix(admitted);
-  (admitted as { principal: DurablePrincipal }).principal = authority.seal(target);
-  for (const name of ["admitted-request.json", "invocation.json", "run-state.json"]) {
-    const path = join(target.runDirectory, name);
-    if (!existsSync(path)) continue;
-    const page = replaceRunPrefix(JSON.parse(await readFile(path, "utf8")));
-    await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
+
+  const invocationPath = join(target.runDirectory, "invocation.json");
+  if (existsSync(invocationPath)) {
+    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, ["runDirectory", "sessionDirectory", "sessionFile"]);
+    await writeFile(invocationPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
+
+  const statePath = join(target.runDirectory, "run-state.json");
+  if (existsSync(statePath)) {
+    const page = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, [
+      "runDirectory",
+      "admittedRequestPath",
+      "sessionDirectory",
+      "sessionFile",
+    ]);
+    await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
   }
 }
 

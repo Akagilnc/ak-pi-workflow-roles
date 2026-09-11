@@ -10,14 +10,14 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import {
   readTicketProvenance,
   resolveTicketProvenanceVolume,
@@ -145,14 +145,14 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
 
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
+    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: resolveBookKeyFromGit(project),
+      subject: { ticketNumber: TICKET },
       runId,
       role: "diarist",
-      home,
     });
     const state = await readRoleRunState(
-      coords.runDirectory,
+      placement.runDirectory,
       piDurablePrincipalAuthority,
     );
     assert.equal(state?.role, "diarist");
