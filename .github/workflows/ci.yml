@@ -12,8 +12,11 @@ on:
 #   - the group key falls back to github.run_id for every non-pull_request
 #     event, so each push run gets its own group and can never collide with
 #     another push run;
-#   - cancel-in-progress is gated on event_name == 'pull_request', so even a
-#     same-group push run could not be cancelled by another push run.
+#   - cancel-in-progress only controls whether an already-*running* run in
+#     the same group gets cancelled when a new one starts; by default GitHub
+#     also cancels a same-group *pending* run regardless of this flag, so it
+#     plays no part in push isolation — that rests solely on the group
+#     uniqueness above, not on any second, independent safeguard here.
 # default-branch push and the publish-registry.yml workflow_run trigger
 # (issue #798 seam) are untouched by this.
 concurrency:
