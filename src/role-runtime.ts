@@ -1080,6 +1080,8 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
+    let navigatorSessionParent: string | undefined;
+    let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
@@ -1135,9 +1137,22 @@ export function createRoleRuntimeExtension(
         void Promise.resolve(attendance.dispose()).then(
           undefined,
           (error) => {
-            envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
-              diagnostic: error instanceof Error ? error.message : String(error),
-            });
+            const diagnostic = error instanceof Error ? error.message : String(error);
+            try {
+              sitianReport({
+                level: "event",
+                kind: "navigator-dispose-failure",
+                cwd: navigatorCwd,
+                sessionParent: navigatorSessionParent,
+                payload: { diagnostic },
+                source: "role-runtime",
+              });
+            } catch (recordError) {
+              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+                diagnostic,
+                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              });
+            }
           },
         );
       })();
@@ -1876,6 +1891,8 @@ export function createRoleRuntimeExtension(
           && entry.role !== "navigator"
           && !isStationChild
         ) {
+          navigatorSessionParent = ctx.sessionManager.getSessionFile();
+          navigatorCwd = ctx.cwd;
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {

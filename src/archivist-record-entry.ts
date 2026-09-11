@@ -53,19 +53,19 @@ function writeCurrentSession(sessionDir: string, sessionFile: string): void {
   }
 }
 
-/** Parent session surface needed to link and (when already under home) nest the record. */
+/** Durable parent session surface that links and nests the record. */
 export type RecordSessionParent = {
   getSessionFile(): string | undefined;
 };
 
 export type CreateRecordSessionOptions = {
-  /** Role working directory — used for git book-key discovery when the parent is not already under home. Not a record destination. */
+  /** Role working directory passed to the record session; not a placement input. */
   readonly cwd: string;
   /** What kind of record this is (e.g. "auditor-roles"). Single path segment; not a destination path. */
   readonly kind: string;
-  /** Optional parent session — supplies parentSession link; nest under parent only when that parent already lives under the ledger home. */
+  /** Parent session — its durable file is the sole nesting authority. */
   readonly parent?: RecordSessionParent;
-  /** Stable work identity for book-level records which continue across role runs. */
+  /** Optional durable-record intent; does not select placement or continuation. */
   readonly subject?: string;
 };
 
@@ -117,10 +117,10 @@ function assertRecentFinalFileUnderSessionDir(
   }
 }
 
-/** Open result including the sole resumed fact (nest existed before this open). */
+/** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
   readonly session: SessionManager;
-  /** True only when an existing same-nest volume was reopened (subject/gate path). */
+  /** True only when the authorized worker-submission-gate volume was reopened. */
   readonly resumed: boolean;
 };
 
