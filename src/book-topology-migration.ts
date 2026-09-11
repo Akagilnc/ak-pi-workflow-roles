@@ -1,16 +1,31 @@
-import { mkdir, readdir, readFile, rename } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+
+import {
+  physicalPathIdentity,
+  physicallyContainedIn,
+} from "./activation-ledger-topology.ts";
+import {
+  BOOK_TOPOLOGY_ADMISSION_LOCK,
+  bookTopologyMigrationLockPath,
+} from "./book-topology-migration-lock.ts";
 
 export type MigrationDisposition = "placed" | "unbound" | "discarded";
 
-export type MigrationItemOutcome = {
-  readonly disposition: MigrationDisposition;
-  /** Source-relative identity of the directory, file, or JSONL row. */
-  readonly source: string;
-  /** Required for a malformed JSONL row so the evidence preserves its exact bytes. */
-  readonly malformedRaw?: string;
-};
+export type MigrationItemOutcome =
+  | {
+      readonly disposition: MigrationDisposition;
+      /** Source-relative identity of the directory, file, or JSONL row. */
+      readonly source: string;
+    }
+  | {
+      readonly disposition: "unbound";
+      readonly source: string;
+      readonly malformed: true;
+      /** Exact source bytes are mandatory for every malformed JSONL row. */
+      readonly malformedRaw: string;
+    };
 
 export type MigrationPartitionReport = {
   readonly partition: string;
@@ -58,7 +73,7 @@ export function reconcileMigrationPartition(
     if (outcome.disposition === "placed") placed += 1;
     else if (outcome.disposition === "unbound") unbound += 1;
     else discarded += 1;
-    if (outcome.malformedRaw !== undefined) {
+    if ("malformed" in outcome) {
       malformedRows.push({ source: outcome.source, raw: outcome.malformedRaw });
     }
   }
@@ -74,22 +89,22 @@ export function reconcileMigrationPartition(
   };
 }
 
-function isWithin(parent: string, candidate: string): boolean {
-  const rel = relative(resolve(parent), resolve(candidate));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-async function findRunStateFiles(root: string): Promise<string[]> {
-  const found: string[] = [];
+async function findMigrationPrerequisiteFiles(root: string): Promise<{
+  states: string[];
+  admissions: string[];
+}> {
+  const states: string[] = [];
+  const admissions: string[] = [];
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && entry.name === "run-state.json") found.push(path);
+      else if (entry.isFile() && entry.name === "run-state.json") states.push(path);
+      else if (entry.isFile() && entry.name === BOOK_TOPOLOGY_ADMISSION_LOCK) admissions.push(path);
     }
   }
   await walk(root);
-  return found;
+  return { states, admissions };
 }
 
 /**
@@ -102,14 +117,20 @@ export async function assertBookTopologyMigrationPrerequisites(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const runDirectory = env.AK_ROLE_RUN_DIR;
-  if (runDirectory !== undefined && isWithin(booksDirectory, runDirectory)) {
+  if (
+    runDirectory !== undefined
+    && (physicalPathIdentity(booksDirectory) === physicalPathIdentity(runDirectory)
+      || physicallyContainedIn(booksDirectory, runDirectory))
+  ) {
     throw new Error(
       `book topology migration cannot run from a role dossier inside books/: ${runDirectory}`,
     );
   }
 
   const active: string[] = [];
-  for (const statePath of await findRunStateFiles(booksDirectory)) {
+  const prerequisiteFiles = await findMigrationPrerequisiteFiles(booksDirectory);
+  active.push(...prerequisiteFiles.admissions);
+  for (const statePath of prerequisiteFiles.states) {
     let state: unknown;
     try {
       const page: unknown = JSON.parse(await readFile(statePath, "utf8"));
@@ -162,21 +183,34 @@ export async function migrateBookTopology(input: {
   }
   const ledgerHome = resolve(input.ledgerHome ?? join(homedir(), ".ak-roles"));
   const booksDirectory = join(ledgerHome, "books");
-  await assertBookTopologyMigrationPrerequisites(booksDirectory, input.env);
-  const backupBooksDirectory = await renameBooksToDatedBackup(booksDirectory, input.now);
-  await mkdir(booksDirectory);
+  const lockPath = bookTopologyMigrationLockPath(ledgerHome);
+  const lock = await open(lockPath, "wx");
+  let mutationStarted = false;
+  try {
+    await lock.writeFile(`${process.pid}\n`);
+    await assertBookTopologyMigrationPrerequisites(booksDirectory, input.env);
+    const backupBooksDirectory = await renameBooksToDatedBackup(booksDirectory, input.now);
+    mutationStarted = true;
+    await mkdir(booksDirectory);
 
-  const context = { backupBooksDirectory, booksDirectory };
-  const partitions: MigrationPartitionReport[] = [];
-  for (const migrator of input.migrators) {
-    const report = await migrator.migrate(context);
-    if (report.partition !== migrator.partition) {
-      throw new Error(`partition report mismatch: expected ${migrator.partition}, received ${report.partition}`);
+    const context = { backupBooksDirectory, booksDirectory };
+    const partitions: MigrationPartitionReport[] = [];
+    for (const migrator of input.migrators) {
+      const report = await migrator.migrate(context);
+      if (report.partition !== migrator.partition) {
+        throw new Error(`partition report mismatch: expected ${migrator.partition}, received ${report.partition}`);
+      }
+      if (report.before !== report.placed + report.unbound + report.discarded) {
+        throw new Error(`partition reconciliation did not close: ${report.partition}`);
+      }
+      partitions.push(report);
     }
-    if (report.before !== report.placed + report.unbound + report.discarded) {
-      throw new Error(`partition reconciliation did not close: ${report.partition}`);
-    }
-    partitions.push(report);
+    await lock.close();
+    await unlink(lockPath);
+    return { backupBooksDirectory, booksDirectory, partitions };
+  } catch (error) {
+    await lock.close().catch(() => undefined);
+    if (!mutationStarted) await unlink(lockPath).catch(() => undefined);
+    throw error;
   }
-  return { backupBooksDirectory, booksDirectory, partitions };
 }

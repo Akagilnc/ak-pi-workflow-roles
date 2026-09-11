@@ -4,6 +4,7 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
 } from "./activation-ledger-topology.ts";
+import { claimBookTopologyAdmission } from "./book-topology-migration-lock.ts";
 
 export type RoleRunSubject =
   | { readonly ticketNumber: number }
@@ -69,4 +70,5 @@ export function ensureRoleRunPlacement(
   ]) {
     ensureRoleRunDirectory(ledgerHome, directory);
   }
+  claimBookTopologyAdmission(ledgerHome, placement.runDirectory);
 }
