@@ -19,6 +19,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
@@ -998,6 +999,13 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     );
     assert.equal(unbound.exitCode, 0);
     assert.equal(unboundRunDirectory, join(bookRoot, "unbound", "runs", `${unboundId}@judge`));
+    const submissionRecord = join(unboundRunDirectory, "session", "submission-ledger", "records.jsonl");
+    await readFile(submissionRecord, "utf8");
+    const recorded = await readRecordedSubmissionRows(project, unboundId, home);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]!.role, "judge");
+    assert.deepEqual(recorded[0]!.accepted, { judgeStatus: "converged" });
+
     assert.ok(unbound.terminal?.artifacts.length);
     for (const artifact of unbound.terminal!.artifacts) {
       assert.equal(artifact.path.startsWith(join(unboundRunDirectory, "artifacts")), true);
