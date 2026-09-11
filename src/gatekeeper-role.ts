@@ -1,11 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
-import {
-  auditorRunDirectory,
-  persistGateSubmissionCandidate,
-  readLatestSubmissionArguments,
-} from "./auditor-dossier-tool.ts";
+import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
@@ -59,10 +55,10 @@ export type GatekeeperResult =
       readonly submission?: unknown;
     };
 
-/** Non-pass faces that bounce the parent session (correctable). */
+/** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
 export type GatekeeperNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "escalate" | "no_receipt" }
+  { status: "bounce" | "escalate" | "no_receipt" | "transport_failure" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
@@ -90,11 +86,6 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Production default relays
-   * it verbatim on same-parent officer resume (#786).
-   */
-  submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
@@ -166,21 +157,13 @@ function failureReason(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-/** Serializable stand-in when the child tool call had no arguments object. */
-export const MISSING_ARGUMENTS_SUBMISSION = Object.freeze({ missing: "arguments" as const });
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Keep original decision bytes for the next reader; undefined becomes a serializable missing-args fact. */
+/** Original decision bytes — no sentinel replacement (#836). */
 function retainedReceipt(decision: unknown): unknown {
-  // undefined must not be stored: JSON drops it and the missing-args fact vanishes.
-  // Through the real provider adapter an undefined root argument arrives as an
-  // empty object after serialization; that must also project a missing-args fact.
-  return decision === undefined || (isRecord(decision) && Object.keys(decision).length === 0)
-    ? MISSING_ARGUMENTS_SUBMISSION
-    : decision;
+  return decision;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -216,66 +199,94 @@ function projectOfficerDecision(
 
 /**
  * Project a public-role terminal onto the gate queue surface.
- * Lifecycle facts (no_receipt / transport) stay loud; conclusion reads only
- * the status field. No unusable/unreadable judgment (#753).
+ * Host failure stays failure; recorded officer payloads ride beside it (#836 A.3).
+ * Multiple recorded payloads are all kept — code does not pick last-wins.
  */
+function officerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
+  const outcome = terminal?.roleOutcome;
+  if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
+    return outcome.payloads ?? terminal?.submissions ?? [];
+  }
+  if (outcome?.kind === "failure") return outcome.payloads ?? terminal?.submissions ?? [];
+  return terminal?.submissions ?? [];
+}
+
+function projectOfficerPayloads(
+  officer: GateOfficer,
+  payloads: readonly unknown[],
+  fallbackStatus?: string,
+): GatekeeperResult {
+  if (payloads.length === 0) {
+    return projectOfficerDecision(officer, undefined, fallbackStatus);
+  }
+  // Present every recorded payload; queue only the latest conclusion so a reask
+  // can converge (#836 呈现 ≠ 排队).
+  const queued = projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
+  if (payloads.length === 1) return queued;
+  if (
+    queued.status === "pass"
+    || queued.status === "bounce"
+    || queued.status === "escalate"
+    || queued.status === "needs_reask"
+  ) {
+    return { ...queued, receipt: payloads };
+  }
+  return queued;
+}
+
 function projectOfficerTerminal(
   officer: GateOfficer,
   summoned: PublicSummonResult,
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
+  const recorded = officerPayloads(terminal);
   if (outcome === undefined) {
-    const detail = summoned.stderr?.trim();
+    const detail = summoned.stderr ?? "";
     return {
       status: "transport_failure",
       stage: officer,
-      reason: detail && detail.length > 0
+      reason: detail.length > 0
         ? `${gateSeatLabel(officer)} public summon exit ${summoned.exitCode}: ${detail}`
         : `${gateSeatLabel(officer)} public summon produced no terminal (exit ${summoned.exitCode})`,
-      submission: summoned,
+      submission: recorded.length > 0 ? recorded : summoned,
     };
   }
   if (outcome.kind === "no_receipt") {
     return {
       status: "no_receipt",
       stage: officer,
-      reason: `${gateSeatLabel(officer)}未产生已接受回执即散局`,
+      reason: typeof outcome.status === "string" && outcome.status.length > 0
+        ? outcome.status
+        : "no_receipt",
       facts: outcome,
     };
   }
   if (outcome.kind === "failure") {
-    // Real provider/engine/disk failure — keep loud. Not a shape judgment.
     return {
       status: "transport_failure",
       stage: officer,
       reason: outcome.diagnostic,
-      submission: outcome.decisiveFacts,
+      submission: recorded.length > 0 ? recorded : outcome.decisiveFacts,
     };
   }
   if (outcome.kind === "audit_escalation") {
-    // Residual/compliance escalate face: queue as escalate, receipt as written.
-    // Nested officer escalate itself seals accepted+status escalate (no rewrite).
     return {
       status: "escalate",
       officer,
-      receipt: retainedReceipt(outcome.decisiveFacts),
+      receipt: recorded.length === 1 ? recorded[0] : recorded,
     };
   }
   if (outcome.kind === "accepted") {
-    // Prefer the officer's own decisiveFacts as the receipt body. outcome.status is
-    // only a fallback when facts have no status key (missing-args sentinel stays intact).
-    const facts = outcome.decisiveFacts;
-    if (isRecord(facts) && Object.keys(facts).length > 0) {
-      return projectOfficerDecision(officer, facts, outcome.status);
-    }
-    return projectOfficerDecision(officer, { status: outcome.status });
+    // outcome.status is the fixture/compat leaf: production settlement leaves
+    // it undefined once payloads are recorded, so this only matters when a
+    // caller still supplies status without any recorded payload (#836 hang).
+    return projectOfficerPayloads(officer, recorded, outcome.status);
   }
-  // Unknown terminal kind: still not a shape judgment — ask the speaker again.
   return {
     status: "needs_reask",
     officer,
-    receipt: retainedReceipt(outcome),
+    receipt: recorded.length > 0 ? recorded : retainedReceipt(outcome),
   };
 }
 
@@ -313,16 +324,13 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // #632: Grok session.jsonl is header-only — freeze the in-memory tool-call leaf
-  // as a run artifact so dossier exploration still resolves. LLM→LLM resume does
-  // not ride this path: submission body goes verbatim on gateReviewInstruction (#786).
-  persistGateSubmissionCandidate(runDirectory, options.context);
-  const submission = readLatestSubmissionArguments(options.context);
+  // #836: officers receive the whole parent run directory pointer and find the
+  // submission themselves — code no longer picks latest toolCall leaf (A7.1–A7.3).
   let summoned: PublicSummonResult;
   try {
     const summon =
       options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask, nextSubmission) => {
+      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask) => {
         const { summonGateOfficer } = await import("./public-role-summons.ts");
         return summonGateOfficer({
           officer: nextOfficer,
@@ -330,7 +338,6 @@ export async function projectGatekeeperRun(
           cwd: options.context.cwd ?? process.cwd(),
           ...(officerSignal === undefined ? {} : { signal: officerSignal }),
           ...(reask === undefined ? {} : { reask }),
-          ...(nextSubmission === undefined ? {} : { submission: nextSubmission }),
           ...(options.home === undefined ? {} : { home: options.home }),
           ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
           ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
@@ -342,7 +349,6 @@ export async function projectGatekeeperRun(
       runDirectory,
       options.signal,
       options.reask,
-      submission,
     );
   } catch (error) {
     return {

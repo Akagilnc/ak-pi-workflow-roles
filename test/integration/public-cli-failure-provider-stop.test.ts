@@ -17,7 +17,7 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
+import { buildResumeContinuationPrompt, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -388,8 +388,8 @@ test("engine-suffixed resume envelope keeps first-attempt auditor retention boun
       packageRoot,
       engine: "kimi",
     });
-    assert.notEqual(engineResumePrompt, RESUME_TRANSPORT_ENVELOPE);
-    assert.equal(engineResumePrompt.startsWith(`${RESUME_TRANSPORT_ENVELOPE}\n`), true);
+    assert.equal(engineResumePrompt.includes("[ak-role:resume-continue]"), false);
+    assert.match(engineResumePrompt, /engine:/);
 
     const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
       // text-string form (message.content string)

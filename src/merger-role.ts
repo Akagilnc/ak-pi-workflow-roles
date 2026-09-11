@@ -19,13 +19,12 @@ function materialText(input: MergerInput, key: keyof MergerInput["materials"]): 
 
 /**
  * Merger (校书郎) role runtime.
- * Code admits one submission and terminates the round (第 0 条).
+ * Submission tool records every call (#836); host end is the final.
  * Git state / completion verification are not attendance or rejection gates (#827).
  */
 export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDependencies) {
   let activation: { soul: string; input: Readonly<MergerInput> } | undefined;
   let registered = false;
-  let accepted = false;
   pi.registerFlag(MERGER_INPUT_FLAG.name, MERGER_INPUT_FLAG.definition);
   return {
     async activate() {
@@ -35,15 +34,12 @@ export function createMergerRoleRuntime(pi: RoleHost, dependencies: MergerRoleDe
       if (!soul) throw new Error("Merger soul is empty");
       const input = validateMergerInput(await dependencies.loadInput(path));
       activation = { soul, input };
-      accepted = false;
       if (!registered) {
         registered = true;
         pi.registerTool({
           name: MERGER_OUTPUT_TOOL_NAME, label: "合并输出", description: "提交合并结果；输出分支为 completed 与 escalate。", promptSnippet: "提交合并结果", parameters: mergerOutputSchema,
           async execute(_id: string, params: unknown, _signal: AbortSignal | undefined, _update: unknown, _ctx: HostContext) {
             if (!activation) throw new Error("校书郎未激活");
-            if (accepted) throw new Error("合并回执已受理");
-            accepted = true;
             return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: params, terminate: true as const };
           },
         });

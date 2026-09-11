@@ -5,6 +5,7 @@ import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -18,14 +19,23 @@ export type ComplianceReceived = {
   readonly reply: unknown;
   readonly usage?: Usage;
 };
+/** Host/engine/record failure — not a role three-state, not `received` (#836 A.3). */
+export type ComplianceTransportFailure = {
+  readonly status: "transport_failure";
+  readonly diagnostic: string;
+  readonly submissions?: readonly unknown[];
+  readonly terminal?: unknown;
+  readonly usage?: Usage;
+};
 export type ComplianceDecision =
-  | { status: "pass"; usage?: Usage }
-  | { status: "bounce"; violations: readonly unknown[]; usage?: Usage }
-  | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; usage?: Usage }
+  | { status: "pass"; receipt?: unknown; usage?: Usage }
+  | { status: "bounce"; violations: readonly unknown[]; receipt?: unknown; usage?: Usage }
+  | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; receipt?: unknown; usage?: Usage }
   | ComplianceNoReceipt
-  | ComplianceReceived;
+  | ComplianceReceived
+  | ComplianceTransportFailure;
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
-export const AUDITOR_DOSSIER_PROMPT = "本 run 卷宗已就绪。" as const;
+export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
@@ -60,11 +70,12 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
   }
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
-  if (status === "pass") return { status, ...(usage === undefined ? {} : { usage }) };
-  if (status === "bounce") return { status, violations: readListField(args.violations), ...(usage === undefined ? {} : { usage }) };
+  if (status === "pass") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
+  if (status === "bounce") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
     return {
       status,
+      receipt: arguments_,
       ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}),
       ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}),
       ...(usage === undefined ? {} : { usage }),
@@ -97,6 +108,8 @@ export type AuditorSummon = (
   sourceRunDirectory: string,
   /** Parent cancellation forwarded to the nested activation (#675). */
   signal?: AbortSignal,
+  /** Plain-language re-ask when the prior reply was not a three-state conclusion. */
+  reask?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
@@ -141,15 +154,30 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    // Real failure (process/provider/disk) — keep loud. No shape-unreadable diversion.
-    throw new Error(outcome.diagnostic);
+    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
+    return {
+      status: "transport_failure",
+      diagnostic: outcome.diagnostic,
+      ...(rows.length > 0 ? { submissions: rows } : {}),
+      ...(summoned.terminal === undefined ? {} : { terminal: summoned.terminal }),
+      ...(usage === undefined ? {} : { usage }),
+    };
   }
   if (outcome.kind === "accepted") {
-    const candidate = {
-      status: outcome.status,
-      ...outcome.decisiveFacts,
-    };
-    return readComplianceCandidate(candidate, usage);
+    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
+    if (rows.length === 0) {
+      return readComplianceCandidate({}, usage);
+    }
+    // Queue the latest conclusion; keep every original row on the receipt/reply face.
+    const decision = readComplianceCandidate(rows[rows.length - 1], usage);
+    if (rows.length === 1) return decision;
+    if (decision.status === "pass" || decision.status === "bounce" || decision.status === "escalate") {
+      return { ...decision, receipt: rows };
+    }
+    if (decision.status === "received") {
+      return { ...decision, reply: rows };
+    }
+    return decision;
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {
@@ -171,6 +199,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       auditSubject: AuditorSoulRole,
       sourceRunDirectory: string,
       auditSignal?: AbortSignal,
+      reask?: string,
     ) => {
       // Dynamic import avoids compliance ↔ public-cli circular init (TDZ).
       const { summonPublicRole } = await import("./public-role-summons.ts");
@@ -185,13 +214,22 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
           auditSubject,
           "--source-run",
           sourceRunDirectory,
-          AUDITOR_DOSSIER_PROMPT,
+          `${AUDITOR_DOSSIER_PROMPT}${sourceRunDirectory}`,
         ],
         cwd: options.context.cwd ?? process.cwd(),
         home,
         ...(auditSignal === undefined ? {} : { signal: auditSignal }),
+        ...(reask === undefined ? {} : { reviewReask: reask }),
       });
     });
-  const summoned = await summon(subject, runDirectory, options.signal);
-  return await projectAuditorTerminal(summoned);
+  let reask: string | undefined;
+  for (;;) {
+    const summoned = await summon(subject, runDirectory, options.signal, reask);
+    const decision = await projectAuditorTerminal(summoned);
+    if (decision.status === "received") {
+      reask = OFFICER_CONCLUSION_REASK;
+      continue;
+    }
+    return decision;
+  }
 }

@@ -1,4 +1,4 @@
-import { Type, type Static, type TLiteral, type TSchema } from "typebox";
+import type { Static, TSchema } from "typebox";
 import type { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 type HostContentPart = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments?: unknown } | { type: string };
@@ -301,8 +301,8 @@ export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, hand
 type HostGatekeeperSubject = {
   readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
 };
-/** Gatekeeper bounce/escalate/no_receipt plus other correct submission rejects share one projection map. */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" } & Record<string, unknown>;
+/** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
+type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };
@@ -468,10 +468,5 @@ export interface InstitutionalSessionHost {
   openInstitutionalSession(
     options: HostInstitutionalSessionOptions,
   ): Promise<HostInstitutionalSessionHandle>;
-}
-
-/** Local replacement for Pi AI's convenience constructor. */
-export function stringEnum<const V extends readonly string[]>(values: V, options: Record<string, unknown> = {}) {
-  return Type.Union(values.map((value) => Type.Literal(value)) as [TLiteral<V[number]>, ...TLiteral<V[number]>[]], options);
 }
 

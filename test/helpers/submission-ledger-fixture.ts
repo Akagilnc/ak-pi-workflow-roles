@@ -8,10 +8,7 @@ import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-c
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
-import {
-  createSubmissionLedgerHost,
-  readSealedSubmission,
-} from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost } from "../../src/submission-ledger.ts";
 
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
@@ -76,12 +73,16 @@ async function driveLedgerProducer(input: {
         },
         abort() {},
       } as HostContext;
-    await handlers.get("tool_execution_start")!({ toolCallId: input.toolCallId, toolName }, context);
-    await registered.execute(input.toolCallId, {}, undefined, undefined, context);
-    await handlers.get("turn_end")!({
-      turnIndex: 0,
-      calls: [{ toolCallId: input.toolCallId, toolName }],
-    }, context);
+    // #836: recording happens on execute from LLM params; turn_end only books roundContext.
+    // Fixture details stand in for the model tool-call arguments.
+    await registered.execute(input.toolCallId, input.details, undefined, undefined, context);
+    const turnEnd = handlers.get("turn_end");
+    if (turnEnd !== undefined) {
+      await turnEnd({
+        turnIndex: 0,
+        calls: [{ toolCallId: input.toolCallId, toolName }],
+      }, context);
+    }
   } finally {
     if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = priorRun;
@@ -90,7 +91,13 @@ async function driveLedgerProducer(input: {
   }
 }
 
-/** Seal an accepted projection through the production ledger host. */
+/**
+ * Seal an accepted projection through the production ledger host.
+ * #836: the submission tool records every call — callers decide whether a
+ * given turn provides `sealedAcceptance` at all; this producer never
+ * second-guesses that by skipping a call because something was already
+ * recorded (调几次记几次, no dedup gate here).
+ */
 export async function sealAcceptedSubmission(input: {
   readonly cwd: string;
   readonly runId: string;
@@ -102,15 +109,6 @@ export async function sealAcceptedSubmission(input: {
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
 }): Promise<void> {
-  // Read under the same machine home the producer writes (not ambient process HOME).
-  // A new court attempt may seal again after a prior sealed attempt — only skip when
-  // this exact court turn would collide with an already-present latest seal without id.
-  if (
-    input.courtAttemptId === undefined &&
-    (await readSealedSubmission(input.cwd, input.runId, input.home)) !== undefined
-  ) {
-    return;
-  }
   await driveLedgerProducer({
     cwd: input.cwd,
     runId: input.runId,

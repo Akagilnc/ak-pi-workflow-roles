@@ -33,6 +33,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { payloadFacts } from "../helpers/terminal-payload.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-cli-", scenario);
@@ -111,13 +112,13 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
       // no audit_escalation rewrite, no fabricated reason when absent.
       assert.equal(outcome.kind, "accepted");
       if (outcome.kind !== "accepted") throw new Error("expected accepted Inspector output");
-      assert.equal(outcome.status, row.status);
-      assert.deepEqual(outcome.decisiveFacts.findings, row.findings);
+      assert.equal(payloadFacts(outcome).status, row.status);
+      assert.deepEqual(payloadFacts(outcome).findings, row.findings);
       if (row.status === "pass") {
-        assert.deepEqual(outcome.decisiveFacts.freeExtra, freeExtra);
+        assert.deepEqual(payloadFacts(outcome).freeExtra, freeExtra);
       }
       if (row.status === "escalate") {
-        assert.equal(outcome.decisiveFacts.reason, undefined);
+        assert.equal(payloadFacts(outcome).reason, undefined);
       }
     }
   });

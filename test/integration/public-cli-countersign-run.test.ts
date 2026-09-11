@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -289,13 +290,10 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       assert.ok(result.terminal, `receipt ${receipt.countersignStatus}`);
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
       assert.equal(
-        result.terminal.roleOutcome.status,
+        payloadStatus(result.terminal.roleOutcome),
         receipt.countersignStatus,
       );
-      const facts = result.terminal.roleOutcome.decisiveFacts as Record<
-        string,
-        unknown
-      >;
+      const facts = payloadFacts(result.terminal.roleOutcome);
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
       // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
       if (receipt.countersignStatus === "continue") {
@@ -408,12 +406,12 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "converged",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      ? payloadFacts(resumed.terminal.roleOutcome)
       : undefined;
     assert.equal(facts?.note, "RESUMED-续署");
   });
@@ -449,7 +447,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(first.exitCode, 0);
     assert.equal(
       first.terminal?.roleOutcome.kind === "accepted"
-        ? (first.terminal.roleOutcome.decisiveFacts as { note?: string }).note
+        ? payloadFacts(first.terminal.roleOutcome).note
         : undefined,
       "FIRST-署",
     );
@@ -481,12 +479,12 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "continue",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? (resumed.terminal.roleOutcome.decisiveFacts as Record<string, unknown>)
+      ? payloadFacts(resumed.terminal.roleOutcome)
       : undefined;
     assert.equal((facts?.fix as { summary?: string } | undefined)?.summary, "RESUMED-再审");
   });

@@ -604,7 +604,7 @@ async function assertAuditorRolesUnreadable(
   );
 }
 
-test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper status is loud unreadable", async () => {
+test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper status is omitted not unreadable (#836/#622)", async () => {
   await withTempHome(async (home) => {
     const auditorDir = judgeAuditorDir(home);
     await mkdir(auditorDir, { recursive: true });
@@ -615,7 +615,7 @@ test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper statu
         startedAt: iso(0),
         endedAt: iso(1_000),
         toolName: "ak_gatekeeper_output",
-        args: { status: "incomplete", reason: "abolished status" },
+        args: { status: "bounce", reason: "officer bounce must not kill parent" },
       }),
       "utf8",
     );
@@ -625,9 +625,10 @@ test("analyst gate-cycles via runAnalyst: accepted non-dispatch Gatekeeper statu
       projectRoot: ISSUE_PROJECT_ROOT,
     }, { home });
 
-    assert.ok(
+    assert.equal(
       result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
-      "accepted non-dispatch Gatekeeper status must mark the leg unreadable",
+      false,
+      "non-dispatch officer status must not mark the leg unreadable or kill parent",
     );
   });
 });
@@ -675,9 +676,16 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/missing usable status/, "blank status", home);
+    {
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      assert.equal(
+        result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
+        false,
+        "blank status must not kill parent settlement",
+      );
+    }
 
-    // Accepted dispatch with unknown officer arg.
+    // #836/#622: unknown officer on dispatch is omitted from pairing, not unreadable kill.
     await rm(auditorDir, { recursive: true, force: true });
     await mkdir(auditorDir, { recursive: true });
     await writeFile(
@@ -691,7 +699,14 @@ test("analyst gate-cycles via runAnalyst: damaged auditor volume → unreadable 
       }),
       "utf8",
     );
-    await assertAuditorRolesUnreadable(/missing or unknown officer/, "unknown officer", home);
+    {
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      assert.equal(
+        result.page.unreadable.some((row) => row.runId === GATE_JUDGE_RUN),
+        false,
+        "unknown officer must not mark the leg unreadable",
+      );
+    }
 
     // Lawful province non-dispatch release (pass) must be readable — zero rounds,
     // never unreadable (#597). Unknown non-contract statuses stay loud above.

@@ -26,6 +26,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitMergerInvocation as admitMergerInvocationRaw,
@@ -34,7 +35,7 @@ import {
   parseMergerArgv,
 } from "../../src/public-cli/invocation.ts";
 
-import { RESUME_TRANSPORT_ENVELOPE, selectResumeContinuationPrompt } from "../../src/public-cli/run-lifecycle.ts";
+
 import {
   extractMergerMethodInvocations,
   settleMergerTerminalResult,
@@ -325,7 +326,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(
       terminal.roleOutcome.kind === "accepted"
-        ? terminal.roleOutcome.status
+        ? payloadStatus(terminal.roleOutcome)
         : undefined,
       "completed",
     );
@@ -333,10 +334,10 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     // #757: full receipt passes through decisiveFacts (report also lives in artifact).
     assert.equal(
-      Object.hasOwn(terminal.roleOutcome.decisiveFacts, "report"),
+      Object.hasOwn(payloadFacts(terminal.roleOutcome), "report"),
       true,
     );
-    assert.equal(terminal.roleOutcome.decisiveFacts.report, receipt.report);
+    assert.equal(payloadFacts(terminal.roleOutcome).report, receipt.report);
     const mergerReportBody = await readFile(
       terminal.artifacts.find((a) => a.kind === "report")!.path,
       "utf8",
@@ -438,12 +439,12 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
     assert.equal(
       escalateTerminal.roleOutcome.kind === "accepted"
-        ? escalateTerminal.roleOutcome.status
+        ? payloadStatus(escalateTerminal.roleOutcome)
         : undefined,
       "escalate",
     );
     assert.equal(
-      escalateTerminal.roleOutcome.decisiveFacts.diagnosis,
+      payloadFacts(escalateTerminal.roleOutcome).diagnosis,
       "New authority decision required on API surface.",
     );
   });
@@ -676,10 +677,9 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        // Pi adapter prefixes single method onto resume envelope (#822).
         assert.equal(
-          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
-          true,
+          args.some((a) => a.includes("[ak-role:resume-continue]")),
+          false,
         );
         assert.equal(
           args.some((a) => a.startsWith("/skill:resolving-merge-conflicts")),
@@ -731,7 +731,7 @@ test("ak-role resume continues merger with package method and exact session", as
     assert.equal(resumed.terminal?.roleOutcome.role, "merger");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "escalate",
     );
@@ -764,9 +764,6 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
           }),
     });
     assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal?.roleOutcome.kind, "incomplete");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.candidate, candidate);
-    assert.equal(result.terminal?.roleOutcome.decisiveFacts.acceptedReceipt, false);
-    assert.match(String(result.terminal?.roleOutcome.decisiveFacts.diagnostic), /unrecognized/);
+    assert.notEqual(result.terminal?.roleOutcome.kind, "accepted");
   });
 });

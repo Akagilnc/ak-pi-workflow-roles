@@ -12,6 +12,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -23,12 +24,14 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 
 import {
   admitDoctorInvocation,
@@ -44,6 +47,7 @@ import {
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-doctor-", scenario);
@@ -320,6 +324,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     await seedDoctorIssueRuns(home, bookKey, 40);
     const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
+    // #836: captured from the same real `loadDoctorCase`/role payload the
+    // piRunner uses, so the later report.receipt/report.cost assertions check
+    // against the actual values rather than hand-authored duplicates.
+    let candidateCost: unknown;
+    let candidateDetails: unknown;
     const completedIo = captureIo();
     const completed = await runAkRole(
       ["doctor", "--issue", "40", "--project", project, "inspect"],
@@ -338,9 +347,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           assert.equal(options.env.AK_CORRELATION_ID, "corr-doctor-113");
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
+          candidateCost = patient.cost;
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);
+          candidateDetails = details;
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -351,6 +362,13 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 isError: false,
                 details,
               },
+            })}\n${JSON.stringify({
+              // #836: the audit candidate entry carries runtime cost beside
+              // (never merged into) the role's testimony — settlement reads
+              // it from here to publish the independent report.cost field.
+              type: "custom",
+              customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+              data: { version: 1, testimony: details, cost: patient.cost },
             })}\n`,
             "utf8",
           );
@@ -369,12 +387,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(completed.terminal);
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(completed.terminal!.roleOutcome.status, "completed");
+    assert.equal(payloadStatus(completed.terminal!.roleOutcome), "completed");
     // #757: full receipt passes through — issueNumber stays under case, not lifted.
-    const completedCase = completed.terminal!.roleOutcome.decisiveFacts.case as { issueNumber?: number } | undefined;
+    const completedCase = payloadFacts(completed.terminal!.roleOutcome).case as { issueNumber?: number } | undefined;
     assert.equal(completedCase?.issueNumber, 40);
-    assert.ok(Array.isArray(completed.terminal!.roleOutcome.decisiveFacts.findings));
-    assert.equal((completed.terminal!.roleOutcome.decisiveFacts.findings as unknown[]).length, 1);
+    assert.ok(Array.isArray(payloadFacts(completed.terminal!.roleOutcome).findings));
+    assert.equal((payloadFacts(completed.terminal!.roleOutcome).findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
@@ -383,10 +401,17 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
       receipt: { status: string; case: { issueNumber: number } };
+      cost: unknown;
     };
     assert.equal(report.role, "doctor");
     assert.equal(report.receipt.status, "completed");
     assert.equal(report.receipt.case.issueNumber, 40);
+    // #836: settlement.ts extractDoctorCandidateCostFact/publishDoctorArtifacts
+    // must read the audit candidate entry and publish machine cost as an
+    // independent report field beside — not merged into — the role's original
+    // payload, which the public report.receipt must still equal exactly.
+    assert.deepEqual(report.receipt, candidateDetails);
+    assert.deepEqual(report.cost, candidateCost);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
@@ -451,12 +476,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(refused.terminal!.roleOutcome.kind, "accepted");
     assert.equal(
       refused.terminal!.roleOutcome.kind === "accepted"
-        ? refused.terminal!.roleOutcome.status
+        ? payloadStatus(refused.terminal!.roleOutcome)
         : undefined,
       "refused",
     );
     assert.equal(
-      refused.terminal!.roleOutcome.decisiveFacts.reason,
+      payloadFacts(refused.terminal!.roleOutcome).reason,
       "Need retained sessions",
     );
 
@@ -490,6 +515,60 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       piDurablePrincipalAuthority,
     );
     assert.equal(settled.roleOutcome.kind, "accepted");
+
+    // #836: extractDoctorCandidateCostFact/extractDoctorCandidateAuditNoReceiptFact
+    // must bound their scan to the current attempt (currentAttemptStartIndex),
+    // the same bound already used elsewhere in settlement.ts for other
+    // attempt-sensitive scans — a later attempt with no candidate entry of
+    // its own must not inherit the prior attempt's cost/auditNoReceipt.
+    const settleSessionFile = join(runDirectory, "session", "session.jsonl");
+    await appendFile(
+      settleSessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "resume" },
+      })}\n${JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: DOCTOR_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: candidateDetails,
+        },
+      })}\n`,
+      "utf8",
+    );
+    const settledNextAttempt = await settleDoctorTerminalResult(
+      fixtureDoctorAdmitted({
+        runId: "run-doctor-settle",
+        bookKey,
+        projectRoot: project,
+        instruction: "inspect",
+        instructionEmpty: false,
+        runDirectory,
+        issueNumber: admittedSnap.issueNumber,
+        caseRunsPath: admittedSnap.caseRunsPath,
+        caseIdentity: admittedSnap.caseIdentity,
+      }),
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(settledNextAttempt.roleOutcome.kind, "accepted");
+    const reportPathNextAttempt = settledNextAttempt.artifacts.find((a) => a.kind === "report")?.path;
+    assert.ok(reportPathNextAttempt);
+    const reportNextAttempt = JSON.parse(
+      await readFile(reportPathNextAttempt!, "utf8"),
+    ) as { cost: unknown; auditNoReceipt: unknown };
+    assert.equal(
+      reportNextAttempt.cost,
+      undefined,
+      "#836: a prior attempt's candidate cost must not leak into a later attempt lacking its own candidate entry",
+    );
+    assert.equal(
+      reportNextAttempt.auditNoReceipt,
+      undefined,
+      "#836: a prior attempt's auditNoReceipt must not leak into a later attempt lacking its own candidate entry",
+    );
+
     assert.equal(
       await trySettleDoctorTerminalResult(
         fixtureDoctorAdmitted({
@@ -510,7 +589,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
   });
 });
 
-test("terminal persistence write failure through public entry propagates loudly with no fake terminal", async () => {
+test("terminal persistence failure through public entry propagates loudly with no fake terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -527,6 +606,13 @@ test("terminal persistence write failure through public entry propagates loudly 
       `${runId}@doctor`,
     );
     const captured = captureIo();
+    // #836 A.3 (class 2, r9 bounce): the accepted Doctor payload must ride
+    // beside the persistence failure, not just a bare failure Terminal —
+    // so this run must actually record a submission (sealedAcceptance, same
+    // producer the "completed" tracer above uses) before the run-state write
+    // is broken. Captured here so the assertion below checks against the
+    // real recorded bytes, not a hand-authored duplicate.
+    let recordedDetails: unknown;
     const result = await runAkRole(
       ["doctor", "--issue", "41", "--project", project, "inspect"],
       {
@@ -544,6 +630,8 @@ test("terminal persistence write failure through public entry propagates loudly 
           const patient = await loadDoctorCase(casePath);
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
+          const details = sampleCompletedDoctorOutput(patient.identity);
+          recordedDetails = details;
           await writeFile(
             sessionFile,
             `${JSON.stringify({
@@ -552,19 +640,24 @@ test("terminal persistence write failure through public entry propagates loudly 
                 role: "toolResult",
                 toolName: DOCTOR_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: sampleCompletedDoctorOutput(patient.identity),
+                details,
               },
             })}\n`,
             "utf8",
           );
           // Real run-state seam: the facade admitted the run and the
           // coordinator already marked it running; now occupy run-state.json
-          // with a directory so markRunTerminal's terminal write fails (EISDIR).
+          // with a directory. markRunTerminal reads current run-state before
+          // it writes, so this actually fails that precondition read
+          // (readFile → EISDIR) inside readRoleRunStateDisk — not the later
+          // write step. The real EISDIR identity must propagate through, not
+          // get relabeled a synthetic "run state missing".
           // No production hook, no direct markRunTerminal call, no new fixture.
           await rm(join(runDirectory, "run-state.json"));
           await mkdir(join(runDirectory, "run-state.json"));
           return {
             code: 0,
+            sealedAcceptance: { role: "doctor" as const, details },
             timedOut: false,
             stderr: "",
             args: [...args],
@@ -574,13 +667,29 @@ test("terminal persistence write failure through public entry propagates loudly 
       },
     );
 
-    // The original terminal-persistence error must propagate loudly and no
-    // fake terminal may be presented on stdout. If someone re-adds
-    // `.catch(() => undefined)` around the settled-path markRunTerminal, the
-    // failure would be swallowed and a terminal presented — this assertion
-    // then fails, so the restoration is killed.
-    assert.equal(result.exitCode, 1, `expected loud failure, got stdout=${JSON.stringify(captured.stdout)} stderr=${JSON.stringify(captured.stderr)}`);
-    assert.equal(result.terminal, undefined, "no terminal may be returned when run-state write fails");
-    assert.equal(captured.stdout.join(""), "", "stdout must not present a fake terminal");
+    // #836: the original terminal-persistence error must propagate loudly as
+    // a real controlled-failure Terminal, carrying its own real EISDIR
+    // identity — never silently swallowed, never relabeled a synthetic
+    // "run state missing", and never an escaped exception that reaches
+    // auto-resume with no recorded Terminal at all. Reuses the shared
+    // public-failure-settlement contract (same assertions every other seam's
+    // real-persistence-failure case uses). Asserted on the portable
+    // structured identity (code) rather than a hand-authored diagnostic
+    // string, since the exact Node error message is not a stable contract.
+    const { terminal } = await assertPublicFailureSettlement({
+      result,
+      stdout: captured.stdout,
+      stderr: captured.stderr,
+      expectedCause: "unrecognized",
+      diagnosticIncludes: "EISDIR",
+      identityCode: "EISDIR",
+    });
+    assert.equal(terminal.roleOutcome.role, "doctor");
+    // #836 A.3: the already-recorded Doctor payload rides beside the real
+    // persistence failure — never dropped by the controlled-failure path.
+    assert.deepEqual(terminal.submissions, [recordedDetails]);
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.deepEqual(terminal.roleOutcome.payloads, [recordedDetails]);
+    }
   });
 });

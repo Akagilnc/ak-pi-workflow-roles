@@ -2,14 +2,13 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "./canonical-skill-binding.ts";
-import { createGhCollectorGitHubTransport, createGhIssueSoftFetcher } from "./collector-github.ts";
+import { createGhCollectorGitHubTransport } from "./collector-github.ts";
 import { createPiDoctorAuditor } from "./doctor-auditor.ts";
 import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
-import { createPerDispatchReviewerAgent } from "./reviewer-agent.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
 import { createReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import { loadAuditorSoulFromSubjectInput } from "./auditor-soul.ts";
@@ -25,7 +24,6 @@ const collectorHandbookSeedPath = fileURLToPath(
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
 export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const doctorAuditor = createPiDoctorAuditor();
-  const reviewerAgent = createPerDispatchReviewerAgent({ packageRoot });
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
@@ -35,7 +33,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
-    createReviewerIssueFetcher: () => createGhIssueSoftFetcher(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
@@ -63,8 +60,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     },
     // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
     auditDoctorCompliance: (options) => doctorAuditor(options),
-    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
-    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
       context: options.context,
       role: options.role,

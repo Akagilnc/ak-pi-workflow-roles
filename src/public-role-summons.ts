@@ -62,12 +62,6 @@ export type PublicSummonRequest = {
    */
   readonly reviewReask?: string;
   /**
-   * #786 same-parent re-summons: verbatim parent-submission body for the gate officer.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint ignores it.
-   * Never folded into argv / parent-run lookup keys (ADR 0079 卷宗指针 stays pure).
-   */
-  readonly gateReviewInstruction?: string;
-  /**
    * Pi-adapter inject (tests). Used only as the `pi` row when composing the
    * adapter table — never as an override of the child seat's selected host.
    */
@@ -304,10 +298,6 @@ export async function summonPublicRole(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     // #753: reask rides the existing notary same-ticket resume summons.instruction.
     ...(options.reviewReask === undefined ? {} : { reviewReask: options.reviewReask }),
-    // #786: verbatim submission body on same-parent resume (not conclusion re-ask).
-    ...(options.gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction: options.gateReviewInstruction }),
     ...(options.boundTicketNumber === undefined
       ? {}
       : { boundTicketNumber: options.boundTicketNumber }),
@@ -436,11 +426,6 @@ export async function summonGateOfficer(options: {
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim on resume
-   * when reask is absent (#786). Never a path pointer substitute.
-   */
-  readonly submission?: unknown;
   /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
   readonly roleTurnHost?: RoleTurnHost;
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
@@ -453,17 +438,10 @@ export async function summonGateOfficer(options: {
     // Hard path resolve: fail loud — never fall through to packageMachineHome (#604 / #675).
     home = homeFromRunDirectory(options.sourceRunDirectory);
   }
-  // Conclusion re-ask keeps sole ownership of reviewReask. New-submission body
-  // rides a separate field so first mint never fails the "reask requires prior" gate.
-  let gateReviewInstruction: string | undefined;
-  if (options.reask === undefined && options.submission !== undefined) {
-    const { buildGateOfficerReviewInstruction } = await import("./auditor-dossier-tool.ts");
-    gateReviewInstruction = buildGateOfficerReviewInstruction({
-      submission: options.submission,
-    });
-  }
   // Officer host is seat-owned only (#821). Parent invocation.json.host stays a
   // hostTransition consumer in post-admission — not an officer override channel.
+  // #836: officers get the whole parent run directory pointer; code does not
+  // inject a picked toolCall leaf as the resume instruction.
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -471,9 +449,6 @@ export async function summonGateOfficer(options: {
     ...(options.io === undefined ? {} : { io: options.io }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.reask === undefined ? {} : { reviewReask: options.reask }),
-    ...(gateReviewInstruction === undefined
-      ? {}
-      : { gateReviewInstruction }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -489,8 +464,7 @@ export async function summonGateOfficer(options: {
   }
   if (options.officer === "auditor") {
     // #756: judge compliance path — same queue law as notary/inspector.
-    // Subject is judge (doctor compliance stays on the disposeCompliance path).
-    const { AUDITOR_DOSSIER_PROMPT } = await import("./compliance-transport.ts");
+    // #836: auditor kickoff is path pointer (同察院), not「本 run 卷宗已就绪」.
     return summonPublicRole({
       role: "auditor",
       argv: [
@@ -498,12 +472,13 @@ export async function summonGateOfficer(options: {
         "judge",
         "--source-run",
         options.sourceRunDirectory,
-        AUDITOR_DOSSIER_PROMPT,
+        `卷宗指针：${options.sourceRunDirectory}`,
       ],
       ...common,
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath); reask rides env only.
+  // #836 resume 请重读 is added on the resume projection face, not here.
   return summonPublicRole({
     role: "inspector",
     argv: [`卷宗指针：${options.sourceRunDirectory}`],

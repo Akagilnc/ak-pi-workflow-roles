@@ -54,7 +54,7 @@ import {
   trySettleCountersignTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { TerminalResult } from "./terminal.ts";
+import { lastRolePayloadRecord, type TerminalResult } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -145,12 +145,20 @@ async function invokeCourtDiarist(input: {
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
-  // Discriminated union: only non-failure arms carry status (failure uses cause).
-  if (roleOutcome !== undefined && roleOutcome.kind !== "failure") {
-    if (roleOutcome.status === "escalate") {
+  if (roleOutcome !== undefined && (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation")) {
+    const facts = lastRolePayloadRecord(roleOutcome.payloads ?? []);
+    const status =
+      typeof facts?.status === "string"
+        ? facts.status
+        : typeof facts?.countersignStatus === "string"
+          ? facts.countersignStatus
+          : roleOutcome.kind === "audit_escalation"
+            ? "escalate"
+            : undefined;
+    if (status === "escalate") {
       const reason =
-        typeof roleOutcome.decisiveFacts.reason === "string"
-          ? roleOutcome.decisiveFacts.reason
+        typeof facts?.reason === "string"
+          ? facts.reason
           : "diarist escalated without reason";
       return { identity: { kind: "escalate", reason } };
     }

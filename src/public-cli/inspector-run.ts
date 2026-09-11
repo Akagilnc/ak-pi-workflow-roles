@@ -50,11 +50,6 @@ export type InspectorRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
    */
   reviewReask?: string;
-  /**
-   * #786 same-parent re-summons: verbatim parent-submission body.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv 卷宗指针.
-   */
-  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -102,8 +97,9 @@ export async function runPublicInspector(
   // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+    const resumeInstruction = env.reviewReask;
     const summons: SameTicketSummonsMaterials = {
+      sourceRunPath: parentRunPath,
       ...(resumeInstruction === undefined
         ? {
             instruction: parsed.instruction,
@@ -127,18 +123,6 @@ export async function runPublicInspector(
         ),
     });
     if (resumed !== undefined) return resumed;
-    // Reask without a prior same-parent run cannot deliver the plain-language ask
-    // on a fresh mint without inventing a second prompt path — fail loud (#753).
-    // gateReviewInstruction (verbatim body) alone is resume-only; fresh mint keeps argv 卷宗指针.
-    if (env.reviewReask !== undefined) {
-      presentStructuralRejection(
-        new CliUsageError(
-          "inspector review reask requires a prior same-parent run to resume",
-        ),
-        io,
-      );
-      return { exitCode: 2 };
-    }
   }
 
   let admitted: AdmittedInspectorInvocation;

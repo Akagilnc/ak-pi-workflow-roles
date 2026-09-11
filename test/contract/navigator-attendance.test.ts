@@ -6,7 +6,6 @@ import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, 
 import {
   createNavigatorAttendance,
   createNavigatorPrepareTool,
-  decorateSettlementWithNavigation,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
@@ -98,38 +97,6 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
   });
 });
 
-test("a duplicate Navigator prepare batch cannot publish its first provisional recommendation", async () => {
-  await withTempRoot("navigator-duplicate-prepare-", async (root) => {
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const harness = sessionHarness();
-    const events: any[] = [];
-    const nav = await attendance(setting, harness, events);
-    nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("duplicate-first", candidate(), undefined, undefined, {} as never);
-    await assert.rejects(
-      harness.tool().execute("duplicate-second", candidate(), undefined, undefined, {} as never),
-      /exactly one typed candidate batch/,
-    );
-    harness.entries.push({
-      type: "message",
-      message: { role: "assistant", content: [
-        { type: "toolCall", id: "duplicate-first", name: NAVIGATOR_PREPARE_TOOL_NAME },
-        { type: "toolCall", id: "duplicate-second", name: NAVIGATOR_PREPARE_TOOL_NAME },
-      ] } });
-    harness.entries.push({
-      type: "message",
-      message: { role: "toolResult", toolCallId: "duplicate-second", toolName: NAVIGATOR_PREPARE_TOOL_NAME, isError: true, content: [{ type: "text", text: "Navigator preparation must submit exactly one typed candidate batch" }] } });
-    harness.release();
-    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("corrected-single", candidate({ reason: "Only the corrected batch is lawful." }), undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events.length, 1);
-    assert.equal(events[0]?.reason, "Only the corrected batch is lawful.");
-  });
-});
 
 test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
   await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
@@ -372,12 +339,17 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       "human_decision",
       `${seat.role}: copied role-shaped details must not escalate Navigator`,
     );
+    const auditConflicts = Array.isArray((projected.audit as { conflicts?: unknown } | undefined)?.conflicts)
+      ? [...((projected.audit as { conflicts: readonly unknown[] }).conflicts)]
+      : Array.isArray(projected.conflicts)
+        ? [...(projected.conflicts as readonly unknown[])]
+        : [];
     for (const forged of [
       { ...projected, status: "pass" },
       { ...projected, kind: "audit_escalation", auditDecisionGate: undefined },
       { ...projected, conflicts: ["wrong"] },
-      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[]), "duplicate"] },
-      { ...projected, conflicts: [...(projected.conflicts as readonly unknown[])].reverse() },
+      { ...projected, conflicts: [...auditConflicts, "duplicate"] },
+      { ...projected, conflicts: [...auditConflicts].reverse() },
     ]) {
       assert.notEqual(
         publicNavigatorSettlement(seat.role, seat.phase, {

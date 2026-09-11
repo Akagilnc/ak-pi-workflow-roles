@@ -16,7 +16,7 @@ import {
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
-import { retainDiagnosticTail } from "../diagnostic-tail.ts";
+
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   headlessMcpConfigDocument,
@@ -209,8 +209,7 @@ function spawnHeadlessTurn(options: {
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      // Rolling diagnostic tail only — not an unbounded transcript face.
-      stderr = retainDiagnosticTail(stderr + chunk);
+      stderr += chunk;
     });
     child.on("error", (error) => {
       if (settled) return;
@@ -379,7 +378,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             return terminalFromSpawned(spawned, {
               cause: "output",
               identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
-              diagnostic: retainDiagnosticTail(spawned.stderr.trim() || "headless CLI produced no parseable result"),
+              diagnostic: spawned.stderr.length > 0 ? spawned.stderr : "headless CLI produced no parseable result",
               details: { sessionId, exitCode: spawned.code },
             });
           }
@@ -400,7 +399,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ? envelope.result
               : Array.isArray(envelope.errors)
                 ? envelope.errors.map(String).join("\n")
-                : retainDiagnosticTail(spawned.stderr.trim() || "headless CLI reported is_error");
+                : spawned.stderr.length > 0 ? spawned.stderr : "headless CLI reported is_error";
             return terminalFromSpawned(spawned, {
               cause: "output",
               identity: { name: "HeadlessCliError", code: errorCode },

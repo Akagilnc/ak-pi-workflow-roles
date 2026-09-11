@@ -36,12 +36,16 @@ function notaryHarness() {
   return { flags, tools, pi, beforeStart: () => beforeStart };
 }
 
-test("projectLawfulNotaryOutput projects pass/bounce; non-release retained as-is", () => {
+test("projectLawfulNotaryOutput keeps original payload as-is (#836)", () => {
   assert.equal(projectLawfulNotaryOutput({ status: "pass", findings: [] })?.status, "pass");
   const bounce = projectLawfulNotaryOutput({ status: "bounce", findings: ["x"] });
   assert.equal(bounce?.status, "bounce");
-  assert.equal(projectLawfulNotaryOutput({ status: "incomplete", reason: "missing draft" }), undefined);
-  assert.equal(projectLawfulNotaryOutput({ status: "maybe" }), undefined);
+  // Non-tri-state and incomplete are retained, not dropped.
+  assert.deepEqual(
+    projectLawfulNotaryOutput({ status: "incomplete", reason: "missing draft" }),
+    { status: "incomplete", reason: "missing draft" },
+  );
+  assert.deepEqual(projectLawfulNotaryOutput({ status: "maybe" }), { status: "maybe" });
   assert.equal(projectLawfulNotaryOutput(null), undefined);
   const raw = { status: "maybe", note: "not an explicit release" };
   assert.deepEqual(retainNotarySubmission(raw), raw);

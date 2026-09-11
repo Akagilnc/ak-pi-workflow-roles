@@ -44,10 +44,7 @@ import {
   type CollectorConfigState,
   type CollectorLedger,
 } from "./collector-ledger.ts";
-import {
-  buildCollectorReceipt,
-  type CollectorReceipt,
-} from "./collector-receipt.ts";
+
 import {
   collectorBindTargetArgsSchema,
   collectorHandbookWriteArgsSchema,
@@ -63,18 +60,6 @@ import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submiss
 import { CollectorUnknownEvidenceError } from "./collector-identity.ts";
 
 export { CollectorUnknownEvidenceError } from "./collector-identity.ts";
-
-/**
- * #641 chain②: normal completion must never declare `infrastructureFailure`.
- * When the runtime can machine-verify a lawful receipt assembly, a declaration
- * is model misuse — bounce it as correctable guidance instead of host failure.
- */
-export class CollectorNormalCompletionDeclarationError extends CorrectableSubmissionError {
-  constructor() {
-    super("runtime 已按机器状态核验本局为正常完工（回执可合法组装）：正常完工的交件不得填 infrastructureFailure，请省略该字段后重新提交。");
-    this.name = "CollectorNormalCompletionDeclarationError";
-  }
-}
 
 /** #676 A: role-chosen target could not bind uniquely — correctable, not host failure. */
 export class CollectorTargetBindError extends CorrectableSubmissionError {
@@ -350,15 +335,6 @@ export function createCollectorRoleRuntime(
       if (event.toolName === COLLECTOR_OUTPUT_TOOL) {
         activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, event.toolCallId);
       }
-      if (
-        activation.ledger.outputCandidate &&
-        event.toolName !== COLLECTOR_OUTPUT_TOOL
-      ) {
-        return {
-          block: true,
-          reason: "通进司已产出输出候选，本局不再受理操作",
-        };
-      }
       return undefined;
     },
 
@@ -391,32 +367,40 @@ export function createCollectorRoleRuntime(
             }
 
             let bound = prNumber;
+            let associated: readonly number[] = [];
             if (issueNumber !== undefined) {
-              const associated = await listPullRequestNumbersByTicket(createGhApiRunner(), {
+              associated = await listPullRequestNumbersByTicket(createGhApiRunner(), {
                 owner: activation.repository.owner,
                 repo: activation.repository.repo,
                 ticketNumber: issueNumber,
               });
-              if (associated.length === 0) {
-                throw new CollectorTargetBindError(
-                  `${activation.repository.canonical} 的 issue #${issueNumber} 无关联 PR；请改用明确 --pr 或其他 issueNumber`,
-                );
+              if (bound === undefined && associated.length === 1) {
+                bound = associated[0]!;
               }
-              if (associated.length > 1) {
-                throw new CollectorTargetBindError(
-                  `issue #${issueNumber} 关联多个 PR：${associated.join("、")}；请改用明确 prNumber 或 --pr`,
-                );
-              }
-              const fromIssue = associated[0]!;
-              if (prNumber !== undefined && prNumber !== fromIssue) {
-                throw new CollectorTargetBindError(
-                  `prNumber ${prNumber} 与 issue #${issueNumber} 关联 PR ${fromIssue} 冲突`,
-                );
-              }
-              bound = fromIssue;
+            }
+            if (bound === undefined) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    bound: false,
+                    repository: activation.repository.canonical,
+                    prNumber: prNumber ?? null,
+                    issueNumber: issueNumber ?? null,
+                    associated,
+                  }),
+                }],
+                details: {
+                  bound: false,
+                  repository: activation.repository.canonical,
+                  prNumber: prNumber ?? null,
+                  issueNumber: issueNumber ?? null,
+                  associated,
+                },
+              };
             }
 
-            activation.ledger.bindTarget(bound!);
+            activation.ledger.bindTarget(bound);
             activation.ledger.completeOperational(toolCallId);
             return {
               content: [{
@@ -424,9 +408,11 @@ export function createCollectorRoleRuntime(
                 text: `目标已绑定：${activation.repository.canonical}#${bound}`,
               }],
               details: {
+                bound: true,
                 repository: activation.repository.canonical,
                 prNumber: bound,
-                ...(issueNumber === undefined ? {} : { issueNumber }),
+                issueNumber: issueNumber ?? null,
+                associated,
               },
             };
           } catch (error) {
@@ -668,36 +654,21 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_OUTPUT_TOOL,
         label: "通进司输出",
-        description: "观察完成后提交；回执由 runtime 组装。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
+        description: "观察完成后提交原交卷。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
         promptSnippet: "提交通进司回执",
-        bounceInfrastructureDeclaration(params) {
-          const activation = getActivation();
-          if (activation === undefined) return undefined;
-          try {
-            buildCollectorReceipt(activation.ledger, params, activation.clock);
-          } catch {
-            return undefined;
-          }
-          return new CollectorNormalCompletionDeclarationError();
-        },
         parameters: outputSchema,
         async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
           const activation = getActivation();
           if (activation === undefined) throw new Error("通进司未激活");
           try {
             activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
-            const receipt: CollectorReceipt = buildCollectorReceipt(
-              activation.ledger,
-              params,
-              activation.clock,
-            );
             activation.ledger.recordOutputCandidate();
             return {
               content: [{
                 type: "text" as const,
                 text: COLLECTOR_ACCEPTED_TEXT,
               }],
-              details: receipt,
+              details: params,
               terminate: true as const,
             };
           } catch (error) {

@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  GATE_DOSSIER_POINTER_PREFIX,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -36,6 +37,15 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+
+/** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
+function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { name: error.name, message: error.message, ...(code === undefined ? {} : { code }) };
+  }
+  return { message: String(error) };
+}
 
 /** Append one system section to a continuation prompt, keeping its kind. */
 function appendContinuationSection(
@@ -69,9 +79,9 @@ import {
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
-import { readSealedSubmission } from "../submission-ledger.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
+  attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
@@ -85,7 +95,8 @@ import {
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
-  sealedAcceptanceRedispatchDisposition,
+  settleHostEndedNoReceipt,
+  attachRecordedSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -270,6 +281,13 @@ export type ControlledFailureInput = {
   knownDetails?: Readonly<Record<string, unknown>>;
   typedHttpObservationSettled?: true;
   typedHttpObservation?: TypedProviderHttpObservation;
+  /**
+   * #836: set when the caller already attempted markRunTerminal/markRunResumable
+   * and it is what threw `thrown` — presentControlledFailure must not retry
+   * the same known-failing run-state write a second time; the caught error is
+   * already the reported cause.
+   */
+  skipRunStateWrite?: boolean;
 };
 
 /** Result of seat prep after the single pre-lease admitted load. */
@@ -399,17 +417,20 @@ export async function presentControlledFailure<
     resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
   }
 
-  if (persistRunState) {
+  if (persistRunState && !failureInput.skipRunStateWrite) {
     await persistReturnedRunState(admitted, authority);
   }
 
-  const terminal = await settleFailureTerminalResult(
+  const terminal = await attachRecordedSubmissions(
     admitted,
-    failure,
-    authority,
-    resumable
-      ? { resume: { command: renderResumeCommand(admitted.runId) } }
-      : {},
+    await settleFailureTerminalResult(
+      admitted,
+      failure,
+      authority,
+      resumable
+        ? { resume: { command: renderResumeCommand(admitted.runId) } }
+        : {},
+    ),
   );
   presentFailureTerminal(terminal, io);
   return {
@@ -452,6 +473,57 @@ async function settleAfterTurnStarted<
     )) as { exitCode: number; admitted: A; terminal: T };
   } catch (error) {
     throw new TurnDispatchedFailure(error);
+  }
+}
+
+/**
+ * Persist run-state for a result dispatchPostAdmissionTurn deferred
+ * (needsPersist — station-child / resumable auto-resume loop, #416/#840):
+ * that write must land outside the loop's own retried-dispatch try, but its
+ * failure still settles through the single existing controlled-failure
+ * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080
+ * single-settlement-disposition) — never a second hand-rolled
+ * classify/artifact/Terminal (#836 r12 class 3), and never lawful/non-lawful
+ * settling differently (#836 r13 class 2: a caller's io here may be a no-op,
+ * so a stderr-only trace is never seen and the failure is otherwise
+ * swallowed — 失败诚实宪法 真因必须落痕). Both cases settle through
+ * settleAfterTurnStarted, which attaches the run's already-recorded ledger
+ * submissions to the new failure terminal and returns skipAutoResume so the
+ * caller presents it once and stops — never re-entering auto-resume.
+ */
+async function settleDeferredPersist<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult,
+>(
+  admitted: A,
+  authority: DurablePrincipalAuthority,
+  adapters: PostAdmissionAdapters<A, T>,
+  io: CliIo,
+  result: {
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  },
+): Promise<typeof result> {
+  if (result.needsPersist !== true || result.terminal === undefined) return result;
+  const { needsPersist: _needsPersist, ...settledResult } = result;
+  const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
+  try {
+    await persistReturnedRunState(admitted, authority, lawful ? { lawful: true } : undefined);
+    return settledResult;
+  } catch (error) {
+    const failed = await settleAfterTurnStarted(
+      admitted,
+      { timedOut: false, code: null, stderr: "", thrown: error, skipRunStateWrite: true },
+      adapters,
+      authority,
+      io,
+      true,
+    );
+    return { ...failed, turnDispatched: true as const, skipAutoResume: true as const };
   }
 }
 
@@ -630,6 +702,18 @@ export async function dispatchPostAdmissionTurn<
       return { ...settled, turnDispatched: true as const, ...deferredPersist };
     }
 
+    // `result.stderr` stays live in memory for the real classification below
+    // regardless of whether this durable mirror write succeeds. A write
+    // failure here (unwritable run directory, stderr.log occupied as a
+    // directory, ...) is a real infrastructure problem and must never be
+    // dropped silently (catch-and-continue with no trace is a defect) — but
+    // it also must never become THE controlling failure and wash out a
+    // primary child signal that already arrived on `result`, or an
+    // already-sealed accepted payload (#836: a secondary failure must not
+    // overwrite an already-known cause or an already-recorded leg). It rides
+    // beside whatever the real classification below determines, and only
+    // becomes the reported failure itself when nothing else is wrong.
+    //
     // Everything below runs after the host turn genuinely started (#840 r9
     // 判词 class 1 boundary — 覆盖 executeTurn 已启动后至返回带 turnDispatched
     // 结果前的全部异常). Each fallible step routes any failure through the
@@ -645,6 +729,7 @@ export async function dispatchPostAdmissionTurn<
     // turn genuinely started, so the next retry sends a resume payload — the
     // true cause settles through the loop's own existing dispatch-exception
     // machinery once the retry budget is exhausted.
+    let stderrLogWriteFailure: unknown;
     try {
       await writeFile(
         join(admitted.runDirectory, "stderr.log"),
@@ -652,10 +737,13 @@ export async function dispatchPostAdmissionTurn<
         "utf8",
       );
     } catch (error) {
+      stderrLogWriteFailure = error;
       // Best-effort: the turn's own stderr capture is secondary to lawful /
       // controlled-failure settlement below, but the failure itself must
       // still leave a real trace (失败诚实宪法 真因必须落痕) — durably, since
-      // every auto-resume attempt's io is dummyIo (#840 r9 判词 class 1).
+      // every auto-resume attempt's io is dummyIo (#840 r9 判词 class 1). It
+      // still rides beside the classification below and, if nothing else is
+      // wrong, becomes the reported failure itself (#836).
       await recordBestEffortPostDispatchDiagnostic(
         admitted,
         env,
@@ -664,26 +752,109 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    let settled: T | undefined;
-    // Same-ticket re-summons carry courtAttemptId — settle only that attempt so a
-    // prior sealed pass cannot wash this turn's missing/escalated/failed result.
     const courtScope =
       request.courtAttemptId === undefined || request.courtAttemptId.length === 0
         ? undefined
         : { courtAttemptId: request.courtAttemptId };
-    // Single complete boundary (#840 r9 判词 class 1): trySettle, its
-    // shouldPresent gate, and the accepted-settlement cleanup all settle
-    // through this one catch. shouldPresent used to sit outside every
-    // TurnDispatchedFailure wrap, so a throw from it looked like an ordinary
-    // pre-turn throw to the caller (turnStartedBeforeThrow stayed false) and
-    // replayed the initial payload even though the host turn had already
-    // genuinely run.
+
+    // Single complete boundary (#840 r9 判词 class 1): resolving the
+    // host/runner failure facts, trySettle, its shouldPresent gate, and the
+    // accepted-settlement cleanup all settle through this one catch — a
+    // throw from any of them (including the session-file decode itself)
+    // still routes through settleAfterTurnStarted's TurnDispatchedFailure
+    // instead of losing turnDispatched to an uncaught throw. The facts are
+    // resolved before trySettle (#836) so an already-accepted settlement is
+    // never presented over a real current host/runner failure signal or a
+    // real stderr.log durable-write failure — both stay a real failure with
+    // the recorded payload riding beside it, not replacing it.
+    let settled: T | undefined;
     let settledOutcome:
       | { exitCode: number; admitted: A; terminal: T; turnDispatched: true }
       | undefined;
+    let hostSignalFailed = false;
+    let resolution: Awaited<ReturnType<typeof resolveAuditedRunnerFailureResolution>> | undefined;
     try {
+      const sessionFile =
+        admitted.principal !== undefined
+          ? env.principalAuthority.decode(admitted.principal).sessionFile
+          : "";
+      const runnerKnownFailure =
+        adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
+          ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
+          : result.knownFailure;
+      const credentialFailure = postRunMissingCredentialFailure(
+        result,
+        env.model,
+        env.credentials,
+      );
+      resolution = await resolveAuditedRunnerFailureResolution({
+        runner: runnerKnownFailure,
+        sessionFile,
+        credential: credentialFailure,
+        runDirectory: admitted.runDirectory,
+      });
+      // A direct, current signal from the host/runner itself (timeout / host
+      // knownFailure / runner knownFailure / missing credential) is a real
+      // problem regardless of what else already settled — a settled accepted
+      // outcome must not paper over it (it rides beside the recorded payload
+      // via `submissions`, never replacing the payload). The audited
+      // resolution's own typed session read (malformed JSONL, provider-stop,
+      // an illegal/unsealed accepted status, a stale/superseded typed-HTTP
+      // observation, ...) makes a run with no sealed acceptance a true
+      // failure too — it must not be discarded into a lawful no_receipt just
+      // because the raw runner signal alone looked clean. But it must not
+      // retroactively invalidate an acceptance that already sealed this turn
+      // — a resolved 429 observed earlier in the same session is exactly
+      // that.
+      const directHostFailureSignal =
+        result.timedOut
+        || result.knownFailure !== undefined
+        || runnerKnownFailure !== undefined
+        || credentialFailure !== undefined;
+      hostSignalFailed =
+        directHostFailureSignal
+        || (result.code !== null && result.code !== 0)
+        || resolution.knownFailure !== undefined;
+
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
-      if (settled !== undefined && shouldPresent(settled)) {
+      if (settled !== undefined) {
+        settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;
+      }
+      // #836 r12 class 2: an accepted/audit_escalation settlement can be
+      // entirely a prior attempt's stale payload (courtAttempt is a
+      // recording tag, not a visibility gate — attachRecordedSubmissions
+      // above still surfaces that historical payload honestly either way).
+      // Consume the ledger's own subject.attemptId (submission-ledger.ts)
+      // only to learn whether *this* attempt itself produced a fresh seal —
+      // never to filter what presents.
+      const settledIsFreshThisAttempt =
+        settled === undefined
+        || (settled.roleOutcome.kind !== "accepted" && settled.roleOutcome.kind !== "audit_escalation")
+          ? true
+          : await attemptProducedFreshSubmission(admitted, courtScope);
+      // A lawful settled outcome already reached this turn takes precedence
+      // over a later bare exit-code / session-inspection signal (trailing
+      // nonzero exit, late stderr noise, a stale already-superseded
+      // typed-HTTP observation, ...) — but never over a direct current
+      // host/runner failure signal, nor over a real stderr.log durable-write
+      // failure (confirmed infrastructure trouble, not weak/bare evidence),
+      // both of which stay a real failure with the recorded payload riding
+      // beside it, not replacing it (#836: never kill an already-recorded
+      // leg, but never wash a real failure away either). Note: the narrower
+      // directHostFailureSignal gates acceptance here; the broader
+      // hostSignalFailed (adds bare exit code / resolution.knownFailure)
+      // only gates the no-settlement fallback below — except when the
+      // settlement itself is entirely stale (no fresh seal this attempt),
+      // where a bare nonzero exit / resolution failure must not be outranked
+      // by someone else's earlier success (#836 r12 class 2).
+      const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
+      if (
+        settled !== undefined
+        && shouldPresent(settled)
+        && !directHostFailureSignal
+        && !staleAcceptanceOutranksRealFailure
+        && stderrLogWriteFailure === undefined
+      ) {
         // This court sealed — drop open-court pointer (bare resume no longer continues it).
         if (
           settled.roleOutcome.kind === "accepted" &&
@@ -717,8 +888,8 @@ export async function dispatchPostAdmissionTurn<
         };
       }
     } catch (error) {
-      // Settle (or its shouldPresent gate) throw is a real failure fact —
-      // never swallow into undefined.
+      // Settle (or its shouldPresent gate, or the failure-fact resolution
+      // above) throw is a real failure fact — never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
         admitted,
         {
@@ -735,60 +906,136 @@ export async function dispatchPostAdmissionTurn<
       return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
     }
     if (settledOutcome !== undefined) {
+      if (persistRunState) {
+        try {
+          await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+        } catch (error) {
+          // #836: `settledOutcome.terminal` already carries recorded
+          // submissions (attachRecordedSubmissions above). A real run-state
+          // persistence failure here must surface loudly through the same
+          // controlled-failure seam every other dispatch-time failure in
+          // this function uses (ADR 0080: one settlement disposition owner)
+          // — not escape uncaught to auto-resume's dispatch-retry path,
+          // whose exhausted-budget terminal carries no recorded submissions
+          // at all. skipRunStateWrite: the write that just threw is the same
+          // write presentControlledFailure would otherwise retry — don't
+          // call a known-failing operation twice.
+          const failed = await settleAfterTurnStarted(
+            admitted,
+            {
+              timedOut: false,
+              code: null,
+              stderr: "",
+              thrown: error,
+              skipRunStateWrite: true,
+            },
+            adapters,
+            env.principalAuthority,
+            io,
+            persistRunState,
+          );
+          return { ...failed, turnDispatched: true as const, ...deferredPersist };
+        }
+      }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
       return { ...settledOutcome, ...deferredPersist };
     }
 
-    // Any exception while resolving the failure facts below — including the
-    // session-file decode itself — still happened after the host turn
-    // genuinely started (#840 r9 判词 class 1). Fold it into the same single
-    // controlled-failure settlement instead of losing turnDispatched to an
-    // uncaught throw.
-    let failureInput: ControlledFailureInput;
-    try {
-      const sessionFile =
-        admitted.principal !== undefined
-          ? env.principalAuthority.decode(admitted.principal).sessionFile
-          : "";
-      const runnerKnownFailure =
-        adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
-          ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
-          : result.knownFailure;
-      const credentialFailure = postRunMissingCredentialFailure(
-        result,
-        env.model,
-        env.credentials,
+    // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
+    if (hostSignalFailed) {
+      const resolutionInput = controlledFailureInputFromResolution(resolution!);
+      const stderrLogWriteDetails =
+        stderrLogWriteFailure === undefined
+          ? undefined
+          : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
+      const failed = await settleAfterTurnStarted(
+        admitted,
+        {
+          timedOut: result.timedOut,
+          code: result.code,
+          stderr: result.stderr,
+          ...resolutionInput,
+          // Secondary fact only — never the cause. Rides on whichever channel
+          // classification actually reads (knownFailure.details owns it when
+          // a knownFailure exists; the top-level knownDetails otherwise).
+          ...(stderrLogWriteDetails === undefined
+            ? {}
+            : resolutionInput.knownFailure !== undefined
+              ? {
+                knownFailure: {
+                  ...resolutionInput.knownFailure,
+                  details: { ...(resolutionInput.knownFailure.details ?? {}), ...stderrLogWriteDetails },
+                },
+              }
+              : { knownDetails: stderrLogWriteDetails }),
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+        persistRunState,
       );
-      const resolution = await resolveAuditedRunnerFailureResolution({
-        runner: runnerKnownFailure,
-        sessionFile,
-        credential: credentialFailure,
-        runDirectory: admitted.runDirectory,
-      });
-      failureInput = {
-        timedOut: result.timedOut,
-        code: result.code,
-        stderr: result.stderr,
-        ...controlledFailureInputFromResolution(resolution),
-      };
-    } catch (error) {
-      failureInput = {
-        timedOut: false,
-        code: result.code,
-        stderr: result.stderr,
-        thrown: error,
-      };
+      return { ...failed, turnDispatched: true as const, ...deferredPersist };
     }
-    const failed = await settleAfterTurnStarted(
+
+    // Nothing else was wrong, but the durable stderr mirror itself failed to
+    // write — that is the real (infrastructure) problem in this case, not a
+    // lawful absence of a receipt. Honest and loud, not silently no_receipt.
+    if (stderrLogWriteFailure !== undefined) {
+      const failed = await settleAfterTurnStarted(
+        admitted,
+        {
+          timedOut: false,
+          code: result.code,
+          stderr: result.stderr,
+          thrown: stderrLogWriteFailure,
+        },
+        adapters,
+        env.principalAuthority,
+        io,
+        persistRunState,
+      );
+      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+    }
+
+    const noReceipt = await attachRecordedSubmissions(
       admitted,
-      failureInput,
-      adapters,
-      env.principalAuthority,
-      io,
-      persistRunState,
+      await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
+      courtScope,
     );
-    return { ...failed, turnDispatched: true as const, ...deferredPersist };
+    if (persistRunState) {
+      try {
+        await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+      } catch (error) {
+        // #836: same run-state persistence hazard as the settled/accepted
+        // branch above — route through the shared controlled-failure seam so
+        // the real failure surfaces loudly instead of escaping uncaught to
+        // auto-resume's dispatch-retry path with no recorded submissions.
+        // skipRunStateWrite: don't retry the write that just threw.
+        const failed = await settleAfterTurnStarted(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+            skipRunStateWrite: true,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        );
+        return { ...failed, turnDispatched: true as const, ...deferredPersist };
+      }
+    }
+    return {
+      exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
+      admitted,
+      terminal: noReceipt,
+      turnDispatched: true as const,
+      ...deferredPersist,
+    };
   } finally {
     try {
       await lease.release();
@@ -832,19 +1079,32 @@ export function resumeTurnRequestProjectionOptions(
     readonly attachments: readonly { frozenPath: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
+  const officerSourcePath = request.summons?.sourceRunPath;
+  const withReread = (body: string): string => {
+    if (
+      officerSourcePath === undefined
+      || (admitted.role !== "notary"
+        && admitted.role !== "inspector"
+        && admitted.role !== "auditor")
+    ) {
+      return body;
+    }
+    if (body.startsWith("请重读")) return body;
+    return `请重读\n${body}`;
+  };
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + optional paths.
       // Attachments are not a gate: message-only summons must stay plain too.
-      prompt = buildInstructionTransportPrompt({
+      prompt = withReread(buildInstructionTransportPrompt({
         instruction: request.message,
         instructionEmpty: false,
         attachments: summonsPrepared.attachments,
-      });
+      }));
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
-      prompt = request.message;
+      prompt = withReread(request.message);
     } else {
       // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
@@ -855,11 +1115,27 @@ export function resumeTurnRequestProjectionOptions(
     }
   } else if (summonsPrepared !== undefined) {
     // #755: same-ticket review summons — instruction/attachments only.
-    prompt = buildInstructionTransportPrompt(summonsPrepared);
+    prompt = withReread(buildInstructionTransportPrompt(summonsPrepared));
   } else if (request.summons !== undefined) {
     // #755: same-ticket summons with no instruction/attachments (e.g. notary
-    // source-run pointer) — plain resume envelope, no handbook / 重新读.
-    prompt = RESUME_TRANSPORT_ENVELOPE;
+    // source-run pointer). #836: officer resume opening adds「请重读」+ path pointer.
+    const path = request.summons.sourceRunPath;
+    if (
+      path !== undefined &&
+      (admitted.role === "notary" ||
+        admitted.role === "inspector" ||
+        admitted.role === "auditor")
+    ) {
+      prompt = `请重读\n${GATE_DOSSIER_POINTER_PREFIX}${path}`;
+    } else if (
+      admitted.role === "notary" ||
+      admitted.role === "inspector" ||
+      admitted.role === "auditor"
+    ) {
+      prompt = "请重读";
+    } else {
+      prompt = "";
+    }
   } else {
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
     prompt = buildResumeContinuationPrompt({
@@ -1028,41 +1304,23 @@ export async function runPostAdmissionSeatResume<
         // court materials ride). Settlement identity stays on the outer admitted.
         let admittedForBuild = loaded.admitted;
 
-        // Bare resume: read + seal-judge + bound clear only under the held lease.
+        // Bare resume: open-court pointer is the continue signal (not ledger seal).
         if (request.summons === undefined) {
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
-            const sealedForOpen = await readSealedSubmission(
-              admittedForBuild.projectRoot,
-              admittedForBuild.runId,
-              {
-                home: homeFromRunDirectory(admittedForBuild.runDirectory),
-                attemptId: openCourt.courtAttemptId,
-              },
-            );
-            if (sealedForOpen === undefined) {
-              // Continue open court: same summons materials + existing courtAttemptId.
-              // Caller message (if any) stays on the request — projection keeps it.
-              openCourtAttemptId = openCourt.courtAttemptId;
-              request = {
-                runId: request.runId,
-                ...(request.message === undefined
-                  ? {}
-                  : { message: request.message }),
-                ...(openCourt.summons === undefined
-                  ? {}
-                  : { summons: openCourt.summons }),
-              };
-              if (openCourt.summons !== undefined) {
-                const reloaded = await input.load(request);
-                admittedForBuild = reloaded.admitted;
-              }
-            } else {
-              // Open court already sealed — clear only the court id just judged.
-              await clearCurrentCourt(
-                admittedForBuild.runDirectory,
-                openCourt.courtAttemptId,
-              );
+            openCourtAttemptId = openCourt.courtAttemptId;
+            request = {
+              runId: request.runId,
+              ...(request.message === undefined
+                ? {}
+                : { message: request.message }),
+              ...(openCourt.summons === undefined
+                ? {}
+                : { summons: openCourt.summons }),
+            };
+            if (openCourt.summons !== undefined) {
+              const reloaded = await input.load(request);
+              admittedForBuild = reloaded.admitted;
             }
           }
         }
@@ -1168,8 +1426,8 @@ export async function runPostAdmissionSeatResume<
               firstTurn = turnRequest;
               return turnRequest;
             },
-            dispatch: (turnRequest) =>
-              dispatchPostAdmissionTurn({
+            dispatch: async (turnRequest) => {
+              const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
                 env: {
                   ...input.env,
@@ -1185,7 +1443,15 @@ export async function runPostAdmissionSeatResume<
                 ...(input.effectiveEngine === undefined
                   ? {}
                   : { effectiveEngine: input.effectiveEngine }),
-              }),
+              });
+              return settleDeferredPersist(
+                loaded.admitted,
+                input.env.principalAuthority,
+                stationAdapters,
+                attemptIo,
+                result,
+              );
+            },
           }),
       });
     }
@@ -1284,10 +1550,8 @@ export async function runPostAdmissionResumable<
     autoResumeLimit: env.autoResumeLimit,
     buildInitialPayload: buildInitialRequest,
     buildResumePayload: buildResumeRequest,
-    sealedAcceptanceDisposition: () =>
-      sealedAcceptanceRedispatchDisposition(admitted),
-    dispatch: (request, lease, _isFirst, attemptIo) =>
-      dispatchPostAdmissionTurn({
+    dispatch: async (request, lease, _isFirst, attemptIo) => {
+      const result = await dispatchPostAdmissionTurn({
         admitted,
         env: {
           ...env,
@@ -1300,7 +1564,9 @@ export async function runPostAdmissionResumable<
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      }),
+      });
+      return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
+    },
   });
 }
 
@@ -1402,7 +1668,11 @@ export async function runPostAdmissionManualResume<
     result.terminal !== undefined &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
   ) {
-    await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+    // dispatchPostAdmissionTurn already persisted this lawful outcome inline
+    // (persistRunState defaults true here — no station-child/loop deferral)
+    // through its own settleAfterTurnStarted-backed branches; a lawful result
+    // only ever reaches this point once that persist has already succeeded
+    // (#836 r12 class 3 dedup — one persist owner, not a second here).
     io.stdout(formatTerminalResult(result.terminal));
   }
   if (result.terminal !== undefined) {

@@ -13,7 +13,6 @@ import {
   writeTicketProvenanceHumanView,
 } from "./ticket-provenance.ts";
 import { projectTicketProvenanceEntry } from "./ticket-provenance-contracts.ts";
-import type { DiaristEntrySubmission } from "./diarist-contracts.ts";
 
 /**
  * Honest machine facts about what this turn actually committed to the volume.
@@ -44,7 +43,7 @@ export async function commitDiaristEntries(input: {
   readonly ticketNumber: number;
   readonly cwd: string;
   readonly home?: string;
-  readonly entries: readonly DiaristEntrySubmission[];
+  readonly entries: readonly unknown[];
 }): Promise<DiaristCommitFacts> {
   const { ticketNumber, cwd } = input;
   const homeOpt = input.home === undefined ? {} : { home: input.home };
@@ -54,26 +53,14 @@ export async function commitDiaristEntries(input: {
   let dropped = 0;
 
   for (const submitted of input.entries) {
-    const entry = projectTicketProvenanceEntry({
-      basis: {
-        method: "llm-semantic",
-        anchors: [`#${ticketNumber}`],
-        ...(submitted.note === undefined ? {} : { note: submitted.note }),
-      },
-      sourceKind: submitted.sourceKind,
-      sourceRef: submitted.sourceRef,
-      transcript: submitted.transcript,
-      timestamp: submitted.timestamp,
-    });
-    if (entry === undefined) {
+    if (projectTicketProvenanceEntry(submitted) === undefined) {
       dropped += 1;
-      continue;
     }
     appendTicketProvenanceEntry({
       ticketNumber,
       cwd,
       ...homeOpt,
-      entry,
+      payload: submitted,
       source: "diarist",
     });
   }
@@ -84,6 +71,7 @@ export async function commitDiaristEntries(input: {
     cwd,
     ...homeOpt,
     entries: volume.entries,
+    unprojected: volume.unprojected,
   });
 
   const appended = volume.entries.length - before.entries.length;

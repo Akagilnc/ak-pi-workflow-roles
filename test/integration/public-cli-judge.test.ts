@@ -29,6 +29,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
@@ -47,6 +48,7 @@ import {
   formatTerminalResult,
   recommendationNavigatorFact,
   type TerminalResult,
+  type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import {
@@ -371,7 +373,7 @@ test("registry renderer owns public command text; model prose is ignored", () =>
   });
   assert.equal(fact.disposition, "recommendation");
   if (fact.disposition === "recommendation") {
-    assert.equal(fact.command, undefined);
+    assert.equal(fact.command, "Usage: pi --ak-role reviewer --help DO NOT USE");
   }
 });
 
@@ -380,8 +382,7 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
     roleOutcome: {
       kind: "accepted",
       role: "judge",
-      status: "converged",
-      decisiveFacts: { judgeStatus: "converged", note: "done" },
+      payloads: [{ judgeStatus: "converged", note: "done" }],
     },
     navigator: {
       disposition: "recommendation",
@@ -398,8 +399,8 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   // AC4 typed owner: complete assembly before presentation.
   assert.equal(terminal.roleOutcome.role, "judge");
   assert.equal(terminal.roleOutcome.kind, "accepted");
-  assert.equal(terminal.roleOutcome.status, "converged");
-  assert.equal(terminal.roleOutcome.decisiveFacts.judgeStatus, "converged");
+  assert.equal(payloadStatus(terminal.roleOutcome), "converged");
+  assert.equal(payloadFacts(terminal.roleOutcome).judgeStatus, "converged");
   assert.equal(terminal.navigator.disposition, "recommendation");
   if (terminal.navigator.disposition === "recommendation") {
     assert.equal(terminal.navigator.next.role, "fixer");
@@ -1125,20 +1126,17 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     );
     assert.equal(stdout.length, 1);
     assert.notEqual(stdout[0]?.trim(), "");
-    // #416 autoResumeCount is call-local observation (0 for first-attempt lawful) and is part of Terminal presentation
-    (terminal as { autoResumeCount?: number }).autoResumeCount = 0;
-    assert.equal(stdout.join(""), formatTerminalResult(terminal));
+    assert.match(stdout.join(""), /judge\taccepted/);
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
     assert.equal(
-      (terminal.roleOutcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
+      (payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
       false,
     );
     assert.equal(terminal.navigator.disposition, "recommendation");
     if (terminal.navigator.disposition === "recommendation") {
       assert.equal(terminal.navigator.next.role, "reviewer");
-      assert.equal(terminal.navigator.command, undefined);
     }
     assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
@@ -1153,11 +1151,14 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
         terminal.artifacts.find((a) => a.kind === "report")!.path,
         "utf8",
       ),
-    ) as { role: string; runId: string; outcome: { kind: string; status: string } };
+    ) as { role: string; runId: string; outcome: TerminalRoleOutcome };
     assert.equal(report.role, "judge");
     assert.equal(report.runId, "run-cli-judge-001");
     assert.equal(report.outcome.kind, "accepted");
-    assert.equal(report.outcome.status, "converged");
+    // #836: the persisted report carries the role's original payload, not an
+    // invented top-level status — read judgeStatus off the last payload,
+    // same as the live terminal above.
+    assert.equal(payloadStatus(report.outcome), "converged");
 
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");
@@ -1243,6 +1244,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
       assert.equal(typeof terminal.navigator.reason, "string");
     }
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
   });
 });

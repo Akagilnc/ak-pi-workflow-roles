@@ -13,6 +13,8 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { payloadStatus } from "../helpers/terminal-payload.ts";
+import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
 const io = { stdout() {}, stderr() {} };
@@ -531,13 +533,19 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
     async function assertMethodProvenanceReceipt(result: {
       hostFailure?: unknown;
       terminal?: {
-        roleOutcome?: { kind?: string; status?: string };
+        roleOutcome?: TerminalRoleOutcome;
         artifacts?: ReadonlyArray<{ kind: string; path: string }>;
       };
     }, label: string): Promise<void> {
       assert.equal(result.hostFailure, undefined, `${label}: host selection must succeed`);
       assert.equal(result.terminal?.roleOutcome?.kind, "accepted", label);
-      assert.equal(result.terminal?.roleOutcome?.status, "planned", label);
+      // #836: the role's own status field, read off its original payload —
+      // not a runtime-selected top-level status.
+      assert.equal(
+        result.terminal?.roleOutcome === undefined ? undefined : payloadStatus(result.terminal.roleOutcome),
+        "planned",
+        label,
+      );
       const evidenceRef = result.terminal?.artifacts?.find((a) => a.kind === "evidence");
       assert.ok(evidenceRef, `${label}: evidence artifact`);
       const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as {

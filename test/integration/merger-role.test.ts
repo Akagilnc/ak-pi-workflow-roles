@@ -54,7 +54,10 @@ test("Merger accepts one honest escalation without Git success verification", as
   const args = { status: "escalate", attemptId: "attempt", diagnosis: "no in-progress merge", report: "nothing to reconcile" };
   const result = await h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("out", args, undefined, undefined, context("out", args));
   assert.equal(result.terminate, true); assert.deepEqual(result.details, args);
-  await assert.rejects(h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("again", args, undefined, undefined, context("again", args)));
+  // #836: the submission tool records every call — it does not abort, seal, or
+  // reject a second call. Host end (not the tool) is the sole final.
+  const again = await h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("again", args, undefined, undefined, context("again", args));
+  assert.equal(again.terminate, true); assert.deepEqual(again.details, args);
 });
 
 test("Merger accepts completed receipt without path-scope/completion Git verification gate", async () => {

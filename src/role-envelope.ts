@@ -26,7 +26,6 @@ import type { PreparedRoleTurn } from "./prepared-role-turn.ts";
 import { projectActivationFlags } from "./role-activation-flags.ts";
 import {
   isCorrectableExecuteError,
-  mechanicalSubmissionRejectionResumeMessage,
   projectCorrectableExecuteRejection,
 } from "./submission-correctable-error.ts";
 import {
@@ -58,7 +57,7 @@ export function buildSkillExpansion(
   return Object.freeze({
     name,
     location: method.path,
-    content: `References are relative to ${dirname(method.path)}.\n\n${method.body}`,
+    content: method.body,
     // Non-pi typed chain keeps original task bytes (ticket #822 r3); no consumer trim.
     userMessage: prompt,
   });
@@ -183,9 +182,8 @@ export async function prepareRoleEnvelope(options: {
       },
     },
     abort() {
-      // Lawful abort (non-sole rejection / seal / audit-escalation in submission-ledger)
-      // must not poison ACP retry prompts (#593 r1). hostAbort is armed only by typed
-      // infra: rememberInfrastructureFailure and non-correctable MCP catch.
+      // #836: hostAbort is armed only by typed infra (rememberInfrastructureFailure
+      // and non-correctable MCP catch). Submission does not abort the turn.
     },
   };
   const bookCustomMessage = (customType: string, message: { content?: string; details?: unknown }): void => {
@@ -207,13 +205,8 @@ export async function prepareRoleEnvelope(options: {
   };
 
   const host: RoleHost = {
-    deliverSubmissionRejection(value) {
-      // Mechanical round rejection has no officer receipt; shared resume text is the fact (#813).
-      rejection = {
-        code: value.code,
-        toolCallIds: value.toolCallIds,
-        message: mechanicalSubmissionRejectionResumeMessage(value.code),
-      };
+    deliverSubmissionRejection(_value) {
+      // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
     },
     capabilities: {
       skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
@@ -591,10 +584,7 @@ export async function prepareRoleEnvelope(options: {
       calls.length = 0;
       await emit("turn_end", { turnIndex: 0, calls: roundCalls });
     }
-    // Infrastructure failure outranks accepted closure / correctable retry: the
-    // declaration already aborted hostAbort; "already declared" is not success (#593).
-    // Lawful seal / non-sole rejection still call context.abort() (ledger), but that
-    // path does not arm hostAbort — only infrastructureRoundFailure is terminal here.
+    // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
       return { accepted: false as const, failure: infrastructureRoundFailure };
     }
@@ -617,11 +607,10 @@ export async function prepareRoleEnvelope(options: {
       rejection = undefined;
       return { accepted: false as const, retry };
     }
-    const failure: RoleTurnKnownFailure = {
-      cause: "output",
-      identity: { name: "MissingSubmission", code: "round-ended-without-submission" },
-    };
-    return { accepted: false as const, failure };
+    // #836: host ended without a recorded submission is not a failure.
+    // Settlement presents ledger contents; empty ledger → no_receipt.
+    await emit("agent_settled", {});
+    return { accepted: true as const };
   };
 
   // Shared envelope activation. systemPrompt must be ready before session/new
@@ -652,9 +641,12 @@ export async function prepareRoleEnvelope(options: {
       systemPrompt: methodPrompt,
       systemPromptOptions: {},
     });
-    const systemPromptBody = [...promptResults].reverse().find((value): value is { systemPrompt: string } =>
-      typeof value === "object" && value !== null && "systemPrompt" in value && typeof value.systemPrompt === "string")?.systemPrompt
-      ?? methodPrompt;
+    const systemPromptParts = promptResults.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      if (!("systemPrompt" in value) || typeof value.systemPrompt !== "string") return [];
+      return [value.systemPrompt];
+    });
+    const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
     // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
     // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
     const readingMaterials: unknown[] = [];

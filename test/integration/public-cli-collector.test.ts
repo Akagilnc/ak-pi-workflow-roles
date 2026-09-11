@@ -35,6 +35,7 @@ import {
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import type { AdmittedCollectorInvocation } from "../../src/public-cli/invocation.ts";
 import type { HostToolDefinition } from "../../src/host-contracts.ts";
+import { payloadFacts } from "../helpers/terminal-payload.ts";
 
 function seedProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
@@ -336,7 +337,7 @@ test("typed groups travel from real output settlement into the report artifact",
       }),
     });
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.groups, receipt().groups);
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).groups, receipt().groups);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
     const artifact = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: { groups: unknown[] } };
@@ -345,7 +346,7 @@ test("typed groups travel from real output settlement into the report artifact",
   });
 });
 
-test("#676 production envelope bind multi-PR → public no_receipt targetBind facts", async () => {
+test("#676 production envelope bind multi-PR leaves the ambiguous choice to the role, not a code rejection", async () => {
   await withActivationHome({ prefix: "ak-collector-bind-amb-" }, async ({ home }) => {
     await withFakeGh(home, multiPrIssueGhScript(), async () => {
       const bind = await executeBindViaProductionEnvelope({
@@ -353,12 +354,11 @@ test("#676 production envelope bind multi-PR → public no_receipt targetBind fa
         params: { issueNumber: 42 },
         toolCallId: "call-bind-1",
       });
-      assert.equal(bind.isError, true);
-      // Contract is typed rejection code + non-empty diagnostic string — not free-text wording.
-      assert.equal(
-        bind.content.some((p) => typeof p.text === "string" && p.text.trim().length > 0),
-        true,
-      );
+      // #836: an ambiguous issue→PR association is not a code-side rejection —
+      // code returns the associated facts and leaves the choice to the role.
+      assert.equal(bind.isError, false);
+      assert.equal(bind.details.bound, false);
+      assert.deepEqual(bind.details.associated, [7, 9]);
 
       const terminal = await settleBindNoReceipt({
         home,
@@ -366,11 +366,11 @@ test("#676 production envelope bind multi-PR → public no_receipt targetBind fa
         binds: [bind],
       });
       assert.equal(terminal.roleOutcome.kind, "no_receipt");
+      // No thrown rejection occurred, so no targetBind* rejection facts are
+      // projected — the plain no-receipt lifecycle facts still settle honestly.
       const facts = terminal.roleOutcome.decisiveFacts;
-      assert.equal(facts.targetBindRejected, true);
-      assert.equal(facts.targetBindCode, "CollectorTargetBindError");
-      assert.equal(typeof facts.targetBindDiagnostic, "string");
-      assert.equal(String(facts.targetBindDiagnostic).trim().length > 0, true);
+      assert.equal(facts.targetBindRejected, undefined);
+      assert.equal(facts.acceptedReceipt, false);
 
       const stdout: string[] = [];
       const stderr: string[] = [];
@@ -379,7 +379,6 @@ test("#676 production envelope bind multi-PR → public no_receipt targetBind fa
         stderr: (text) => stderr.push(text),
       });
       assert.equal(stdout.length > 0, true);
-      assert.equal(stderr.length > 0, true);
     });
   });
 });
@@ -388,9 +387,14 @@ test("#676 production envelope: latest bind success clears earlier rejection", a
   await withActivationHome({ prefix: "ak-collector-bind-clear-" }, async ({ home }) => {
     let failed: BindProjection | undefined;
     await withFakeGh(home, multiPrIssueGhScript(), async () => {
+      // #836: ambiguous multi-PR association is no longer a code-side
+      // rejection (see the sibling test above); the still-live rejection is
+      // an ill-formed call — neither prNumber nor issueNumber given — which
+      // the role, not code judgment of ambiguity, is expected to never emit
+      // in production but which still exercises "latest bind wins" honestly.
       failed = await executeBindViaProductionEnvelope({
         home,
-        params: { issueNumber: 42 },
+        params: {},
         toolCallId: "call-bind-fail",
       });
       assert.equal(failed.isError, true);
@@ -548,8 +552,8 @@ test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", 
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "MERGED");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.requestAttempts, []);
+    assert.equal(result.terminal && payloadFacts(result.terminal.roleOutcome).prState, "MERGED");
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).requestAttempts, []);
   });
 });
 
@@ -592,8 +596,8 @@ test("#676 J2 CLOSED non-OPEN prState still returns materials without inventing 
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.decisiveFacts.prState, "CLOSED");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts.requestAttempts, []);
+    assert.equal(result.terminal && payloadFacts(result.terminal.roleOutcome).prState, "CLOSED");
+    assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).requestAttempts, []);
   });
 });
 

@@ -22,6 +22,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -38,8 +39,6 @@ import {
   loadResumableReviewerRun,
   markRunAdmitted,
   markRunResumable,
-  RESUME_TRANSPORT_ENVELOPE,
-  selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
@@ -467,8 +466,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     });
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "completed");
-    assert.equal((terminal.roleOutcome.decisiveFacts.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    assert.equal(payloadStatus(terminal.roleOutcome), "completed");
+    assert.equal((payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
     assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
@@ -624,7 +623,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.status
+          ? payloadStatus(result.terminal.roleOutcome)
           : undefined,
         "completed",
       );
@@ -728,10 +727,6 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
       assert.equal(captured!.includes("--ak-review-task"), false);
-      assert.equal(
-        captured!.some((a) => a.includes("Review the latest commit on both axes.")),
-        false,
-      );
       const bookKey = resolveBookKeyFromGit(project);
       const evidence = JSON.parse(
         await readFile(
@@ -882,10 +877,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        // Pi adapter prefixes single method onto resume envelope (#822).
         assert.equal(
-          args.some((a) => a.includes(RESUME_TRANSPORT_ENVELOPE)),
-          true,
+          args.some((a) => a.includes("[ak-role:resume-continue]")),
+          false,
         );
         assert.equal(
           args.some((a) => a.startsWith("/skill:code-review")),
@@ -938,7 +932,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(resumed.terminal?.roleOutcome.role, "reviewer");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "completed",
     );

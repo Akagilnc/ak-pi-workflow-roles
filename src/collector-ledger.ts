@@ -51,21 +51,7 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_HANDBOOK_WRITE_TOOL,
 ] as const;
 
-/**
- * #641 chain①: observe context projects at most this many bytes of each
- * material body; the full body stays reachable via the record pointer
- * (evidenceId + htmlUrl) and is preserved in the volume, never unconditionally
- * transcribed into model context or receipt.
- */
-const COLLECTOR_OBSERVE_BODY_HEAD_BYTES = 512;
-
-function utf8SafePrefix(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-  const bytes = Buffer.from(text, "utf8");
-  let end = maxBytes;
-  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
-  return `${bytes.subarray(0, end).toString("utf8")}…`;
-}
+// #836: observe body truncation deleted (A6.4). Full body is the material.
 
 export type ObserveEvidenceEntry = {
   evidenceId: string;
@@ -103,21 +89,9 @@ export type ObserveModelView = {
   }>;
 };
 
-/**
- * #641 chain① model-context projection: identical shape to the volume view,
- * with every material body bounded to a head preview. Full bodies remain
- * pointer-reachable (evidenceId/htmlUrl) and stay in the ledger volume
- * (collector-side; provider-visible observe details carry only this bounded
- * projection), never unconditionally transcribed into model context.
- */
+/** #836: observe context is the full volume view — no body truncation. */
 function projectObserveContextView(modelView: ObserveModelView): ObserveModelView {
-  return {
-    ...modelView,
-    evidence: modelView.evidence.map((entry) =>
-      entry.body === undefined
-        ? entry
-        : { ...entry, body: utf8SafePrefix(entry.body, COLLECTOR_OBSERVE_BODY_HEAD_BYTES) }),
-  };
+  return modelView;
 }
 
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
@@ -707,17 +681,6 @@ export function createCollectorLedger(
 
     bindTarget(prNumber) {
       assertNotFatal();
-      if (outputCandidate || pendingOutputCallId !== undefined) {
-        throw new Error("通进司已产出输出候选，本局不再受理目标绑定");
-      }
-      if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
-        throw new Error("通进司绑定目标要求正安全整数 PR 号");
-      }
-      if (config.prNumber !== undefined && config.prNumber !== prNumber) {
-        throw new Error(
-          `通进司目标已绑定 PR ${config.prNumber}，不可改绑为 ${prNumber}`,
-        );
-      }
       config.prNumber = prNumber;
       appendJournal("ak-collector-target-bound", {
         prNumber,
@@ -727,12 +690,6 @@ export function createCollectorLedger(
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (
-        toolName !== COLLECTOR_OUTPUT_TOOL &&
-        (outputCandidate || pendingOutputCallId !== undefined)
-      ) {
-        throw new Error("通进司已产出输出候选，本局不再受理操作");
-      }
       if (toolName === COLLECTOR_OUTPUT_TOOL) {
         pendingOutputCallId = toolCallId;
         return;

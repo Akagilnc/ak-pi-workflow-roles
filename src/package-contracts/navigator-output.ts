@@ -37,9 +37,10 @@ export type NavigatorAdvice = { readonly status: "advice"; readonly candidates: 
  * shape is not an admission gate (ADR 0055 / 第 0 条).
  */
 export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | undefined {
-  if (!isRecord(value) || !Array.isArray(value.candidates)) return undefined;
-  if (value.status !== "advice") return undefined;
-  return { status: "advice", candidates: value.candidates.filter(isRecord) };
+  // #836: no field drop
+  return (typeof value === "object" && value !== null && !Array.isArray(value))
+    ? (value as NavigatorAdvice)
+    : undefined;
 }
 
 /**
@@ -47,10 +48,9 @@ export function projectLawfulNavigatorOutput(value: unknown): NavigatorAdvice | 
  * Does not gate role admission — callers must not use this to reject a submission.
  */
 export function validateRecordedNavigatorOutput(value: unknown): NavigatorAdvice {
-  const projected = projectLawfulNavigatorOutput(value);
-  if (projected === undefined) {
-    throw new Error("Navigator output has no recognized execution discriminator");
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Navigator output is not an object");
   }
-  return projected;
+  return value as NavigatorAdvice;
 }
 

@@ -69,11 +69,6 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
    */
   reviewReask?: string;
-  /**
-   * #786 same-parent re-summons: verbatim parent-submission body.
-   * Rides summons.instruction when reviewReask is absent. Fresh mint keeps argv instruction.
-   */
-  gateReviewInstruction?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -295,7 +290,7 @@ export async function runPublicInstructionSeat(
   }
 
   // #756/#786: auditor reask / verbatim submission body ride summons.instruction on resume.
-  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+  const resumeInstruction = env.reviewReask;
   const summons: SameTicketSummonsMaterials = {
     ...(resumeInstruction === undefined
       ? {
@@ -326,17 +321,8 @@ export async function runPublicInstructionSeat(
         }),
     });
     if (resumed !== undefined) return resumed;
-    // Reask without a prior same-parent run cannot deliver the plain-language ask
-    // on a fresh mint without inventing a second prompt path — fail loud (#753 / #756).
-    if (env.reviewReask !== undefined) {
-      presentStructuralRejection(
-        new CliUsageError(
-          "auditor review reask requires a prior same-parent run to resume",
-        ),
-        io,
-      );
-      return { exitCode: 2 };
-    }
+    // #836: reask without a prior same-parent run still mints; summons.instruction
+    // already carries the reask text. Do not structurally terminate the queue.
   }
 
   let admitted: AdmittedInstructionSeatInvocation;

@@ -2,6 +2,8 @@
 
 Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e46b-7e1b-8d5d-cb618de4c1ae` countersignStatus=converged 全票全审第七轮署；decision keys 与绑定原话见 #582；**2026-09-06 原地修正**：起居郎建制为角色，见 #708 r2 修订（#582 已关）与下表 `diarist-is-role`；**2026-09-07 #742**：`no-call-rule` 键值回到 L108274/L108315 射程；陛下「直接修正老的adr。我不认为让adr越来越多有什么好处」）
 
+> **Supersession / 修订 (#836):** 删预绑票号覆盖起居郎自报、escalate 时删 sitian/ticketNumber、anchors 覆盖与失败行静默丢、白名单外整条丢。起居郎交什么记什么；投影失败只记「未投影」不丢原文。票号绑定改为随材料告知。
+
 ## 承继 / 修正关系
 
 本 ADR **修正** [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 的 `record-scope-phase-two=pi-session-records-only`：二期 scope 在「Pi session 记录」之外，新增 kind `ticket-provenance`，收录 cc session 誊录块 / issue 面 / ADR 锚。历史 ADR 正文不回改；承继关系由本票记载（同 [ADR 0074](0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 先例）。appender 内核 / 落盘拓扑 / `--source-run` / submission ledger **零改动**——`kind` 本为开放集，subject 哈希分区既有。

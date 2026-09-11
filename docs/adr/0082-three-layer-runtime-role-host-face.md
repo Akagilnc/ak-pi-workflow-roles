@@ -2,6 +2,8 @@
 
 Status: accepted（owner 2026-09-09「入」；直属通道，誊自 #505 家族 owner 原话）。本 ADR 不新增任何决定；每键绑定 #505/#508/#509/#510/#512/#513 票面所载 owner 原话（逐字），或票面记「owner 拍」之表述。真源票：#505（三层角色架构改造图，2026-09-05 关，家族 PR #648 并 main）。
 
+> **Supersession / 落点 (#836):** 终局＝宿主会话「关」动词取代交卷工具 abort。御史台子腿改为本席自调 code-review skill，删 reviewer-construction/reviewer-child-executor 的代码编译与伪成功执行链。输出检查段保留排队重问，去掉改标拒收。
+
 ## 为什么要立本 ADR
 #505 家族的决定只在 issue 里；票庭/大理寺按 soul 只检索 docs/adr 与 CONTEXT.md，检索不到，于是 #644/#645/#646 宿主接入票过庭时无人以三层法封驳（2026-09-09 勘查：engine 轴只有 pi 消费；pi 不走共享信封；headless 抄 ACP 七处同形）。本 ADR 把既有决定搬进可检索的法源，供开票与判卷。
 

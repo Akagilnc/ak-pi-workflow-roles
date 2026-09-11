@@ -73,12 +73,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * no findings array rewrite). Recognition only for recording/settlement callers.
  */
 export function projectLawfulNotaryOutput(value: unknown): NotaryOutput | undefined {
-  if (!isRecord(value)) return undefined;
-  const status = typeof value.status === "string" ? value.status : undefined;
-  if (status === "bounce" || status === "pass" || status === "escalate") {
-    return value as NotaryOutput;
-  }
-  return undefined;
+  // #836: no field drop
+  return (typeof value === "object" && value !== null && !Array.isArray(value))
+    ? (value as NotaryOutput)
+    : undefined;
 }
 
 /** Retain submitted Notary params as-is for the failure channel (no shape rewrite). */
@@ -96,10 +94,9 @@ export function retainNotarySubmission(value: unknown): unknown {
  * Does not gate role admission — callers must not use this to reject a submission.
  */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
-  const projected = projectLawfulNotaryOutput(value);
-  if (projected === undefined) {
-    throw new Error("Notary output has no recognized execution discriminator");
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Notary output is not an object");
   }
-  return projected;
+  return value as NotaryOutput;
 }
 

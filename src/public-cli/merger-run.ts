@@ -101,7 +101,7 @@ function mergerAdapters(
             scope,
           ),
     shouldPresentSettled: (t) =>
-      isLawfulTypedTerminalOutcome(t.roleOutcome) || t.roleOutcome.kind === "incomplete",
+      isLawfulTypedTerminalOutcome(t.roleOutcome),
   };
 }
 

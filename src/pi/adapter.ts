@@ -21,7 +21,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
-import { mechanicalSubmissionRejectionResumeMessage } from "../submission-correctable-error.ts";
+
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
 
@@ -137,13 +137,8 @@ export function createPiRoleHostAdapter(
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
   const host: RoleHost = {
-    deliverSubmissionRejection(rejection) {
-      pi.sendMessage({
-        customType: "ak-role-submission-rejection",
-        content: mechanicalSubmissionRejectionResumeMessage(rejection.code),
-        display: true,
-        details: rejection,
-      }, { triggerTurn: true, deliverAs: "followUp" });
+    deliverSubmissionRejection(_rejection) {
+      // #836 删 1/A4.5: no package-authored non-sole resume sentence.
     },
     capabilities: {
       skillExpansion(prompt) {

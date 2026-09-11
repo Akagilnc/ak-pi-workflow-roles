@@ -1,5 +1,4 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
-import { stringEnum } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
@@ -20,7 +19,7 @@ import {
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
-import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
 import {
   FixerPacketValidationError,
   parseFixerPrerequisites,
@@ -45,25 +44,28 @@ export {
 };
 export type { WorkerOutput };
 
+// #836 r16 class 1: report/remainingScope are LLM/human-read narrative content —
+// no code branches on their length. `reason` alone keeps minLength: the worker
+// gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
+// (src/worker-submission-gates.ts:159-163,297-302).
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across every variant
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
+const CODER_STATUS_DESCRIPTION =
+  "planned | completed | refused | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
-    status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
+    report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: stringEnum(["completed", "refused"] as const, {
-      description:
-        "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
-    }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
+    report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
-    status: stringEnum(["unfinished"] as const, {
-      description:
-        "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
-    }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
-    remainingScope: Type.String({ minLength: 1, description: "本局后剩余工作" }),
+    status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
+    report: Type.String({ description: "如实结果报告" }),
+    remainingScope: Type.String({ description: "本局后剩余工作" }),
     reason: Type.Optional(Type.String({
       minLength: 1,
       description:
@@ -149,6 +151,17 @@ export type WorkerRoleRuntime = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the accepted receipt's own `status` word as submitted (#836: `status`
+ * stays an open Type.Unknown provider field, so FixerOutput's Static type no
+ * longer narrows it to a literal union — code still just reads whatever
+ * string the role wrote; a non-string status reads as "" and simply misses
+ * every known-status gate below, same as any other unrecognized status).
+ */
+function workerStatusOf(output: WorkerOutput): string {
+  return typeof output.status === "string" ? output.status : "";
 }
 
 function deepFreeze<T>(value: T): T {
@@ -261,16 +274,16 @@ export function createFixerRoleRuntime(
             if (packet === undefined || phase === undefined) {
               throw new Error("修内司修理包与阶段未装载");
             }
-            const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
+            const output = deepFreeze(validateFixerOutput(parameters, phase));
             assertAcceptableThroughHost(
               submissionGate,
-              output.status,
+              workerStatusOf(output),
               output,
               hostActions,
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(output.status)) {
+            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion" },
@@ -331,7 +344,6 @@ export function createCoderRoleRuntime(
   let tddInvocationInjected = false;
   let originalRequest: string | undefined;
   let expansionPending = false;
-  let expansionCaptured = false;
   let lifecycleRegistered = false;
   const submissionGate = createWorkerSubmissionGate();
 
@@ -352,7 +364,6 @@ export function createCoderRoleRuntime(
       tddInvocationInjected = false;
       originalRequest = undefined;
       expansionPending = false;
-      expansionCaptured = false;
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
@@ -400,23 +411,17 @@ export function createCoderRoleRuntime(
               throw new Error("将作监任务与阶段未装载");
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
-            if (
-              phase === "apply" && output.status === "completed" &&
-              !expansionCaptured
-            ) {
-              const rejection = new CoderSkillExpansionEvidenceMissingError();
-              hostActions.bindSubmissionNonPass(toolCallId, rejection.result);
-              throw rejection;
-            }
+            // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
+            // Skill still ships with the package (ADR 0052); code no longer refuses on it.
             assertAcceptableThroughHost(
               submissionGate,
-              output.status,
+              workerStatusOf(output),
               output,
               hostActions,
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(output.status)) {
+            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
               await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "worker_completion" },
@@ -459,12 +464,6 @@ export function createCoderRoleRuntime(
             }
             if (expansionPending) {
               expansionPending = false;
-              if (originalRequest !== undefined) {
-                expansionCaptured = binding.captureExpansion(
-                  pi.capabilities?.skillExpansion(event.prompt),
-                  originalRequest,
-                ) !== undefined;
-              }
             }
           }
           return {

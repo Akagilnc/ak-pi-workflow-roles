@@ -12,7 +12,6 @@ import {
 import {
   fixerOutputSchema,
   validateFixerOutput,
-  validateFixerOutputForPacket,
 } from "../../src/package-contracts/fixer-output.ts";
 
 const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
@@ -110,30 +109,13 @@ test("typed prerequisite blockers cross the public TypeBox schema and prerequisi
   for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
     assert.equal(Value.Check(fixerOutputSchema, candidate), true);
     assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
-    assert.deepEqual(validateFixerOutputForPacket(candidate, phase, invocation), candidate);
   }
-});
-
-test("recognizable undeclared prerequisite references reject in plan and apply", () => {
-  const invocation = mutableInput();
-  const blocker = { cause: "prerequisite_unmet", prerequisiteId: "undeclared", evidence: "not declared" };
-  const plan = { ...planRefusal, blocker };
-  const refusedLeaf = { ...applyRefusal.classResults[0], blocker };
-  const apply = { ...applyRefusal, classResults: [refusedLeaf] };
-  const mixed = { status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, refusedLeaf] };
-  assert.throws(() => validateFixerOutputForPacket(plan, "plan", invocation), /prerequisiteId.*declared/);
-  assert.throws(() => validateFixerOutputForPacket(apply, "apply", invocation), /prerequisiteId.*declared/);
-  assert.throws(() => validateFixerOutputForPacket(mixed, "apply", invocation), /prerequisiteId.*declared/);
-  const empty = input(Object.freeze([]));
-  assert.throws(() => validateFixerOutputForPacket(planRefusal, "plan", empty), /prerequisiteId.*declared/);
-  assert.throws(() => validateFixerOutputForPacket(applyRefusal, "apply", empty), /prerequisiteId.*declared/);
-  assert.throws(() => validateFixerOutputForPacket({ status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, applyRefusal.classResults[0]] }, "apply", empty), /prerequisiteId.*declared/);
 });
 
 test("zero declarations preserve authority refusal, completed apply, and existing settlement combinations", () => {
   const invocation = input(Object.freeze([]));
   const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
   const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  assert.deepEqual(validateFixerOutputForPacket(authority, "plan", invocation), authority);
-  assert.deepEqual(validateFixerOutputForPacket(completed, "apply", invocation), completed);
+  assert.deepEqual(validateFixerOutput(authority, "plan"), authority);
+  assert.deepEqual(validateFixerOutput(completed, "apply"), completed);
 });

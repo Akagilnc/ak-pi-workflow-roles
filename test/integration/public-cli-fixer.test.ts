@@ -29,11 +29,12 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
 } from "../../src/public-cli/invocation.ts";
-import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+
 import {
   extractFixerMethodInvocations,
   settleFixerTerminalResult,
@@ -273,7 +274,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     });
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.roleOutcome.status, "completed");
+    assert.equal(payloadStatus(terminal.roleOutcome), "completed");
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
@@ -464,7 +465,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       assert.equal(result.terminal?.roleOutcome.role, "fixer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? result.terminal.roleOutcome.status
+          ? payloadStatus(result.terminal.roleOutcome)
           : undefined,
         "planned",
       );
@@ -593,7 +594,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+        assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
@@ -630,7 +631,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
     assert.equal(resumed.terminal?.roleOutcome.role, "fixer");
     assert.equal(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? resumed.terminal.roleOutcome.status
+        ? payloadStatus(resumed.terminal.roleOutcome)
         : undefined,
       "planned",
     );
@@ -728,23 +729,23 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(
       terminal.roleOutcome.kind === "accepted"
-        ? terminal.roleOutcome.status
+        ? payloadStatus(terminal.roleOutcome)
         : undefined,
       "refused",
     );
     assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
     assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
     // #757: status rides as submitted — no fixerStatus lift.
-    assert.equal(terminal.roleOutcome.decisiveFacts.status, "refused");
+    assert.equal(payloadFacts(terminal.roleOutcome).status, "refused");
     // #757: blocker fields stay nested under blocker — no lift/drop projection.
-    const blocker = terminal.roleOutcome.decisiveFacts.blocker as {
+    const blocker = payloadFacts(terminal.roleOutcome).blocker as {
       cause?: string;
       prerequisiteId?: string;
     } | undefined;
     assert.equal(blocker?.cause, "prerequisite_unmet");
     assert.equal(blocker?.prerequisiteId, "owner.choice");
     assert.equal(
-      terminal.roleOutcome.decisiveFacts.remainingScope,
+      payloadFacts(terminal.roleOutcome).remainingScope,
       "the entire plan assignment",
     );
     // Not a controlled-failure face.
@@ -795,11 +796,11 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(
       result.terminal!.roleOutcome.kind === "accepted"
-        ? result.terminal!.roleOutcome.status
+        ? payloadStatus(result.terminal!.roleOutcome)
         : undefined,
       "refused",
     );
-    const publicBlocker = result.terminal!.roleOutcome.decisiveFacts.blocker as {
+    const publicBlocker = payloadFacts(result.terminal!.roleOutcome).blocker as {
       cause?: string;
       prerequisiteId?: string;
     } | undefined;
@@ -896,9 +897,9 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
       assert.equal(settled.roleOutcome.kind, row.kind, row.status);
       assert.equal(settled.roleOutcome.role, "fixer", row.status);
       if (settled.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
-      assert.equal(settled.roleOutcome.status, row.status);
+      assert.equal(payloadStatus(settled.roleOutcome), row.status);
       assert.deepEqual(
-        settled.roleOutcome.decisiveFacts[row.factKey],
+        payloadFacts(settled.roleOutcome)[row.factKey],
         row.factValue,
         row.status,
       );
@@ -941,9 +942,9 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
       assert.ok(result.terminal, row.status);
       assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
       if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
-      assert.equal(result.terminal!.roleOutcome.status, row.status);
+      assert.equal(payloadStatus(result.terminal!.roleOutcome), row.status);
       assert.deepEqual(
-        result.terminal!.roleOutcome.decisiveFacts[row.factKey],
+        payloadFacts(result.terminal!.roleOutcome)[row.factKey],
         row.factValue,
         row.status,
       );

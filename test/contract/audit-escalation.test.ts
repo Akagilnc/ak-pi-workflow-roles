@@ -10,6 +10,8 @@ import {
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
 import type { ComplianceNoReceipt } from "../../src/compliance-transport.ts";
+import { runComplianceAudit } from "../../src/compliance-transport.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   AcceptedDetailsContractError,
@@ -43,21 +45,18 @@ test("escalation projects one terminating human decision and is not an accepted 
   assert.equal(bounceCalls, 0);
   assert.equal(result.terminate, true);
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
-  assert.deepEqual(result.details.conflicts, decision.conflicts);
-  assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
-  // Human text reads the audit-owned gate only — question + every option present.
-  assert.ok(result.content[0].text.includes(decision.decisionGate.question));
-  for (const option of decision.decisionGate.options) {
-    assert.ok(
-      result.content[0].text.includes(option),
-      `human text must carry audit option: ${option}`,
-    );
-  }
+  assert.deepEqual((result.details.audit as { conflicts?: unknown }).conflicts, decision.conflicts);
+  assert.deepEqual(
+    (result.details.audit as { auditDecisionGate?: unknown }).auditDecisionGate,
+    decision.decisionGate,
+  );
+  assert.equal(result.content[0].text, JSON.stringify(decision));
   assert.doesNotMatch(result.content[0].text, /accepted/i);
   assert.equal(isAuditEscalationResult(result.details), true);
-  assert.throws(
-    () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, result.details),
-    /not an accepted role receipt/,
+  // #836: status/allowlist rejection deleted — original payload is accepted as details.
+  assert.deepEqual(
+    validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, result.details),
+    result.details,
   );
   assert.deepEqual(projectAuditEscalation(decision).details, result.details);
 });
@@ -133,28 +132,19 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
     delivered,
   );
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
-  assert.equal(result.details.judgeStatus, "converged");
-  assert.equal(result.details.note, "keep-me");
-  assert.equal(result.details.reason, "role reason");
-  assert.equal(result.details.officer, "role officer");
-  assert.deepEqual(result.details.findings, ["role finding"]);
-  assert.deepEqual(result.details.conflicts, ["conflict"]);
-  // Audit gate always lives at auditDecisionGate — one fixed home.
-  assert.deepEqual(result.details.auditDecisionGate, decision.decisionGate);
-  // Role brought no decisionGate — that key stays absent (not filled by audit).
-  assert.equal(result.details.decisionGate, undefined);
-  // Without delivered output, verdict fields are absent (negative control).
+  assert.deepEqual(result.details.receipt, delivered);
+  assert.deepEqual((result.details.audit as { conflicts?: unknown }).conflicts, ["conflict"]);
+  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
   const stripped = projectAuditEscalation(decision).details;
-  assert.equal(stripped.note, undefined);
+  assert.equal(stripped.receipt, undefined);
 
-  // Officer-owned facts cannot be filled by colliding parent-role fields.
   const officer = projectAuditEscalation(
     { status: "escalate", officer: "notary" },
     delivered,
   ).details;
-  assert.equal(officer.officer, "notary");
-  assert.equal(Object.hasOwn(officer, "reason"), false);
-  assert.equal(Object.hasOwn(officer, "findings"), false);
+  assert.deepEqual(officer.receipt, delivered);
+  assert.equal((officer.audit as { officer?: unknown }).officer, "notary");
+  assert.equal((officer.receipt as { officer?: unknown }).officer, "role officer");
 });
 
 test("escalate face keeps role decisionGate and audit gate side by side", async () => {
@@ -192,37 +182,11 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
   );
   const details = result.details;
   assert.equal(details.kind, AUDIT_ESCALATION_KIND);
-  assert.equal(details.judgeStatus, "escalate");
-  assert.equal(details.reasoning, "need owner choice");
-  assert.deepEqual(details.classes, []);
-  // Role's options survive in full, in order — not eaten by the audit gate.
-  assert.deepEqual(details.decisionGate, roleGate);
-  assert.deepEqual(details.conflicts, decision.conflicts);
-  // Audit gate has one fixed home beside the role gate (neither folded).
-  assert.deepEqual(details.auditDecisionGate, auditGate);
-  // Human text carries the audit gate; role question is not passed off as audit's.
-  const face = result.content[0].text;
-  assert.ok(face.includes(auditGate.question), "audit question must appear in human text");
-  for (const option of auditGate.options) {
-    assert.ok(face.includes(option), `audit option must appear in human text: ${option}`);
-  }
-  assert.equal(
-    face.includes(`Question: ${roleGate.question}`),
-    false,
-    "role question must not be presented as the audit Question",
-  );
-  // Malformed role decisionGate must not throw (reads audit home only).
-  for (const badGate of ["oops", { question: "q" }] as const) {
-    const resilient = projectAuditEscalation(decision, {
-      judgeStatus: "escalate",
-      decisionGate: badGate,
-    });
-    assert.equal(resilient.details.kind, AUDIT_ESCALATION_KIND);
-    assert.deepEqual(resilient.details.auditDecisionGate, auditGate);
-    assert.equal(resilient.details.decisionGate, badGate);
-    assert.ok(resilient.content[0].text.includes(auditGate.question));
-  }
-  // kind cannot be laundered by a role field of the same name.
+  assert.deepEqual(details.receipt, delivered);
+  assert.deepEqual((details.receipt as { decisionGate?: unknown }).decisionGate, roleGate);
+  assert.deepEqual((details.audit as { conflicts?: unknown }).conflicts, decision.conflicts);
+  assert.deepEqual((details.audit as { auditDecisionGate?: unknown }).auditDecisionGate, auditGate);
+  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
   const launder = await disposeComplianceDecision(
     decision,
     {
@@ -237,6 +201,7 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
     { kind: "not-escalation", decisionGate: roleGate },
   );
   assert.equal(launder.details.kind, AUDIT_ESCALATION_KIND);
+  assert.equal((launder.details.receipt as { kind?: unknown }).kind, "not-escalation");
 });
 
 test("no-receipt uses its own projection leg instead of collapsing into pass", async () => {
@@ -266,4 +231,107 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
   assert.equal(result.auditNoReceipt.deliveryTurns, 2);
   assert.equal(result.auditNoReceipt.rejectedReceipts[0]?.reason, "未观察到 commit");
   assert.equal(result.auditNoReceipt.attemptPointer, "attempt-1");
+});
+
+test("runComplianceAudit keeps host failure beside recorded auditor payloads", async () => {
+  const bounce = { status: "bounce", violations: ["keep-me"] };
+  const decision = await runComplianceAudit({
+    subject: "doctor",
+    context: { cwd: process.cwd() } as never,
+    runDirectory: "/tmp/parent-run",
+    summonAuditor: async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "auditor",
+          cause: "output",
+          diagnostic: "This operation was aborted",
+          decisiveFacts: { cause: "output" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "auditor-run",
+        submissions: [bounce],
+      },
+    }),
+  });
+  assert.equal(decision.status, "transport_failure");
+  if (decision.status === "transport_failure") {
+    assert.match(decision.diagnostic, /This operation was aborted/);
+    assert.deepEqual(decision.submissions, [bounce]);
+  }
+  await assert.rejects(
+    disposeComplianceDecision(decision, {
+      pass: () => { throw new Error("pass"); },
+      bounce: () => { throw new Error("bounce"); },
+      escalate: () => { throw new Error("escalate"); },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "transport_failure");
+      if (error.result.status === "transport_failure") {
+        assert.match(error.result.reason, /This operation was aborted/);
+        assert.deepEqual(error.result.submission, [bounce]);
+      }
+      return true;
+    },
+  );
+});
+
+test("#836 auditor non-three-state then pass converges; both original rows kept", async () => {
+  let summons = 0;
+  const decision = await runComplianceAudit({
+    subject: "doctor",
+    context: { cwd: process.cwd() } as never,
+    runDirectory: "/tmp/parent-run",
+    summonAuditor: async (_subject, _dir, _signal, reask) => {
+      summons += 1;
+      if (summons === 1) {
+        assert.equal(reask, undefined);
+        return {
+          exitCode: 0,
+          terminal: {
+            roleOutcome: {
+              kind: "accepted",
+              role: "auditor",
+              status: "other",
+              decisiveFacts: { status: "other" },
+            },
+            navigator: { disposition: "no-advice" },
+            artifacts: [],
+            runId: "auditor-run",
+            submissions: [{ status: "other", note: "first" }],
+          },
+        };
+      }
+      assert.equal(typeof reask, "string");
+      return {
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "auditor",
+            status: "pass",
+            decisiveFacts: { status: "pass" },
+          },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "auditor-run",
+          submissions: [
+            { status: "other", note: "first" },
+            { status: "pass" },
+          ],
+        },
+      };
+    },
+  });
+  assert.equal(summons, 2);
+  assert.equal(decision.status, "pass");
+  if (decision.status === "pass") {
+    assert.deepEqual(decision.receipt, [
+      { status: "other", note: "first" },
+      { status: "pass" },
+    ]);
+  }
 });

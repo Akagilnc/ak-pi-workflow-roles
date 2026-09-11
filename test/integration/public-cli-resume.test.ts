@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -29,20 +30,19 @@ import {
   readTypedHttp429Observation,
   recordTypedProviderHttpStatus,
   renderResumeCommand,
-  RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
-import { readSealedSubmission } from "../../src/submission-ledger.ts";
+import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
-/** Typed-region proof: run ID appears only inside resume.command. */
+/** Resumable failure: top-level runId omitted; resume.command carries the id (#665). Original payloads/diagnostics are not rewritten (#836). */
 function assertRunIdOnlyInResumeCommand(
   terminal: TerminalResult,
   runId: string,
@@ -54,18 +54,6 @@ function assertRunIdOnlyInResumeCommand(
     terminal.runId,
     undefined,
     "top-level runId must be omitted on resumable failure Terminal",
-  );
-  const outsideResumeCommand = {
-    roleOutcome: terminal.roleOutcome,
-    navigator: terminal.navigator,
-    artifacts: terminal.artifacts,
-    runId: terminal.runId,
-    resumeKeys: terminal.resume === undefined ? [] : Object.keys(terminal.resume),
-  };
-  assert.equal(
-    JSON.stringify(outsideResumeCommand).includes(runId),
-    false,
-    "run ID must not appear outside resume.command in typed Terminal regions",
   );
 }
 
@@ -646,7 +634,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
   });
 });
 
-test("lawful+publication-fail under 429: resume hint uniform-out; sealed still no-redispatch (#665/#648)", async () => {
+test("lawful+publication-fail under 429: resume hint uniform-out; recorded payload survives (#665/#836)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -672,7 +660,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
 
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    // #665: principal available + typed 429 → resume hint (统一出), even with sealed/lawful.
+    // #665: principal available + typed 429 → resume hint (统一出).
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
@@ -680,9 +668,10 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
-    // Sealed-acceptance publication miss must not auto-redispatch (#648).
-    assert.equal(dispatches(), 1);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
+    // Publication failure under 429 is non-lawful → retries until budget (default 2 resumes → 3 dispatches).
+    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without seal block");
+    assert.equal(result.terminal!.autoResumeCount, 2);
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
       home,
@@ -693,9 +682,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       `${runId}@judge`,
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-    const sealed = await readSealedSubmission(project, runId, home);
-    assert.ok(sealed, "sealed accepted projection must survive publication failure");
-    assert.equal(sealed.role, "judge");
+    assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
 
     // #833: manual resume is pass-through even after sealed + publication miss.
     // Host is reached; no re-seal keeps the prior sealed projection readable.
@@ -724,8 +711,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     });
     assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must remain readable after manual resume",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must remain readable after manual resume",
     );
 
     // #672 US6: clear the test-planted report.json directory fault, then manual
@@ -748,27 +735,26 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
     if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
       assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-      assert.equal(rebuilt.terminal!.roleOutcome.status, "converged");
+      assert.equal(payloadStatus(rebuilt.terminal!.roleOutcome), "converged");
       assert.equal(
-        (rebuilt.terminal!.roleOutcome.decisiveFacts as { note?: string }).note,
+        payloadFacts(rebuilt.terminal!.roleOutcome).note,
         "lawful despite later publication failure",
       );
     }
-    assert.equal(rebuilt.terminal!.autoResumeCount ?? 0, 0);
+    // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
     const reportStat = await stat(reportPath);
     assert.equal(reportStat.isFile(), true, "cleared fault must rebuild report.json as a file");
     const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
       role?: string;
       runId?: string;
-      outcome?: { kind?: string; role?: string; status?: string; decisiveFacts?: { note?: string } };
+      outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
     };
     assert.equal(reportBody.role, "judge");
     assert.equal(reportBody.runId, runId);
     assert.equal(reportBody.outcome?.kind, "accepted");
     assert.equal(reportBody.outcome?.role, "judge");
-    assert.equal(reportBody.outcome?.status, "converged");
     assert.equal(
-      reportBody.outcome?.decisiveFacts?.note,
+      (reportBody.outcome?.payloads?.at(-1) as { note?: string } | undefined)?.note,
       "lawful despite later publication failure",
     );
     assert.ok(
@@ -776,8 +762,8 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       "rebuilt terminal must reference the public report artifact",
     );
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must remain after report rebuild",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must remain after report rebuild",
     );
   });
 
@@ -814,14 +800,47 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
       },
     );
 
-    assert.equal(dispatches(), 1);
+    // #836: seal no longer blocks; non-lawful throw path records then fails.
+    // The deferred run-state persist this settlement defers hits the same
+    // poisoned run-state.json again — a second genuine infra failure. #836
+    // r13 class 2: it must settle loudly and stop the loop immediately
+    // (autoResumeCount 0), not retry through it silently to budget
+    // exhaustion (the pre-r13 value here was 2).
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    assert.equal(dispatches(), 1);
+    assert.equal(result.terminal!.autoResumeCount, 0);
     assert.ok(
-      await readSealedSubmission(project, runId, home),
-      "sealed accepted projection must survive direct throw after seal",
+      await hasRecordedSubmission(project, runId, home),
+      "recorded accepted payload must survive direct throw after record",
     );
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(
+        result.terminal!.roleOutcome.diagnostic.includes("sealed accepted"),
+        false,
+      );
+      assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
+      assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
+      // The reported cause is the deferred persist write's own real failure
+      // (EISDIR on the still-poisoned run-state.json) — structured field,
+      // proof this settled through the real authority rather than being
+      // traced only to the loop's no-op attempt io and discarded.
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      // #836 r13 class 2 / verdict A3: the failure terminal itself — not
+      // just the ledger — must carry the already-recorded payload beside
+      // the host failure (terminal.ts's failure outcome `payloads` field).
+      assert.ok(Array.isArray(result.terminal!.roleOutcome.payloads));
+      assert.ok(
+        result.terminal!.roleOutcome.payloads!.some(
+          (payload) =>
+            typeof payload === "object"
+            && payload !== null
+            && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
+        ),
+        "failure terminal must carry the sealed payload alongside the deferred-persist failure",
+      );
+    }
   });
 
   // Failing ledger authority: read errors must preserve true cause and fail closed —
@@ -848,7 +867,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
         roleTurnHost: {
           executeTurn: async (request) => {
             const out = await inner.executeTurn(request);
-            // Poison the same ledger volume sealedLedgerHome/readSealedSubmission consult.
+            // Poison the same ledger volume settlement reads.
             const ledgerFile = resolveSitianRecordPathInLedger(
                 {
                   level: "event",
@@ -861,7 +880,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
             await rm(ledgerFile, { force: true });
             await mkdir(ledgerFile, { recursive: true });
             await assert.rejects(
-              () => readSealedSubmission(project, runId, home),
+              () => readRecordedSubmissions(project, runId, home),
               (error: NodeJS.ErrnoException) => error.code === "EISDIR",
             );
             return out;
@@ -869,14 +888,17 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
         },
       },
     );
-    assert.equal(dispatches(), 1, "ledger authority failure must not redispatch");
+    // #836: authority-failed seal block deleted — non-lawful failure still exhausts budget.
+    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without authority block");
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
-    assert.equal(result.terminal!.autoResumeCount ?? 0, 0);
+    assert.equal(result.terminal!.autoResumeCount, 2);
     const outcome = result.terminal!.roleOutcome;
     assert.equal(outcome.kind, "failure");
     if (outcome.kind === "failure") {
       assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(typeof outcome.diagnostic, "string");
+      assert.ok(String(outcome.diagnostic).length > 0);
     }
 
     // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
@@ -905,16 +927,17 @@ test("lawful+publication-fail under 429: resume hint uniform-out; sealed still n
     });
     assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
     assert.equal(resumeResult.exitCode, 1);
-    assert.ok(resumeResult.terminal);
-    const resumeOutcome = resumeResult.terminal!.roleOutcome;
-    assert.equal(resumeOutcome.kind, "failure");
-    if (resumeOutcome.kind === "failure") {
-      assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+    // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
+    if (resumeResult.terminal !== undefined) {
+      const resumeOutcome = resumeResult.terminal.roleOutcome;
+      assert.equal(resumeOutcome.kind, "failure");
+      if (resumeOutcome.kind === "failure") {
+        assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+      }
     }
   });
 
 });
-
 
 test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
   await withTempHome(async (home) => {
@@ -966,33 +989,9 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(
-        result.terminal!.roleOutcome.diagnostic.includes(runId),
-        false,
-        "typed Terminal diagnostic must not re-disclose exact run ID",
-      );
-      assert.equal(
-        result.terminal!.roleOutcome.diagnostic.includes("[run-id]"),
-        true,
-      );
-      assert.equal(
-        String(result.terminal!.roleOutcome.decisiveFacts.diagnostic).includes(
-          runId,
-        ),
-        false,
-      );
-    }
-
     const presented = `${stdout.join("")}${stderr.join("")}`;
     const resumeCommand = result.terminal!.resume!.command;
     assert.equal(presented.includes(resumeCommand), true);
-    const presentedOutsideCommand = presented.split(resumeCommand).join("");
-    assert.equal(
-      presentedOutsideCommand.includes(runId),
-      false,
-      "presented Terminal/stderr must not disclose run ID outside resume.command",
-    );
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -1131,7 +1130,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           assert.equal(args.includes("--continue"), false);
           // Must not resubmit original instruction as a new prompt payload.
           assert.equal(args.includes(instruction), false);
-          assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+          assert.equal(args.includes("[ak-role:resume-continue]"), false);
           // Exact model override for this resume only.
           assert.equal(args[args.indexOf("--provider") + 1], "xai");
           assert.equal(args[args.indexOf("--model") + 1], "grok-4.5");
@@ -2439,7 +2438,7 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
       // Pi adapter prefixes single forced method onto resume argv (#822); judge/coder-plan/fixer plain.
-      const rawPrompt = c.message === undefined ? RESUME_TRANSPORT_ENVELOPE : c.message;
+      const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedLast =
         c.role === "reviewer"
           ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)

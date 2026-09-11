@@ -14,9 +14,16 @@ export const mergerInputSchema = Type.Object({
   resolutionScope: Type.Array(Type.String(), { description: "材料：解析范围提示；可空" }),
   authorizedChecks: Type.Array(checkSchema),
 }, { additionalProperties: false });
+// #836 r16 class 1: attemptId/report/diagnosis are LLM/human-read narrative
+// content (candidate stored as submitted) — no code branches on their length.
+// mergerInputSchema (host-authored material, not role output) is out of scope.
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across both variants
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
+const MERGER_STATUS_DESCRIPTION = "completed | escalate — 形状指引，非 schema 闸" as const;
 const mergerOutputVariants = Type.Union([
-  Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), report: Type.String({ minLength: 1, description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("escalate", { description: "escalate — 形状指引，非 schema 闸" }), attemptId: Type.String({ minLength: 1, description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ minLength: 1, description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ minLength: 1, description: "如实结果报告" }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
+  Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),
 ]);
 export const mergerOutputSchema = withInfrastructureFailureDeclaration(openToolObjectFromUnion(mergerOutputVariants));
 
@@ -54,8 +61,5 @@ export function validateMergerInput(value: unknown): MergerInput {
 }
 
 export function validateMergerOutput(value: unknown): MergerOutput {
-  if (!record(value)) throw new Error("合并回执无已识别的执行判别");
-  const status = typeof value.status === "string" ? value.status : undefined;
-  if (status === "completed" || status === "escalate") return structuredClone(value) as MergerOutput;
-  throw new Error("合并回执无已识别的执行判别");
+  return value as MergerOutput;
 }

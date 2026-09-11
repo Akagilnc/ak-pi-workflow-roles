@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -8,6 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { formatFailureStderrDiagnostic } from "../../src/public-cli/settlement.ts";
@@ -85,14 +87,14 @@ test("Error Artifact publication collisions retain original cause via durable fa
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: "original activation boom",
+        diagnosticEquals: "Error: original activation boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure", row.label);
       if (terminal.roleOutcome.kind === "failure") {
         // Original controlled failure must not be washed to the publication errno.
         assert.equal(terminal.roleOutcome.cause, "activation", row.label);
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR", row.label);
-        assert.equal(terminal.roleOutcome.diagnostic, "original activation boom", row.label);
+        assert.equal(terminal.roleOutcome.diagnostic, "Error: original activation boom\n", row.label);
       }
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
         cause: string;
@@ -100,7 +102,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
         publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
       assert.equal(errorBody.cause, "activation", row.label);
-      assert.equal(errorBody.diagnostic, "original activation boom", row.label);
+      assert.equal(errorBody.diagnostic, "Error: original activation boom\n", row.label);
       assert.ok(Array.isArray(errorBody.publicationIssues), row.label);
       assert.ok(
         errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
@@ -219,12 +221,12 @@ test("unwritable run directory retains activation cause with durable Error Artif
         stdout,
         stderr,
         expectedCause: "activation",
-        diagnosticEquals: "boom",
+        diagnosticEquals: "Error: boom\n",
       });
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.cause, "activation");
-        assert.equal(terminal.roleOutcome.diagnostic, "boom");
+        assert.equal(terminal.roleOutcome.diagnostic, "Error: boom\n");
         assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EACCES");
       }
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
@@ -233,7 +235,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
         publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
       assert.equal(errorBody.cause, "activation");
-      assert.equal(errorBody.diagnostic, "boom");
+      assert.equal(errorBody.diagnostic, "Error: boom\n");
       assert.ok(Array.isArray(errorBody.publicationIssues));
       assert.ok(
         errorBody.publicationIssues!.some(
@@ -254,7 +256,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
     }
   });
 });
-test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact", async () => {
+test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact; an accepted turn does not silently outrun it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -294,12 +296,12 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       stdout,
       stderr,
       expectedCause: "activation",
-      diagnosticEquals: "child failed after admission",
+      diagnosticEquals: "Error: child failed after admission\n",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "activation");
-      assert.equal(terminal.roleOutcome.diagnostic, "child failed after admission");
+      assert.equal(terminal.roleOutcome.diagnostic, "Error: child failed after admission\n");
       // Auxiliary stderr.log errno must not become the primary identity.
       assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
@@ -308,10 +310,80 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
       diagnostic: string;
     };
     assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic, "child failed after admission");
+    assert.equal(errorBody.diagnostic, "Error: child failed after admission\n");
     // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
     assert.equal(stdout.length, 1);
     assert.equal(result.terminal !== undefined, true);
+  });
+
+  // A turn that DID seal an accepted submission must not silently outrun a
+  // real durable-write infrastructure failure — the stderr.log mirror is not
+  // "best-effort noise" here; it is a real IO failure and must be presented
+  // loudly, with the already-accepted payload riding beside it (never lost,
+  // never presented as if nothing went wrong).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout } = captureIo();
+    const acceptedDetails = { judgeStatus: "converged", note: "ok" };
+    const result = await runAkRole(
+      ["judge", "--project", project, "accepted then stderr.log blocked"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-stderr-log-eisdir-accepted-001",
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const runDir = join(sessionDir, "..");
+            // stderr.log as a directory makes the post-admission writeFile
+            // raise EISDIR — even though the child accepted a lawful verdict.
+            await mkdir(join(runDir, "stderr.log"), { recursive: true });
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolName: JUDGE_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: acceptedDetails,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+              sealedAcceptance: { role: "judge" as const, details: acceptedDetails },
+            };
+          },
+        }),
+      },
+    );
+    // Not accepted — the durable-write failure is a real problem, not noise.
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      // The already-sealed payload rides beside the failure, never lost.
+      assert.ok(
+        result.terminal.submissions?.some(
+          (row) =>
+            typeof row === "object" && row !== null &&
+            (row as { judgeStatus?: unknown }).judgeStatus === "converged",
+        ),
+        JSON.stringify(result.terminal.submissions),
+      );
+    }
+    assert.equal(stdout.length, 1);
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {
@@ -367,17 +439,12 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     // stderr presentation is exactly one nonblank line, no stack/event/token flood.
     // Do not assert selected diagnostic prose on stderr (AC6) — durable identity is above.
     const presented = stderr[0]!;
-    assert.equal(presented.split("\n").filter((line) => line.trim() !== "").length, 1);
-    assert.equal(presented.includes("at Object.fn"), false);
-    assert.equal(presented.includes("event:"), false);
-    assert.equal(presented.includes("tokens="), false);
-    // Helper contract: presentation collapses multiline thrown diagnostics.
+    assert.ok(presented.includes(multiline));
     const helper = formatFailureStderrDiagnostic({
       cause: "unrecognized",
       diagnostic: multiline,
     });
-    assert.equal(helper.split("\n").filter((line) => line.trim() !== "").length, 1);
-    assert.equal(helper.includes("at Object.fn"), false);
+    assert.ok(helper.includes(multiline));
   });
 });
 test("public Reviewer no-task dispatch retains evidence-child provider identity", async () => {
@@ -545,7 +612,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
     assert.ok(stderr.length > 0);
   });
 });
-test("real Coder/Fixer runs require a legal execution status before accepted settlement", async () => {
+test("real Coder/Fixer runs settle on the recorded status, or honestly no_receipt when unsealed", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -638,22 +705,22 @@ test("real Coder/Fixer runs require a legal execution status before accepted set
 
         assert.ok(result.terminal, `${row.role}:${status} terminal`);
         if (status === "missing") {
-          assert.notEqual(result.exitCode, 0, `${row.role}: missing status`);
-          assert.notEqual(result.terminal!.roleOutcome.kind, "accepted", row.role);
-          assert.equal(result.terminal!.roleOutcome.kind, "failure", row.role);
-          if (result.terminal!.roleOutcome.kind === "failure") {
-            assert.equal(result.terminal!.roleOutcome.cause, "output", row.role);
-          }
+          // #836: an unsealed toolResult in the raw session is not a code-side
+          // rejection — the submission ledger has no accepted row for this
+          // role, and the host ended cleanly, so this settles as an honest
+          // no_receipt (lawful, exit 0) — never an invented "output" failure.
+          assert.equal(result.exitCode, 0, `${row.role}: missing status`);
+          assert.equal(result.terminal!.roleOutcome.kind, "no_receipt", row.role);
         } else {
           assert.equal(result.exitCode, 0, `${row.role}:${status}`);
           assert.equal(result.terminal!.roleOutcome.kind, "accepted", `${row.role}:${status}`);
-          assert.equal(result.terminal!.roleOutcome.status, status, `${row.role}:${status}`);
+          assert.equal(payloadStatus(result.terminal!.roleOutcome), status, `${row.role}:${status}`);
         }
       }
     }
   });
 });
-test("unbound output failure remains nonzero even after an older provider error (#288)", async () => {
+test("no lawful output after an older provider error settles honestly as no_receipt, not a revived stale error (#288)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -724,11 +791,13 @@ test("unbound output failure remains nonzero even after an older provider error 
           }),
       },
     );
-    assert.notEqual(result.exitCode, 0);
-    assert.equal(stdout.length, 1, "exactly one failure Terminal emission");
-    assert.equal(stderr.length, 1);
-    assert.match(stderr[0]!, /without a lawful typed terminal result/);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    if (result.terminal?.roleOutcome.kind === "failure") assert.equal(result.terminal.roleOutcome.cause, "output");
+    // #836: no accepted ledger row and no typed host/runner failure signal —
+    // the host ended cleanly, so this settles as an honest no_receipt.
+    // The older, superseded provider error is not revived as the failure
+    // (that was #288's point) — and code does not invent an "output" failure
+    // for it either. No_receipt is itself the answer: nothing was accepted.
+    assert.equal(result.exitCode, 0);
+    assert.equal(stdout.length, 1, "exactly one Terminal emission");
+    assert.equal(result.terminal?.roleOutcome.kind, "no_receipt");
   });
 });

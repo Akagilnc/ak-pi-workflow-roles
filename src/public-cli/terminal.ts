@@ -44,18 +44,6 @@ export type TerminalRoleName =
   | "auditor"
   | "diarist";
 
-/** Merger/Collector residual only — Notary/audit residual abolished (#475). */
-export type ResidualIncompleteTerminalOutcome = {
-  kind: "incomplete";
-  role: "merger" | "collector";
-  status: "incomplete";
-  decision: "no-usable-result";
-  candidate: unknown;
-  diagnostic: string;
-  acceptedReceipt: false;
-  decisiveFacts: Readonly<Record<string, unknown>>;
-};
-
 export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";
   role: TerminalRoleName;
@@ -67,17 +55,20 @@ export type TerminalRoleOutcome =
   | {
       kind: "accepted";
       role: TerminalRoleName;
-      status: string;
-      /** Few decisive facts drawn from the typed receipt. */
-      decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Original role payloads in ledger order — this is the role-result block (#836 / ADR 0052). */
+      payloads?: readonly unknown[];
+      /** Fixture/compat leaf only — settlement does not write a selected status. */
+      status?: string;
+      decisiveFacts?: Readonly<Record<string, unknown>>;
     }
   | {
       kind: "audit_escalation";
       role: TerminalRoleName;
       status: "audit_escalation";
-      decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Original role payloads in ledger order (#836). */
+      payloads?: readonly unknown[];
+      decisiveFacts?: Readonly<Record<string, unknown>>;
     }
-  | ResidualIncompleteTerminalOutcome
   | NoReceiptTerminalOutcome
   | {
       kind: "failure";
@@ -87,6 +78,8 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Already-recorded original payloads, coexist with host failure (#836 A3). */
+      payloads?: readonly unknown[];
     };
 
 /** Lawful typed terminal results exit zero (including audit_escalation). */
@@ -100,28 +93,6 @@ export function exitCodeForTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): number {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
-}
-
-export function buildResidualIncompleteTerminalOutcome(input: {
-  role: "merger" | "collector";
-  candidate: unknown;
-  diagnostic: string;
-}): ResidualIncompleteTerminalOutcome {
-  return {
-    kind: "incomplete",
-    role: input.role,
-    status: "incomplete",
-    decision: "no-usable-result",
-    candidate: input.candidate,
-    diagnostic: input.diagnostic,
-    acceptedReceipt: false,
-    decisiveFacts: {
-      decision: "no-usable-result",
-      candidate: input.candidate,
-      diagnostic: input.diagnostic,
-      acceptedReceipt: false,
-    },
-  };
 }
 
 export type TerminalNavigatorFact =
@@ -168,7 +139,7 @@ export type TerminalGateDispatch =
 export type TerminalGateOfficerReport = {
   readonly seat: "inspector" | "notary";
   readonly status: string;
-  readonly findings: readonly string[];
+  readonly findings: readonly unknown[];
 };
 
 /** One direct or historical paired gate round on the public Terminal. */
@@ -189,19 +160,6 @@ export type TerminalGateFact = {
   readonly rounds: readonly TerminalGateRound[];
 };
 
-/** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
-export const REDACTED_RUN_ID_TOKEN = "[run-id]" as const;
-
-/**
- * Remove an exact Role run ID from untrusted free text at the public Terminal boundary.
- * Private durable artifacts keep the original bytes; only resume.command may disclose it.
- */
-export function redactExactRunId(text: string, runId: string): string {
-  if (runId.length === 0) return text;
-  if (!text.includes(runId)) return text;
-  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
-}
-
 /**
  * One admitted Role run's typed Terminal aggregate.
  * Resumable failures carry `resume` and must not re-disclose the run ID via
@@ -210,10 +168,35 @@ export function redactExactRunId(text: string, runId: string): string {
  * auto-resumes occurred during this single LLM call; it is not persisted to
  * run-state.json and does not participate in limit decisions.
  */
+/** Original payloads on a terminal — role result for accepted/audit; coexist on failure. */
+export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unknown[] {
+  if (outcome.kind === "accepted" || outcome.kind === "audit_escalation") return outcome.payloads ?? [];
+  if (outcome.kind === "failure") return outcome.payloads ?? [];
+  return [];
+}
+
+/** Last object payload the role actually wrote. No field remapping. */
+export function lastRolePayloadRecord(
+  payloads: readonly unknown[],
+): Record<string, unknown> | undefined {
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const payload = payloads[index];
+    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+      return payload as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
+  /**
+   * Mirror of recorded original payloads (same bytes as roleOutcome.payloads).
+   * Kept so officer/compliance readers share one array with the role-result block.
+   */
+  submissions?: readonly unknown[];
   /**
    * Optional gate facts (#478). Present when accepted direct or historical
    * paired rounds exist under session/auditor-roles; omitted on no-gate runs.
@@ -234,26 +217,22 @@ export type TerminalResult = {
 );
 
 /**
- * Build a recommendation navigator fact. Command is always registry-rendered;
- * any model-authored command string is ignored.
+ * Build a recommendation navigator fact. Model command is kept when present;
+ * registry render is fallback only. Unknown seats stay recommendations (#836 B4.1).
  */
 export function recommendationNavigatorFact(input: {
   next: { role: string; phase: NavigatorPhase };
   reason: string;
   route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
   advisoryDiagnostic?: string;
-  /** Ignored — retained only so callers can pass through raw attendance without using it. */
   modelCommand?: string;
 }): TerminalNavigatorFact {
-  void input.modelCommand;
-  if (!isPublicCallableRole(input.next.role)) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: `recommended role is not a public callable seat: ${input.next.role}`,
-    };
-  }
-  const command = renderPublicAkRoleCommand(input.next);
+  const command =
+    typeof input.modelCommand === "string" && input.modelCommand.trim() !== ""
+      ? input.modelCommand
+      : isPublicCallableRole(input.next.role)
+        ? renderPublicAkRoleCommand(input.next)
+        : undefined;
   return {
     disposition: "recommendation",
     next: input.next,
@@ -275,7 +254,9 @@ export function formatTerminalResult(result: TerminalResult): string {
   const outcomeStatus =
     result.roleOutcome.kind === "failure"
       ? result.roleOutcome.cause
-      : result.roleOutcome.status;
+      : result.roleOutcome.kind === "accepted"
+        ? "accepted"
+        : result.roleOutcome.status;
   lines.push(
     `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${encodeTerminalField(outcomeStatus)}`,
   );
@@ -284,12 +265,14 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
-  const facts = result.roleOutcome.decisiveFacts;
-  for (const [key, value] of Object.entries(facts)) {
-    if (value === undefined) continue;
-    const rendered =
-      typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
+  if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt") {
+    const facts = result.roleOutcome.decisiveFacts;
+    for (const [key, value] of Object.entries(facts)) {
+      if (value === undefined) continue;
+      const rendered =
+        typeof value === "string" ? value : JSON.stringify(value);
+      lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
+    }
   }
   lines.push(`navigator\t${result.navigator.disposition}`);
   if (result.navigator.advisoryDiagnostic !== undefined) {
@@ -336,6 +319,17 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
+  }
+  // Role-result block: original payloads in ledger order (#836 / ADR 0052).
+  const payloads =
+    result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation"
+      ? result.roleOutcome.payloads ?? result.submissions ?? []
+      : result.roleOutcome.kind === "failure"
+        ? result.roleOutcome.payloads ?? result.submissions ?? []
+        : result.submissions ?? [];
+  for (const payload of payloads) {
+    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
+    lines.push(`submission\t${encodeTerminalField(rendered)}`);
   }
   return `${lines.join("\n")}\n`;
 }

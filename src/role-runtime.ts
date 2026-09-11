@@ -7,7 +7,7 @@ import {
   type RoleEnvelopeHost,
   type RoleHost,
 } from "./host-contracts.ts";
-import { recordReviewerDispatchRejectionSync } from "./public-cli/reviewer-dispatch-rejection.ts";
+
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
@@ -97,7 +97,7 @@ import {
 import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -117,11 +117,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerExecution, ReviewerIssueFetcher, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-import {
-  type ReviewerSpecDisposition,
-} from "./reviewer-construction.ts";
+import type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -247,24 +243,13 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
 function assembleReviewerParentSystemPrompt(input: {
   baseSystemPrompt: string;
   soul: string;
-  specDisposition?: ReviewerSpecDisposition;
 }): string {
-  const specDispositionNote =
-    input.specDisposition === "skipped-missing"
-      ? [
-          "",
-          "<reviewer_spec_disposition>",
-          "权威 Spec 不存在；未启动 Spec 取证腿。",
-          "</reviewer_spec_disposition>",
-        ]
-      : [];
   return [
     input.baseSystemPrompt,
     "",
     "<reviewer_soul>",
     input.soul,
     "</reviewer_soul>",
-    ...specDispositionNote,
   ].join("\n");
 }
 import {
@@ -391,7 +376,7 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
-export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
+export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
@@ -415,15 +400,8 @@ export {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
-export type {
-  ReviewerExecutionRecord,
-  ReviewerTargetSnapshot,
-  ReviewerUsage,
-  ReviewerWorkspaceDisposition,
-} from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
-export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-export type { CollectorReceipt } from "./collector-receipt.ts";
+export type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
@@ -479,31 +457,10 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
     case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
-    case "reviewer": return { id: "load-install-and-dispatch", run: async () => {
-      // Envelope owns flag decode inside the activation stage (trace + fail-closed path).
+    case "reviewer": return { id: "load-and-install", run: async () => {
       const admitted = runtime.decodeReviewerAdmitted();
       const activation = await runtime.reviewer.activate(runtime.context, admitted);
       runtime.bindReviewerParent(activation);
-      const result = await activation.dispatcher.dispatch(activation.fixedBaseRevision, { context: runtime.context });
-      if (result.status !== "accepted") {
-        const rejection = new ExplicitInternalActivationError(
-          `Fixed Reviewer dispatch was not accepted: ${result.status}: ${result.diagnostic}`,
-          {
-            knownCause: "activation",
-            name: "ReviewerDispatchRejectionError",
-          },
-        );
-        // Pi stderr cannot carry the structured violations. Do not mask a durable
-        // write failure: its infrastructure cause is truer than the unwritten page.
-        const runDir = process.env.AK_ROLE_RUN_DIR;
-        if (typeof runDir === "string" && runDir.trim() !== "") {
-          recordReviewerDispatchRejectionSync(runDir, {
-            diagnostic: rejection.message,
-            violations: result.violations,
-          });
-        }
-        throw rejection;
-      }
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
@@ -616,8 +573,6 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
-  /** Shared-seam issue-fetch capability for Reviewer Spec self-fetch (#343). */
-  createReviewerIssueFetcher?(): ReviewerIssueFetcher;
   loadCollectorSoul?(): Promise<string>;
   /** #677: optional packaged seed for first-use general bot handbook. */
   loadCollectorHandbookSeed?(): Promise<string>;
@@ -642,16 +597,6 @@ export type RoleRuntimeDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
-  runReviewerDispatch?(
-    dispatch: AcceptedReviewerExecution,
-    options: {
-      context: HostContext;
-      signal?: AbortSignal;
-      /** Request-scoped RoleHost flag reader for engine axis (#818). */
-      getFlag?: (name: string) => boolean | string | undefined;
-    },
-  ): Promise<ReviewerDispatchRunResult>;
-  shutdownReviewerAgent?(): Promise<void>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -728,7 +673,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
 }
 
 export async function projectClosedSubmissionLifecycle(
-  projection: import("./submission-ledger.ts").ClosedSubmissionProjection,
+  closed: import("./submission-ledger.ts").ClosedSubmission,
   context: HostContext,
   phase: NavigatorPhase,
   recordAccepted: () => void,
@@ -736,12 +681,12 @@ export async function projectClosedSubmissionLifecycle(
 ): Promise<void> {
   recordAccepted();
   const closure = {
-    toolName: navigatorOutputTool(projection.role)!,
+    toolName: navigatorOutputTool(closed.role)!,
     isError: false,
-    details: projection.decisiveFacts,
+    details: closed.accepted,
   };
   context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-  await settle(publicNavigatorSettlement(projection.role, phase, closure));
+  await settle(publicNavigatorSettlement(closed.role, phase, closure));
 }
 
 /**
@@ -934,7 +879,7 @@ export function createAuditorRoleRuntime(
  */
 function readDiaristTicketAssertion(
   submitted: Record<string, unknown> | undefined,
-): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } {
+): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } | { kind: "invalid" } {
   if (submitted === undefined || !("ticketNumber" in submitted)) {
     return { kind: "true-unbound" };
   }
@@ -949,9 +894,7 @@ function readDiaristTicketAssertion(
       return { kind: "ticket", ticketNumber: n };
     }
   }
-  throw new Error(
-    "diarist ticketNumber must be a safe integer >= 1, null, or absent",
-  );
+  return { kind: "invalid" };
 }
 
 /** Run coordinates + optional pre-bound ticket from durable pages (#779). */
@@ -1010,61 +953,22 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
-
-        // LLM cannot identify the court target — escalate without machine facts.
-        // Strip sitian (锚定宪法) and ticketNumber (must not leak into
-        // caller-visible admitted typed key via decisiveFacts mirror).
-        if (submitted?.status === "escalate") {
-          if (!("sitian" in submitted) && !("ticketNumber" in submitted)) {
-            return submitted;
-          }
-          const stripped = { ...submitted };
-          delete stripped.sitian;
-          delete stripped.ticketNumber;
-          return stripped;
-        }
-
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates();
-
-        // Already bound before the turn (typed handoff / resume): skip re-recognition
-        // and commit under that identity (ADR 0075 已绑定 ticket 优先).
-        const ticketNumber =
-          coords.boundTicketNumber !== undefined
-            ? coords.boundTicketNumber
-            : assertion.kind === "ticket"
-              ? assertion.ticketNumber
-              : undefined;
-
-        // true-unbound → 无录 (no volume). Cannot-identify must arrive as
-        // status=escalate above — never as silent unbound.
-        if (ticketNumber === undefined) {
-          if (submitted === undefined || !("sitian" in submitted)) {
-            return { ...(submitted ?? { receipt: parameters }), ticketNumber: null };
+        // #836 7.3: pre-bound ticket is material for the LLM, not an override.
+        const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
+        if (ticketNumber !== undefined) {
+          if (coords.boundTicketNumber === undefined) {
+            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
-          const stripped: Record<string, unknown> = {
-            ...submitted,
-            ticketNumber: null,
-          };
-          delete stripped.sitian;
-          return stripped;
+          await commitDiaristEntries({
+            ticketNumber,
+            cwd: coords.projectRoot,
+            home: coords.home,
+            entries: projectDiaristEntries(parameters),
+          });
         }
-
-        if (coords.boundTicketNumber === undefined) {
-          await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
-        }
-
-        const facts = await commitDiaristEntries({
-          ticketNumber,
-          cwd: coords.projectRoot,
-          home: coords.home,
-          entries: projectDiaristEntries(parameters),
-        });
-        return {
-          ...(submitted ?? { receipt: parameters }),
-          ticketNumber,
-          sitian: facts,
-        };
+        return parameters;
       },
     },
     dependencies,
@@ -1136,14 +1040,14 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (envelopeHost: RoleEnvelopeHost) => void {
   return (envelopeHost) => {
-    let projectClosedSubmission: (projection: import("./submission-ledger.ts").ClosedSubmissionProjection, context: HostContext) => Promise<void> = async () => {
+    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
       envelopeHost.host,
       new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
-      async (projection, context) => projectClosedSubmission(projection, context),
+      async (closed, context) => projectClosedSubmission(closed, context),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1225,15 +1129,36 @@ export function createRoleRuntimeExtension(
           };
           pendingNavigatorPresentation = { event, report };
         }
-        await attendance.dispose();
+        // 过时不候: do not await sidecar teardown — parent court must close.
+        // Dispose failure is recorded, not washed; it must not re-block the court.
+        void Promise.resolve(attendance.dispose()).then(
+          undefined,
+          (error) => {
+            try {
+              sitianReport({
+                level: "event",
+                kind: "navigator-dispose-failure",
+                payload: {
+                  diagnostic: error instanceof Error ? error.message : String(error),
+                },
+                source: "role-runtime",
+              });
+            } catch (recordError) {
+              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+                diagnostic: error instanceof Error ? error.message : String(error),
+                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              });
+            }
+          },
+        );
       })();
       pendingNavigatorSettlement = pending;
       await pending;
     };
-    projectClosedSubmission = async (projection, context) => projectClosedSubmissionLifecycle(
-      projection,
+    projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
+      closed,
       context,
-      navigatorPhase(roleHost, projection.role),
+      navigatorPhase(roleHost, closed.role),
       () => receiptDelivery.recordAccepted(),
       settleNavigatorProjection,
     );
@@ -1278,6 +1203,10 @@ export function createRoleRuntimeExtension(
         // Soft session_start placeholders (no materials yet) recover here; hard
         // contextError from true loader failures stays poisoned and honest.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
+          // Navigator's own input bootstrap, not a rewrite of another role's
+          // output payload (#836 targets the latter): the human's own raw
+          // prompt bytes, copied verbatim into Navigator's work context when
+          // nothing else has supplied a subject yet.
           const subject = event.prompt.trim();
           if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
@@ -1300,53 +1229,23 @@ export function createRoleRuntimeExtension(
       // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
       if (role === "reviewer" && activeReviewerParent !== undefined) {
         if (!reviewerExpansionCaptured) {
-          if (
-            reviewerOriginalRequest === undefined
-            || activeReviewerParent.skillBinding.captureExpansion(
+          if (reviewerOriginalRequest !== undefined) {
+            activeReviewerParent.skillBinding.captureExpansion(
               roleHost.capabilities?.skillExpansion(event.prompt),
               reviewerOriginalRequest,
-            ) === undefined
-          ) {
-            failInfrastructure(
-              new Error("Canonical code-review Skill expansion did not match the captured request"),
-              ctx,
             );
           }
           reviewerExpansionCaptured = true;
         }
-        const specDisposition = activeReviewerParent.getSpecDisposition();
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
             soul: activeReviewerParent.soul,
-            ...(specDisposition === undefined ? {} : { specDisposition }),
           }),
         };
       }
       // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
       if (role === "collector" && activeCollector !== undefined) {
-        const options = event.systemPromptOptions;
-        if (options.skills && options.skills.length > 0) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 skills"),
-            ctx,
-          );
-        }
-        if (options.contextFiles && options.contextFiles.length > 0) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到系统提示中的环境 context files"),
-            ctx,
-          );
-        }
-        if (
-          typeof options.appendSystemPrompt === "string"
-          && options.appendSystemPrompt.trim().length > 0
-        ) {
-          failInfrastructure(
-            activeCollector.ledger.latchFatal("通进司检测到 appendSystemPrompt 漂移"),
-            ctx,
-          );
-        }
         if (!collectorFirstDispatchDone) {
           collectorFirstDispatchDone = true;
           activeCollector.ledger.recordActivation(activeCollector.clock);
@@ -1379,7 +1278,7 @@ export function createRoleRuntimeExtension(
         const reason = (event.content ?? [])
           .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
-          .trim() || "terminating tool rejected";
+          .trim();
         receiptDelivery.recordRejected(reason);
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
@@ -1391,7 +1290,7 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { details: infrastructureDetails, isError: true };
+        return { isError: true };
       }
       // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
@@ -1405,11 +1304,7 @@ export function createRoleRuntimeExtension(
       // a second file, grep, or nesting step. Receipt details stay contract-pure;
       // unavailable/no-advice leave the settlement untouched.
       if (event.isError) return;
-      const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
-      if (decorated === undefined) return;
-      return {
-        content: decorated.content as typeof event.content,
-      };
+      return;
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is
@@ -1419,9 +1314,10 @@ export function createRoleRuntimeExtension(
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
-        // Provider failure/abort has no tool_result event; classify it here so the
-        // receipt policy cannot turn infrastructure death into an exit-0 lifecycle.
-        receiptDelivery.stopForInfrastructure();
+        // Abort after an already-recorded receipt must not un-accept or催交.
+        if (receiptDelivery.nextAction() !== "accepted") {
+          receiptDelivery.stopForInfrastructure();
+        }
         return;
       }
       if (receiptDelivery.nextAction() === "request-delivery") {
@@ -1606,21 +1502,6 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
-        ...(dependencies.createReviewerIssueFetcher === undefined
-          ? {}
-          : { fetchIssue: dependencies.createReviewerIssueFetcher() }),
-        async runDispatch(dispatch, options) {
-          if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          // #818: request-scoped engine flag reaches axis sub-session via same RoleHost
-          // that parent registerEngineDetourTool reads — never ambient process.env.
-          return dependencies.runReviewerDispatch(dispatch, {
-            ...options,
-            getFlag: (name) => roleHost.getFlag(name),
-          });
-        },
-        ...(dependencies.shutdownReviewerAgent === undefined
-          ? {}
-          : { shutdownAgent: dependencies.shutdownReviewerAgent }),
       },
       hostActions,
     );
@@ -1765,23 +1646,6 @@ export function createRoleRuntimeExtension(
         if (event.reason === "fork" || event.reason === "reload") {
           throw new Error(
             `Collector does not support session_start reason ${event.reason}`,
-          );
-        }
-        // #676 J4: ambient skill/prompt/template commands fail closed at activation.
-        const commands = roleHost.getCommands?.() ?? [];
-        const ambientCommands = commands.filter((command) => {
-          const name = command.name.toLowerCase();
-          return (
-            name.includes("skill")
-            || name.includes("prompt")
-            || name.startsWith("template")
-          );
-        });
-        if (ambientCommands.length > 0) {
-          throw new Error(
-            `Collector detected ambient instruction commands: ${
-              ambientCommands.map((c) => c.name).join(", ")
-            }`,
           );
         }
         // Business tools behind admission barrier (inert-without-role invariant).

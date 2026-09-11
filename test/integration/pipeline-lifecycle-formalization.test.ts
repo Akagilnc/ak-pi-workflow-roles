@@ -1,19 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import type {
   RoleTurnHost,
   RoleTurnRequest,
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 /**
  * #517 §5(c) acceptance: the post-admission lifecycle is host-neutral. A faux
@@ -37,6 +39,27 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
         fauxHostCalled = true;
         receivedRequest = request;
+        // #836: settlement no longer invents an "output failure" artifact for
+        // an empty ledger (that would be a runtime-fabricated status) — a real
+        // artifact requires a real accepted submission on the ledger, so the
+        // faux host seals one through the same production submission-ledger
+        // producer any other substituted host would drive.
+        const runId = runIdFromRunDirectory(request.runDirectory);
+        if (runId === undefined) throw new Error("faux host requires an admitted run directory");
+        // Settlement reads the real session transcript to detect a lawful
+        // activation happened at all; the submission ledger (sealed below) is
+        // a separate sitian-backed record. A substituted host still owns both.
+        const sessionDir = join(request.runDirectory, "session");
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+        await sealAcceptedSubmission({
+          cwd: request.cwd,
+          runId,
+          runDirectory: request.runDirectory,
+          home: request.home,
+          role: "judge",
+          details: { judgeStatus: "converged", note: "faux host settled" },
+        });
         return {
           code: 0,
           stderr: "faux host stderr output",
@@ -92,11 +115,14 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     assert.ok(artifact, "settled terminal must publish at least one real artifact");
     const artifactBody = JSON.parse(
       await readFile(artifact.path, "utf8"),
-    ) as { role?: string; cause?: string; kind?: string };
+    ) as { role?: string; outcome?: { kind?: string; payloads?: readonly unknown[] } };
     assert.equal(artifactBody.role, "judge", "artifact must carry the judge role");
-    assert.ok(
-      typeof artifactBody.cause === "string" && artifactBody.cause.length > 0,
-      "artifact must carry a structured outcome (cause)",
+    assert.equal(artifactBody.outcome?.kind, "accepted", "artifact must carry the accepted outcome kind");
+    // #836: the published artifact carries the role's own original payload —
+    // not a runtime-invented status.
+    assert.equal(
+      (artifactBody.outcome?.payloads?.at(-1) as { judgeStatus?: string } | undefined)?.judgeStatus,
+      "converged",
     );
     });
 });

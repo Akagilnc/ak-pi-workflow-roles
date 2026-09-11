@@ -43,6 +43,7 @@ function bookDirectOfficerPointer(
     && result.status !== "bounce"
     && result.status !== "escalate"
     && result.status !== "needs_reask"
+    && result.status !== "transport_failure"
   ) {
     return;
   }
@@ -102,23 +103,17 @@ export async function requireGatekeeperPass(options: {
     }
     if (gatekeeper.status === "pass") return;
     if (gatekeeper.status === "needs_reask") {
-      // Resume the speaker with plain-language re-ask — never bounce the parent (#753).
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
     if (gatekeeper.status === "transport_failure") {
-      const error = new Error(`交卷闸 transport_failure（${gatekeeper.stage}）：${gatekeeper.reason}`) as Error & {
-        stage: typeof gatekeeper.stage;
-        reason: string;
-        submission?: unknown;
-      };
-      error.stage = gatekeeper.stage;
-      error.reason = gatekeeper.reason;
-      if (gatekeeper.submission !== undefined) error.submission = gatekeeper.submission;
-      options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
+      const failure = Object.assign(new Error(gatekeeper.reason), {
+        name: "GatekeeperTransportFailure",
+        ...(gatekeeper.submission === undefined ? {} : { submission: gatekeeper.submission }),
+      });
+      options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // bounce | escalate | no_receipt: raw receipt (or lifecycle fact) back to parent.
-    // escalate is NOT thrown as parent next-step — parent reads the officer words (#753).
+    // bounce | escalate | no_receipt: parent stands and may resubmit. Not a run abort.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

@@ -156,55 +156,17 @@ export type SameTicketSummonsMaterials = {
   readonly sourceRun?: NotarySourceRunLocator;
 };
 
-function resumeRereadInstruction(materialPath: string, handbook: boolean): string {
-  return handbook
-    ? `重新读 ${materialPath}，再组装外包 argv`
-    : `重新读 ${materialPath}`;
-}
-
-/**
- * Engine-axis resume-only material lines (#736 / ADR 0069·0071).
- * #755 withdrew this rewrite from 审核循环续话; review same-ticket resume stays
- * plain dialogue via resumeTurnRequestProjectionOptions. Outsourcing resume
- * still rewrites neutral handbook/path pointers into 重新读 instructions.
- * First-round delivery is unchanged; never pastes material body.
- */
-export function instructResumeHandbookRead(
-  prompt: string,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const handbookPath = engineMaterial?.materialPath;
-  return prompt
-    .split("\n")
-    .map((line) => {
-      if (!line.startsWith("- ")) return line;
-      const value = line.slice(2);
-      if (handbookPath !== undefined && value === handbookPath) {
-        return resumeRereadInstruction(handbookPath, true);
-      }
-      if (isAbsolute(value)) return resumeRereadInstruction(value, false);
-      return line;
-    })
-    .join("\n");
-}
-
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Not used for 审核循环 same-ticket summons (#755).
- * Message present → base bytes unchanged; absent → package transport envelope.
- * When engine material is present, append structured engine coordinates then
- * rewrite absolute material pointer lines into 重新读 instructions. Zero parse,
- * zero classify, zero narrow. Pointer only — never material body.
+ * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
+ * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const base = message !== undefined ? message : RESUME_TRANSPORT_ENVELOPE;
-  return instructResumeHandbookRead(
-    appendEngineSessionMaterial([base], engineMaterial).join("\n"),
-    engineMaterial,
-  );
+  const lines = message !== undefined ? [message] : [];
+  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**
@@ -365,8 +327,15 @@ async function readRoleRunStateDisk(
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only true absence (ENOENT) is a lawful "no run state yet". A real read
+    // failure (EISDIR, EACCES, ...) or a JSON.parse SyntaxError on a present
+    // file is genuine infrastructure/data damage and must keep its own
+    // identity — callers route it through the controlled-failure seam
+    // (markRunRunning/markRunResumable/markRunTerminal/recordCurrentCourt)
+    // instead of it being relabeled "run state missing" (#836).
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return undefined;

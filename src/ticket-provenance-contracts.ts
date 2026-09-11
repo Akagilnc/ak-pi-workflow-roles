@@ -12,12 +12,8 @@ export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
 /** Payload discriminator: diagnostic residue (not a diary body entry). */
 export const TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC = "diagnostic" as const;
 
-/** Source families the diarist may enumerate (v1). */
-export type TicketProvenanceSourceKind =
-  | "cc-session"
-  | "issue-body-comment"
-  | "adr-decision-key"
-  | "ticket-decree-block";
+/** Source family as the diarist wrote it (#836: no allowlist drop). */
+export type TicketProvenanceSourceKind = string;
 
 /**
  * How a block entered the volume.
@@ -87,15 +83,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const SOURCE_KINDS = new Set<string>([
-  "cc-session",
-  "issue-body-comment",
-  "adr-decision-key",
-  "ticket-decree-block",
-]);
-
-const BASIS_METHODS = new Set<string>(["llm-semantic"]);
-
 const DIAGNOSTIC_KINDS = new Set<string>([
   "collector-failed",
   "issue-source-failed",
@@ -144,54 +131,11 @@ export function projectTicketProvenanceEntry(
   value: unknown,
 ): TicketProvenanceEntry | undefined {
   if (!isRecord(value)) return undefined;
-  // Diagnostics are a separate projection — never body entries.
   if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
     return undefined;
   }
-  if (!isRecord(value.basis)) return undefined;
-  if (typeof value.basis.method !== "string" || !BASIS_METHODS.has(value.basis.method)) {
+  if (typeof value.sourceKind !== "string" || typeof value.transcript !== "string") {
     return undefined;
   }
-  if (typeof value.sourceKind !== "string" || !SOURCE_KINDS.has(value.sourceKind)) {
-    return undefined;
-  }
-  if (!isRecord(value.sourceRef)) return undefined;
-  if (typeof value.transcript !== "string" || value.transcript.length === 0) {
-    return undefined;
-  }
-  if (typeof value.timestamp !== "string" || value.timestamp.length === 0) {
-    return undefined;
-  }
-
-  const basis: TicketProvenanceBasis = {
-    method: value.basis.method as TicketProvenanceBasisMethod,
-    ...(Array.isArray(value.basis.anchors)
-      ? {
-          anchors: value.basis.anchors.filter(
-            (item): item is string => typeof item === "string",
-          ),
-        }
-      : {}),
-    ...(typeof value.basis.note === "string" ? { note: value.basis.note } : {}),
-  };
-
-  const sourceRef: TicketProvenanceSourceRef = {
-    ...(typeof value.sourceRef.sessionFile === "string"
-      ? { sessionFile: value.sourceRef.sessionFile }
-      : {}),
-    ...(typeof value.sourceRef.entryId === "string" ||
-    typeof value.sourceRef.entryId === "number"
-      ? { entryId: value.sourceRef.entryId }
-      : {}),
-    ...(typeof value.sourceRef.path === "string" ? { path: value.sourceRef.path } : {}),
-    ...(typeof value.sourceRef.url === "string" ? { url: value.sourceRef.url } : {}),
-  };
-
-  return {
-    basis,
-    sourceKind: value.sourceKind as TicketProvenanceSourceKind,
-    sourceRef,
-    transcript: value.transcript,
-    timestamp: value.timestamp,
-  };
+  return value as TicketProvenanceEntry;
 }

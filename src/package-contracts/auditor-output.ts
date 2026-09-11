@@ -42,30 +42,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** #836: no field drop — original object is the receipt. */
 export function projectLawfulAuditorOutput(value: unknown): AuditorOutput | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.status === "pass") return { status: "pass" };
-  if (value.status === "bounce") {
-    return {
-      status: "bounce",
-      ...(Object.hasOwn(value, "violations") ? { violations: value.violations } : {}),
-    };
-  }
-  if (value.status === "escalate") {
-    return {
-      status: "escalate",
-      ...(Object.hasOwn(value, "conflicts") ? { conflicts: value.conflicts } : {}),
-      ...(Object.hasOwn(value, "decisionGate") ? { decisionGate: value.decisionGate } : {}),
-    };
-  }
-  return undefined;
+  return isRecord(value) ? (value as AuditorOutput) : undefined;
 }
 
 export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
-  const projected = projectLawfulAuditorOutput(value);
-  if (projected === undefined) {
-    throw new Error("Auditor output has no recognized execution discriminator");
-  }
-  return projected;
+  if (!isRecord(value)) throw new Error("Auditor output is not an object");
+  return value as AuditorOutput;
 }
 

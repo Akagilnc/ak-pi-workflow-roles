@@ -4,6 +4,7 @@ import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
+import { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -80,24 +81,10 @@ export function buildAuditEscalationResult(
   if (Object.hasOwn(decision, "findings") && (decision as { findings?: unknown }).findings !== undefined) {
     auditOwned.findings = (decision as { findings?: unknown }).findings;
   }
-  const deliveredFields =
-    deliveredOutput !== undefined &&
-    deliveredOutput !== null &&
-    typeof deliveredOutput === "object" &&
-    !Array.isArray(deliveredOutput)
-      ? { ...(deliveredOutput as Record<string, unknown>) }
-      : {};
-  // Role output cannot fill an absent audit/officer-owned field.
-  delete deliveredFields.conflicts;
-  delete deliveredFields.auditDecisionGate;
-  if (Object.hasOwn(decision, "officer")) {
-    delete deliveredFields.reason;
-    delete deliveredFields.officer;
-    delete deliveredFields.findings;
-  }
   const result = {
-    ...deliveredFields,
-    ...auditOwned,
+    kind: AUDIT_ESCALATION_KIND,
+    ...(deliveredOutput !== undefined ? { receipt: deliveredOutput } : {}),
+    audit: auditOwned,
   } as AuditEscalationResult;
   AUDIT_ESCALATION_LIVE_REGISTRY.add(result);
   return result;
@@ -111,45 +98,14 @@ export function isAuditEscalationProjection(
   return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
 }
 
-function humanDecisionText(
-  decision: AuditEscalationDecision,
-  result: AuditEscalationResult,
-): string {
-  const officer = Object.hasOwn(decision, "officer")
-    ? (decision as OfficerAuditEscalationDecision).officer
-    : undefined;
-  const lines = [
-    officer === undefined
-      ? "Human decision required: compliance audit escalation."
-      : `Human decision required: ${officer} escalation.`,
-  ];
-  if (officer !== undefined && typeof result.reason === "string") {
-    lines.push(`Reason: ${result.reason}`);
-  }
-  if (Array.isArray(result.conflicts)) {
-    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${readableGateItem(conflict)}`));
-  }
-  if (officer !== undefined && Array.isArray(result.findings) && result.findings.length > 0) {
-    lines.push("Findings:", ...result.findings.map((finding) => `- ${readableGateItem(finding)}`));
-  }
-  const gate = result.auditDecisionGate;
-  if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
-    const record = gate as Record<string, unknown>;
-    if (typeof record.question === "string") lines.push(`Question: ${record.question}`);
-    if (Array.isArray(record.options)) {
-      lines.push("Options:", ...record.options.map((option) => `- ${readableGateItem(option)}`));
-    }
-  }
-  return lines.join("\n");
-}
-
 export function projectAuditEscalation(
   decision: AuditEscalationDecision,
   deliveredOutput?: unknown,
 ): AuditEscalationToolResult {
   const details = buildAuditEscalationResult(decision, deliveredOutput);
+  const original = deliveredOutput !== undefined ? deliveredOutput : decision;
   return {
-    content: [{ type: "text", text: humanDecisionText(decision, details) }],
+    content: [{ type: "text", text: readableGateItem(original) }],
     details,
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),
@@ -186,6 +142,10 @@ export type ComplianceDecisionHandlers<T> = {
   ) => T | PromiseLike<T>;
   bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
+  /** Host failure beside any recorded auditor payloads — parent is not accepted. */
+  transportFailure?: (
+    facts: Extract<ComplianceDecision, { status: "transport_failure" }>,
+  ) => T | PromiseLike<T>;
 };
 
 /**
@@ -225,5 +185,15 @@ export async function disposeComplianceDecision<T>(
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),
       );
+    case "transport_failure":
+      if (handlers.transportFailure !== undefined) {
+        return await handlers.transportFailure(decision);
+      }
+      throw new GatekeeperDecisionError({
+        status: "transport_failure",
+        stage: "auditor",
+        reason: decision.diagnostic,
+        submission: decision.submissions ?? decision.terminal,
+      });
   }
 }

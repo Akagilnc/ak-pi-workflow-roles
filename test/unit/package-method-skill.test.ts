@@ -161,7 +161,7 @@ test("packaged tdd binding captures expansion against package skill path only", 
 
     // Use binding snapshot paths for exact expansion (realpath may differ by OS).
     const location = binding.snapshot.path;
-    const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
+    const expectedContent = binding.snapshot.body;
     assert.deepEqual(binding.captureExpansion({ name: "tdd", location, content: expectedContent, userMessage: request }, request), {
       name: "tdd",
       location,
@@ -171,11 +171,10 @@ test("packaged tdd binding captures expansion against package skill path only", 
 
     // Configured (non-realpath) package path spelling is also accepted.
     const configuredPath = resolvePackagedMethodSkillPath(packageRoot, "tdd");
-    const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    assert.deepEqual(binding.captureExpansion({ name: "tdd", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "tdd", location: configuredPath, content: expectedContent, userMessage: request }, request), {
       name: "tdd",
       location: configuredPath,
-      content: configuredExpected,
+      content: expectedContent,
       userMessage: request,
     });
 
@@ -234,7 +233,7 @@ test("packaged code-review binding captures expansion against package skill path
     const request = "Review the branch since main.";
 
     const location = binding.snapshot.path;
-    const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
+    const expectedContent = binding.snapshot.body;
     assert.deepEqual(binding.captureExpansion({ name: "code-review", location, content: expectedContent, userMessage: request }, request), {
       name: "code-review",
       location,
@@ -246,11 +245,10 @@ test("packaged code-review binding captures expansion against package skill path
       packageRoot,
       "code-review",
     );
-    const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
-    assert.deepEqual(binding.captureExpansion({ name: "code-review", location: configuredPath, content: configuredExpected, userMessage: request }, request), {
+    assert.deepEqual(binding.captureExpansion({ name: "code-review", location: configuredPath, content: expectedContent, userMessage: request }, request), {
       name: "code-review",
       location: configuredPath,
-      content: configuredExpected,
+      content: expectedContent,
       userMessage: request,
     });
 

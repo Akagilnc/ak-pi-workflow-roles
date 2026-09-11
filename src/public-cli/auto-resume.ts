@@ -36,7 +36,6 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
-  type SealedAcceptanceRedispatchDisposition,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -273,34 +272,20 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
  * open (O_EXCL) with a per-attempt unique name enforces 史必追加 (#419): a later
  * attempt can never overwrite an earlier attempt's file.
  */
-async function retainDispatchError(
-  admitted: { runDirectory: string; principal: DurablePrincipal },
-  principalAuthority: DurablePrincipalAuthority,
-  sessionAppender: SessionCustomEntryAppender,
-  attempt: number,
-  error: unknown,
-): Promise<{ file: string; pointerError?: unknown }> {
-  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = join(
-    artifactsDir,
-    `dispatch-error-attempt-${attempt}-${randomUUID()}.json`,
-  );
-  // Whole-object dump: everything the thrown value carries, nothing picked.
-  const payload = `${JSON.stringify(
-    {
-      version: 1,
-      attempt,
-      recordedAt: new Date().toISOString(),
-      error: serializeThrownValue(error),
-    },
-    jsonSafeReplacer(),
-    2,
-  )}\n`;
-  // O_EXCL: exclusive create — the retention history is append-only by
-  // construction; a colliding name fails loudly instead of overwriting.
-  // O_NOFOLLOW when the platform provides it keeps a planted symlink from
-  // being followed; on platforms without it, exclusivity still holds.
-  // AK artifact owner stays here; only the session JSONL pointer uses Pi codec.
+/**
+ * Hardened create-once JSON write shared by every durable artifact this loop
+ * retains directly (dispatch-error dumps, lawful-persist-failure error/
+ * evidence records): O_EXCL (fail loud on a colliding name, never overwrite)
+ * + O_NOFOLLOW where the platform provides it (a planted symlink is never
+ * followed) — mirrors settlement.ts's own hardened artifact writers.
+ */
+async function writeHardenedArtifactFile(
+  artifactsDir: string,
+  namePrefix: string,
+  payload: Record<string, unknown>,
+): Promise<string> {
+  const filePath = join(artifactsDir, `${namePrefix}-${randomUUID()}.json`);
+  const body = `${JSON.stringify(payload, jsonSafeReplacer(), 2)}\n`;
   const noFollowFlag =
     typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
   const handle = await open(
@@ -309,10 +294,28 @@ async function retainDispatchError(
     0o600,
   );
   try {
-    await handle.writeFile(payload, "utf8");
+    await handle.writeFile(body, "utf8");
   } finally {
     await handle.close();
   }
+  return filePath;
+}
+
+async function retainDispatchError(
+  admitted: { runDirectory: string; principal: DurablePrincipal },
+  principalAuthority: DurablePrincipalAuthority,
+  sessionAppender: SessionCustomEntryAppender,
+  attempt: number,
+  error: unknown,
+): Promise<{ file: string; pointerError?: unknown }> {
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+  // Whole-object dump: everything the thrown value carries, nothing picked.
+  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
+    version: 1,
+    attempt,
+    recordedAt: new Date().toISOString(),
+    error: serializeThrownValue(error),
+  });
   // Addressable pointer in the dossier (卷宗): Pi session custom-entry codec
   // (appendPiSessionCustomEntry). Lease still owned here with run-writer.
   let pointerLease: RunWriterLease;
@@ -448,13 +451,6 @@ export async function runWithAutoResumeLoop<
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
-  /**
-   * After a non-lawful terminal or dispatch throw, consult settlement-owned
-   * sealed-acceptance redispatch disposition (#672 / ADR 0080). Publication
-   * miss must not redispatch and destroy the sealed read (#648 / #599).
-   * Loop presents entry-specific terminals; it must not rebuild the gate.
-   */
-  sealedAcceptanceDisposition?: () => Promise<SealedAcceptanceRedispatchDisposition>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -530,7 +526,14 @@ export async function runWithAutoResumeLoop<
     }
     dispatchOrdinal += 1;
 
-    let persistFailure: { readonly error: unknown } | undefined;
+    // #836 r12 class 3: run-state persist for a dispatch that deferred it
+    // (needsPersist) is settled by the dispatch closure itself, before this
+    // loop ever sees the result — through the single existing
+    // presentControlledFailure / settleFailureTerminalResult authority (ADR
+    // 0080), never a second hand-rolled classify/artifact/Terminal here. This
+    // loop only ever sees the already-resolved outcome: a lawful/failure
+    // Terminal (with skipAutoResume set when persist failed after an
+    // already-settled result) or the original non-lawful result unchanged.
     if (result !== undefined) {
       everyAttemptThrew = false;
       const terminal = (result as { terminal?: TerminalResult }).terminal;
@@ -539,23 +542,6 @@ export async function runWithAutoResumeLoop<
       }
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
-      if (result.needsPersist === true) {
-        // Persist on the loop seam, not inside retried dispatch.
-        try {
-          await persistReturnedRunState(
-            options.admitted,
-            { isAvailable: isPrincipalAvailable },
-            lawful ? { lawful: true } : undefined,
-          );
-        } catch (persistError) {
-          // Lawful persist stays loud (no fake terminal). Non-lawful persist is
-          // not a host-turn failure — do not auto-resume it — but sealed stop
-          // must still see the already-settled result (#648).
-          if (lawful) throw persistError;
-          persistFailure = { error: persistError };
-          lastThrownError = persistError;
-        }
-      }
       if (lawful) {
         if (terminal !== undefined) {
           // Present lawful terminal once to real io (dummy was used inside dispatch)
@@ -567,45 +553,6 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-    }
-
-    // Settlement-owned sealed disposition before any redispatch (#648 / #672):
-    // shared for non-lawful return and direct throw. Only entry presentation
-    // differs (present returned terminal vs throw-path synthetic).
-    if (options.sealedAcceptanceDisposition !== undefined) {
-      const disposition = await options.sealedAcceptanceDisposition();
-      if (disposition.kind === "block") {
-        if (disposition.reason === "sealed-accepted" && result !== undefined) {
-          const terminal = (result as { terminal?: TerminalResult }).terminal;
-          if (terminal !== undefined) presentTerminal(terminal, options.io);
-          return result;
-        }
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError:
-            disposition.reason === "authority-failed"
-              ? disposition.cause
-              : lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason:
-            disposition.reason === "authority-failed"
-              ? "sealed-acceptance authority failed closed"
-              : "sealed accepted projection already present",
-          everyAttemptThrew,
-        });
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
-          exitCode: 1,
-          terminal,
-        } as T;
-      }
-    }
-
-    if (persistFailure !== undefined) {
-      throw persistFailure.error;
     }
 
     if (result !== undefined) {
