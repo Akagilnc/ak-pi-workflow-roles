@@ -96,20 +96,26 @@ export type ClosedSubmission = {
 
 export type ClosedSubmissionProjection = ClosedSubmission;
 
-async function submissionRecordFile(cwd: string, runId: string, home?: string): Promise<string> {
-  const ledgerHome = resolveActivationLedgerHome(home);
-  const runDirectory = await findRunDirectoryById(home, runId);
+async function submissionRecordFile(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<string> {
+  const ledgerHome = resolveActivationLedgerHome(scope.home);
+  const discoveredRun = scope.sessionParent === undefined
+    ? await findRunDirectoryById(scope.home, runId)
+    : undefined;
   return resolveSitianRecordPathInLedger({
     level: "event",
     kind: "candidate",
     subject: { runId },
     cwd,
-    ...(runDirectory === undefined ? {} : { sessionParent: join(runDirectory, "session", "session.jsonl") }),
+    ...(scope.sessionParent !== undefined
+      ? { sessionParent: scope.sessionParent }
+      : discoveredRun === undefined
+        ? {}
+        : { sessionParent: join(discoveredRun, "session", "session.jsonl") }),
   }, ledgerHome).recordFile;
 }
 
-async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: string) {
-  const file = await submissionRecordFile(cwd, runId, home);
+async function readOwnedSubmissionRecords(cwd: string, runId: string, scope: SubmissionLedgerReadScope = {}) {
+  const file = await submissionRecordFile(cwd, runId, scope);
   const { records } = await readSitianRecords(file);
   return {
     file,
@@ -120,6 +126,8 @@ async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: str
 /** Optional court-turn scope for settlement reads (#637). */
 export type SubmissionLedgerReadScope = {
   readonly home?: string;
+  /** Durable run principal; the direct ownership coordinate when already known. */
+  readonly sessionParent?: string;
   /**
    * Recording tag for this court. Presentation of original payloads is run-scoped
    * (#836: attempt/latest must not hide already-recorded rows).
@@ -171,9 +179,9 @@ export async function hasFreshAttemptSubmission(
   cwd: string,
   runId: string,
   attemptId: string,
-  home?: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<boolean> {
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, resolveReadScope(homeOrScope));
   return owned.some((record) => {
     if (recordAttemptId(record) !== attemptId) return false;
     if (record.kind === "sealed") return true;
@@ -206,7 +214,7 @@ export async function readRecordedSubmissionRows(
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<readonly RecordedSubmissionRow[]> {
   const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
   const scoped = recordsForAttempt(owned, scope.attemptId);
   const out: RecordedSubmissionRow[] = [];
   for (const record of scoped) {
@@ -264,7 +272,7 @@ export async function readLatestSubmissionOutcome(
   homeOrScope?: string | SubmissionLedgerReadScope,
 ): Promise<LatestSubmissionOutcome | undefined> {
   const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
   const scoped = recordsForAttempt(owned, scope.attemptId);
   for (let index = scoped.length - 1; index >= 0; index -= 1) {
     const record = scoped[index];
@@ -279,8 +287,8 @@ export async function readLatestSubmissionOutcome(
 
 type LedgerState = { prior?: RecordPointer; sequence: number };
 
-async function restoreState(cwd: string, runId: string, home?: string): Promise<LedgerState> {
-  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<LedgerState> {
+  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
   const last = owned.at(-1);
   return {
     ...(last === undefined ? {} : { prior: { identity: last.identity, recordFile: file, kind: last.kind, level: last.level } }),
@@ -314,7 +322,11 @@ export function createSubmissionLedgerHost(
   };
   const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
     const home = resolveHomeFromContext(context);
-    const pending = restoreState(context.cwd, runId, home);
+    const sessionParent = context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
+    const pending = restoreState(context.cwd, runId, {
+      ...(home === undefined ? {} : { home }),
+      ...(typeof sessionParent === "string" && sessionParent.length > 0 ? { sessionParent } : {}),
+    });
     states.set(runId, pending);
     return pending;
   })();

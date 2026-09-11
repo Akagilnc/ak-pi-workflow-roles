@@ -4,7 +4,7 @@
  * test/unit/host-retry-verdict-relay.test.ts — together they cover both families.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,14 +21,14 @@ const OPAQUE_RETRY_MESSAGE = JSON.stringify({
   reason: "opaque retry payload",
 });
 
-function baseRequest(runDirectory: string): RoleTurnRequest {
+function baseRequest(runDirectory: string, home: string): RoleTurnRequest {
   return {
     principal: fixturePrincipal(join(runDirectory, "session")),
     activation: { role: "judge" },
     methods: [],
     continuation: { kind: "initial", prompt: "initial-assignment" },
     cwd: runDirectory,
-    home: runDirectory,
+    home,
     agentDir: join(runDirectory, "agent"),
     runDirectory,
   };
@@ -69,7 +69,9 @@ printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_i
 }
 
 test("headless executeTurn delivers opaque retry.message on resume", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-820-headless-relay-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-820-headless-relay-"));
+  const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-headless");
+  await mkdir(runDirectory, { recursive: true });
   try {
     const promptLog = join(runDirectory, "prompts.log");
     const binary = await writeFakeHeadlessBinary(runDirectory, promptLog);
@@ -106,7 +108,7 @@ test("headless executeTurn delivers opaque retry.message on resume", async () =>
         },
       }),
     });
-    const result = await host.executeTurn(baseRequest(runDirectory));
+    const result = await host.executeTurn(baseRequest(runDirectory, home));
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
     const prompts = (await readFile(promptLog, "utf8"))
@@ -114,6 +116,6 @@ test("headless executeTurn delivers opaque retry.message on resume", async () =>
       .filter((line) => line.length > 0);
     assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
   } finally {
-    await rm(runDirectory, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
 });

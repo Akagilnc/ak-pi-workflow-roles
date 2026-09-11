@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
@@ -64,8 +64,8 @@ function registerTool(
       getLeafEntry: () => undefined,
       getLeafId: () => null,
       getEntries: () => [],
-      getSessionDir: () => "",
-      getSessionFile: () => undefined,
+      getSessionDir: () => `${process.env.AK_ROLE_RUN_DIR}/session`,
+      getSessionFile: () => `${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`,
     },
     abort() { throw new Error("ledger must not abort the host (#836)"); },
   } as unknown as HostContext;
@@ -88,6 +88,8 @@ function registerTool(
 async function fixture() {
   const root = await mkdtemp(worktreeTempPrefix("ak-submission-ledger-"));
   execFileSync("git", ["init", "-q", root]);
+  await mkdir(`${root}/.ak-roles/books/fixture/runs/run-ledger@judge/session`, { recursive: true });
+  await writeFile(`${root}/.ak-roles/books/fixture/runs/run-ledger@judge/session/session.jsonl`, "");
   return { root, ...registerTool(root) };
 }
 
@@ -104,7 +106,7 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   const priorRun = process.env.AK_ROLE_RUN_DIR;
   const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   const f = await fixture();
-  process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-ledger@judge`;
+  process.env.AK_ROLE_RUN_DIR = `${f.root}/.ak-roles/books/fixture/runs/run-ledger@judge`;
   delete process.env.AK_ROLE_COURT_ATTEMPT;
   await withPrimaryAwareCleanup(
     () => run(f),
@@ -340,7 +342,9 @@ test("every packaged role records original payload through the production ledger
   ];
   for (const row of rows) {
     await withLedgerFixture(async (f) => {
-      process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-${row.role}@${row.role}`;
+      process.env.AK_ROLE_RUN_DIR = `${f.root}/.ak-roles/books/fixture/runs/run-${row.role}@${row.role}`;
+      await mkdir(`${process.env.AK_ROLE_RUN_DIR}/session`, { recursive: true });
+      await writeFile(`${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`, "");
       const outputTool = packagedRoleOutputTool(row.role)!;
       const alternateHost = registerTool(
         f.root,
@@ -352,7 +356,10 @@ test("every packaged role records original payload through the production ledger
       const accepted = await alternateHost.tool().execute(`${row.role}-output`, row.details, undefined, undefined, alternateHost.context);
       assert.deepEqual(accepted.details, row.details, row.role);
       assert.equal(accepted.terminate, true, row.role);
-      const rows = await readRecordedSubmissionRows(f.root, `run-${row.role}`, f.root);
+      const rows = await readRecordedSubmissionRows(f.root, `run-${row.role}`, {
+        home: f.root,
+        sessionParent: `${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`,
+      });
       assert.deepEqual(rows, [{ role: row.role, kind: "accepted", accepted: row.details }], row.role);
     });
   }
@@ -372,7 +379,7 @@ test("a recorded append failure never returns accepted", async () => {
           throw new Error("prime");
         });
         await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
-        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith(".jsonl"));
+        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("submission-ledger/records.jsonl"));
         if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
         await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context));
         // Unlock to read.
