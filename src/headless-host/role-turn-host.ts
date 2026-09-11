@@ -192,16 +192,6 @@ export function createCodexExecTurnObserver(): {
   };
 }
 
-export function parseCodexExecJsonl(stdout: string): CodexExecTurnObservation {
-  const observer = createCodexExecTurnObserver();
-  for (const line of stdout.split("\n")) {
-    const text = line.trim();
-    if (text === "") continue;
-    try { observer.observe(JSON.parse(text) as unknown); } catch { /* non-JSON stdout noise */ }
-  }
-  return observer.result();
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
