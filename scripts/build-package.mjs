@@ -22,8 +22,6 @@ const entries = [
   "activation-ledger-topology",
   "activation-reconciliation",
   "archivist-record-entry",
-  // Pure subject nest topology — cold discovery without SessionManager (#636).
-  "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).
