@@ -332,7 +332,6 @@ export function createSubmissionLedgerHost(
       payload: event,
       source: "role-runtime",
       cwd: context.cwd,
-      sessionParent: context.sessionManager.getSessionFile(),
       ...(home !== undefined ? { home } : {}),
       ...(typeof sessionParent === "string" && sessionParent.length > 0 ? { sessionParent } : {}),
     });
