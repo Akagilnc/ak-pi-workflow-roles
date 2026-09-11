@@ -169,12 +169,18 @@ async function listFilesRecursive(root: string, predicate: (name: string) => boo
   return out;
 }
 
+/**
+ * Home partition sources under one record-class root:
+ * - direct `<category>/records.jsonl` (legacy flat book-root volume)
+ * - hashed sub-volumes `<category>/<volumeId>/records.jsonl`
+ * Both enter the same line-closed placement path; ENOENT yields empty reads.
+ */
 async function listVolumeRecordFiles(partitionDir: string): Promise<string[]> {
+  const files: string[] = [join(partitionDir, "records.jsonl")];
   const volumes = await readdir(partitionDir, { withFileTypes: true }).catch((error: unknown) => {
     if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
     throw error;
   });
-  const files: string[] = [];
   for (const entry of volumes) {
     if (!entry.isDirectory()) continue;
     files.push(join(partitionDir, entry.name, "records.jsonl"));
@@ -183,10 +189,10 @@ async function listVolumeRecordFiles(partitionDir: string): Promise<string[]> {
 }
 
 /**
- * Paths already closed by the three home migrators.
- * Criterion (not a partition name list): root record-class volumes and nested
- * ticket-provenance. Run trees are NOT blanket-skipped — wrong-kind rows inside
- * a run must still rehome by content (#866 / #852 §落错).
+ * Paths already closed by the three home migrators — including the partition-root
+ * direct records.jsonl. Criterion (not a partition name list): root record-class
+ * trees and nested ticket-provenance. Run trees are NOT blanket-skipped — wrong-kind
+ * rows inside a run must still rehome by content (#866 / #852 §落错).
  */
 function isHomeRecordClassRelativePath(relPosix: string): boolean {
   const parts = relPosix.split("/");
@@ -461,6 +467,7 @@ async function migrateHomePartitionBook(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
+  // listVolumeRecordFiles covers partition-root records.jsonl + hashed sub-volumes.
   const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
     await migrateJsonlFileByKind(context, bookKey, writes, filePath, category, outcomes);
@@ -520,11 +527,13 @@ async function scrubRawLinesFromFile(
 
 /**
  * Foreign jsonl rows whose typed kind is one of the three record classes.
- * Range = whole book minus home volumes. Inside runs/: skip only rows already
- * under their typed owning run at the canonical nest (those travel with #865);
- * path-class alone never excuses a cross-run wrong principal. Every other typed
- * row rehomes by content; dest copies at the source nest are scrubbed so a
- * recursive run cp cannot keep a lying duplicate.
+ * Range = whole book minus home partitions (root records.jsonl, hashed volumes,
+ * nested ticket-provenance) — those close under the three home migrators so T8
+ * does not double-count. Inside runs/: skip only rows already under their typed
+ * owning run at the canonical nest (those travel with #865); path-class alone
+ * never excuses a cross-run wrong principal. Every other typed row rehomes by
+ * content; dest copies at the source nest are scrubbed so a recursive run cp
+ * cannot keep a lying duplicate.
  */
 async function migrateMisplacedBook(
   context: BookTopologyMigrationContext,
@@ -541,6 +550,7 @@ async function migrateMisplacedBook(
   for (const filePath of files) {
     const rel = sourceRelative(context.backupBooksDirectory, filePath);
     const withinBook = rel.split("/").slice(1).join("/");
+    // Home partition roots (incl. direct records.jsonl) are owned by home migrators.
     if (isHomeRecordClassRelativePath(withinBook)) continue;
 
     const lines = await readJsonlLines(filePath);
