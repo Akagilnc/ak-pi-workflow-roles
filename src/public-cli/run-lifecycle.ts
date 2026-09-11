@@ -16,7 +16,6 @@ import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { settleBookTopologyAdmission } from "../book-topology-migration-lock.ts";
 import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -224,7 +223,6 @@ export async function writeRoleRunState(
     `${JSON.stringify(payload, null, 2)}\n`,
     "utf8",
   );
-  settleBookTopologyAdmission(runDirectory);
 }
 
 /**
