@@ -438,13 +438,9 @@ async function copyTicketCompanions(
   }
   if (ticketNumber === undefined) return;
 
+  // Typed ticket rows already created dest records.jsonl via placeTicketProvenanceLine.
   const destDir = join(context.booksDirectory, bookKey, String(ticketNumber), TICKET_PROVENANCE);
   await ensureDir(destDir);
-  try {
-    await stat(join(destDir, "records.jsonl"));
-  } catch {
-    await appendFile(join(destDir, "records.jsonl"), "", "utf8");
-  }
   for (const name of [TICKET_PROVENANCE_HUMAN_VIEW, "offered-identities.jsonl"] as const) {
     const from = join(volumeDir, name);
     try {
@@ -494,28 +490,28 @@ async function migrateHomePartitionBook(
   }
 }
 
-/** Rewrite dest file without the given identities (drop wrong-nest copies after rehome). */
-async function scrubIdentitiesFromFile(
+function normalizeJsonlRaw(raw: string): string {
+  return raw.endsWith("\n") ? raw : `${raw}\n`;
+}
+
+/** Rewrite dest file without the given exact raw lines (drop wrong-nest copies after rehome). */
+async function scrubRawLinesFromFile(
   recordFile: string,
-  identities: ReadonlySet<string>,
+  rawLines: ReadonlySet<string>,
 ): Promise<void> {
-  if (identities.size === 0) return;
+  if (rawLines.size === 0) return;
   const lines = await readJsonlLines(recordFile);
   if (lines.length === 0) return;
   const kept: string[] = [];
   let changed = false;
   for (const raw of lines) {
     if (raw.trim() === "") continue;
-    const parsed = parseJsonlLine(raw);
-    if (
-      parsed.ok
-      && typeof parsed.value.identity === "string"
-      && identities.has(parsed.value.identity)
-    ) {
+    const normalized = normalizeJsonlRaw(raw);
+    if (rawLines.has(normalized)) {
       changed = true;
       continue;
     }
-    kept.push(raw.endsWith("\n") ? raw : `${raw}\n`);
+    kept.push(normalized);
   }
   if (!changed) return;
   await ensureDir(dirname(recordFile));
@@ -538,7 +534,8 @@ async function migrateMisplacedBook(
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
-  // backupRelPath → identities rehomed out of a source-run nest (wrong path or wrong principal)
+  // backupRelPath → exact raw lines rehomed out of a source-run nest (wrong path or wrong principal).
+  // Match by line bytes, not identity — rows without identity must still leave the lying source copy.
   const scrubPlans = new Map<string, Set<string>>();
 
   for (const filePath of files) {
@@ -567,28 +564,25 @@ async function migrateMisplacedBook(
         );
       }
 
-      if (
-        (withinBook.includes("/runs/") || withinBook.startsWith("runs/"))
-        && typeof parsed.value.identity === "string"
-      ) {
+      if (withinBook.includes("/runs/") || withinBook.startsWith("runs/")) {
         let set = scrubPlans.get(withinBook);
         if (set === undefined) {
           set = new Set<string>();
           scrubPlans.set(withinBook, set);
         }
-        set.add(parsed.value.identity);
+        set.add(normalizeJsonlRaw(raw));
       }
     }
   }
 
-  // Drop rehomed identities from the source nest in dest (wrong path or wrong principal).
-  for (const [withinBook, identities] of scrubPlans) {
+  // Drop rehomed lines from the source nest in dest (wrong path or wrong principal).
+  for (const [withinBook, rawLines] of scrubPlans) {
     const coords = runCoordsFromRelativePath(withinBook);
     const withinRun = relativePathWithinRun(withinBook);
     if (coords === undefined || withinRun === undefined) continue;
     const destRun = await findBookRunDirectory(join(context.booksDirectory, bookKey), coords.runId);
     if (destRun === undefined) continue;
-    await scrubIdentitiesFromFile(join(destRun.runDirectory, withinRun), identities);
+    await scrubRawLinesFromFile(join(destRun.runDirectory, withinRun), rawLines);
   }
 }
 
