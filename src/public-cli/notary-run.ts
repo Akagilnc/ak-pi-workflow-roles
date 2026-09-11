@@ -9,7 +9,7 @@ import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -166,8 +166,7 @@ export async function runPublicNotary(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+    ...pickEngineAxis(env),
     packageRoot: env.packageRoot,
   });
   const turnRequest = buildNotaryTurnRequest(admitted, {
@@ -175,8 +174,7 @@ export async function runPublicNotary(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}

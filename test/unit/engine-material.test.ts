@@ -66,21 +66,8 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", asy
   assert.equal(withNotes.includes("- /abs/resources/engines/cursor.md"), true);
 });
 
-test("#883 appendEngineSessionMaterial / fromOptions: engineModel coordinate is optional opaque", async () => {
-  const withModel = appendEngineSessionMaterial(["base"], {
-    name: "cursor",
-    model: "cursor-grok-4.6-high",
-    materialPath: "/abs/resources/engines/cursor.md",
-  });
-  assert.equal(withModel.includes("- engine: cursor"), true);
-  assert.equal(withModel.includes("- engineModel: cursor-grok-4.6-high"), true);
-
-  const nameOnlyModel = appendEngineSessionMaterial(["base"], {
-    name: "cursor",
-    model: "cursor-grok-4.6-high",
-  });
-  assert.equal(nameOnlyModel.includes("- engineModel: cursor-grok-4.6-high"), true);
-
+test("#883 engineSessionMaterialFromOptions: engineModel is optional opaque coordinate", async () => {
+  // Typed material.model only — prompt presentation of engineModel is not contract.
   await withTempRoot("ak-engine-model-", async (root) => {
     await mkdir(join(root, "resources", "engines"), { recursive: true });
     await writeFile(join(root, "resources", "engines", "cursor.md"), "x\n", "utf8");
@@ -91,7 +78,6 @@ test("#883 appendEngineSessionMaterial / fromOptions: engineModel coordinate is 
     });
     assert.equal(material?.name, "cursor");
     assert.equal(material?.model, "cursor-grok-4.6-high");
-    // Absent model keeps prior shape (no model key).
     const bare = engineSessionMaterialFromOptions({
       engine: "cursor",
       packageRoot: root,

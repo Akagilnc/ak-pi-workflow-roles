@@ -11,7 +11,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -184,8 +184,7 @@ export async function runPublicFixer(
         home: env.home,
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+        ...pickEngineAxis(env),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -195,8 +194,7 @@ export async function runPublicFixer(
           prompt: buildFixerTransportPrompt(
             admitted,
             engineSessionMaterialFromOptions({
-              ...(env.engine === undefined ? {} : { engine: env.engine }),
-              ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+              ...pickEngineAxis(env),
               packageRoot: env.packageRoot,
             }),
           ),
@@ -208,8 +206,7 @@ export async function runPublicFixer(
         home: env.home,
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+        ...pickEngineAxis(env),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -218,8 +215,7 @@ export async function runPublicFixer(
           kind: "resume",
           prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
-            ...(env.engine === undefined ? {} : { engine: env.engine }),
-            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+            ...pickEngineAxis(env),
           }),
         },
       }),

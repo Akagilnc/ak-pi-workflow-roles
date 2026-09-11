@@ -10,6 +10,7 @@ import type {
   RoleTurnModelConfig,
   RoleTurnRequest,
 } from "../host-contracts.ts";
+import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { SeatModelConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -66,8 +67,7 @@ export function projectRoleTurnRequest(
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,
     ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
-    ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
+    ...pickEngineAxis(options),
     cwd,
     home: options.home,
     agentDir: options.agentDir,

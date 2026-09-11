@@ -35,6 +35,7 @@ import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
+  pickEngineAxis,
   type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
@@ -183,10 +184,7 @@ export function buildResumeContinuationPrompt(options: {
     options.message,
     engineSessionMaterialFromOptions({
       packageRoot: options.packageRoot,
-      ...(options.engine === undefined ? {} : { engine: options.engine }),
-      ...(options.engineModel === undefined
-        ? {}
-        : { engineModel: options.engineModel }),
+      ...pickEngineAxis(options),
     }),
   );
 }

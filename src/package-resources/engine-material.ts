@@ -22,8 +22,8 @@ export type EngineSessionMaterial = Readonly<{
 
 /** Project engine name + optional model for env / request / material spreads. */
 export function pickEngineAxis(source: {
-  readonly engine?: string;
-  readonly engineModel?: string;
+  readonly engine?: string | undefined;
+  readonly engineModel?: string | undefined;
 }): { engine?: string; engineModel?: string } {
   return {
     ...(source.engine === undefined ? {} : { engine: source.engine }),

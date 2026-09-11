@@ -8,6 +8,7 @@ import { assertRegisteredHostName, DEFAULT_ROLE_TURN_HOST } from "../host-descri
 import {
   assertLegalEngineModel,
   assertLegalEngineName,
+  pickEngineAxis,
 } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
@@ -169,10 +170,7 @@ export function setPersistentSeatConfig(
       [seat]: {
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
-        ...(previous?.engine === undefined ? {} : { engine: previous.engine }),
-        ...(previous?.engineModel === undefined
-          ? {}
-          : { engineModel: previous.engineModel }),
+        ...pickEngineAxis(previous ?? {}),
         ...(previous?.host === undefined ? {} : { host: previous.host }),
       },
     },
@@ -203,10 +201,7 @@ export function clearPersistentSeatConfig(
       seats: {
         ...config.seats,
         [seat]: {
-          ...(previous.engine === undefined ? {} : { engine: previous.engine }),
-          ...(previous.engineModel === undefined
-            ? {}
-            : { engineModel: previous.engineModel }),
+          ...pickEngineAxis(previous),
           ...(previous.host === undefined ? {} : { host: previous.host }),
         },
       },
@@ -572,10 +567,11 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
       return {
-        ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
-        ...(raw.engineModel === undefined
-          ? {}
-          : { engineModel: raw.engineModel as string }),
+        ...pickEngineAxis({
+          engine: typeof raw.engine === "string" ? raw.engine : undefined,
+          engineModel:
+            typeof raw.engineModel === "string" ? raw.engineModel : undefined,
+        }),
         ...(raw.host === undefined ? {} : { host: raw.host as string }),
       };
     }
@@ -597,10 +593,11 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     ...(raw.thinking === undefined
       ? {}
       : { thinking: raw.thinking as PublicThinkingLevel }),
-    ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
-    ...(raw.engineModel === undefined
-      ? {}
-      : { engineModel: raw.engineModel as string }),
+    ...pickEngineAxis({
+      engine: typeof raw.engine === "string" ? raw.engine : undefined,
+      engineModel:
+        typeof raw.engineModel === "string" ? raw.engineModel : undefined,
+    }),
     ...(raw.host === undefined ? {} : { host: raw.host as string }),
   };
   return parsed;
@@ -672,20 +669,20 @@ function attachEngineAxis(
     // Invocation engine override: model only when the same invocation supplies it.
     return {
       ...seat,
-      engine: invocation.engine,
-      ...(invocation.engineModel === undefined
-        ? {}
-        : { engineModel: invocation.engineModel }),
+      ...pickEngineAxis({
+        engine: invocation.engine,
+        engineModel: invocation.engineModel,
+      }),
       engineSource: "invocation",
     };
   }
   if (persistentEngine !== undefined) {
     return {
       ...seat,
-      engine: persistentEngine,
-      ...(persistentEngineModel === undefined
-        ? {}
-        : { engineModel: persistentEngineModel }),
+      ...pickEngineAxis({
+        engine: persistentEngine,
+        engineModel: persistentEngineModel,
+      }),
       engineSource: "persistent",
     };
   }

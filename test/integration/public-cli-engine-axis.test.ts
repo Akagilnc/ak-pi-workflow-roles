@@ -1322,8 +1322,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
 
 /**
  * #883 — engine model axis on seat table → typed turn request + invocation.
- * Acceptance: set once, leg carries verbatim; clear restores absent; opaque
- * accepted id is not rewritten. Contract surface is typed only.
+ * Contract surface is typed only (request / invocation / seat row).
  */
 test("#883 engine model axis: set/clear/opaque round-trip on real public entry", async () => {
   await withTempHome(async (home) => {
@@ -1334,8 +1333,9 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
     execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
     execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
     const bookKey = resolveBookKeyFromGit(project);
+    const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
+    const OPAQUE_MODEL = "cursor-grok-4.6-high";
 
-    // Seed model so set-engine is legal.
     {
       const { io, stderr } = captureIo();
       const setModel = await runAkRole(
@@ -1345,8 +1345,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       assert.equal(setModel.exitCode, 0, stderr.join(""));
     }
 
-    // 1 + 5: set engine+model; leg carries the opaque id verbatim on request + invocation.
-    const OPAQUE_MODEL = "cursor-grok-4.6-high";
+    // 1 + 5: set engine+model once; one leg carries the opaque id on request + invocation.
     {
       const { io, stderr } = captureIo();
       const setEngine = await runAkRole(
@@ -1357,97 +1356,47 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       const persisted = await loadPublicCliConfig(home);
       assert.equal(persisted.seats.judge?.engine, "cursor");
       assert.equal(persisted.seats.judge?.engineModel, OPAQUE_MODEL);
-    }
 
-    {
-      let capturedModel: string | undefined;
-      let capturedEngine: string | undefined;
-      const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "engine model proof"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => "engine-model-001",
-          credentials,
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async () => ({
-              code: 1,
-              stderr: "stop after capture",
-              timedOut: false,
-              args: [],
-            }),
-          }),
-        },
-      );
-      // Prefer minimal host capture of the typed request when available.
-      assert.notEqual(result.exitCode, 2, stderr.join(""));
-      const invocation = readJudgeInvocation(home, bookKey, "engine-model-001");
-      assert.equal(invocation.engine, "cursor");
-      assert.equal(
-        invocation.engineModel,
-        OPAQUE_MODEL,
-        "invocation.engineModel must be the seat-table id verbatim",
-      );
-      void capturedModel;
-      void capturedEngine;
-    }
-
-    // Capture typed RoleTurnRequest.engineModel via minimal host (engine CLI contract path).
-    {
-      const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
       let requestEngine: string | undefined;
       let requestModel: string | undefined;
-      const { io, stderr } = captureIo();
       await runAkRole(["judge", "--project", project, "engine model request"], {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => "engine-model-002",
+        createRunId: () => "engine-model-001",
         credentials,
-        io,
+        io: captureIo().io,
         roleTurnHost: createMinimalHost((request) => {
           requestEngine = request.engine;
           requestModel = request.engineModel;
           return Promise.resolve({ code: 0, stderr: "", timedOut: false });
         }),
       });
-      assert.equal(stderr.join("").includes("structural"), false, stderr.join(""));
       assert.equal(requestEngine, "cursor");
-      assert.equal(
-        requestModel,
-        OPAQUE_MODEL,
-        "RoleTurnRequest.engineModel must reach the host verbatim (engine CLI contract path)",
-      );
-      const invocation = readJudgeInvocation(home, bookKey, "engine-model-002");
+      assert.equal(requestModel, OPAQUE_MODEL);
+      const invocation = readJudgeInvocation(home, bookKey, "engine-model-001");
+      assert.equal(invocation.engine, "cursor");
       assert.equal(invocation.engineModel, OPAQUE_MODEL);
     }
 
-    // 2: name-is-model engine without engineModel — behavior unchanged (no engineModel key).
-    {
+    // 2: name-only set-engine clears any prior engineModel (name-is-model / material-pinned bare).
+    for (const engine of ["hermes", "opus"] as const) {
       const { io, stderr } = captureIo();
-      const setHermes = await runAkRole(
-        ["config", "set-engine", "judge", "hermes"],
-        { packageRoot, home, io },
-      );
-      assert.equal(setHermes.exitCode, 0, stderr.join(""));
-      // set-engine name-only preserves prior engineModel — clear explicitly for bare case.
-      const clearModel = await runAkRole(
-        ["config", "unset-engine-model", "judge"],
-        { packageRoot, home, io },
-      );
-      assert.equal(clearModel.exitCode, 0, stderr.join(""));
-      const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
+      const setBare = await runAkRole(["config", "set-engine", "judge", engine], {
+        packageRoot,
+        home,
+        io,
+      });
+      assert.equal(setBare.exitCode, 0, stderr.join(""));
+      // Name-only set drops prior engineModel — no unset needed.
+      assert.equal((await loadPublicCliConfig(home)).seats.judge?.engineModel, undefined);
+
       let requestModel: string | undefined = "sentinel";
-      await runAkRole(["judge", "--project", project, "name-is-model bare"], {
+      await runAkRole(["judge", "--project", project, `${engine} bare`], {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => "engine-model-hermes",
+        createRunId: () => `engine-model-${engine}`,
         credentials,
         io: captureIo().io,
         roleTurnHost: createMinimalHost((request) => {
@@ -1456,44 +1405,12 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
         }),
       });
       assert.equal(requestModel, undefined);
-      const invocation = readJudgeInvocation(home, bookKey, "engine-model-hermes");
+      const invocation = readJudgeInvocation(home, bookKey, `engine-model-${engine}`);
       assert.equal("engineModel" in invocation, false);
-      assert.equal(invocation.engine, "hermes");
+      assert.equal(invocation.engine, engine);
     }
 
-    // Material-pinned engine without engineModel — unchanged.
-    {
-      const { io, stderr } = captureIo();
-      await runAkRole(["config", "set-engine", "judge", "opus"], { packageRoot, home, io });
-      assert.equal(stderr.join(""), "");
-      // opus may still carry residual model from earlier if set-engine preserved it;
-      // force clear.
-      await runAkRole(["config", "unset-engine-model", "judge"], {
-        packageRoot,
-        home,
-        io: captureIo().io,
-      });
-      const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
-      let requestModel: string | undefined = "sentinel";
-      await runAkRole(["judge", "--project", project, "material-pinned bare"], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "engine-model-opus",
-        credentials,
-        io: captureIo().io,
-        roleTurnHost: createMinimalHost((request) => {
-          requestModel = request.engineModel;
-          return Promise.resolve({ code: 0, stderr: "", timedOut: false });
-        }),
-      });
-      assert.equal(requestModel, undefined);
-      const invocation = readJudgeInvocation(home, bookKey, "engine-model-opus");
-      assert.equal("engineModel" in invocation, false);
-      assert.equal(invocation.engine, "opus");
-    }
-
-    // 3: set model, then clear → back to absent.
+    // 3: set model then clear → absent on seat, request, invocation.
     {
       const { io, stderr } = captureIo();
       await runAkRole(
@@ -1510,7 +1427,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       const persisted = await loadPublicCliConfig(home);
       assert.equal(persisted.seats.judge?.engine, "cursor");
       assert.equal(persisted.seats.judge?.engineModel, undefined);
-      const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
+
       let requestModel: string | undefined = "sentinel";
       await runAkRole(["judge", "--project", project, "cleared model"], {
         packageRoot,
@@ -1529,7 +1446,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       assert.equal("engineModel" in invocation, false);
     }
 
-    // set-engine-model alone (user story 9) + unset-engine drops both.
+    // set-engine-model alone + unset-engine drops both halves.
     {
       const { io, stderr } = captureIo();
       await runAkRole(["config", "set-engine", "judge", "cursor"], { packageRoot, home, io });

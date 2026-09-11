@@ -23,6 +23,7 @@ import {
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
+import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
 
 import type {
@@ -1117,8 +1118,7 @@ export function resumeTurnRequestProjectionOptions(
       // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
         packageRoot: env.packageRoot,
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+        ...pickEngineAxis(env),
         message: request.message,
       });
     }
@@ -1149,8 +1149,7 @@ export function resumeTurnRequestProjectionOptions(
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
-      ...(env.engine === undefined ? {} : { engine: env.engine }),
-      ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+      ...pickEngineAxis(env),
     });
   }
   return {
@@ -1158,8 +1157,7 @@ export function resumeTurnRequestProjectionOptions(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}
@@ -1508,8 +1506,6 @@ export async function runPostAdmissionOneShot<
   admitted?: A;
   terminal?: T;
 }> {
-  const engine = input.effectiveEngine ?? input.env.engine;
-  const engineModel = input.env.engineModel;
   return await runPostAdmissionResumable({
     admitted: input.admitted,
     env: input.env,
@@ -1521,8 +1517,10 @@ export async function runPostAdmissionOneShot<
         kind: "resume",
         prompt: buildResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
-          ...(engine === undefined ? {} : { engine }),
-          ...(engineModel === undefined ? {} : { engineModel }),
+          ...pickEngineAxis({
+            engine: input.effectiveEngine ?? input.env.engine,
+            engineModel: input.env.engineModel,
+          }),
         }),
       },
     }),

@@ -807,8 +807,7 @@ function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
   host?: string;
 } {
   return {
-    ...(disk?.engine === undefined ? {} : { engine: disk.engine }),
-    ...(disk?.engineModel === undefined ? {} : { engineModel: disk.engineModel }),
+    ...pickEngineAxis(disk ?? {}),
     ...(disk?.host === undefined ? {} : { host: disk.host }),
   };
 }
