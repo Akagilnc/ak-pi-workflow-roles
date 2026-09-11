@@ -7,7 +7,7 @@
  * deprecated-kinds, deprecated-run-pages, navigator, collector-handbook,
  * manual-archives.
  */
-import { cp, mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import type { Dirent, Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
@@ -172,23 +172,6 @@ async function readJsonlParentSession(path: string): Promise<string | undefined>
   }
 }
 
-async function listJsonlFiles(directory: string): Promise<string[]> {
-  const files: string[] = [];
-  async function walk(current: string): Promise<void> {
-    for (const entry of await listDirents(current)) {
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        await walk(path);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        files.push(path);
-      }
-    }
-  }
-  await walk(directory);
-  files.sort();
-  return files;
-}
-
 async function backupParentRunExists(
   backupBooksDirectory: string,
   parent: ParentRun,
@@ -198,41 +181,67 @@ async function backupParentRunExists(
   );
 }
 
+/**
+ * True volume = continuation pointer + live session under the volume + parent in a
+ * real backup run (#867). Missing/malformed current-session, a sessionFile outside
+ * the volume, temp/fixture parents, or absent backup parent all disqualify.
+ */
 async function findTrueVolumeParent(
   backupBooksDirectory: string,
   volumeDirectory: string,
 ): Promise<ParentRun | undefined> {
-  const jsonlFiles = await listJsonlFiles(volumeDirectory);
-  const preferred: string[] = [];
-  let ledgerRaw: string | undefined;
+  let ledgerRaw: string;
   try {
     ledgerRaw = await readFile(join(volumeDirectory, CURRENT_SESSION_LEDGER), "utf8");
   } catch (error) {
-    if (!isEnoent(error)) throw error;
+    if (isEnoent(error)) return undefined;
+    throw error;
   }
-  if (ledgerRaw !== undefined) {
-    try {
-      const ledger: unknown = JSON.parse(ledgerRaw);
-      if (ledger !== null && typeof ledger === "object" && !Array.isArray(ledger)) {
-        const sessionFile = (ledger as { sessionFile?: unknown }).sessionFile;
-        if (typeof sessionFile === "string" && sessionFile.length > 0) {
-          const local = join(volumeDirectory, basename(sessionFile));
-          if (jsonlFiles.includes(local)) preferred.push(local);
-        }
-      }
-    } catch {
-      // Invalid current-session does not disqualify a volume; jsonl headers decide.
+  let sessionFileField: string;
+  try {
+    const ledger: unknown = JSON.parse(ledgerRaw);
+    if (ledger === null || typeof ledger !== "object" || Array.isArray(ledger)) {
+      return undefined;
     }
+    const sessionFile = (ledger as { sessionFile?: unknown }).sessionFile;
+    if (typeof sessionFile !== "string" || sessionFile.length === 0) return undefined;
+    sessionFileField = sessionFile;
+  } catch {
+    return undefined;
   }
-  const ordered = [...new Set([...preferred, ...jsonlFiles])];
-  for (const file of ordered) {
-    const parentSession = await readJsonlParentSession(file);
-    if (parentSession === undefined) continue;
-    const parent = parseParentRun(parentSession);
-    if (parent === undefined) continue;
-    if (await backupParentRunExists(backupBooksDirectory, parent)) return parent;
+
+  const resolvedVolume = resolve(volumeDirectory);
+  const resolvedSession = resolve(sessionFileField);
+  const localSession = resolve(volumeDirectory, basename(sessionFileField));
+  const liveSession =
+    pathContainedIn(resolvedVolume, resolvedSession) ? resolvedSession
+    : pathContainedIn(resolvedVolume, localSession) ? localSession
+    : undefined;
+  if (liveSession === undefined) return undefined;
+  try {
+    const info = await stat(liveSession);
+    if (!info.isFile()) return undefined;
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
   }
-  return undefined;
+
+  const parentSession = await readJsonlParentSession(liveSession);
+  if (parentSession === undefined) return undefined;
+  if (!isRealRunParentSession(parentSession)) return undefined;
+  const parent = parseParentRun(parentSession);
+  if (parent === undefined) return undefined;
+  if (!(await backupParentRunExists(backupBooksDirectory, parent))) return undefined;
+  return parent;
+}
+
+/** Real-run parent: under books/.../runs/...; reject temp and fixture spill parents. */
+/** Real-run parent must sit under `.ak-roles/books/<book>/runs/<leaf>/`.
+ * Flat spill parents under /tmp or fixture workdirs never match parseParentRun.
+ */
+function isRealRunParentSession(parentSession: string): boolean {
+  const normalized = parentSession.replaceAll("\\", "/");
+  return parseParentRun(normalized) !== undefined;
 }
 
 async function findPlacedRunDirectory(
@@ -505,11 +514,75 @@ export const bookTopologyDeprecatedKindsMigrator: BookTopologyPartitionMigrator 
   },
 };
 
+/**
+ * Copy one legacy run directory into the new tree while omitting deprecated
+ * top-level pages. T9 must use this (or equivalent isDeprecatedRunPage filter)
+ * when placing whole runs; the deprecated-run-pages migrator also scrubs any
+ * leftover destination pages so the external contract holds after the full
+ * partition sequence.
+ */
+export async function copyRunDirectoryForMigration(
+  sourceRunDirectory: string,
+  destinationRunDirectory: string,
+): Promise<void> {
+  await mkdir(destinationRunDirectory, { recursive: true });
+  for (const entry of await listDirents(sourceRunDirectory)) {
+    if (entry.isFile() && isDeprecatedRunPage(entry.name)) continue;
+    const src = join(sourceRunDirectory, entry.name);
+    const dest = join(destinationRunDirectory, entry.name);
+    if (entry.isDirectory()) {
+      await cp(src, dest, { recursive: true, preserveTimestamps: true });
+    } else if (entry.isFile()) {
+      await cp(src, dest, { preserveTimestamps: true });
+    }
+  }
+}
+
+async function unlinkIfPresent(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+}
+
+/** Remove deprecated pages from every run already present under destination books. */
+async function scrubDestinationDeprecatedRunPages(booksDirectory: string): Promise<void> {
+  for (const bookKey of await listBookKeys(booksDirectory)) {
+    const bookRoot = join(booksDirectory, bookKey);
+    for (const subject of await listDirents(bookRoot)) {
+      if (!subject.isDirectory()) continue;
+      const runsRoot = join(bookRoot, subject.name, "runs");
+      if (!(await directoryExists(runsRoot))) continue;
+      for (const run of await listDirents(runsRoot)) {
+        if (!run.isDirectory()) continue;
+        const runDirectory = join(runsRoot, run.name);
+        for (const page of await listDirents(runDirectory)) {
+          if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
+          await unlinkIfPresent(join(runDirectory, page.name));
+        }
+      }
+    }
+    // Legacy flat runs/ under a book (if a migrator staged there) — scrub too.
+    const flatRuns = join(bookRoot, "runs");
+    if (await directoryExists(flatRuns)) {
+      for (const run of await listDirents(flatRuns)) {
+        if (!run.isDirectory()) continue;
+        const runDirectory = join(flatRuns, run.name);
+        for (const page of await listDirents(runDirectory)) {
+          if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
+          await unlinkIfPresent(join(runDirectory, page.name));
+        }
+      }
+    }
+  }
+}
+
 export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrator = {
   partition: DEPRECATED_RUN_PAGES_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {
     const outcomes: MigrationItemOutcome[] = [];
-    const { backupBooksDirectory } = context;
+    const { backupBooksDirectory, booksDirectory } = context;
 
     for (const bookKey of await listBookKeys(backupBooksDirectory)) {
       const runsRoot = join(backupBooksDirectory, bookKey, "runs");
@@ -522,9 +595,17 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
             disposition: "discarded",
             source: sourceIdentity(backupBooksDirectory, join(runDirectory, page.name)),
           });
+          // If T9 already placed this run, strip the page from the destination now.
+          const placed = await findPlacedRunDirectory(booksDirectory, bookKey, run.name);
+          if (placed !== undefined) {
+            await unlinkIfPresent(join(placed, page.name));
+          }
         }
       }
     }
+
+    // Full-tree scrub so the external contract holds even if a run copier used raw cp.
+    await scrubDestinationDeprecatedRunPages(booksDirectory);
 
     return reconcileMigrationPartition(DEPRECATED_RUN_PAGES_PARTITION, "entries", outcomes);
   },
