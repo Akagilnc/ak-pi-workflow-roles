@@ -6,6 +6,22 @@ on:
     # (issue #798); do not treat this list as a publish allowlist to copy.
     branches: [main]
   pull_request:
+# Cancel a pull_request run once its PR gets a new tip — a run for a
+# superseded head SHA has no value to PR checks and would otherwise idle
+# until the platform's ~6h job cap (issue #848). Scope is pull_request only:
+#   - the group key falls back to github.run_id for every non-pull_request
+#     event, so each push run gets its own group and can never collide with
+#     another push run;
+#   - cancel-in-progress only controls whether an already-*running* run in
+#     the same group gets cancelled when a new one starts; by default GitHub
+#     also cancels a same-group *pending* run regardless of this flag, so it
+#     plays no part in push isolation — that rests solely on the group
+#     uniqueness above, not on any second, independent safeguard here.
+# default-branch push and the publish-registry.yml workflow_run trigger
+# (issue #798 seam) are untouched by this.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
