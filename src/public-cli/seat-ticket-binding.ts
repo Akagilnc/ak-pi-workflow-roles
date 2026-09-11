@@ -1,17 +1,14 @@
 /**
  * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747 / #771).
  *
- * ADR 0075 `diarist-resolves-ticket-llm-layer`: the seat's LLM names the court
- * target as a typed assertion; the mechanical layer only verifies that assertion
- * (complete decimal of N appears in the summons; ticket exists). Code never
- * judges which ticket the summons is about — no prose harvest, no first-#N
- * position pick, no matching book-known numbers against instruction text
+ * ADR 0075 `diarist-resolves-ticket-llm-layer`: the diarist LLM recognizes the
+ * court target; recognized ticket → provenance, truly unbound → no provenance,
+ * or escalate when it cannot recognize one. Code does not re-judge the ticket
  * (锚定宪法; owner 2026-09-08: 代码不准做判断). Other seats reuse a typed
  * identity already handed over (起居郎 assertion / source-run / already-bound
  * resume) — they do not re-recognize from instruction. No CLI --ticket, no
  * attachment frontmatter. #747: officer same-parent resume also lives here.
  *
- * Mechanical verify helpers live on diarist.ts / invocation.ts (sole owners).
  * This module owns same-ticket / same-parent resume only.
  */
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
