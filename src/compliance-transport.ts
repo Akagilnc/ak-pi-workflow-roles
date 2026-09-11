@@ -1,5 +1,4 @@
 import type { Usage } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import type { HostContext } from "./host-contracts.ts";
@@ -36,10 +35,6 @@ export type ComplianceDecision =
   | ComplianceTransportFailure;
 /** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
 export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
-
-const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
-const decisionGateSchema = Type.Object({ question: nonblank, options: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false });
-export const complianceDecisionSchema = Type.Object({ status: Type.Unknown({ description: "pass | bounce | escalate — 形状指引，非 schema 闸" }), violations: Type.Array(nonblank, { description: "观察到的合规违规" }), conflicts: Type.Array(nonblank, { description: "未决权威或执行冲突" }), decisionGate: Type.Union([decisionGateSchema, Type.Null()], { description: "升级问题与可选选项" }) }, { additionalProperties: true, required: [] });
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
 export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
