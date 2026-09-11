@@ -13,6 +13,7 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
+import { rewriteRoleRunDurablePages } from "./role-run-relocation.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 
 const RUNS_PARTITION = "runs";
@@ -103,124 +104,6 @@ async function attributeRun(runDirectory: string): Promise<TicketAttribution> {
     sourcePage: project.sourcePage,
     basename: pathBasename,
   };
-}
-
-function rewritePathValue(
-  value: unknown,
-  historicalRunDirectory: string,
-  targetRunDirectory: string,
-): unknown {
-  if (typeof value !== "string") return value;
-  if (value === historicalRunDirectory) return targetRunDirectory;
-  const prefix = `${historicalRunDirectory}${sep}`;
-  if (value.startsWith(prefix)) {
-    return `${targetRunDirectory}${value.slice(historicalRunDirectory.length)}`;
-  }
-  return value;
-}
-
-function rewriteFields(
-  record: Record<string, unknown>,
-  fields: readonly string[],
-  historicalRunDirectory: string,
-  targetRunDirectory: string,
-): void {
-  for (const field of fields) {
-    if (field in record) {
-      record[field] = rewritePathValue(
-        record[field],
-        historicalRunDirectory,
-        targetRunDirectory,
-      );
-    }
-  }
-}
-
-async function rewriteRunPages(
-  targetRunDirectory: string,
-  historicalRunDirectory: string,
-): Promise<void> {
-  const admittedPath = join(targetRunDirectory, "admitted-request.json");
-  try {
-    const page = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    rewriteFields(
-      page,
-      [
-        "runDirectory",
-        "admittedRequestPath",
-        "sessionDirectory",
-        "sessionFile",
-        "taskPath",
-        "packetPath",
-        "prerequisitesPath",
-        "requestManifestPath",
-        "mergerInputPath",
-      ],
-      historicalRunDirectory,
-      targetRunDirectory,
-    );
-    if (Array.isArray(page.attachments)) {
-      for (const attachment of page.attachments) {
-        if (attachment !== null && typeof attachment === "object") {
-          rewriteFields(
-            attachment as Record<string, unknown>,
-            ["frozenPath"],
-            historicalRunDirectory,
-            targetRunDirectory,
-          );
-        }
-      }
-    }
-    await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-  }
-
-  const invocationPath = join(targetRunDirectory, "invocation.json");
-  try {
-    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    rewriteFields(
-      page,
-      ["runDirectory", "sessionDirectory", "sessionFile"],
-      historicalRunDirectory,
-      targetRunDirectory,
-    );
-    await writeFile(
-      invocationPath,
-      `${JSON.stringify(page, null, 2)}\n`,
-      "utf8",
-    );
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-  }
-
-  const statePath = join(targetRunDirectory, "run-state.json");
-  try {
-    const page = JSON.parse(await readFile(statePath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    rewriteFields(
-      page,
-      [
-        "runDirectory",
-        "admittedRequestPath",
-        "sessionDirectory",
-        "sessionFile",
-      ],
-      historicalRunDirectory,
-      targetRunDirectory,
-    );
-    await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-  }
 }
 
 async function writeDerivationPage(
@@ -350,7 +233,11 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
 
         await copyRunTree(sourcePath, targetPath, leaf.isDirectory);
         if (leaf.isDirectory) {
-          await rewriteRunPages(targetPath, historicalRunDirectory);
+          await rewriteRoleRunDurablePages({
+            pagesDirectory: targetPath,
+            oldRunDirectory: historicalRunDirectory,
+            newRunDirectory: targetPath,
+          });
           if (attribution.kind === "worktree-basename") {
             await writeDerivationPage(targetPath, attribution);
           }
