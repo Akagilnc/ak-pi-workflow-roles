@@ -50,6 +50,12 @@ export type InspectorRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
    */
   reviewReask?: string;
+  /**
+   * #879 gate summons: verbatim parent-submission body for officer dialogue content.
+   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
+   * Argv 卷宗指针 stays the binding/lookup key only.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -97,7 +103,7 @@ export async function runPublicInspector(
   // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask;
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: parentRunPath,
       ...(resumeInstruction === undefined
@@ -164,7 +170,9 @@ export async function runPublicInspector(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+      // #879: gate first mint uses parent payload as content; binding stays argv 卷宗指针.
+      prompt: (env.reviewReask ?? env.gateReviewInstruction)
+        ?? buildInspectorTransportPrompt(admitted, engineMaterial),
     },
   });
 

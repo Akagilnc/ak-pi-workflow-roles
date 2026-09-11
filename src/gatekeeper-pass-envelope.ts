@@ -74,6 +74,11 @@ export async function requireGatekeeperPass(options: {
   readonly signal?: AbortSignal;
   readonly hostActions: GatekeeperPassHostActions;
   readonly toolCallId: string;
+  /**
+   * In-flight parent typed payload for this gate turn (#879). Relayed verbatim
+   * as officer dialogue content; binding pointer stays the parent run directory.
+   */
+  readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
 }): Promise<void> {
@@ -85,6 +90,7 @@ export async function requireGatekeeperPass(options: {
       subject: options.subject,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.summonOfficer === undefined ? {} : { summonOfficer: options.summonOfficer }),
+      ...(options.submission === undefined ? {} : { submission: options.submission }),
       ...(reask === undefined ? {} : { reask }),
     });
     const gatekeeper = projected.result;

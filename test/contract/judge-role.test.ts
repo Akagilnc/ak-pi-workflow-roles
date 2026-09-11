@@ -362,6 +362,7 @@ function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contrac
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       hostActions: options.hostActions,
       toolCallId: options.toolCallId,
+      ...(options.submission === undefined ? {} : { submission: options.submission }),
       ...(defaultGateSummon === undefined ? {} : { summonOfficer: extensionGateSummon }),
     });
   };

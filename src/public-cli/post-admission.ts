@@ -11,7 +11,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
-  GATE_DOSSIER_POINTER_PREFIX,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -1056,16 +1055,16 @@ export async function dispatchPostAdmissionTurn<
 }
 
 /**
- * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755):
+ * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
  * - manual resume (no same-ticket summons): package envelope / optional caller
  *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
  * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
- *   attachment paths only — no「重新读」、no engine handbook packaging
- *   (#750/#755), whether or not attachments are present.
+ *   attachment paths only — no「请重读」、no code-authored content substitute,
+ *   no engine handbook packaging (#750/#755/#879).
  * Caller message wins as prompt base when supplied (bytes unchanged, including
- * blank/whitespace); else summons instruction. Attachment projection must not
- * re-interpret the caller message as instructionEmpty.
+ * blank/whitespace); else summons instruction (parent payload or reask).
+ * Binding pointer stays on summons.sourceRunPath / activation — not dialogue content.
  * Seats add only their activation projection. Call prepareSummonsResumeMaterials
  * first when request.summons carries instruction or attachment paths.
  */
@@ -1079,32 +1078,22 @@ export function resumeTurnRequestProjectionOptions(
     readonly attachments: readonly { frozenPath: string }[];
   },
 ): RoleTurnRequestProjectionOptions {
-  const officerSourcePath = request.summons?.sourceRunPath;
-  const withReread = (body: string): string => {
-    if (
-      officerSourcePath === undefined
-      || (admitted.role !== "notary"
-        && admitted.role !== "inspector"
-        && admitted.role !== "auditor")
-    ) {
-      return body;
-    }
-    if (body.startsWith("请重读")) return body;
-    return `请重读\n${body}`;
-  };
+  // #879: officer dialogue content is caller/peer words only — no「请重读」,
+  // no code-authored constant substitute. Binding pointer stays on summons
+  // sourceRunPath / activation (independent machine material).
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
       // #755: same-ticket review / open-court — caller words + optional paths.
       // Attachments are not a gate: message-only summons must stay plain too.
-      prompt = withReread(buildInstructionTransportPrompt({
+      prompt = buildInstructionTransportPrompt({
         instruction: request.message,
         instructionEmpty: false,
         attachments: summonsPrepared.attachments,
-      }));
+      });
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
-      prompt = withReread(request.message);
+      prompt = request.message;
     } else {
       // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
       prompt = buildResumeContinuationPrompt({
@@ -1114,28 +1103,13 @@ export function resumeTurnRequestProjectionOptions(
       });
     }
   } else if (summonsPrepared !== undefined) {
-    // #755: same-ticket review summons — instruction/attachments only.
-    prompt = withReread(buildInstructionTransportPrompt(summonsPrepared));
+    // #755/#879: same-ticket review — instruction/attachments only (body or reask).
+    prompt = buildInstructionTransportPrompt(summonsPrepared);
   } else if (request.summons !== undefined) {
-    // #755: same-ticket summons with no instruction/attachments (e.g. notary
-    // source-run pointer). #836: officer resume opening adds「请重读」+ path pointer.
-    const path = request.summons.sourceRunPath;
-    if (
-      path !== undefined &&
-      (admitted.role === "notary" ||
-        admitted.role === "inspector" ||
-        admitted.role === "auditor")
-    ) {
-      prompt = `请重读\n${GATE_DOSSIER_POINTER_PREFIX}${path}`;
-    } else if (
-      admitted.role === "notary" ||
-      admitted.role === "inspector" ||
-      admitted.role === "auditor"
-    ) {
-      prompt = "请重读";
-    } else {
-      prompt = "";
-    }
+    // #879: same-ticket summons with no instruction (e.g. notary source-run binding
+    // only). Pointer is activation/sourceRun material — not dialogue content.
+    // Do not invent「请重读」or pointer-as-content substitute.
+    prompt = "";
   } else {
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
     prompt = buildResumeContinuationPrompt({

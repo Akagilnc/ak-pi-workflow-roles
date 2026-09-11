@@ -78,6 +78,7 @@ function requirePiGatekeeperPass(options: {
   signal?: AbortSignal;
   hostActions: HostGatekeeperActions;
   toolCallId: string;
+  submission?: unknown;
 }): Promise<void> {
   return requireGatekeeperPass({
     context: options.context,
@@ -90,6 +91,7 @@ function requirePiGatekeeperPass(options: {
       bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
     },
     toolCallId: options.toolCallId,
+    ...(options.submission === undefined ? {} : { submission: options.submission }),
   });
 }
 

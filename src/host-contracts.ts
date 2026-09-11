@@ -350,7 +350,7 @@ export interface RoleHost {
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
-  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string }): Promise<void>;
+  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string; submission?: unknown }): Promise<void>;
   on(event: "before_agent_start", handler: HostEventHandler<"before_agent_start">): void;
   on(event: "input", handler: HostEventHandler<"input">): void;
   on(event: "tool_call", handler: HostEventHandler<"tool_call">): void;

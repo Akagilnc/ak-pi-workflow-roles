@@ -1,8 +1,9 @@
 /**
- * #753 / #786 class: gate-officer same-parent resume + gate-round accounting.
+ * #753 / #786 / #879 class: gate-officer same-parent resume + gate-round accounting.
  * - Multiple pointers to one officer session must not multiply rounds.
  * - Direct officer pointer booking upserts a stable leaf per officer.
- * - Same-parent notary resume delivers verbatim submission body via real seat entry (#786).
+ * - Parent typed payload reaches officer dialogue content byte-equal (#879).
+ * - This-turn officer receipt returns alone — not a historical array (#879).
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -20,6 +21,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -132,28 +134,12 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#836 projectGatekeeperRun summons officer with whole run directory pointer only", async () => {
+test("#879 projectGatekeeperRun relays each parent payload verbatim on officer dialogue", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 786 });
-
-    const BODY_MARKER = "GATE-SUBMISSION-BODY-MARKER-786";
-    const leaf = {
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: "call-parent-1",
-            name: "ak_coder_output",
-            arguments: { status: "completed", report: BODY_MARKER },
-          },
-        ],
-      },
-    };
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
 
     const prompts: string[] = [];
     const baseHost = roleTurnHostFromLegacyPiRunner({
@@ -173,6 +159,7 @@ test("#836 projectGatekeeperRun summons officer with whole run directory pointer
     };
     const io = captureIo().io;
 
+    // Seed a same-parent officer run so the next gate summons resumes it.
     const first = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -183,44 +170,62 @@ test("#836 projectGatekeeperRun summons officer with whole run directory pointer
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
         roleTurnHost: host,
-        createRunId: () => "01a078600-0000-7000-8000-0000000n001",
+        createRunId: () => "01a087900-0000-7000-8000-0000000n001",
       },
       io,
       parseNotaryArgv,
     );
     assert.equal(first.exitCode, 0);
     assert.equal(prompts.length, 1);
+    const firstMintPrompt = prompts[0]!;
+    // External/first mint without parent payload stays out of #879 content channel.
+    assert.equal(firstMintPrompt.includes("请重读"), false, "code must not inject 请重读");
 
-    // #836: code no longer picks latest toolCall leaf as submission body (A7.1–A7.3).
-    // Officer gets the whole run directory pointer and finds materials themselves.
-    const projected = await projectGatekeeperRun({
-      context: {
-        cwd: project,
-        sessionManager: {
-          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
-          getEntries: () => [leaf],
-        },
-      } as never,
-      subject: { kind: "countersign_verdict" },
-      runDirectory: sourceRunPath,
-      home,
-      packageRoot,
-      roleTurnHost: host,
-      createRunId: () => "01a078600-0000-7000-8000-0000000n002",
-    });
-    assert.equal(projected.result.status, "bounce");
-    assert.equal(prompts.length, 2);
-    const resumePrompt = prompts[1]!;
-    assert.equal(
-      resumePrompt.includes(BODY_MARKER),
-      false,
-      "code must not inject parent submission body; officer reads the run directory",
-    );
-    assert.equal(
-      resumePrompt.includes("请重读") || resumePrompt.includes("卷宗指针") || resumePrompt.includes(sourceRunPath),
-      true,
-      "resume must carry path pointer (请重读 / 卷宗指针 / run path)",
-    );
+    const roundBodies = [
+      { countersignStatus: "converged", note: "GATE-BODY-ROUND-1" },
+      { countersignStatus: "converged", note: "GATE-BODY-ROUND-2" },
+      { countersignStatus: "converged", note: "GATE-BODY-ROUND-3" },
+    ] as const;
+
+    for (let i = 0; i < roundBodies.length; i += 1) {
+      const body = roundBodies[i]!;
+      const projected = await projectGatekeeperRun({
+        context: {
+          cwd: project,
+          sessionManager: {
+            getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+            // Header-only / stale leaf must not be the content source (#879).
+            getEntries: () => [],
+          },
+        } as never,
+        subject: { kind: "countersign_verdict" },
+        runDirectory: sourceRunPath,
+        submission: body,
+        home,
+        packageRoot,
+        roleTurnHost: host,
+        createRunId: () => `01a087900-0000-7000-8000-0000000n00${i + 2}`,
+      });
+      assert.equal(projected.result.status, "bounce");
+      const resumePrompt = prompts[i + 1]!;
+      const bodyText = readableGateItem(body);
+      // Content channel = parent payload bytes. Trailing 起居录 pointer section is
+      // ADR 0081 automatic case material (out of #879 scope) — not a substitute.
+      assert.equal(
+        resumePrompt === bodyText || resumePrompt.startsWith(`${bodyText}\n`),
+        true,
+        `round ${i + 1} officer dialogue must open with parent typed payload verbatim`,
+      );
+      assert.equal(resumePrompt.includes("请重读"), false);
+      // Binding pointer stays on summons/activation — not substituted as content opener.
+      assert.equal(resumePrompt.startsWith("卷宗指针"), false);
+      assert.equal(resumePrompt.startsWith(sourceRunPath), false);
+      assert.ok(
+        projected.summoned?.runDirectory,
+        "officer run binding must remain (pointer channel independent of content)",
+      );
+    }
+    assert.equal(prompts.length, 1 + roundBodies.length);
   });
 });
 
@@ -257,7 +262,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
   }
 });
 
-test("#836 all recorded payloads kept; queue reads the latest conclusion", async () => {
+test("#879 this-turn receipt returns alone; historical rows stay on officer terminal", async () => {
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -286,14 +291,17 @@ test("#836 all recorded payloads kept; queue reads the latest conclusion", async
   });
   assert.equal(projected.result.status, "bounce");
   if (projected.result.status === "bounce") {
-    assert.deepEqual(projected.result.receipt, [
-      { status: "pass", findings: ["first"] },
-      { status: "bounce", findings: ["second"] },
-    ]);
+    // Dialogue return is this turn only — not a historical array (#879).
+    assert.deepEqual(projected.result.receipt, { status: "bounce", findings: ["second"] });
   }
+  // Ledger column on the officer terminal still keeps every row.
+  assert.deepEqual(projected.summoned?.terminal?.submissions, [
+    { status: "pass", findings: ["first"] },
+    { status: "bounce", findings: ["second"] },
+  ]);
 });
 
-test("#836 non-three-state then lawful pass converges; both payloads remain", async () => {
+test("#879 non-three-state then lawful pass converges; parent sees this-turn pass only", async () => {
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -322,11 +330,12 @@ test("#836 non-three-state then lawful pass converges; both payloads remain", as
   });
   assert.equal(projected.result.status, "pass");
   if (projected.result.status === "pass") {
-    assert.deepEqual(projected.result.receipt, [
-      { status: "other", note: "first" },
-      { status: "pass", findings: ["ok"] },
-    ]);
+    assert.deepEqual(projected.result.receipt, { status: "pass", findings: ["ok"] });
   }
+  assert.deepEqual(projected.summoned?.terminal?.submissions, [
+    { status: "other", note: "first" },
+    { status: "pass", findings: ["ok"] },
+  ]);
 });
 
 test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, not parent invocation host", async () => {

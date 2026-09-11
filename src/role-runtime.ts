@@ -1020,6 +1020,8 @@ export function createCountersignRoleRuntime(
             ...(signal === undefined ? {} : { signal }),
             hostActions,
             toolCallId,
+            // #879: this-turn typed payload — identity-bound at submit site.
+            submission: parameters,
           });
         }
       : undefined;

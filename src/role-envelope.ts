@@ -234,6 +234,7 @@ export async function prepareRoleEnvelope(options: {
           bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
         },
         toolCallId: options.toolCallId,
+        ...(options.submission === undefined ? {} : { submission: options.submission }),
       });
     },
     on(...registration: HostEventRegistration) {
