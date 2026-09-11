@@ -12,20 +12,8 @@ function declarationIdentity(schema: TSchema): string {
   return JSON.stringify(semantic);
 }
 
-/**
- * #836 r16 class 2: root `required` stays empty except for the machine execution
- * discriminator the caller names (e.g. `status`/`judgeStatus`) — code branches on
- * it to pick the next move (worker gate, judge/countersign queue, gatekeeper
- * queue, terminating-tools projection). Every other field is narrative content
- * the LLM owns and stays optional. Callers with no such discriminator (e.g.
- * Collector output) pass no `requiredKeys` and get the prior zero-required shape.
- */
-function discriminatorRequired(properties: Record<string, unknown>, requiredKeys: readonly string[]): string[] {
-  return requiredKeys.filter((key) => key in properties);
-}
-
-/** Collapse transport variants into one provider-compatible open object; only `requiredKeys` stay required. */
-export function openToolObjectFromUnion(schema: UnionSchema, requiredKeys: readonly string[] = []): TSchema {
+/** Collapse transport variants into one provider-compatible, zero-required open object. */
+export function openToolObjectFromUnion(schema: UnionSchema): TSchema {
   const declarations = new Map<string, TSchema[]>();
   for (const variant of schema.anyOf) {
     for (const [name, declaration] of Object.entries(variant.properties ?? {})) {
@@ -43,14 +31,16 @@ export function openToolObjectFromUnion(schema: UnionSchema, requiredKeys: reado
     return [name, Type.Optional(described(name, declaration))];
   }));
   const object = Type.Object(properties, { additionalProperties: true });
-  (object as unknown as { required: string[] }).required = discriminatorRequired(properties, requiredKeys);
+  (object as unknown as { required: string[] }).required = [];
   return object;
 }
 
-/** Open a pre-existing object transport schema without changing declarations; only `requiredKeys` stay required. */
-export function openToolObject(schema: TSchema & { properties: Record<string, TSchema> }, requiredKeys: readonly string[] = []): TSchema {
-  const properties = Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [name, Type.Optional(described(name, declaration))]));
-  const object = Type.Object(properties, { additionalProperties: true });
-  (object as unknown as { required: string[] }).required = discriminatorRequired(properties, requiredKeys);
+/** Open a pre-existing object transport schema without changing declarations. */
+export function openToolObject(schema: TSchema & { properties: Record<string, TSchema> }): TSchema {
+  const object = Type.Object(
+    Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [name, Type.Optional(described(name, declaration))])),
+    { additionalProperties: true },
+  );
+  (object as unknown as { required: string[] }).required = [];
   return object;
 }

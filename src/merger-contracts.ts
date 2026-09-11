@@ -21,8 +21,7 @@ const mergerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal("escalate", { description: "escalate — 形状指引，非 schema 闸" }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),
 ]);
-// #836 r16 class 2: `status` is the machine execution discriminator; kept required.
-export const mergerOutputSchema = withInfrastructureFailureDeclaration(openToolObjectFromUnion(mergerOutputVariants, ["status"]));
+export const mergerOutputSchema = withInfrastructureFailureDeclaration(openToolObjectFromUnion(mergerOutputVariants));
 
 export type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 export type MergerMaterial = DeepReadonly<Static<typeof materialSchema>>;

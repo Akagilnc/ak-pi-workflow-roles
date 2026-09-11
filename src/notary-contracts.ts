@@ -31,8 +31,6 @@ export const NOTARY_TICKET_FLAG = {
 export const NOTARY_FIXED_KICKOFF =
   "符宝郎案卷已受理；来源 run 定位见会话材料。";
 
-// #836 r16 class 2: `status` is the machine execution discriminator the queue
-// reads to select pass/bounce/escalate (src/gatekeeper-role.ts:170-247).
 export const notaryOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
@@ -46,7 +44,6 @@ export const notaryOutputSchema = withInfrastructureFailureDeclaration(
         description: "status 为 escalate 时的上呈理由",
       })),
     }),
-    ["status"],
   ),
 );
 

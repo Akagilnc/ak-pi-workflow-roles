@@ -12,7 +12,6 @@ import { withInfrastructureFailureDeclaration } from "./terminating-infrastructu
 export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
 export const NAVIGATOR_ACCEPTED_TEXT = "游奕使建议已受理";
 
-// #836 r16 class 2: `status` is the machine execution discriminator; kept required.
 export const navigatorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
@@ -23,7 +22,6 @@ export const navigatorOutputSchema = withInfrastructureFailureDeclaration(
         description: "排好序的路线建议数组，元素含 next/phase/reason — 形状指引，非 schema 闸",
       }),
     }),
-    ["status"],
   ),
 );
 

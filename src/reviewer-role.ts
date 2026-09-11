@@ -39,9 +39,8 @@ const reviewerOutputVariants = Type.Union([
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);
-// #836 r16 class 2: `status` is the machine execution discriminator; kept required.
 export const reviewerOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(reviewerOutputVariants, ["status"]),
+  openToolObjectFromUnion(reviewerOutputVariants),
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;

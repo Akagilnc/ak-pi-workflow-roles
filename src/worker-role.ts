@@ -75,10 +75,8 @@ const coderOutputVariants = Type.Union([
     })),
   }, { additionalProperties: false }),
 ]);
-// #836 r16 class 2: `status` is the machine execution discriminator the worker
-// gate reads to pick the next move (worker-role.ts:400-418 → worker-submission-gates.ts).
 export const coderOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(coderOutputVariants, ["status"]),
+  openToolObjectFromUnion(coderOutputVariants),
 );
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {

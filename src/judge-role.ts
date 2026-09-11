@@ -54,7 +54,7 @@ export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
     { additionalProperties: true },
   ),
 );
-(judgeVerdictSchema as unknown as { required: string[] }).required = ["judgeStatus"];
+(judgeVerdictSchema as unknown as { required: string[] }).required = [];
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 

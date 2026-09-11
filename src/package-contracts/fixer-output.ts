@@ -46,11 +46,8 @@ const fixerOutputVariants = Type.Union([
   Type.Object({ status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类拒绝结算" }) }),
   Type.Object({ status: Type.Literal("partially_completed", { description: "partially_completed — 形状指引，非 schema 闸" }), report: Type.String({ description: "如实结果报告" }), classResults: Type.Array(classResultSchema, { description: "各类完成或拒绝结算" }), testEvidence: Type.Optional(testEvidenceSchema) }),
 ]);
-// #836 r16 class 2: `status` is the machine execution discriminator the worker
-// gate reads to pick the next move (src/worker-role.ts:264-280,400-418 →
-// src/worker-submission-gates.ts) — it alone stays required.
 export const fixerOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(fixerOutputVariants, ["status"]),
+  openToolObjectFromUnion(fixerOutputVariants),
 );
 
 export type FixerBlocker = Static<typeof blockerSchema>;

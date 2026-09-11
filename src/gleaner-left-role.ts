@@ -17,8 +17,7 @@ export type { GleanerLeftOutput };
 export { validateRecordedGleanerLeftOutput };
 
 // #836 r16 class 1: pointer/statement are LLM/human-read narrative content — no
-// code branches on their presence. `status` is the machine execution
-// discriminator (kept required by the openToolObject requiredKeys arg below).
+// code branches on their presence.
 /** 左拾遗弹章交卷形状；形状指引，非 schema 闸。 */
 export const gleanerLeftOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
@@ -37,7 +36,6 @@ export const gleanerLeftOutputSchema = withInfrastructureFailureDeclaration(
         { description: "弹章列表；空列表合法完局" },
       ),
     }),
-    ["status"],
   ),
 );
 

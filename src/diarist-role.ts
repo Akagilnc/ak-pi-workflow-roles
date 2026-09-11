@@ -21,8 +21,7 @@ export { validateRecordedDiaristOutput };
 // sourceKind/transcript, but the lawful path on a miss is to keep the entry as
 // unprojected raw payload (src/diarist.ts:52-75 never rejects or drops it), so
 // provider `required` would cut off that very branch; sourceRef/timestamp are
-// not branched on at all. `status` is the machine execution discriminator
-// (kept required by the openToolObject requiredKeys arg below).
+// not branched on at all.
 /** 起居郎交卷形状；形状指引，非 schema 闸。 */
 export const diaristOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
@@ -72,7 +71,6 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
         ),
       ),
     }),
-    ["status"],
   ),
 );
 

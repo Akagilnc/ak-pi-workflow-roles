@@ -18,8 +18,6 @@ export { INSPECTOR_OUTPUT_TOOL_NAME as INSPECTOR_OUTPUT_TOOL };
 export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
-// #836 r16 class 2: `status` is the machine execution discriminator the queue
-// reads to select pass/bounce/escalate (src/gatekeeper-role.ts:170-247).
 /** 察院事后察举交卷形状；形状指引，非 schema 闸。 */
 export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
@@ -34,7 +32,6 @@ export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
         description: "status 为 escalate 时的上呈理由",
       })),
     }),
-    ["status"],
   ),
 );
 

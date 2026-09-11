@@ -41,7 +41,7 @@ export const countersignVerdictSchema = withInfrastructureFailureDeclaration(
     { additionalProperties: true },
   ),
 );
-(countersignVerdictSchema as unknown as { required: string[] }).required = ["countersignStatus"];
+(countersignVerdictSchema as unknown as { required: string[] }).required = [];
 
 export type CountersignVerdictParameters = Static<typeof countersignVerdictSchema>;
 

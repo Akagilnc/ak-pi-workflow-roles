@@ -82,9 +82,8 @@ const doctorSubmissionVariants = Type.Union([
     missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: evidenceIds }, { additionalProperties: true }), { description: "如实证词所需而尚缺的证据" }),
   }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
 ]);
-// #836 r16 class 2: `status` is the machine execution discriminator; kept required.
 export const doctorSubmissionSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(doctorSubmissionVariants, ["status"]),
+  openToolObjectFromUnion(doctorSubmissionVariants),
 );
 // #836 r16 class 3: action tool — code reads evidenceId to look up the Map entry
 // and offset/limit to slice + accumulate coverage (src/doctor-contracts.ts:97-128,
