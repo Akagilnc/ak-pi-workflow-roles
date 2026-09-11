@@ -113,19 +113,41 @@ function runLeafFromRecord(record: Record<string, unknown>): string | undefined 
   return undefined;
 }
 
-function runLeafFromVolumeText(text: string): string | undefined {
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
+/**
+ * Worker-submission-gate volumes are Pi session files. Ownership is only the
+ * session header's parentSession — never later message/payload path fields.
+ * Malformed JSONL rows are reported separately; they do not select the leaf.
+ */
+function inspectWorkerSubmissionGateVolume(text: string): {
+  readonly leaf: string | undefined;
+  readonly malformedRows: readonly { readonly lineNumber: number; readonly raw: string }[];
+} {
+  const malformedRows: { lineNumber: number; raw: string }[] = [];
+  let headerSeen = false;
+  let leaf: string | undefined;
+
+  for (const row of jsonlRows(text)) {
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(line);
-      if (!isRecord(parsed)) continue;
-      const leaf = runLeafFromRecord(parsed);
-      if (leaf !== undefined) return leaf;
+      parsed = JSON.parse(row.raw);
     } catch {
-      // Volume attribution scans parseable rows only; malformed rows stay in the copied bytes.
+      malformedRows.push({ lineNumber: row.lineNumber, raw: row.raw });
+      continue;
+    }
+    if (!isRecord(parsed)) {
+      malformedRows.push({ lineNumber: row.lineNumber, raw: row.raw });
+      continue;
+    }
+    if (!headerSeen) {
+      headerSeen = true;
+      // Sole attribution evidence: Pi session header parentSession.
+      if (parsed.type === "session" && typeof parsed.parentSession === "string") {
+        leaf = runLeafFromPath(parsed.parentSession);
+      }
     }
   }
-  return undefined;
+
+  return { leaf, malformedRows };
 }
 
 function destinationKindFile(
@@ -363,6 +385,7 @@ async function migrateWorkerSubmissionGate(
   context: BookTopologyMigrationContext,
 ): Promise<ReturnType<typeof reconcileMigrationPartition>> {
   const outcomes: MigrationItemOutcome[] = [];
+  const volumeMalformedRows: { source: string; raw: string }[] = [];
   const ticketCache = new Map<string, number | undefined>();
   const { backupBooksDirectory, booksDirectory } = context;
   const kind = WORKER_SUBMISSION_GATE_KIND;
@@ -387,7 +410,8 @@ async function migrateWorkerSubmissionGate(
       const sourcePath = join(sourceDir, name);
       const source = posixRelative(backupBooksDirectory, sourcePath);
       const text = await readFile(sourcePath, "utf8");
-      const leaf = runLeafFromVolumeText(text);
+      const inspected = inspectWorkerSubmissionGateVolume(text);
+      const leaf = inspected.leaf;
       const ticketNumber = leaf === undefined
         ? undefined
         : await ticketForRunLeaf(ticketCache, backupBooksDirectory, bookKey, leaf);
@@ -402,10 +426,17 @@ async function migrateWorkerSubmissionGate(
       await mkdir(dirname(dest), { recursive: true });
       await cp(sourcePath, dest, { preserveTimestamps: true });
       volumeDestinations.set(resolve(sourcePath), dest);
+      // One outcome per volume keeps the entries closure; bad rows attach below.
       outcomes.push({
         disposition: leaf !== undefined && ticketNumber !== undefined ? "placed" : "unbound",
         source,
       });
+      for (const bad of inspected.malformedRows) {
+        volumeMalformedRows.push({
+          source: `${source}:${bad.lineNumber}`,
+          raw: bad.raw,
+        });
+      }
     }
 
     await migrateCurrentSessionPointer({
@@ -421,7 +452,12 @@ async function migrateWorkerSubmissionGate(
     });
   }
 
-  return reconcileMigrationPartition(kind, "entries", outcomes);
+  const report = reconcileMigrationPartition(kind, "entries", outcomes);
+  return {
+    ...report,
+    // Malformed rows are evidence on the volume bytes, not extra entry units.
+    malformedRows: [...report.malformedRows, ...volumeMalformedRows],
+  };
 }
 
 const bookTopologySitianMixedVolumeMigrators: readonly BookTopologyPartitionMigrator[] =
