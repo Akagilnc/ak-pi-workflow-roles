@@ -57,6 +57,7 @@ export function ticketProvenanceEntryIdentity(
 export type AppendTicketProvenanceInput = {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly sessionParent: string;
   /** Original diarist row (or `{ original, unprojected: true }` envelope). */
   readonly payload: unknown;
   /** Explicit package home (tests / admitted run); never process.env.HOME (#604). */
@@ -107,6 +108,7 @@ export function appendTicketProvenanceEntry(
     identity,
     subject,
     cwd: input.cwd,
+    sessionParent: input.sessionParent,
     ...(input.home === undefined ? {} : { home: input.home }),
     host: input.host ?? "diarist",
     source: input.source ?? "diarist",

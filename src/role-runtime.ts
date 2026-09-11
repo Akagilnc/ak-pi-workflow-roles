@@ -964,6 +964,7 @@ export function createDiaristRoleRuntime(
           await commitDiaristEntries({
             ticketNumber,
             cwd: coords.projectRoot,
+            sessionParent: join(coords.runDirectory, "session", "session.jsonl"),
             home: coords.home,
             entries: projectDiaristEntries(parameters),
           });
@@ -1134,21 +1135,9 @@ export function createRoleRuntimeExtension(
         void Promise.resolve(attendance.dispose()).then(
           undefined,
           (error) => {
-            try {
-              sitianReport({
-                level: "event",
-                kind: "navigator-dispose-failure",
-                payload: {
-                  diagnostic: error instanceof Error ? error.message : String(error),
-                },
-                source: "role-runtime",
-              });
-            } catch (recordError) {
-              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
-                diagnostic: error instanceof Error ? error.message : String(error),
-                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
-              });
-            }
+            envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+              diagnostic: error instanceof Error ? error.message : String(error),
+            });
           },
         );
       })();

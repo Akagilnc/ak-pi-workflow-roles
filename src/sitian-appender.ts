@@ -204,6 +204,12 @@ export function resolveSitianVolumeCategory(kind: string): string {
   return kind;
 }
 
+type SitianRecordPath = {
+  readonly sessionDir: string;
+  readonly recordFile: string;
+  readonly ledgerHome: string;
+};
+
 function safeBookKey(cwd: string): string {
   try {
     return resolveBookKeyFromGit(cwd);
@@ -212,56 +218,36 @@ function safeBookKey(cwd: string): string {
   }
 }
 
-type SitianRecordPath = {
-  readonly sessionDir: string;
-  readonly recordFile: string;
-  readonly ledgerHome: string;
-};
-
 /** Pure topology owner shared by ambient writes and explicit-home submission reads. */
 export function resolveSitianRecordPathInLedger(
   input: SitianRecordInput,
   ledgerHome: string,
 ): SitianRecordPath {
-  const cwd = input.cwd ?? process.cwd();
   const category = resolveSitianVolumeCategory(input.kind);
+  const ticketNumber = category === "ticket-provenance"
+    ? typeof input.subject === "string" && /^[1-9][0-9]*$/.test(input.subject)
+      ? input.subject
+      : typeof input.subject === "object"
+        && typeof input.subject.ticketNumber === "number"
+        && Number.isSafeInteger(input.subject.ticketNumber)
+        && input.subject.ticketNumber > 0
+        ? String(input.subject.ticketNumber)
+        : undefined
+    : undefined;
 
   let sessionDir: string;
-
-  if (input.sessionParent !== undefined && input.sessionParent.length > 0 && physicallyContainedIn(ledgerHome, input.sessionParent)) {
-    sessionDir = join(dirname(input.sessionParent), category);
+  if (ticketNumber !== undefined) {
+    const bookDir = activationBookDirectory(ledgerHome, safeBookKey(input.cwd ?? process.cwd()));
+    sessionDir = join(bookDir, ticketNumber, category);
   } else {
-    const bookKey = safeBookKey(cwd);
-    const bookDir = activationBookDirectory(ledgerHome, bookKey);
-    if (input.subject !== undefined) {
-      if (
-        (category === "ticket-provenance" && typeof input.subject === "string" && /^[1-9][0-9]*$/.test(input.subject)) ||
-        (
-          typeof input.subject === "object" &&
-          typeof input.subject.ticketNumber === "number" &&
-          Number.isSafeInteger(input.subject.ticketNumber) &&
-          input.subject.ticketNumber > 0
-        )
-      ) {
-        const ticketNumber = typeof input.subject === "string"
-          ? input.subject
-          : String(input.subject.ticketNumber);
-        sessionDir = join(bookDir, ticketNumber, category);
-      } else {
-        let subjectStr: string;
-        if (typeof input.subject === "string") {
-          subjectStr = input.subject;
-        } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
-          subjectStr = input.subject.runId;
-        } else {
-          subjectStr = JSON.stringify(input.subject);
-        }
-        const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
-        sessionDir = join(bookDir, category, digest);
-      }
-    } else {
-      sessionDir = join(bookDir, category);
+    if (
+      input.sessionParent === undefined
+      || input.sessionParent.length === 0
+      || !physicallyContainedIn(ledgerHome, input.sessionParent)
+    ) {
+      throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
+    sessionDir = join(dirname(input.sessionParent), category);
   }
 
   const recordFile = join(sessionDir, "records.jsonl");

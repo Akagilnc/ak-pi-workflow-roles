@@ -7,19 +7,14 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   ActivationLedgerError,
-  activationBookDirectory,
   ensureRealDirectoryTree,
   errorText,
   pathContainedIn,
   physicallyContainedIn,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
-import { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
-
-export { subjectKeyedRecordDirectory } from "./archivist-record-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
@@ -136,8 +131,8 @@ export type RecordSessionOpen = {
  * identity is checked once before SessionManager.open (directory walk cannot see a
  * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
  * via destination-free SessionManager.create — no derived postcondition.
- * Resume via the AK-owned current-session ledger is limited to subject-keyed identity
- * and the authorized worker-submission-gate durable path (ADR 0066).
+ * Resume via the AK-owned current-session ledger is limited to the authorized
+ * worker-submission-gate durable path (ADR 0066).
  * Other ordinary no-subject children (auditor-roles, evidence-children, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
@@ -150,42 +145,29 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   // Path → ledger home is owned by topology (explicit env.home nests via parent path).
   const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
 
-  let sessionDir: string;
-  let parentSession: string | undefined;
-
-  if (options.subject !== undefined) {
-    sessionDir = subjectKeyedRecordDirectory({
-      cwd,
-      kind: options.kind,
-      subject: options.subject,
-      ...(parentFile === undefined || parentFile.length === 0
-        ? {}
-        : { parentSessionFile: parentFile }),
-    });
-    parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
-  } else if (parentFile === undefined || parentFile.length === 0) {
-    // No durable parent principal — preserve prior in-memory child behavior.
-    return { session: SessionManager.inMemory(cwd), resumed: false };
-  } else {
-    const parentResolved = resolve(parentFile);
-    // Nest under parent only when the parent record already lives under the package home.
-    // Nest base is dirname(parent file) — the durable principal's directory — never a
-    // separate getSessionDir() that can diverge (empty in-memory dir + durable file).
-    // Otherwise the book is resolved from cwd (ADR 0048) and the kind sits under that book —
-    // workspace / foreign parents cannot drag records out of home.
-    sessionDir = physicallyContainedIn(ledgerHome, parentResolved)
-      ? join(dirname(parentResolved), options.kind)
-      : join(activationBookDirectory(ledgerHome, resolveBookKeyFromGit(cwd)), options.kind);
-    parentSession = parentFile;
+  if (parentFile === undefined || parentFile.length === 0) {
+    if (options.subject === undefined) {
+      // No durable principal requested: preserve prior in-memory child behavior.
+      return { session: SessionManager.inMemory(cwd), resumed: false };
+    }
+    throw new Error("Durable record ownership requires a parent session inside the ledger home");
   }
+
+  const parentResolved = resolve(parentFile);
+  if (!physicallyContainedIn(ledgerHome, parentResolved)) {
+    throw new Error("Durable record ownership requires a parent session inside the ledger home");
+  }
+  // The durable parent's file is the sole nesting authority. A divergent
+  // SessionManager directory must not create a second placement route.
+  const sessionDir = join(dirname(parentResolved), options.kind);
+  const parentSession = parentFile;
 
   const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Subject-keyed nests continue by subject digest; worker-submission-gate is the
-  // sole authorized no-subject same-nest continuation. All other kinds mint fresh.
-  const mayResumeSameNest =
-    options.subject !== undefined || options.kind === WORKER_SUBMISSION_GATE_KIND;
+  // Worker-submission-gate is the sole authorized same-nest continuation.
+  // Subject no longer selects a persistence partition.
+  const mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
     const recentFile = readCurrentSession(sessionDir);
     assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
