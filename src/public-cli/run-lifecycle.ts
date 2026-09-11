@@ -984,8 +984,9 @@ export async function acquireRunWriterLease(
  * Returns undefined when the ID is unknown.
  */
 export async function findRunDirectoryById(
-  home: string,
+  home: string | undefined,
   runId: string,
+  onlyBookKey?: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
@@ -997,6 +998,7 @@ export async function findRunDirectoryById(
     return undefined;
   }
   for (const bookKey of bookKeys) {
+    if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
     let subjects: string[];
     try {

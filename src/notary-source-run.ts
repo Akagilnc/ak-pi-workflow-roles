@@ -13,7 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 
 // Run directory leaf: <runId>@<role>. Production uses uuidv7 runIds; offline tracers
 // may use deterministic non-uuid leaves. Role token stays identifier-shaped.
@@ -92,7 +92,8 @@ export async function resolveNotarySourceRunLocator(options: {
   let candidate: string;
   const bare = parseRunDirectoryName(raw);
   if (bare !== undefined && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey))
+      ?? join(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
   }

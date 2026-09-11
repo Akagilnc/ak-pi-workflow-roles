@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import test from "node:test";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -375,7 +375,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     });
     const notaryIo = captureIo();
     const result = await runPublicNotary(
-      ["--source-run", sourceRunPath],
+      ["--source-run", basename(sourceRunPath)],
       {
         home,
         agentDir: join(home, ".pi"),
