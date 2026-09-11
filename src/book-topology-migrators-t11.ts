@@ -32,8 +32,8 @@ const MANUAL_ARCHIVES_PARTITION = "manual-archives";
 
 const TICKET_NUMBER_NAME = /^[1-9][0-9]*$/;
 const RUN_LEAF = /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
-const PARENT_RUN_IN_BOOKS =
-  /(?:^|[\\/])\.ak-roles[\\/]books[\\/]([^\\/]+)[\\/]runs[\\/]([^\\/]+)(?:[\\/]|$)/;
+/** Relative path under a books root: `<book>/runs/<leaf>/...`. */
+const RUN_UNDER_BOOKS = /^([^/]+)\/runs\/([^/]+)(?:\/|$)/;
 
 const DEPRECATED_KIND_DIRECTORIES = [
   "submission-candidate",
@@ -135,9 +135,66 @@ async function hasAnyFileRecursive(directory: string): Promise<boolean> {
   return false;
 }
 
-function parseParentRun(parentSession: string): ParentRun | undefined {
-  const normalized = parentSession.replaceAll("\\", "/");
-  const match = PARENT_RUN_IN_BOOKS.exec(normalized);
+/** Map a path still written against the pre-rename books root into this backup. */
+function mapBooksPathToBackup(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  absolutePath: string,
+): string | undefined {
+  const booksRoot = resolve(booksDirectory);
+  const resolved = resolve(absolutePath);
+  if (resolved !== booksRoot && !pathContainedIn(booksRoot, resolved)) return undefined;
+  return join(backupBooksDirectory, relative(booksRoot, resolved));
+}
+
+/**
+ * Live session for this volume: either already under the volume, or the books
+ * original path that maps 1:1 onto a file inside this backup volume. Basename
+ * fallback is not a binding.
+ */
+function resolveVolumeSessionFile(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  volumeDirectory: string,
+  sessionFileField: string,
+): string | undefined {
+  const resolvedVolume = resolve(volumeDirectory);
+  const resolvedSession = resolve(sessionFileField);
+  if (pathContainedIn(resolvedVolume, resolvedSession)) return resolvedSession;
+
+  const mapped = mapBooksPathToBackup(
+    booksDirectory,
+    backupBooksDirectory,
+    sessionFileField,
+  );
+  if (mapped === undefined) return undefined;
+  const resolvedMapped = resolve(mapped);
+  return pathContainedIn(resolvedVolume, resolvedMapped) ? resolvedMapped : undefined;
+}
+
+/**
+ * Parent run bound to this migration's books or backup root. Any other
+ * `.ak-roles/books/.../runs/...` spelling (temp/fixture spill) is rejected.
+ */
+function parseParentRunBoundToMigration(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  parentSession: string,
+): ParentRun | undefined {
+  const resolved = resolve(parentSession);
+  const booksRoot = resolve(booksDirectory);
+  const backupRoot = resolve(backupBooksDirectory);
+
+  let rel: string | undefined;
+  if (resolved === booksRoot || pathContainedIn(booksRoot, resolved)) {
+    rel = relative(booksRoot, resolved).split(sep).join("/");
+  } else if (resolved === backupRoot || pathContainedIn(backupRoot, resolved)) {
+    rel = relative(backupRoot, resolved).split(sep).join("/");
+  } else {
+    return undefined;
+  }
+
+  const match = RUN_UNDER_BOOKS.exec(rel);
   if (match === null) return undefined;
   const bookKey = match[1];
   const leafName = match[2];
@@ -182,12 +239,17 @@ async function backupParentRunExists(
 }
 
 /**
- * True volume = continuation pointer + live session under the volume + parent in a
- * real backup run (#867). Missing/malformed current-session, a sessionFile outside
- * the volume, temp/fixture parents, or absent backup parent all disqualify.
+ * True volume (#867 three-way conjunction):
+ * 1. continuation pointer (current-session.sessionFile)
+ * 2. that pointer binds a live session under this volume (direct, or books→backup map only)
+ * 3. session content names a parent bound to this migration's real backup run
+ *
+ * Outside pointers, basename-only coincidence, temp/fixture parents, or missing
+ * backup parents all disqualify.
  */
 async function findTrueVolumeParent(
   backupBooksDirectory: string,
+  booksDirectory: string,
   volumeDirectory: string,
 ): Promise<ParentRun | undefined> {
   let ledgerRaw: string;
@@ -210,13 +272,12 @@ async function findTrueVolumeParent(
     return undefined;
   }
 
-  const resolvedVolume = resolve(volumeDirectory);
-  const resolvedSession = resolve(sessionFileField);
-  const localSession = resolve(volumeDirectory, basename(sessionFileField));
-  const liveSession =
-    pathContainedIn(resolvedVolume, resolvedSession) ? resolvedSession
-    : pathContainedIn(resolvedVolume, localSession) ? localSession
-    : undefined;
+  const liveSession = resolveVolumeSessionFile(
+    booksDirectory,
+    backupBooksDirectory,
+    volumeDirectory,
+    sessionFileField,
+  );
   if (liveSession === undefined) return undefined;
   try {
     const info = await stat(liveSession);
@@ -228,20 +289,14 @@ async function findTrueVolumeParent(
 
   const parentSession = await readJsonlParentSession(liveSession);
   if (parentSession === undefined) return undefined;
-  if (!isRealRunParentSession(parentSession)) return undefined;
-  const parent = parseParentRun(parentSession);
+  const parent = parseParentRunBoundToMigration(
+    booksDirectory,
+    backupBooksDirectory,
+    parentSession,
+  );
   if (parent === undefined) return undefined;
   if (!(await backupParentRunExists(backupBooksDirectory, parent))) return undefined;
   return parent;
-}
-
-/** Real-run parent: under books/.../runs/...; reject temp and fixture spill parents. */
-/** Real-run parent must sit under `.ak-roles/books/<book>/runs/<leaf>/`.
- * Flat spill parents under /tmp or fixture workdirs never match parseParentRun.
- */
-function isRealRunParentSession(parentSession: string): boolean {
-  const normalized = parentSession.replaceAll("\\", "/");
-  return parseParentRun(normalized) !== undefined;
 }
 
 async function findPlacedRunDirectory(
@@ -444,7 +499,11 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
           outcomes.push({ disposition: "discarded", source });
           continue;
         }
-        const parent = await findTrueVolumeParent(backupBooksDirectory, sourcePath);
+        const parent = await findTrueVolumeParent(
+          backupBooksDirectory,
+          booksDirectory,
+          sourcePath,
+        );
         if (parent === undefined) {
           outcomes.push({ disposition: "discarded", source });
           continue;
