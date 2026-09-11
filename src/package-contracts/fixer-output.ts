@@ -38,13 +38,9 @@ const refusedClassResultSchema = Type.Object({
 const classResultSchema = Type.Union([completedClassResultSchema, refusedClassResultSchema]);
 const completedClassResultsSchema = Type.Array(completedClassResultSchema);
 
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
-// top-level machine discriminator (worker-submission-gates.ts reads it for
-// WORKER_DONE_STATUSES gating). A closed provider-registered value domain
-// would reject an unknown status before the submission ledger ever records
-// it. Kept open (Type.Unknown, one shared description across every variant
-// so openToolObjectFromUnion's identical-declaration collapse loses no
-// guidance) like every other gate-queue status field in this package.
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across every variant
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const FIXER_STATUS_DESCRIPTION =
   "planned | completed | refused | unfinished | partially_completed — 形状指引，非 schema 闸；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const fixerOutputVariants = Type.Union([

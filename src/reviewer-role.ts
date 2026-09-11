@@ -28,12 +28,9 @@ const reviewerAmendmentsSchema = Type.Object({
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
 // returned as submitted, ADR 0057).
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
-// top-level machine discriminator. A closed provider-registered value domain
-// would reject an unknown status before the submission ledger ever records
-// it. Kept open (Type.Unknown, one shared description across both variants
-// so openToolObjectFromUnion's identical-declaration collapse loses no
-// guidance) like every other gate-queue status field in this package.
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across both variants
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const REVIEWER_STATUS_DESCRIPTION = "completed | refused — 形状指引，非 schema 闸" as const;
 const reviewerOutputVariants = Type.Union([
   Type.Object({

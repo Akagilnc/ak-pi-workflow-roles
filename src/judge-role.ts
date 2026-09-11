@@ -22,12 +22,9 @@ export type { JudgeVerdict };
 // content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
 // or nested presence. `judgeStatus` alone is the machine discriminator the
 // queue reads to pick pass/bounce/escalate (src/judge-role.ts:90-125).
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): a closed provider-registered
-// value domain rejects an unknown judgeStatus before it reaches the
-// submission ledger, defeating 读不出三态→resume 说话者本人 (the rawStatus
-// check + ParentQueueReaskError below never runs). Kept open (Type.Unknown)
-// like the other gate-queue status fields in this package; the reask below
-// is still code's job, not the transport's.
+// #836 (ADR 0003 Amendment): judgeStatus kept open like countersignStatus
+// (src/countersign-role.ts) — a closed domain here would reject an unknown
+// value before the rawStatus/ParentQueueReaskError check below ever runs.
 export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {

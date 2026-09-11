@@ -48,12 +48,9 @@ export type { WorkerOutput };
 // no code branches on their length. `reason` alone keeps minLength: the worker
 // gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
 // (src/worker-submission-gates.ts:159-163,297-302).
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): a closed provider-registered
-// value domain rejects an unknown status before the submission ledger ever
-// records it. `status` is kept open (Type.Unknown, one shared description so
-// no variant's guidance is dropped when openToolObjectFromUnion collapses
-// identical declarations); downstream code (assertAcceptableThroughHost /
-// WORKER_DONE_STATUSES) still reads whatever string the role wrote.
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across every variant
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
   "planned | completed | refused | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const coderOutputVariants = Type.Union([

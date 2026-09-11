@@ -70,12 +70,9 @@ const finding = Type.Union([
   Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), assetEvidence: Type.Optional(Type.Object({ targetKey: nonblank, targetKind: Type.Optional(Type.Union(assetKinds.map((kind) => Type.Literal(kind)))), evidenceId: nonblank }, { additionalProperties: true })), ...findingBody }, { additionalProperties: true }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Optional(Type.Integer()), runsPath: nonblank }, { additionalProperties: true });
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): `status` is the tool's own
-// top-level machine discriminator. A closed provider-registered value domain
-// would reject an unknown status before the submission ledger ever records
-// it. Kept open (Type.Unknown, one shared description across both variants
-// so openToolObjectFromUnion's identical-declaration collapse loses no
-// guidance) like every other gate-queue status field in this package.
+// #836 (ADR 0003 Amendment): status kept open like countersignStatus
+// (src/countersign-role.ts) — one shared description across both variants
+// so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const DOCTOR_STATUS_DESCRIPTION =
   "completed | refused — 形状指引，非 schema 闸；completed 允许空 findings；refused 仅当证据不足以支撑如实案证词" as const;
 const doctorSubmissionVariants = Type.Union([
