@@ -1156,6 +1156,7 @@ async function admitStandardMaterialInvocation<
   });
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const correlationFields =
     options.correlationId === undefined
       ? {}
@@ -1180,6 +1181,7 @@ async function admitStandardMaterialInvocation<
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketFields,
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -1204,6 +1206,7 @@ async function admitStandardMaterialInvocation<
     principal,
     admittedRequestPath,
     ...correlationFields,
+    ...ticketFields,
   };
 }
 
