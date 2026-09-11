@@ -997,16 +997,25 @@ export async function findRunDirectoryById(
     return undefined;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join(activationBookDirectory(ledgerHome, bookKey), "runs");
-    let entries: string[];
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    let subjects: string[];
     try {
-      entries = await readdir(runsDir);
+      subjects = await readdir(bookDir);
     } catch {
       continue;
     }
-    for (const entry of entries) {
-      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join(runsDir, entry);
+    for (const subject of ["", ...subjects]) {
+      const runsDir = subject === "" ? join(bookDir, "runs") : join(bookDir, subject, "runs");
+      let entries: string[];
+      try {
+        entries = await readdir(runsDir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
+          return join(runsDir, entry);
+        }
       }
     }
   }
@@ -1072,6 +1081,7 @@ export async function findLatestRunIdForSeatTicket(input: {
   const ledgerHome = resolveActivationLedgerHome(input.home);
   const runsDir = join(
     activationBookDirectory(ledgerHome, input.bookKey),
+    input.ticketNumber === undefined ? "" : String(input.ticketNumber),
     "runs",
   );
   let entries: string[];

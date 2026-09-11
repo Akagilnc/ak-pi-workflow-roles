@@ -10,7 +10,9 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDiaristInvocation,
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
+  relocateAdmittedRunToTicket,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
@@ -206,8 +208,9 @@ export async function runPublicDiarist(
               ? (facts.sitian as { ticketNumber: number }).ticketNumber
               : undefined;
         if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-          (admitted as { ticketNumber?: number }).ticketNumber = raw;
-          if (result.admitted.ticketNumber === undefined) {
+          await bindAdmittedTicketNumber(admitted, raw);
+          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+          if (result.admitted !== admitted && result.admitted.ticketNumber === undefined) {
             (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
           }
         }

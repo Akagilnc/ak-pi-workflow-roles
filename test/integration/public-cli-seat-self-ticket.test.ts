@@ -11,8 +11,9 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -273,6 +274,14 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(
+      result.admitted!.runDirectory.includes(`${sep}${result.admitted!.bookKey}${sep}582${sep}runs${sep}`),
+      true,
+    );
+    assert.equal(
+      existsSync(join(home, ".ak-roles", "books", result.admitted!.bookKey, "unbound", "runs", `${result.admitted!.runId}@countersign`)),
+      false,
+    );
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

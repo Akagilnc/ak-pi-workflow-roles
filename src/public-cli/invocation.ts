@@ -8,9 +8,10 @@ import {
   lstat,
   readFile,
   realpath,
+  rename,
   writeFile,
 } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
   activationBookDirectory,
@@ -480,27 +481,55 @@ export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
   ticketNumber: number,
 ): Promise<void> {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
-    throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
-  }
   if (admitted.ticketNumber !== undefined) {
     if (admitted.ticketNumber === ticketNumber) return;
     throw new Error(
       `bindAdmittedTicketNumber refuses to replace existing ticket #${admitted.ticketNumber} with #${ticketNumber}`,
     );
   }
+  await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
-  await mergeInvocationIdentityPage(admitted.runDirectory, { ticketNumber });
-  const admittedPath = admitted.admittedRequestPath;
-  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
-    "utf8",
-  );
+}
+
+/** Move a settled first-entry run from unbound to its asserted ticket directory. */
+export async function relocateAdmittedRunToTicket(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+): Promise<void> {
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
+  const oldRunDirectory = admitted.runDirectory;
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
+  const target = roleRunPlacement(ledgerHome, {
+    bookKey: admitted.bookKey,
+    subject: { ticketNumber: admitted.ticketNumber },
+    runId: admitted.runId,
+    role: admitted.role,
+  });
+  ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  await rename(oldRunDirectory, target.runDirectory);
+
+  const replaceRunPrefix = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      return value === oldRunDirectory || value.startsWith(`${oldRunDirectory}${sep}`)
+        ? `${target.runDirectory}${value.slice(oldRunDirectory.length)}`
+        : value;
+    }
+    if (Array.isArray(value)) return value.map(replaceRunPrefix);
+    if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        (value as Record<string, unknown>)[key] = replaceRunPrefix(child);
+      }
+    }
+    return value;
+  };
+  replaceRunPrefix(admitted);
+  (admitted as { principal: DurablePrincipal }).principal = authority.seal(target);
+  for (const name of ["admitted-request.json", "invocation.json", "run-state.json"]) {
+    const path = join(target.runDirectory, name);
+    if (!existsSync(path)) continue;
+    const page = replaceRunPrefix(JSON.parse(await readFile(path, "utf8")));
+    await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
 }
 
 /**

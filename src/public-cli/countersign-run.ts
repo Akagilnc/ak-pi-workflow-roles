@@ -29,6 +29,7 @@ import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
   buildCountersignTransportPrompt,
+  relocateAdmittedRunToTicket,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -398,7 +399,7 @@ export async function runPublicCountersign(
   // Mutable shell: ticket bind re-projects activation before executeTurn.
   const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
 
-  return await runPostAdmissionOneShot({
+  const result = await runPostAdmissionOneShot({
     admitted,
     env,
     io,
@@ -423,6 +424,8 @@ export async function runPublicCountersign(
     }),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
+  await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  return result;
 }
 
 function countersignAdapters(options?: {

@@ -41,6 +41,8 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
@@ -907,11 +909,11 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
       ticketNumber: 582,
     });
     assert.ok(diaristRunId);
-    const diaristCoords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
+    const diaristCoords = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: result.admitted!.bookKey,
+      subject: { ticketNumber: 582 },
       runId: diaristRunId!,
       role: "diarist",
-      home,
     });
     const diaristState = await readRoleRunState(
       diaristCoords.runDirectory,
@@ -1098,16 +1100,17 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
     // createRunId would mint s002 if auto-resume were skipped — must not fire.
+    const secondIo = captureIo();
     const second = await runPublicCountersign(
       ["裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
       },
-      captureIo().io,
+      secondIo.io,
       parseCountersignArgv,
     );
-    assert.equal(second.exitCode, 0);
+    assert.equal(second.exitCode, 0, secondIo.stderr.join(""));
     assert.equal(
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s001",
