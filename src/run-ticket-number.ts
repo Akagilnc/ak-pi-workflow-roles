@@ -57,6 +57,19 @@ async function readBoardPageTicketNumber(
 }
 
 /**
+ * Board-only ticketNumber (admitted → invocation). Placement attribution and
+ * any caller that must ignore derivation pages use this sole projection.
+ */
+export async function readBoardTicketNumber(
+  runDirectory: string,
+): Promise<number | undefined> {
+  return (
+    (await readBoardPageTicketNumber(runDirectory, "admitted-request.json")) ??
+    (await readBoardPageTicketNumber(runDirectory, "invocation.json"))
+  );
+}
+
+/**
  * Worktree-derivation ticket only — never a board assertion. Callers that must
  * distinguish board vs derived use this; effective readers use readRunTicketNumber.
  */
@@ -80,8 +93,7 @@ export async function readRunTicketNumber(
   runDirectory: string,
 ): Promise<number | undefined> {
   return (
-    (await readBoardPageTicketNumber(runDirectory, "admitted-request.json")) ??
-    (await readBoardPageTicketNumber(runDirectory, "invocation.json")) ??
+    (await readBoardTicketNumber(runDirectory)) ??
     (await readMigrationDerivedTicketNumber(runDirectory))
   );
 }

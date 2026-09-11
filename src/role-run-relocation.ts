@@ -2,12 +2,15 @@
  * Single authority for rewriting durable run pages after a run directory moves.
  * Live unbound→ticket relocate and book-topology migration both call this.
  *
- * Scope is typed machine-consumed path fields only — never free text or
- * generated session transcript content.
+ * Scope is typed machine-consumed path fields only — never free text, never
+ * frozen attachment/artifact bytes. Nested walk is confined to package-owned
+ * `session/` seams.
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+
+import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
 
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",
@@ -35,9 +38,13 @@ const RUN_STATE_PAGE_FIELDS = [
   "sessionFile",
 ] as const;
 
+const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
+const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 const CURRENT_SESSION_FIELDS = ["sessionFile"] as const;
 const OFFICER_POINTER_FIELDS = ["sessionFile", "runDirectory"] as const;
 const SITIAN_RECORD_FIELDS = ["sessionParent"] as const;
+const SESSION_HEADER_FIELDS = ["parentSession"] as const;
+const BINDING_PARENT_FIELDS = ["sessionFile"] as const;
 
 export type RunDirectoryPathRewrite = {
   readonly oldRunDirectory: string;
@@ -152,6 +159,37 @@ function collectRewrites(input: {
   return out;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Typed notary/source-run locator: only runDirectory is a path. */
+function rewriteSourceRunLocator(
+  value: unknown,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): void {
+  if (!isPlainObject(value)) return;
+  rewriteRunDirectoryPathFieldsAgainstRewrites(
+    value,
+    SOURCE_RUN_LOCATOR_FIELDS,
+    rewrites,
+  );
+}
+
+/** Same-ticket summons materials carrying typed source-run pointers. */
+function rewriteSummonsMaterials(
+  value: unknown,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): void {
+  if (!isPlainObject(value)) return;
+  rewriteRunDirectoryPathFieldsAgainstRewrites(
+    value,
+    SUMMONS_PATH_FIELDS,
+    rewrites,
+  );
+  rewriteSourceRunLocator(value.sourceRun, rewrites);
+}
+
 async function rewriteJsonObjectFile(
   path: string,
   fields: readonly string[],
@@ -159,10 +197,9 @@ async function rewriteJsonObjectFile(
 ): Promise<void> {
   if (!existsSync(path)) return;
   const page = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (page === null || typeof page !== "object" || Array.isArray(page)) return;
-  const record = page as Record<string, unknown>;
-  rewriteRunDirectoryPathFieldsAgainstRewrites(record, fields, rewrites);
-  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  if (!isPlainObject(page)) return;
+  rewriteRunDirectoryPathFieldsAgainstRewrites(page, fields, rewrites);
+  await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
 }
 
 async function rewriteOfficerPointerFile(
@@ -171,16 +208,15 @@ async function rewriteOfficerPointerFile(
 ): Promise<void> {
   if (!existsSync(path)) return;
   const page = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (page === null || typeof page !== "object" || Array.isArray(page)) return;
-  const record = page as Record<string, unknown>;
+  if (!isPlainObject(page)) return;
   // Only the typed direct-officer pointer shape — never arbitrary .pointer.json.
-  if (record.kind !== "direct-officer-run-pointer") return;
+  if (page.kind !== "direct-officer-run-pointer") return;
   rewriteRunDirectoryPathFieldsAgainstRewrites(
-    record,
+    page,
     OFFICER_POINTER_FIELDS,
     rewrites,
   );
-  await writeFile(path, `${JSON.stringify(record)}\n`, "utf8");
+  await writeFile(path, `${JSON.stringify(page)}\n`, "utf8");
 }
 
 async function rewriteSitianRecordsJsonl(
@@ -212,23 +248,22 @@ async function rewriteSitianRecordsJsonl(
       out.push(line);
       continue;
     }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!isPlainObject(parsed)) {
       out.push(line);
       continue;
     }
-    const record = parsed as Record<string, unknown>;
-    if (!("sessionParent" in record)) {
+    if (!("sessionParent" in parsed)) {
       out.push(line);
       continue;
     }
-    const before = record.sessionParent;
+    const before = parsed.sessionParent;
     rewriteRunDirectoryPathFieldsAgainstRewrites(
-      record,
+      parsed,
       SITIAN_RECORD_FIELDS,
       rewrites,
     );
-    if (record.sessionParent !== before) changed = true;
-    out.push(JSON.stringify(record));
+    if (parsed.sessionParent !== before) changed = true;
+    out.push(JSON.stringify(parsed));
   }
   if (!changed) return;
   const body = out.join("\n");
@@ -240,14 +275,87 @@ async function rewriteSitianRecordsJsonl(
 }
 
 /**
- * Nested machine-consumed path pages under a relocated run tree:
- * current-session.json, direct-officer *.pointer.json, sitian records.jsonl.
- * Does not open session transcripts or free-text files.
+ * Session transcript typed locators only: header.parentSession and
+ * ak_auditor_parent_attempt_binding data.parent.sessionFile. Never message text.
  */
-async function rewriteNestedMachinePathPages(
-  rootDirectory: string,
+async function rewriteSessionTranscriptBindings(
+  path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
 ): Promise<void> {
+  if (!existsSync(path)) return;
+  const raw = await readFile(path, "utf8");
+  if (raw.length === 0) return;
+  const endsWithNewline = raw.endsWith("\n");
+  const lines = raw.split("\n");
+  let changed = false;
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (line === "" && i === lines.length - 1 && endsWithNewline) {
+      out.push("");
+      continue;
+    }
+    if (line.trim() === "") {
+      out.push(line);
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      out.push(line);
+      continue;
+    }
+    if (!isPlainObject(parsed)) {
+      out.push(line);
+      continue;
+    }
+    let lineChanged = false;
+    if (parsed.type === "session" && "parentSession" in parsed) {
+      const before = parsed.parentSession;
+      rewriteRunDirectoryPathFieldsAgainstRewrites(
+        parsed,
+        SESSION_HEADER_FIELDS,
+        rewrites,
+      );
+      if (parsed.parentSession !== before) lineChanged = true;
+    } else if (
+      parsed.type === "custom" &&
+      parsed.customType === AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE &&
+      isPlainObject(parsed.data) &&
+      isPlainObject(parsed.data.parent)
+    ) {
+      const parent = parsed.data.parent;
+      const before = parent.sessionFile;
+      rewriteRunDirectoryPathFieldsAgainstRewrites(
+        parent,
+        BINDING_PARENT_FIELDS,
+        rewrites,
+      );
+      if (parent.sessionFile !== before) lineChanged = true;
+    }
+    if (lineChanged) changed = true;
+    out.push(lineChanged ? JSON.stringify(parsed) : line);
+  }
+  if (!changed) return;
+  const body = out.join("\n");
+  await writeFile(
+    path,
+    endsWithNewline && !body.endsWith("\n") ? `${body}\n` : body,
+    "utf8",
+  );
+}
+
+/**
+ * Package-owned nested seams under session/ only:
+ * current-session.json, direct-officer *.pointer.json, sitian records.jsonl,
+ * session transcript typed parent bindings. Never walks attachments/ or artifacts/.
+ */
+async function rewriteNestedMachinePathPages(
+  pagesDirectory: string,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): Promise<void> {
+  const sessionRoot = join(pagesDirectory, "session");
   async function walk(directory: string): Promise<void> {
     let entries;
     try {
@@ -269,16 +377,18 @@ async function rewriteNestedMachinePathPages(
         await rewriteOfficerPointerFile(path, rewrites);
       } else if (entry.name === "records.jsonl") {
         await rewriteSitianRecordsJsonl(path, rewrites);
+      } else if (entry.name.endsWith(".jsonl")) {
+        await rewriteSessionTranscriptBindings(path, rewrites);
       }
     }
   }
-  await walk(rootDirectory);
+  await walk(sessionRoot);
 }
 
 /**
  * Rewrite admitted-request / invocation / run-state path fields (and attachment
- * frozenPath), then nested machine-consumed path pages, after the run directory
- * has already been moved or copied.
+ * frozenPath pointers only), then nested package-owned session seams, after the
+ * run directory has already been moved or copied.
  * `pagesDirectory` is where the pages now live; path strings still naming an
  * old run directory become the matching new directory. `crossRunRewrites`
  * covers officer/parent pointers that landed under a different final placement.
@@ -303,11 +413,14 @@ export async function rewriteRoleRunDurablePages(input: {
       ADMITTED_PAGE_FIELDS,
       rewrites,
     );
+    // Nested notary typed locator — same value family as top-level sourceRunPath.
+    rewriteSourceRunLocator(page.sourceRun, rewrites);
     if (Array.isArray(page.attachments)) {
       for (const attachment of page.attachments) {
-        if (attachment !== null && typeof attachment === "object") {
+        if (isPlainObject(attachment)) {
+          // Pointer only — never open or mutate frozen attachment bytes.
           rewriteRunDirectoryPathFieldsAgainstRewrites(
-            attachment as Record<string, unknown>,
+            attachment,
             ["frozenPath"],
             rewrites,
           );
@@ -315,13 +428,9 @@ export async function rewriteRoleRunDurablePages(input: {
       }
     }
     // Nested principal wire (sessionDirectory/sessionFile) when present.
-    if (
-      page.principal !== null &&
-      typeof page.principal === "object" &&
-      !Array.isArray(page.principal)
-    ) {
+    if (isPlainObject(page.principal)) {
       rewriteRunDirectoryPathFieldsAgainstRewrites(
-        page.principal as Record<string, unknown>,
+        page.principal,
         ["sessionDirectory", "sessionFile"],
         rewrites,
       );
@@ -358,16 +467,16 @@ export async function rewriteRoleRunDurablePages(input: {
       RUN_STATE_PAGE_FIELDS,
       rewrites,
     );
-    if (
-      page.principal !== null &&
-      typeof page.principal === "object" &&
-      !Array.isArray(page.principal)
-    ) {
+    if (isPlainObject(page.principal)) {
       rewriteRunDirectoryPathFieldsAgainstRewrites(
-        page.principal as Record<string, unknown>,
+        page.principal,
         ["sessionDirectory", "sessionFile"],
         rewrites,
       );
+    }
+    // Open court summons carries the same typed source-run locator family.
+    if (isPlainObject(page.currentCourt)) {
+      rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
     }
     await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
   }

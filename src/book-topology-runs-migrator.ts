@@ -17,7 +17,10 @@ import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
 } from "./role-run-relocation.ts";
-import { MIGRATION_TICKET_DERIVATION_PAGE } from "./run-ticket-number.ts";
+import {
+  MIGRATION_TICKET_DERIVATION_PAGE,
+  readBoardTicketNumber,
+} from "./run-ticket-number.ts";
 
 const RUNS_PARTITION = "runs";
 
@@ -90,38 +93,6 @@ async function readProjectRoot(
       const projectRoot = (raw as { projectRoot?: unknown }).projectRoot;
       if (typeof projectRoot === "string" && projectRoot.length > 0) {
         return { projectRoot, sourcePage: page };
-      }
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Board ticket only for placement attribution. readRunTicketNumber also sees
- * derivation pages, but legacy flat sources have none yet; after migration the
- * derivation page must not re-drive placement. Read board pages directly here.
- */
-async function readBoardTicketNumber(
-  runDirectory: string,
-): Promise<number | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
-    try {
-      const raw: unknown = JSON.parse(
-        await readFile(join(runDirectory, page), "utf8"),
-      );
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-        continue;
-      }
-      const ticketNumber = (raw as { ticketNumber?: unknown }).ticketNumber;
-      if (
-        typeof ticketNumber === "number" &&
-        Number.isSafeInteger(ticketNumber) &&
-        ticketNumber >= 1
-      ) {
-        return ticketNumber;
       }
     } catch (error) {
       if (isEnoent(error)) continue;
