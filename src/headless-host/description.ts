@@ -383,8 +383,10 @@ export function codexMcpConfigArgs(
 
 /**
  * Build one `codex exec` / `codex exec resume` argv (#646).
- * New: `exec … prompt`. Resume: `exec resume <thread_id> … prompt`.
- * Resume has no `--sandbox`/`-C`; workspace-write + never-approval ride `-c`.
+ * New: `exec --approve-for-me … prompt`.
+ * Resume: `exec --approve-for-me resume <thread_id> … prompt`.
+ * Approval stays on the parent command so new and resumed turns use Codex's
+ * automatic review with its workspace-write sandbox.
  */
 export function codexTurnArgs(options: {
   readonly prompt: string;
@@ -409,7 +411,8 @@ export function codexTurnArgs(options: {
    */
   readonly writableRoots?: readonly string[];
 }): string[] {
-  const args: string[] = ["exec"];
+  // Parent-command flag must precede the resume subcommand.
+  const args: string[] = ["exec", "--approve-for-me"];
   if (options.session.kind === "resume") {
     args.push("resume", options.session.id);
   }
@@ -419,19 +422,9 @@ export function codexTurnArgs(options: {
   // Operator config/MCP off; auth still uses CODEX_HOME (official).
   // Project/system config and AGENTS.md have no official suppression switch.
   args.push("--ignore-user-config", "--ignore-rules");
-  // Full workspace permissions; resume lacks --sandbox so both paths use -c.
-  args.push(
-    "-c", `approval_policy=${codexTomlString("never")}`,
-    "-c", `sandbox_mode=${codexTomlString("workspace-write")}`,
-  );
-  // New turn also takes the explicit flag (document-preferred face).
-  if (options.session.kind === "new") {
-    args.push("--sandbox", "workspace-write");
-  }
-
   const roots = (options.writableRoots ?? []).filter((root) => root !== "");
   if (roots.length > 0) {
-    // Resume has no --add-dir; both paths use the config key so rights match.
+    // Resume has no --add-dir; the config key keeps extra roots available on both paths.
     args.push(
       "-c",
       `sandbox_workspace_write.writable_roots=${codexTomlStringArray(roots)}`,
