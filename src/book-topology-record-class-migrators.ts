@@ -1,12 +1,13 @@
 /**
  * #866 (T10): record-class partition migrators (build only; execution is #861).
  *
- * Line-closed placement:
- * - ticket-provenance → <ticket>/ticket-provenance/ by each row's subject
- * - submission-ledger / attempt-history → owning run session/<kind>/ by each row's runId
+ * Line-closed placement by each row's typed kind (never by source directory alone):
+ * - ticket-provenance → <ticket>/ticket-provenance/
+ * - submission-ledger kinds → owning run session/submission-ledger/
+ * - attempt-history → owning run session/attempt-history/
  * - unknown ownership → unbound/ (never silent discard)
- * - malformed rows → unbound with exact bytes preserved
- * - misplaced rows of these kinds rescanned from foreign partitions by content shape
+ * - malformed → unbound with exact bytes + malformedRows entry
+ * - misplaced: any foreign jsonl whose kind is one of the three classes
  */
 import { createHash } from "node:crypto";
 import { appendFile, copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
@@ -38,15 +39,7 @@ const MISPLACED = "misplaced-record-class";
 
 const HUMAN_VIEW_TICKET_RE = /^#\s*起居录\s*·\s*#([1-9][0-9]*)\b/m;
 
-const MISPLACED_SCAN_PARTITIONS = [
-  "auditor-roles",
-  "auditor",
-  "attendance",
-  "dispatch-error",
-  "gate",
-  "worker-submission-gate",
-  "scratchpad",
-] as const;
+type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY;
 
 type JsonLine =
   | { readonly ok: true; readonly value: Record<string, unknown>; readonly raw: string }
@@ -106,27 +99,37 @@ async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
 
-async function existingIdentities(recordFile: string): Promise<Set<string>> {
-  const identities = new Set<string>();
-  for (const line of await readJsonlLines(recordFile)) {
-    if (line.trim() === "") continue;
-    const parsed = parseJsonlLine(line);
-    if (parsed.ok && typeof parsed.value.identity === "string") {
-      identities.add(parsed.value.identity);
-    }
-  }
-  return identities;
-}
+/** Per-destination identity cache — one read per file, O(1) subsequent checks. */
+class RecordWriteCache {
+  private readonly identities = new Map<string, Set<string>>();
 
-async function appendRecordLine(recordFile: string, raw: string): Promise<void> {
-  await ensureDir(dirname(recordFile));
-  const line = raw.endsWith("\n") ? raw : `${raw}\n`;
-  const parsed = parseJsonlLine(raw);
-  if (parsed.ok && typeof parsed.value.identity === "string") {
-    const existing = await existingIdentities(recordFile);
-    if (existing.has(parsed.value.identity)) return;
+  private async load(recordFile: string): Promise<Set<string>> {
+    const cached = this.identities.get(recordFile);
+    if (cached !== undefined) return cached;
+    const set = new Set<string>();
+    for (const line of await readJsonlLines(recordFile)) {
+      if (line.trim() === "") continue;
+      const parsed = parseJsonlLine(line);
+      if (parsed.ok && typeof parsed.value.identity === "string") set.add(parsed.value.identity);
+    }
+    this.identities.set(recordFile, set);
+    return set;
   }
-  await appendFile(recordFile, line, "utf8");
+
+  async append(recordFile: string, raw: string): Promise<void> {
+    await ensureDir(dirname(recordFile));
+    const line = raw.endsWith("\n") ? raw : `${raw}\n`;
+    const parsed = parseJsonlLine(raw);
+    if (parsed.ok && typeof parsed.value.identity === "string") {
+      const existing = await this.load(recordFile);
+      if (existing.has(parsed.value.identity)) return;
+      existing.add(parsed.value.identity);
+    } else if (!this.identities.has(recordFile)) {
+      // Ensure subsequent identity loads see a live map even when first rows lack identity.
+      this.identities.set(recordFile, await this.load(recordFile));
+    }
+    await appendFile(recordFile, line, "utf8");
+  }
 }
 
 function roleFromPayload(payload: unknown): string | undefined {
@@ -142,16 +145,10 @@ function runIdFromPayload(payload: unknown): string | undefined {
     : undefined;
 }
 
-function isSubmissionKind(kind: unknown): boolean {
-  return typeof kind === "string" && S4_SUBMISSION_LEDGER_KINDS.has(kind);
-}
-
-function recordClassOfKind(
-  kind: unknown,
-): typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY | undefined {
+function recordClassOfKind(kind: unknown): RecordClass | undefined {
   if (kind === TICKET_PROVENANCE) return TICKET_PROVENANCE;
   if (kind === ATTEMPT_HISTORY) return ATTEMPT_HISTORY;
-  if (isSubmissionKind(kind)) return SUBMISSION_LEDGER;
+  if (typeof kind === "string" && S4_SUBMISSION_LEDGER_KINDS.has(kind)) return SUBMISSION_LEDGER;
   return undefined;
 }
 
@@ -188,6 +185,22 @@ async function listVolumeRecordFiles(partitionDir: string): Promise<string[]> {
   return files;
 }
 
+/**
+ * Paths already closed by the three home migrators or owned by the runs migrator.
+ * Criterion (not a partition name list): root record-class volumes, nested ticket
+ * provenance, and anything under a runs/ tree.
+ */
+function isHomeOrRunOwnedRelativePath(relPosix: string): boolean {
+  const parts = relPosix.split("/");
+  if (parts[0] === TICKET_PROVENANCE || parts[0] === SUBMISSION_LEDGER || parts[0] === ATTEMPT_HISTORY) {
+    return true;
+  }
+  if (parts.length >= 2 && isTicketNumberString(parts[0]!) && parts[1] === TICKET_PROVENANCE) {
+    return true;
+  }
+  return parts.includes("runs");
+}
+
 function unboundCategoryFile(
   booksDirectory: string,
   bookKey: string,
@@ -195,16 +208,6 @@ function unboundCategoryFile(
   key: string,
 ): string {
   return join(booksDirectory, bookKey, "unbound", category, key, "records.jsonl");
-}
-
-async function placeUnboundLine(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  category: string,
-  key: string,
-  raw: string,
-): Promise<void> {
-  await appendRecordLine(unboundCategoryFile(context.booksDirectory, bookKey, category, key), raw);
 }
 
 async function resolveRunDestination(
@@ -229,7 +232,6 @@ async function resolveRunDestination(
 
   const backupRun = await findBookRunDirectory(join(context.backupBooksDirectory, bookKey), runId);
   if (backupRun !== undefined) {
-    const role = backupRun.role;
     const ticketNumber = (await resolveMigratingRunTicket(backupRun.runDirectory)).ticketNumber;
     return {
       kind: "run",
@@ -238,14 +240,12 @@ async function resolveRunDestination(
         bookKey,
         ticketNumber,
         runId,
-        role,
+        backupRun.role,
       ),
       disposition: ticketNumber !== undefined ? "placed" : "unbound",
     };
   }
 
-  // No retained run body — keep the row under unbound keyed by runId (or role hint).
-  // Never discard solely because the run directory is missing (#852 unbound exit).
   const role = hints.role ?? runCoordsFromSessionParent(hints.sessionParent)?.role;
   const key = role !== undefined ? stableKey(`${runId}@${role}`) : stableKey(runId);
   return { kind: "unbound-key", key };
@@ -254,40 +254,38 @@ async function resolveRunDestination(
 async function placeTicketProvenanceLine(
   context: BookTopologyMigrationContext,
   bookKey: string,
+  writes: RecordWriteCache,
   source: string,
   raw: string,
   value: Record<string, unknown> | undefined,
 ): Promise<MigrationItemOutcome> {
   if (value === undefined) {
-    await placeUnboundLine(context, bookKey, TICKET_PROVENANCE, stableKey(raw), raw);
+    await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
     return { disposition: "unbound", source, malformed: true, malformedRaw: raw };
   }
   const ticketNumber = ticketNumberFromSubject(value.subject);
   if (ticketNumber === undefined) {
-    await placeUnboundLine(context, bookKey, TICKET_PROVENANCE, stableKey(raw), raw);
+    await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
     return { disposition: "unbound", source };
   }
-  const dest = join(
-    context.booksDirectory,
-    bookKey,
-    String(ticketNumber),
-    TICKET_PROVENANCE,
-    "records.jsonl",
+  await writes.append(
+    join(context.booksDirectory, bookKey, String(ticketNumber), TICKET_PROVENANCE, "records.jsonl"),
+    raw,
   );
-  await appendRecordLine(dest, raw);
   return { disposition: "placed", source };
 }
 
 async function placeRunOwnedLine(
   context: BookTopologyMigrationContext,
   bookKey: string,
+  writes: RecordWriteCache,
   category: typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY,
   source: string,
   raw: string,
   value: Record<string, unknown> | undefined,
 ): Promise<MigrationItemOutcome> {
   if (value === undefined) {
-    await placeUnboundLine(context, bookKey, category, stableKey(raw), raw);
+    await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, category, stableKey(raw)), raw);
     return { disposition: "unbound", source, malformed: true, malformedRaw: raw };
   }
 
@@ -297,7 +295,7 @@ async function placeRunOwnedLine(
     ?? runIdFromPayload(value.payload)
     ?? fromParent?.runId;
   if (runId === undefined) {
-    await placeUnboundLine(context, bookKey, category, stableKey(raw), raw);
+    await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, category, stableKey(raw)), raw);
     return { disposition: "unbound", source };
   }
 
@@ -308,23 +306,46 @@ async function placeRunOwnedLine(
   });
 
   if (target.kind === "unbound-key") {
-    await placeUnboundLine(context, bookKey, category, target.key, raw);
+    await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, category, target.key), raw);
     return { disposition: "unbound", source };
   }
 
-  await appendRecordLine(join(target.runDirectory, "session", category, "records.jsonl"), raw);
+  await writes.append(join(target.runDirectory, "session", category, "records.jsonl"), raw);
   return { disposition: target.disposition, source };
 }
 
-async function migrateJsonlFileLines(
+/** Place one parsed row by its typed kind; unknown kinds fall back to the home category unbound. */
+async function placeRecordClassLine(
   context: BookTopologyMigrationContext,
   bookKey: string,
+  writes: RecordWriteCache,
+  source: string,
+  raw: string,
+  value: Record<string, unknown>,
+  fallbackCategory: RecordClass,
+): Promise<MigrationItemOutcome> {
+  const recordClass = recordClassOfKind(value.kind);
+  if (recordClass === TICKET_PROVENANCE) {
+    return placeTicketProvenanceLine(context, bookKey, writes, source, raw, value);
+  }
+  if (recordClass === SUBMISSION_LEDGER || recordClass === ATTEMPT_HISTORY) {
+    return placeRunOwnedLine(context, bookKey, writes, recordClass, source, raw, value);
+  }
+
+  // Unknown kind inside a record-class home volume: preserve under that home's unbound.
+  await writes.append(
+    unboundCategoryFile(context.booksDirectory, bookKey, fallbackCategory, stableKey(raw)),
+    raw,
+  );
+  return { disposition: "unbound", source };
+}
+
+async function migrateJsonlFileByKind(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
+  writes: RecordWriteCache,
   filePath: string,
-  place: (
-    source: string,
-    raw: string,
-    value: Record<string, unknown> | undefined,
-  ) => Promise<MigrationItemOutcome>,
+  fallbackCategory: RecordClass,
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const lines = await readJsonlLines(filePath);
@@ -333,7 +354,18 @@ async function migrateJsonlFileLines(
     if (raw.trim() === "") continue;
     const source = lineSource(context.backupBooksDirectory, filePath, index);
     const parsed = parseJsonlLine(raw);
-    outcomes.push(await place(source, raw, parsed.ok ? parsed.value : undefined));
+    if (!parsed.ok) {
+      // Malformed: preserve under the home partition's unbound bucket.
+      if (fallbackCategory === TICKET_PROVENANCE) {
+        outcomes.push(await placeTicketProvenanceLine(context, bookKey, writes, source, raw, undefined));
+      } else {
+        outcomes.push(await placeRunOwnedLine(context, bookKey, writes, fallbackCategory, source, raw, undefined));
+      }
+      continue;
+    }
+    outcomes.push(
+      await placeRecordClassLine(context, bookKey, writes, source, raw, parsed.value, fallbackCategory),
+    );
   }
 }
 
@@ -342,13 +374,13 @@ async function copyTicketCompanions(
   bookKey: string,
   volumeDir: string,
 ): Promise<void> {
-  // Companions follow the ticket resolved from records or human view — not a second authority.
   const lines = await readJsonlLines(join(volumeDir, "records.jsonl"));
   let ticketNumber: number | undefined;
   for (const raw of lines) {
     if (raw.trim() === "") continue;
     const parsed = parseJsonlLine(raw);
     if (!parsed.ok) continue;
+    if (recordClassOfKind(parsed.value.kind) !== TICKET_PROVENANCE) continue;
     ticketNumber = ticketNumberFromSubject(parsed.value.subject);
     if (ticketNumber !== undefined) break;
   }
@@ -365,7 +397,6 @@ async function copyTicketCompanions(
 
   const destDir = join(context.booksDirectory, bookKey, String(ticketNumber), TICKET_PROVENANCE);
   await ensureDir(destDir);
-  // Empty courts still get a volume face (ADR 0075).
   try {
     await stat(join(destDir, "records.jsonl"));
   } catch {
@@ -383,23 +414,23 @@ async function copyTicketCompanions(
   }
 }
 
-async function migrateTicketProvenanceBook(
+async function migrateHomePartitionBook(
   context: BookTopologyMigrationContext,
   bookKey: string,
+  writes: RecordWriteCache,
+  category: RecordClass,
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  const rootFiles = await listVolumeRecordFiles(join(backupBook, TICKET_PROVENANCE));
+  const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
-    await migrateJsonlFileLines(
-      context,
-      bookKey,
-      filePath,
-      (source, raw, value) => placeTicketProvenanceLine(context, bookKey, source, raw, value),
-      outcomes,
-    );
-    await copyTicketCompanions(context, bookKey, dirname(filePath));
+    await migrateJsonlFileByKind(context, bookKey, writes, filePath, category, outcomes);
+    if (category === TICKET_PROVENANCE) {
+      await copyTicketCompanions(context, bookKey, dirname(filePath));
+    }
   }
+
+  if (category !== TICKET_PROVENANCE) return;
 
   // Partial-nesting era: <ticket>/ticket-provenance/
   const ticketDirs = await readdir(backupBook, { withFileTypes: true }).catch((error: unknown) => {
@@ -415,60 +446,44 @@ async function migrateTicketProvenanceBook(
       if ((error as { code?: unknown }).code === "ENOENT") continue;
       throw error;
     }
-    await migrateJsonlFileLines(
-      context,
-      bookKey,
-      nested,
-      (source, raw, value) => placeTicketProvenanceLine(context, bookKey, source, raw, value),
-      outcomes,
-    );
+    await migrateJsonlFileByKind(context, bookKey, writes, nested, TICKET_PROVENANCE, outcomes);
     await copyTicketCompanions(context, bookKey, dirname(nested));
   }
 }
 
-async function migrateRunOwnedBook(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  category: typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY,
-  outcomes: MigrationItemOutcome[],
-): Promise<void> {
-  const files = await listVolumeRecordFiles(join(context.backupBooksDirectory, bookKey, category));
-  for (const filePath of files) {
-    await migrateJsonlFileLines(
-      context,
-      bookKey,
-      filePath,
-      (source, raw, value) => placeRunOwnedLine(context, bookKey, category, source, raw, value),
-      outcomes,
-    );
-  }
-}
-
+/**
+ * Foreign jsonl rows whose typed kind is one of the three record classes.
+ * Range = whole book tree minus home volumes and runs/ (criterion, not a name list).
+ */
 async function migrateMisplacedBook(
   context: BookTopologyMigrationContext,
   bookKey: string,
+  writes: RecordWriteCache,
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  for (const partition of MISPLACED_SCAN_PARTITIONS) {
-    const files = await listFilesRecursive(join(backupBook, partition), (name) => name.endsWith(".jsonl"));
-    for (const filePath of files) {
-      const lines = await readJsonlLines(filePath);
-      for (let index = 0; index < lines.length; index += 1) {
-        const raw = lines[index]!;
-        if (raw.trim() === "") continue;
-        const source = lineSource(context.backupBooksDirectory, filePath, index);
-        const parsed = parseJsonlLine(raw);
-        if (!parsed.ok) continue;
-        const recordClass = recordClassOfKind(parsed.value.kind);
-        if (recordClass === undefined) continue;
-        if (recordClass === TICKET_PROVENANCE) {
-          outcomes.push(await placeTicketProvenanceLine(context, bookKey, source, raw, parsed.value));
-        } else {
-          outcomes.push(
-            await placeRunOwnedLine(context, bookKey, recordClass, source, raw, parsed.value),
-          );
-        }
+  const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
+  for (const filePath of files) {
+    const rel = sourceRelative(context.backupBooksDirectory, filePath);
+    // rel is bookKey/...
+    const withinBook = rel.split("/").slice(1).join("/");
+    if (isHomeOrRunOwnedRelativePath(withinBook)) continue;
+
+    const lines = await readJsonlLines(filePath);
+    for (let index = 0; index < lines.length; index += 1) {
+      const raw = lines[index]!;
+      if (raw.trim() === "") continue;
+      const parsed = parseJsonlLine(raw);
+      if (!parsed.ok) continue;
+      const recordClass = recordClassOfKind(parsed.value.kind);
+      if (recordClass === undefined) continue;
+      const source = lineSource(context.backupBooksDirectory, filePath, index);
+      if (recordClass === TICKET_PROVENANCE) {
+        outcomes.push(await placeTicketProvenanceLine(context, bookKey, writes, source, raw, parsed.value));
+      } else {
+        outcomes.push(
+          await placeRunOwnedLine(context, bookKey, writes, recordClass, source, raw, parsed.value),
+        );
       }
     }
   }
@@ -476,10 +491,10 @@ async function migrateMisplacedBook(
 
 async function forEachBook(
   context: BookTopologyMigrationContext,
-  body: (bookKey: string) => Promise<void>,
+  body: (bookKey: string, writes: RecordWriteCache) => Promise<void>,
 ): Promise<void> {
   for (const bookKey of await listBookKeys(context.backupBooksDirectory)) {
-    await body(bookKey);
+    await body(bookKey, new RecordWriteCache());
   }
 }
 
@@ -487,7 +502,8 @@ export const ticketProvenancePartitionMigrator: BookTopologyPartitionMigrator = 
   partition: TICKET_PROVENANCE,
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
-    await forEachBook(context, (bookKey) => migrateTicketProvenanceBook(context, bookKey, outcomes));
+    await forEachBook(context, (bookKey, writes) =>
+      migrateHomePartitionBook(context, bookKey, writes, TICKET_PROVENANCE, outcomes));
     return reconcileMigrationPartition(TICKET_PROVENANCE, "lines", outcomes);
   },
 };
@@ -496,7 +512,8 @@ export const submissionLedgerPartitionMigrator: BookTopologyPartitionMigrator = 
   partition: SUBMISSION_LEDGER,
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
-    await forEachBook(context, (bookKey) => migrateRunOwnedBook(context, bookKey, SUBMISSION_LEDGER, outcomes));
+    await forEachBook(context, (bookKey, writes) =>
+      migrateHomePartitionBook(context, bookKey, writes, SUBMISSION_LEDGER, outcomes));
     return reconcileMigrationPartition(SUBMISSION_LEDGER, "lines", outcomes);
   },
 };
@@ -505,7 +522,8 @@ export const attemptHistoryPartitionMigrator: BookTopologyPartitionMigrator = {
   partition: ATTEMPT_HISTORY,
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
-    await forEachBook(context, (bookKey) => migrateRunOwnedBook(context, bookKey, ATTEMPT_HISTORY, outcomes));
+    await forEachBook(context, (bookKey, writes) =>
+      migrateHomePartitionBook(context, bookKey, writes, ATTEMPT_HISTORY, outcomes));
     return reconcileMigrationPartition(ATTEMPT_HISTORY, "lines", outcomes);
   },
 };
@@ -514,7 +532,7 @@ export const misplacedRecordClassPartitionMigrator: BookTopologyPartitionMigrato
   partition: MISPLACED,
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
-    await forEachBook(context, (bookKey) => migrateMisplacedBook(context, bookKey, outcomes));
+    await forEachBook(context, (bookKey, writes) => migrateMisplacedBook(context, bookKey, writes, outcomes));
     return reconcileMigrationPartition(MISPLACED, "lines", outcomes);
   },
 };
