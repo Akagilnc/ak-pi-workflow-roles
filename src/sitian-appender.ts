@@ -234,16 +234,31 @@ export function resolveSitianRecordPathInLedger(
     const bookKey = safeBookKey(cwd);
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
     if (input.subject !== undefined) {
-      let subjectStr: string;
-      if (typeof input.subject === "string") {
-        subjectStr = input.subject;
-      } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
-        subjectStr = input.subject.runId;
+      if (
+        (category === "ticket-provenance" && typeof input.subject === "string" && /^[1-9][0-9]*$/.test(input.subject)) ||
+        (
+          typeof input.subject === "object" &&
+          typeof input.subject.ticketNumber === "number" &&
+          Number.isSafeInteger(input.subject.ticketNumber) &&
+          input.subject.ticketNumber > 0
+        )
+      ) {
+        const ticketNumber = typeof input.subject === "string"
+          ? input.subject
+          : String(input.subject.ticketNumber);
+        sessionDir = join(bookDir, ticketNumber, category);
       } else {
-        subjectStr = JSON.stringify(input.subject);
+        let subjectStr: string;
+        if (typeof input.subject === "string") {
+          subjectStr = input.subject;
+        } else if (typeof input.subject.runId === "string" && input.subject.runId.length > 0) {
+          subjectStr = input.subject.runId;
+        } else {
+          subjectStr = JSON.stringify(input.subject);
+        }
+        const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
+        sessionDir = join(bookDir, category, digest);
       }
-      const digest = createHash("sha256").update(subjectStr).digest("hex").slice(0, 32);
-      sessionDir = join(bookDir, category, digest);
     } else {
       sessionDir = join(bookDir, category);
     }

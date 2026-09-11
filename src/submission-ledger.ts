@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import {
   resolveActivationLedgerHome,
   tryHomeFromAkRolesPath,
@@ -8,6 +10,7 @@ import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
@@ -93,18 +96,20 @@ export type ClosedSubmission = {
 
 export type ClosedSubmissionProjection = ClosedSubmission;
 
-function submissionRecordFile(cwd: string, runId: string, home?: string): string {
+async function submissionRecordFile(cwd: string, runId: string, home?: string): Promise<string> {
   const ledgerHome = resolveActivationLedgerHome(home);
+  const runDirectory = await findRunDirectoryById(home, runId);
   return resolveSitianRecordPathInLedger({
     level: "event",
     kind: "candidate",
     subject: { runId },
     cwd,
+    ...(runDirectory === undefined ? {} : { sessionParent: join(runDirectory, "session", "session.jsonl") }),
   }, ledgerHome).recordFile;
 }
 
 async function readOwnedSubmissionRecords(cwd: string, runId: string, home?: string) {
-  const file = submissionRecordFile(cwd, runId, home);
+  const file = await submissionRecordFile(cwd, runId, home);
   const { records } = await readSitianRecords(file);
   return {
     file,
@@ -315,6 +320,10 @@ export function createSubmissionLedgerHost(
   })();
   const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
     const home = resolveHomeFromContext(context);
+    const runDirectory = process.env.AK_ROLE_RUN_DIR;
+    const sessionParent = typeof runDirectory === "string" && runDirectory.length > 0
+      ? join(runDirectory, "session", "session.jsonl")
+      : context.sessionManager.getSessionFile?.() || context.sessionManager.getSessionDir?.();
     const pointer = sitianReport({
       level: "event",
       kind: event.type,
@@ -324,6 +333,7 @@ export function createSubmissionLedgerHost(
       source: "role-runtime",
       cwd: context.cwd,
       ...(home !== undefined ? { home } : {}),
+      ...(typeof sessionParent === "string" && sessionParent.length > 0 ? { sessionParent } : {}),
     });
     state.prior = pointer;
     return pointer;

@@ -12,7 +12,7 @@ import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -882,6 +882,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         return outcome;
       },
     };
+    let observedDiaristRunId = "";
     const childBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -890,6 +891,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const childHost = {
       async executeTurn(request: RoleTurnRequest) {
         childRoles.push(request.activation.role);
+        observedDiaristRunId = basename(request.runDirectory).split("@")[0]!;
         return childBase.executeTurn(request);
       },
     };
@@ -917,17 +919,11 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     assert.deepEqual(childRoles, ["diarist", "diarist"], "child seat adapter must execute court diarist station");
     const bookKey = resolveBookKeyFromGit(project);
 
-    const diaristRunId = await findLatestRunIdForSeatTicket({
-      home,
-      bookKey,
-      role: "diarist",
-      ticketNumber: 582,
-    });
-    assert.ok(diaristRunId);
+    assert.ok(observedDiaristRunId);
     const diaristCoords = roleRunPlacement(resolveActivationLedgerHome(home), {
       bookKey,
       subject: { ticketNumber: 582 },
-      runId: diaristRunId!,
+      runId: observedDiaristRunId,
       role: "diarist",
     });
     const diaristState = await readRoleRunState(
