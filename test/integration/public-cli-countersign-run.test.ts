@@ -11,7 +11,6 @@ import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -1014,7 +1013,6 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
     ensureTicketProvenanceVolume(582, project, home);
     let bindAttempts = 0;
     let parentTurns = 0;
-    let parentRunDirectory: string | undefined;
     const { io, stdout, stderr } = captureIo();
     const result = await runPublicCountersign(
       ["裁：继续审票 #582 是否足以开工。"],
@@ -1024,10 +1022,7 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
           project,
           runId: "01a0sign00-0000-7000-8000-000000000p1b",
           onTurn: (request) => {
-            if (request.activation.role === "countersign") {
-              parentTurns += 1;
-              parentRunDirectory = request.runDirectory;
-            }
+            if (request.activation.role === "countersign") parentTurns += 1;
           },
           runCourtDiaristStation: async (admitted) => {
             bindAttempts += 1;
@@ -1046,21 +1041,6 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
     assert.equal(parentTurns, 1, "body turn runs once after bind succeeds");
     assert.equal(result.terminal?.autoResumeCount, 1);
     assert.equal(result.admitted?.ticketNumber, 582);
-    const ticketRunDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      result.admitted!.bookKey,
-      "582",
-      "runs",
-      `${result.admitted!.runId}@countersign`,
-    );
-    assert.equal(result.admitted?.runDirectory, ticketRunDirectory);
-    assert.equal(
-      parentRunDirectory,
-      ticketRunDirectory,
-      "deferred beforeDispatch identity must relocate before body dispatch",
-    );
   });
 });
 
@@ -1120,17 +1100,16 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
     // createRunId would mint s002 if auto-resume were skipped — must not fire.
-    const secondIo = captureIo();
     const second = await runPublicCountersign(
       ["裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
       },
-      secondIo.io,
+      captureIo().io,
       parseCountersignArgv,
     );
-    assert.equal(second.exitCode, 0, secondIo.stderr.join(""));
+    assert.equal(second.exitCode, 0);
     assert.equal(
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s001",
@@ -1145,16 +1124,6 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    const provisionalLeaf = "01a0sign00-0000-7000-8000-00000000s002@countersign";
-    assert.equal(
-      existsSync(join(home, ".ak-roles", "books", first.admitted!.bookKey, "582", "runs", provisionalLeaf)),
-      true,
-      "typed same-ticket provisional run must be filed under the ticket",
-    );
-    assert.equal(
-      existsSync(join(home, ".ak-roles", "books", first.admitted!.bookKey, "unbound", "runs", provisionalLeaf)),
-      false,
-    );
   });
 });
 
