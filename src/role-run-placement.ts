@@ -65,7 +65,6 @@ export function ensureRoleRunPlacement(
 ): void {
   for (const directory of [
     placement.sessionDirectory,
-    placement.artifactsDirectory,
     placement.attachmentsDirectory,
   ]) {
     ensureRoleRunDirectory(ledgerHome, directory);
