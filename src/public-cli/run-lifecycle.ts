@@ -987,6 +987,7 @@ export async function findRunDirectoryById(
   home: string | undefined,
   runId: string,
   onlyBookKey?: string,
+  onlyRole?: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
@@ -1015,7 +1016,10 @@ export async function findRunDirectoryById(
         continue;
       }
       for (const entry of entries) {
-        if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
+        if (
+          (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
+          entry === `${runId}@${onlyRole}`
+        ) {
           return join(runsDir, entry);
         }
       }

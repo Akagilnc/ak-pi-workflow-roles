@@ -92,7 +92,7 @@ export async function resolveNotarySourceRunLocator(options: {
   let candidate: string;
   const bare = parseRunDirectoryName(raw);
   if (bare !== undefined && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey))
+    candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey, bare.role))
       ?? join(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
