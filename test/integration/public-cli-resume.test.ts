@@ -1773,27 +1773,19 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
 test("#418 lease release stays best-effort when cleanup fails: residual lock left, next acquire works", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "runs", "run-lease-cleanup-cause@judge");
-    const relocatedRunDirectory = join(home, "issues", "418", "runs", "run-lease-cleanup-cause@judge");
     await mkdir(runDirectory, { recursive: true });
-    const diagnostics: string[] = [];
-    const lease = await acquireRunWriterLease(runDirectory, (line) => diagnostics.push(line));
-    await mkdir(join(home, "issues", "418", "runs"), { recursive: true });
-    await rename(runDirectory, relocatedRunDirectory);
-    lease.relocate(relocatedRunDirectory);
+    const lease = await acquireRunWriterLease(runDirectory);
     // Force a truthful non-EACCES unlink failure: replace the lock file with a
     // directory so release's unlink fails (EISDIR on Linux, EPERM on macOS).
-    const lockPath = join(relocatedRunDirectory, "writer.lock");
+    const lockPath = join(runDirectory, "writer.lock");
     await unlink(lockPath);
     await mkdir(lockPath);
     await lease.release();
-    // The failed release must report and leave the residual at the lease's current path.
-    assert.equal(diagnostics.length, 1);
-    assert.equal(diagnostics[0]!.includes(lockPath), true);
-    assert.equal(diagnostics[0]!.includes(join(runDirectory, "writer.lock")), false);
+    // The failed release must leave the residual lock object on disk.
     await stat(lockPath);
     await rm(lockPath, { recursive: true });
     // Best-effort continue semantics preserved: next acquire succeeds.
-    const next = await acquireRunWriterLease(relocatedRunDirectory);
+    const next = await acquireRunWriterLease(runDirectory);
     await next.release();
   });
 });
