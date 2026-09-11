@@ -21,7 +21,6 @@ import {
   runCoordsFromSessionParent,
   runIdFromSubject,
   ticketNumberFromSubject,
-  ticketNumberFromUnknown,
 } from "./book-topology-migration-placement.ts";
 import {
   reconcileMigrationPartition,
@@ -36,8 +35,6 @@ const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
 const ATTEMPT_HISTORY = "attempt-history";
 const MISPLACED = "misplaced-record-class";
-
-const HUMAN_VIEW_TICKET_RE = /^#\s*起居录\s*·\s*#([1-9][0-9]*)\b/m;
 
 type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY;
 
@@ -219,6 +216,32 @@ function runCoordsFromRelativePath(relPosix: string): { readonly runId: string; 
   return { runId: leaf.slice(0, at), role: leaf.slice(at + 1) };
 }
 
+/** Typed owning run for a record-class row (subject / payload / sessionParent). */
+function owningRunIdFromRecord(value: Record<string, unknown>): string | undefined {
+  return (
+    runIdFromSubject(value.subject)
+    ?? runIdFromPayload(value.payload)
+    ?? runCoordsFromSessionParent(value.sessionParent)?.runId
+  );
+}
+
+/**
+ * Row already sits at the correct run's canonical nest — #865 carries the file.
+ * Path-class alone is not enough: a submission-ledger row under run A that names
+ * run B must still rehome (#866 run-principal).
+ */
+function isAlreadyHomeUnderOwningRun(
+  withinBook: string,
+  recordClass: RecordClass,
+  value: Record<string, unknown>,
+): boolean {
+  if (!isCanonicalRunNestedRecordFile(withinBook, recordClass)) return false;
+  const pathCoords = runCoordsFromRelativePath(withinBook);
+  if (pathCoords === undefined) return false;
+  const owningRunId = owningRunIdFromRecord(value);
+  return owningRunId !== undefined && owningRunId === pathCoords.runId;
+}
+
 function relativePathWithinRun(relPosix: string): string | undefined {
   const parts = relPosix.split("/");
   const runsIndex = parts.indexOf("runs");
@@ -394,6 +417,10 @@ async function migrateJsonlFileByKind(
   }
 }
 
+/**
+ * Copy human-view / offered-identities only when typed JSONL already names the
+ * ticket. No free-text 起居录.md title parse — ticket identity is typed only.
+ */
 async function copyTicketCompanions(
   context: BookTopologyMigrationContext,
   bookKey: string,
@@ -408,15 +435,6 @@ async function copyTicketCompanions(
     if (recordClassOfKind(parsed.value.kind) !== TICKET_PROVENANCE) continue;
     ticketNumber = ticketNumberFromSubject(parsed.value.subject);
     if (ticketNumber !== undefined) break;
-  }
-  if (ticketNumber === undefined) {
-    try {
-      const human = await readFile(join(volumeDir, TICKET_PROVENANCE_HUMAN_VIEW), "utf8");
-      const match = HUMAN_VIEW_TICKET_RE.exec(human);
-      if (match !== null) ticketNumber = ticketNumberFromUnknown(match[1]);
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== "ENOENT") throw error;
-    }
   }
   if (ticketNumber === undefined) return;
 
@@ -507,9 +525,10 @@ async function scrubIdentitiesFromFile(
 /**
  * Foreign jsonl rows whose typed kind is one of the three record classes.
  * Range = whole book minus home volumes. Inside runs/: skip only rows already
- * sitting at the canonical session/<class>/records.jsonl nest (those travel with
- * #865); every other typed row rehomes by content, and any dest copy of the
- * wrong nest is scrubbed so #865's recursive cp does not leave a duplicate lie.
+ * under their typed owning run at the canonical nest (those travel with #865);
+ * path-class alone never excuses a cross-run wrong principal. Every other typed
+ * row rehomes by content; dest copies at the source nest are scrubbed so a
+ * recursive run cp cannot keep a lying duplicate.
  */
 async function migrateMisplacedBook(
   context: BookTopologyMigrationContext,
@@ -519,7 +538,7 @@ async function migrateMisplacedBook(
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
   const files = await listFilesRecursive(backupBook, (name) => name.endsWith(".jsonl"));
-  // backupRelPath → identities rehomed out of a non-canonical nest
+  // backupRelPath → identities rehomed out of a source-run nest (wrong path or wrong principal)
   const scrubPlans = new Map<string, Set<string>>();
 
   for (const filePath of files) {
@@ -536,10 +555,8 @@ async function migrateMisplacedBook(
       const recordClass = recordClassOfKind(parsed.value.kind);
       if (recordClass === undefined) continue;
 
-      // Already at the sole correct run-nested seat — #865 carries the file.
-      if (withinBook.includes("/runs/") || withinBook.startsWith("runs/")) {
-        if (isCanonicalRunNestedRecordFile(withinBook, recordClass)) continue;
-      }
+      // Correct principal + canonical nest — #865 carries the file as-is.
+      if (isAlreadyHomeUnderOwningRun(withinBook, recordClass, parsed.value)) continue;
 
       const source = lineSource(context.backupBooksDirectory, filePath, index);
       if (recordClass === TICKET_PROVENANCE) {
@@ -564,7 +581,7 @@ async function migrateMisplacedBook(
     }
   }
 
-  // If #865 already copied the run, drop rehomed identities from the wrong nest in dest.
+  // Drop rehomed identities from the source nest in dest (wrong path or wrong principal).
   for (const [withinBook, identities] of scrubPlans) {
     const coords = runCoordsFromRelativePath(withinBook);
     const withinRun = relativePathWithinRun(withinBook);
