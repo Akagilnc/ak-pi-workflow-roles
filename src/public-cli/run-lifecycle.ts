@@ -832,7 +832,7 @@ async function reclaimStaleWriterLock(
 async function createWriterLease(
   lockPath: string,
   runDirectory: string,
-  reportCleanupFailure: (error: unknown) => void,
+  reportCleanupFailure: (error: unknown, lockPath: string) => void,
 ): Promise<RunWriterLease> {
   const handle = await open(lockPath, "wx");
   try {
@@ -865,10 +865,10 @@ async function createWriterLease(
             await chmod(currentRunDirectory, 0o755);
             await unlink(currentLockPath);
           } catch (retryError) {
-            reportCleanupFailure(retryError);
+            reportCleanupFailure(retryError, currentLockPath);
           }
         } else {
-          reportCleanupFailure(error);
+          reportCleanupFailure(error, currentLockPath);
         }
       }
     },
@@ -926,9 +926,9 @@ export async function acquireRunWriterLease(
    * acquire reads it as live and rejects; nothing here may promise that the
    * next acquire reclaims it.
    */
-  const reportCleanupFailure = (error: unknown): void => {
+  const reportCleanupFailure = (error: unknown, lockPath: string): void => {
     reportDiagnostic(
-      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${lockPath}: ${describeErrorIdentity(error)}`,
     );
   };
   /** Contested-lock read failure: nothing was cleaned up; the lock stays exactly where it is. */
