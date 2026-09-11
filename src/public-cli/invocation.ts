@@ -25,6 +25,7 @@ import {
   ensureRoleRunPlacement,
   roleRunArtifactsDirectory,
   roleRunPlacement,
+  type RoleRunSubject,
 } from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
@@ -277,6 +278,8 @@ export function issueAdmissionPlacement(
     readonly cwd: string;
     readonly runId: string;
     readonly role: AdmittedRoleInvocation["role"];
+    /** Identity already asserted by 起居郎; never derive this from CLI parameters. */
+    readonly subject: RoleRunSubject;
     readonly home?: string;
   },
 ): AdmissionPlacement {
@@ -284,7 +287,7 @@ export function issueAdmissionPlacement(
   const bookKey = resolveBookKeyFromGit(request.cwd);
   const placement = roleRunPlacement(ledgerHome, {
     bookKey,
-    subject: { unbound: true },
+    subject: request.subject,
     runId: request.runId,
     role: request.role,
   });
@@ -1108,6 +1111,8 @@ export type AdmitJudgeInvocationOptions = {
 
 export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
   correlationId?: string;
+  /** Typed identity handed off by 起居郎 or inherited from an already-bound run. */
+  assertedTicketNumber?: number;
 };
 
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
@@ -1124,7 +1129,7 @@ async function admitStandardMaterialInvocation<
   R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
 >(
   role: R,
-  options: AdmitJudgeInvocationOptions & { correlationId?: string },
+  options: AdmitInspectorInvocationOptions,
 ): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
   // Empty project override must not reach resolve("") → cwd (silent default).
   if (options.project !== undefined) {
@@ -1144,6 +1149,9 @@ async function admitStandardMaterialInvocation<
     cwd: projectRoot,
     runId,
     role,
+    subject: options.assertedTicketNumber === undefined
+      ? { unbound: true }
+      : { ticketNumber: options.assertedTicketNumber },
     home: options.home,
   });
 
@@ -1330,6 +1338,7 @@ export async function admitCountersignInvocation(
     cwd: projectRoot,
     runId,
     role: "countersign",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -1470,6 +1479,7 @@ export async function admitCoderInvocation(
     cwd: projectRoot,
     runId,
     role: "coder",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -1615,6 +1625,7 @@ export async function admitFixerInvocation(
     cwd: projectRoot,
     runId,
     role: "fixer",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -1920,6 +1931,7 @@ export async function admitCollectorInvocation(
     cwd: projectRoot,
     runId,
     role: "collector",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -2217,6 +2229,7 @@ export async function admitDoctorInvocation(
     cwd: projectRoot,
     runId,
     role: "doctor",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -2414,6 +2427,7 @@ export async function admitNotaryInvocation(options: {
     throw error;
   }
 
+  const inheritedTicketNumber = await readRunTicketNumber(sourceRun.runDirectory);
   const runId = options.createRunId?.() ?? uuidv7();
   const {
     principal,
@@ -2427,11 +2441,12 @@ export async function admitNotaryInvocation(options: {
     cwd: projectRoot,
     runId,
     role: "notary",
+    subject: inheritedTicketNumber === undefined
+      ? { unbound: true }
+      : { ticketNumber: inheritedTicketNumber },
     home: options.home,
   });
-  const ticketFields = ticketAdmissionFields(
-    await readRunTicketNumber(sourceRun.runDirectory),
-  );
+  const ticketFields = ticketAdmissionFields(inheritedTicketNumber);
 
   const admitted = {
     role: "notary" as const,
@@ -2580,6 +2595,7 @@ export async function admitGleanerLeftInvocation(
     cwd: projectRoot,
     runId,
     role: "gleaner-left",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -2744,6 +2760,7 @@ export async function admitReviewerInvocation(
     cwd: projectRoot,
     runId,
     role: "reviewer",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -2951,6 +2968,7 @@ export async function admitMergerInvocation(
     cwd: projectRoot,
     runId,
     role: "merger",
+    subject: { unbound: true },
     home: options.home,
   });
 

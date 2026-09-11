@@ -10,7 +10,6 @@ import { engineSessionMaterialFromOptions } from "../package-resources/engine-ma
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDiaristInvocation,
-  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
@@ -140,6 +139,7 @@ export async function runPublicDiarist(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(handoffTicket === undefined ? {} : { assertedTicketNumber: handoffTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -151,14 +151,6 @@ export async function runPublicDiarist(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  // Typed handoff: bind before the turn so identity is on durable pages.
-  if (
-    typeof handoffTicket === "number" &&
-    Number.isSafeInteger(handoffTicket) &&
-    handoffTicket >= 1
-  ) {
-    await bindAdmittedTicketNumber(admitted, handoffTicket);
-  }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,

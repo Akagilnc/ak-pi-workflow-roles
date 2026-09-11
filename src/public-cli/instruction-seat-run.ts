@@ -13,7 +13,6 @@ import {
   admitAuditorInvocation,
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
-  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   persistAdmittedSourceRunPath,
   type AdmittedAuditorInvocation,
@@ -337,6 +336,9 @@ export async function runPublicInstructionSeat(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(auditorSourceTicket === undefined
+        ? {}
+        : { assertedTicketNumber: auditorSourceTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -385,14 +387,7 @@ export async function runPublicInstructionSeat(
         env,
         io,
         request: turnRequest,
-        adapters: instructionSeatAdapters({
-          beforeDispatch: async (admittedSeat) => {
-            // Auditor inherits source-run ticket (notary face) — typed, not prose match.
-            if (auditorSourceTicket !== undefined) {
-              await bindAdmittedTicketNumber(admittedSeat, auditorSourceTicket);
-            }
-          },
-        }),
+        adapters: instructionSeatAdapters(),
         ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
       });
     },
