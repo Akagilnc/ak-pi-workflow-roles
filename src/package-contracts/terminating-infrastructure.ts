@@ -50,9 +50,12 @@ const infrastructureFailureDeclarationSchema = Type.Object(
 
 /**
  * Compose the shared infrastructure-failure declaration into an open output
- * tool-object schema. Returns an open object (additionalProperties: true,
- * required: []) with the base schema's properties plus the shared declaration.
- * Static typing is preserved on the base (`as S`), so existing
+ * tool-object schema. Returns an open object (additionalProperties: true)
+ * with the base schema's properties plus the shared declaration. `required`
+ * is inherited from the base schema (#836 r16 class 2: callers that named a
+ * machine execution discriminator via openToolObject/openToolObjectFromUnion's
+ * `requiredKeys` carry it through here) — the shared declaration key itself is
+ * never required. Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
 export function withInfrastructureFailureDeclaration<
@@ -60,6 +63,7 @@ export function withInfrastructureFailureDeclaration<
 >(schema: S): S {
   const baseProperties = (schema as { properties?: Record<string, TSchema> })
     .properties;
+  const baseRequired = (schema as unknown as { required?: string[] }).required ?? [];
   const properties: Record<string, TSchema> = {
     ...(baseProperties ?? {}),
     [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
@@ -68,7 +72,8 @@ export function withInfrastructureFailureDeclaration<
       ],
   };
   const object = Type.Object(properties, { additionalProperties: true });
-  (object as unknown as { required: string[] }).required = [];
+  (object as unknown as { required: string[] }).required =
+    baseRequired.filter((key) => key !== INFRASTRUCTURE_FAILURE_DECLARATION_KEY);
   return object as unknown as S;
 }
 

@@ -19,38 +19,42 @@ const JUDGE_STATUS_REASK =
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
 
+// #836 r16 class 1: fix/classes/note/decisionGate are LLM/human-read narrative
+// content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
+// or nested presence. `judgeStatus` alone is the machine discriminator the
+// queue reads to pick pass/bounce/escalate (src/judge-role.ts:90-125).
 export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
       judgeStatus: stringEnum(["converged", "continue", "escalate"] as const, { description: "converged | continue | escalate — 形状指引，非 schema 闸" }),
       fix: Type.Optional(
         Type.Object(
-          { summary: Type.String({ minLength: 1, description: "continue 时的补救摘要" }) },
-          { additionalProperties: false, description: "continue 时的补救说明" },
+          { summary: Type.Optional(Type.String({ description: "continue 时的补救摘要" })) },
+          { additionalProperties: true, description: "continue 时的补救说明" },
         ),
       ),
       classes: Type.Optional(Type.Array(Type.Object({
-        name: Type.String({ minLength: 1 }),
-        owner: Type.String({ minLength: 1 }),
-        boundary: Type.String({ minLength: 1 }),
-        disposition: Type.String({ minLength: 1 }),
-      }, { additionalProperties: false }), { minItems: 1, description: "已裁决 finding 类及其 owner 与修理边界" })),
-      note: Type.Optional(Type.String({ minLength: 1, description: "可选裁决附注" })),
+        name: Type.Optional(Type.String()),
+        owner: Type.Optional(Type.String()),
+        boundary: Type.Optional(Type.String()),
+        disposition: Type.Optional(Type.String()),
+      }, { additionalProperties: true }), { description: "已裁决 finding 类及其 owner 与修理边界" })),
+      note: Type.Optional(Type.String({ description: "可选裁决附注" })),
       evidence: Type.Optional(Type.Unknown({ description: "留存的裁决证据" })),
       decisionGate: Type.Optional(
         Type.Object(
           {
-            question: Type.String({ minLength: 1 }),
-            options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+            question: Type.Optional(Type.String()),
+            options: Type.Optional(Type.Array(Type.String())),
           },
-          { additionalProperties: false, description: "需人权威处置的问题与选项" },
+          { additionalProperties: true, description: "需人权威处置的问题与选项" },
         ),
       ),
     },
     { additionalProperties: true },
   ),
 );
-(judgeVerdictSchema as unknown as { required: string[] }).required = [];
+(judgeVerdictSchema as unknown as { required: string[] }).required = ["judgeStatus"];
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 

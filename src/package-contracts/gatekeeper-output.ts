@@ -11,6 +11,8 @@ import { withInfrastructureFailureDeclaration } from "./terminating-infrastructu
 export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 export const GATEKEEPER_ACCEPTED_TEXT = "门下省决议已受理";
 
+// #836 r16 class 2: `status` is the machine execution discriminator the queue
+// reads to select dispatch/pass (src/gatekeeper-role.ts:170-247).
 /** Same open decision shape the province uses inside audit sessions. */
 export const gatekeeperDecisionSchema = openToolObject(
   Type.Object({
@@ -24,6 +26,7 @@ export const gatekeeperDecisionSchema = openToolObject(
       description: "status 为 pass 时可选 string[] findings",
     }),
   }),
+  ["status"],
 );
 
 export const gatekeeperOutputSchema = withInfrastructureFailureDeclaration(

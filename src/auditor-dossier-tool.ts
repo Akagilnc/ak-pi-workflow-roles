@@ -29,7 +29,9 @@ export function createAuditorDossierTool(
   return {
     name: AUDITOR_DOSSIER_TOOL_NAME,
     description: "定位本审计席绑定的 run 卷宗及其证据入口。",
-    parameters: Type.Object({}, { additionalProperties: false }),
+    // #836 r16 class 3: execute() ignores `_params` entirely — a closed root
+    // only rejects the role for saying more.
+    parameters: Type.Object({}, { additionalProperties: true }),
     async execute(_id: string, _params: unknown): Promise<AgentToolResult<AuditorDossierLocation | undefined>> {
       if (runDirectory === undefined) {
         return {

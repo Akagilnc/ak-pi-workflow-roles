@@ -2,24 +2,28 @@ import { Type, type Static } from "typebox";
 import { openToolObject } from "./open-tool-schema.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
-export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: false });
-/**
- * Stable request identity: non-empty after trim, no leading/trailing whitespace.
- * Host schema + ledger identity seam share this contract (#677 / D2 dedup).
- */
-export const COLLECTOR_REQUEST_ID_PATTERN = /^\S(?:.*\S)?$/;
+// #836 r16 class 3: execute() reads no params for this tool
+// (src/collector-role.ts:431-459) — a closed root only rejects the role for
+// saying more; no reader consumes extra fields.
+export const collectorObserveArgsSchema = Type.Object({}, { additionalProperties: true });
+// #836 r16 class 4: the regex was a real provider shape rejection ahead of the
+// ledger's own identity check — src/collector-ledger.ts:911-972 already trims
+// and enforces non-empty/lookup/marker/attemptKey identity on requestId once
+// the tool receives it, so the duplicate pattern-based rejection is deleted
+// (r15b decision, not reopened here).
 export const collectorRequestArgsSchema = Type.Object({
   requestId: Type.String({
     minLength: 1,
-    pattern: COLLECTOR_REQUEST_ID_PATTERN.source,
     description: "请求身份（配置 id 或角色判定的稳定 id；首尾无空白）",
   }),
   snapshotId: Type.String({ minLength: 1, description: "最新留存观察快照" }),
+  // #836 r16 class 3: body.minLength deleted — manifest-configured requestId
+  // ignores body, and the unknown-requestId non-empty condition is a real
+  // branch in src/collector-ledger.ts:922-951, not a provider shape gate.
   body: Type.Optional(Type.String({
-    minLength: 1,
     description: "角色判定的请求正文；request-manifest 未收录该 requestId 时必填",
   })),
-}, { additionalProperties: false });
+}, { additionalProperties: true });
 /** UTF-8 byte ceiling per handbook body — keeps next activation materials inside context budget. */
 export const COLLECTOR_HANDBOOK_MAX_BYTES = 64 * 1024;
 export const collectorHandbookWriteArgsSchema = Type.Object({
@@ -30,28 +34,30 @@ export const collectorHandbookWriteArgsSchema = Type.Object({
   body: Type.String({
     description: `手册全文（opaque 工作记忆；整份替换；UTF-8 至多 ${COLLECTOR_HANDBOOK_MAX_BYTES} 字节）`,
   }),
-}, { additionalProperties: false });
+}, { additionalProperties: true });
 export const collectorReadArgsSchema = Type.Object({
   evidenceId: Type.String({ minLength: 1, description: "observe 返回的材料证据 id（evidenceId）" }),
-}, { additionalProperties: false });
+}, { additionalProperties: true });
 export const collectorWaitArgsSchema = Type.Object({
   durationMs: Type.Integer({
     minimum: 1,
     description: "等待毫秒；实际睡眠不超过剩余等待窗（#678；无包内单次任意上限）",
   }),
-}, { additionalProperties: false });
+}, { additionalProperties: true });
 
 /**
  * #678 D4: open the wait window at a work step.
  * Omit startedAt for existing-PR trigger-phase end (= now).
  * Pass PR creation success time for new-PR auto-trigger rounds.
  */
+// #836 r16 class 3: startedAt.minLength deleted — an empty string is already
+// handled as omission by src/collector-role.ts:586-597, so the provider
+// nonblank gate is not load-bearing for any branch.
 export const collectorOpenWaitWindowArgsSchema = Type.Object({
   startedAt: Type.Optional(Type.String({
-    minLength: 1,
     description: "等待窗起点 ISO 时间；新建 PR 用创建成功时刻；省略＝现在（触发阶段结束）",
   })),
-}, { additionalProperties: false });
+}, { additionalProperties: true });
 
 /**
  * #676 A: role-decided target bind. The model judges task materials and submits

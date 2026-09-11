@@ -10,6 +10,8 @@ import { withInfrastructureFailureDeclaration } from "./terminating-infrastructu
 export const AUDITOR_OUTPUT_TOOL_NAME = "ak_auditor_output" as const;
 export const AUDITOR_ACCEPTED_TEXT = "审刑院回执已接受";
 
+// #836 r16 class 2: `status` is the machine execution discriminator the queue
+// reads (src/judge-role.ts:120-129 审刑院合规路径 / src/gatekeeper-role.ts:170-247).
 export const auditorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
@@ -26,6 +28,7 @@ export const auditorOutputSchema = withInfrastructureFailureDeclaration(
         description: "status 为 escalate 时的决策闸",
       })),
     }),
+    ["status"],
   ),
 );
 

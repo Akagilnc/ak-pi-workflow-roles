@@ -45,25 +45,29 @@ export {
 };
 export type { WorkerOutput };
 
+// #836 r16 class 1: report/remainingScope are LLM/human-read narrative content —
+// no code branches on their length. `reason` alone keeps minLength: the worker
+// gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
+// (src/worker-submission-gates.ts:159-163,297-302).
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: stringEnum(["planned"] as const, { description: "planned — 形状指引，非 schema 闸" }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
+    report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
     status: stringEnum(["completed", "refused"] as const, {
       description:
         "completed | refused — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据",
     }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
+    report: Type.String({ description: "如实结果报告" }),
   }, { additionalProperties: false }),
   Type.Object({
     status: stringEnum(["unfinished"] as const, {
       description:
         "unfinished — 形状指引，非 schema 闸；缺前置或违宪约束致本局未完成时可用。缺待决 owner 决定或答复属缺前置。",
     }),
-    report: Type.String({ minLength: 1, description: "如实结果报告" }),
-    remainingScope: Type.String({ minLength: 1, description: "本局后剩余工作" }),
+    report: Type.String({ description: "如实结果报告" }),
+    remainingScope: Type.String({ description: "本局后剩余工作" }),
     reason: Type.Optional(Type.String({
       minLength: 1,
       description:
@@ -71,8 +75,10 @@ const coderOutputVariants = Type.Union([
     })),
   }, { additionalProperties: false }),
 ]);
+// #836 r16 class 2: `status` is the machine execution discriminator the worker
+// gate reads to pick the next move (worker-role.ts:400-418 → worker-submission-gates.ts).
 export const coderOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(coderOutputVariants),
+  openToolObjectFromUnion(coderOutputVariants, ["status"]),
 );
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {

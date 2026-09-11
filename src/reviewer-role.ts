@@ -25,6 +25,9 @@ const reviewerAmendmentsSchema = Type.Object({
   standards: Type.Optional(Type.String({ description: "相对 Standards 子报告的增量：增 finding、撤回或事实更正" })),
   spec: Type.Optional(Type.String({ description: "相对 Spec 子报告的增量：增 finding、撤回或事实更正" })),
 }, { additionalProperties: true, description: "相对子报告的可选轴增量；非替代报告。无增量的轴可省略。" });
+// #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
+// branches on its length (src/reviewer-role.ts consumer: reviewer content is
+// returned as submitted, ADR 0057).
 const reviewerOutputVariants = Type.Union([
   Type.Object({
     status: Type.Literal("completed", { description: "completed — 形状指引，非 schema 闸" }),
@@ -32,12 +35,13 @@ const reviewerOutputVariants = Type.Union([
   }, { additionalProperties: false }),
   Type.Object({
     status: Type.Literal("refused", { description: "refused — 形状指引，非 schema 闸" }),
-    diagnostic: Type.String({ minLength: 1, description: "拒绝诊断说明" }),
+    diagnostic: Type.String({ description: "拒绝诊断说明" }),
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);
+// #836 r16 class 2: `status` is the machine execution discriminator; kept required.
 export const reviewerOutputSchema = withInfrastructureFailureDeclaration(
-  openToolObjectFromUnion(reviewerOutputVariants),
+  openToolObjectFromUnion(reviewerOutputVariants, ["status"]),
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;

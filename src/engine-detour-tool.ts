@@ -16,6 +16,9 @@ import {
   runEngineDetourOnce,
 } from "./engine-detour.ts";
 
+// #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
+// must obtain the first item as the executable and spawn it (below; #82-98).
+// Root additionalProperties:false is deleted — execute() reads only `argv`.
 const engineDetourArgsSchema = Type.Object(
   {
     argv: Type.Array(Type.String({ minLength: 1 }), {
@@ -23,7 +26,7 @@ const engineDetourArgsSchema = Type.Object(
       description: "首项为 PATH 中的可执行文件，其余项为参数。",
     }),
   },
-  { additionalProperties: false },
+  { additionalProperties: true },
 );
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;

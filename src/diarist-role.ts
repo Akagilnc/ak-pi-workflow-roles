@@ -16,6 +16,13 @@ export {
 export type { DiaristOutput };
 export { validateRecordedDiaristOutput };
 
+// #836 r16 class 1: entries[].sourceKind/sourceRef/transcript/timestamp are
+// LLM/human-read content — src/ticket-provenance-contracts.ts:130-140 reads
+// sourceKind/transcript, but the lawful path on a miss is to keep the entry as
+// unprojected raw payload (src/diarist.ts:52-75 never rejects or drops it), so
+// provider `required` would cut off that very branch; sourceRef/timestamp are
+// not branched on at all. `status` is the machine execution discriminator
+// (kept required by the openToolObject requiredKeys arg below).
 /** 起居郎交卷形状；形状指引，非 schema 闸。 */
 export const diaristOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
@@ -38,11 +45,11 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
         Type.Array(
           Type.Object(
             {
-              sourceKind: Type.String({
+              sourceKind: Type.Optional(Type.String({
                 description:
                   "来源族：cc-session | issue-body-comment | adr-decision-key | ticket-decree-block",
-              }),
-              sourceRef: Type.Object(
+              })),
+              sourceRef: Type.Optional(Type.Object(
                 {
                   sessionFile: Type.Optional(Type.String()),
                   entryId: Type.Optional(Type.Unknown()),
@@ -50,11 +57,11 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
                   url: Type.Optional(Type.String()),
                 },
                 { additionalProperties: true, description: "不可变源指针" },
-              ),
-              transcript: Type.String({
+              )),
+              transcript: Type.Optional(Type.String({
                 description: "整块原文（誊录整块，不指针化）",
-              }),
-              timestamp: Type.String({ description: "源时间戳 ISO" }),
+              })),
+              timestamp: Type.Optional(Type.String({ description: "源时间戳 ISO" })),
               note: Type.Optional(
                 Type.String({ description: "该材料与本案的关系（人读）" }),
               ),
@@ -65,6 +72,7 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
         ),
       ),
     }),
+    ["status"],
   ),
 );
 
