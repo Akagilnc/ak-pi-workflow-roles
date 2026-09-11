@@ -209,17 +209,15 @@ test("#879 projectGatekeeperRun relays each parent payload verbatim on officer d
       assert.equal(projected.result.status, "bounce");
       const resumePrompt = prompts[i + 1]!;
       const bodyText = readableGateItem(body);
-      // Content channel = parent payload bytes. Trailing 起居录 pointer section is
-      // ADR 0081 automatic case material (out of #879 scope) — not a substitute.
+      // #879: continuation content byte-equal to parent typed payload — no wrap.
       assert.equal(
-        resumePrompt === bodyText || resumePrompt.startsWith(`${bodyText}\n`),
-        true,
-        `round ${i + 1} officer dialogue must open with parent typed payload verbatim`,
+        resumePrompt,
+        bodyText,
+        `round ${i + 1} officer dialogue content must equal parent typed payload bytes`,
       );
       assert.equal(resumePrompt.includes("请重读"), false);
-      // Binding pointer stays on summons/activation — not substituted as content opener.
-      assert.equal(resumePrompt.startsWith("卷宗指针"), false);
-      assert.equal(resumePrompt.startsWith(sourceRunPath), false);
+      assert.equal(resumePrompt.includes("本票起居录"), false);
+      assert.equal(resumePrompt.includes("卷宗指针"), false);
       assert.ok(
         projected.summoned?.runDirectory,
         "officer run binding must remain (pointer channel independent of content)",

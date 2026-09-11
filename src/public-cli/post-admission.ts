@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -55,6 +55,48 @@ function appendContinuationSection(
   return continuation.kind === "initial"
     ? { kind: "initial", prompt }
     : { kind: "resume", prompt };
+}
+
+/** Review seats that receive parent peer dialogue on the gate path (#879). */
+function isOfficerReviewSeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor";
+}
+
+/**
+ * Nested gate summons (station child) on an officer seat: dialogue content is
+ * peer words only. Case materials ride an independent artifact — never wrap
+ * the continuation prompt (#879 content/binding split; ADR 0081 delivery kept).
+ */
+function isStationChildOfficerDialogue(
+  role: string,
+  env: { readonly stationChild?: boolean },
+): boolean {
+  return env.stationChild === true && isOfficerReviewSeat(role);
+}
+
+/** Run-relative leaf for ADR 0081 case-dossier pointers on officer gate turns. */
+const CASE_DOSSIER_ARTIFACT_FILE = "case-dossier-pointer.md" as const;
+
+/**
+ * ADR 0081 case materials as an independent run artifact (not prompt text).
+ * Same pointer section bytes; officer finds them under artifacts/ (dossier tool).
+ * No-op when unbound (projectCaseDossierPointerSection returns undefined).
+ */
+async function deliverCaseDossierAsIndependentArtifact(input: {
+  readonly ticketNumber: number | undefined;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly runDirectory: string;
+}): Promise<void> {
+  const section = await projectCaseDossierPointerSection({
+    ticketNumber: input.ticketNumber,
+    projectRoot: input.projectRoot,
+    home: input.home,
+  });
+  if (section === undefined) return;
+  const dir = join(input.runDirectory, "artifacts");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, CASE_DOSSIER_ARTIFACT_FILE), `${section}\n`, "utf8");
 }
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
@@ -650,9 +692,9 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
-    // every public entry: first call, same-ticket re-summons and manual resume
-    // alike. System refs append their own neutral section; caller frozen
-    // attachments and the seat's own prompt bytes are never rewritten.
+    // every public entry. #879: station-child officer dialogue keeps peer content
+    // byte-equal — case materials freeze as independent attachments, never wrap
+    // continuation.prompt. Other entries keep the neutral prompt section.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -661,19 +703,28 @@ export async function dispatchPostAdmissionTurn<
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
-    const dossierSection = await projectCaseDossierPointerSection({
-      ticketNumber: admitted.ticketNumber,
-      projectRoot: admitted.projectRoot,
-      home: env.home,
-    });
-    if (dossierSection !== undefined) {
-      turnRequest = {
-        ...turnRequest,
-        continuation: appendContinuationSection(
-          turnRequest.continuation,
-          dossierSection,
-        ),
-      };
+    if (isStationChildOfficerDialogue(admitted.role, env)) {
+      await deliverCaseDossierAsIndependentArtifact({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+        runDirectory: admitted.runDirectory,
+      });
+    } else {
+      const dossierSection = await projectCaseDossierPointerSection({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+      });
+      if (dossierSection !== undefined) {
+        turnRequest = {
+          ...turnRequest,
+          continuation: appendContinuationSection(
+            turnRequest.continuation,
+            dossierSection,
+          ),
+        };
+      }
     }
 
     // Authoritative host write happens here, at the real dispatch boundary —
@@ -1079,18 +1130,21 @@ export function resumeTurnRequestProjectionOptions(
   },
 ): RoleTurnRequestProjectionOptions {
   // #879: officer dialogue content is caller/peer words only — no「请重读」,
-  // no code-authored constant substitute. Binding pointer stays on summons
-  // sourceRunPath / activation (independent machine material).
+  // no code-authored constant substitute, no attachment-list wrap of peer body.
+  // Binding pointer stays on summons sourceRunPath / activation / attachments.
+  const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
-      // #755: same-ticket review / open-court — caller words + optional paths.
-      // Attachments are not a gate: message-only summons must stay plain too.
-      prompt = buildInstructionTransportPrompt({
-        instruction: request.message,
-        instructionEmpty: false,
-        attachments: summonsPrepared.attachments,
-      });
+      // #755: same-ticket review / open-court — caller words.
+      // #879 station-child officer: words only (attachments are independent freeze).
+      prompt = officerDialogue
+        ? request.message
+        : buildInstructionTransportPrompt({
+            instruction: request.message,
+            instructionEmpty: false,
+            attachments: summonsPrepared.attachments,
+          });
     } else if (request.summons !== undefined) {
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
@@ -1103,12 +1157,14 @@ export function resumeTurnRequestProjectionOptions(
       });
     }
   } else if (summonsPrepared !== undefined) {
-    // #755/#879: same-ticket review — instruction/attachments only (body or reask).
-    prompt = buildInstructionTransportPrompt(summonsPrepared);
+    // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
+    // Other seats keep #755 instruction + optional attachment path listing.
+    prompt = officerDialogue
+      ? (summonsPrepared.instructionEmpty ? "" : summonsPrepared.instruction)
+      : buildInstructionTransportPrompt(summonsPrepared);
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
-    // Do not invent「请重读」or pointer-as-content substitute.
     prompt = "";
   } else {
     // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
