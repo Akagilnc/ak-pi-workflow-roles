@@ -40,7 +40,6 @@ import {
 } from "./tool-execution-observation.ts";
 import {
   ENGINE_DETOUR_TOOL_NAME,
-  ENGINE_FLAG_NAME,
   ENGINE_MODEL_FLAG_NAME,
   resolveEngineModel,
   resolveEngineName,
@@ -1084,11 +1083,8 @@ export function createRoleRuntimeExtension(
     }
     // Station-child identity (#840): omit navigator attendance. One flag.
     roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
-    roleHost.registerFlag(ENGINE_FLAG_NAME, {
-      description: "本次劳务引擎名",
-      type: "string",
-      default: "",
-    });
+    // Register model only. Pi never sets ak-engine — resolveEngineName must
+    // fall through to child-process env. An empty default would block that.
     roleHost.registerFlag(ENGINE_MODEL_FLAG_NAME, {
       description: "本次劳务引擎模型",
       type: "string",
