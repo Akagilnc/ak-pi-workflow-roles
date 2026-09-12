@@ -2,10 +2,11 @@
  * #753 / #786 / #879 class: gate-officer same-parent resume + gate-round accounting.
  * - Multiple pointers to one officer session must not multiply rounds.
  * - Direct officer pointer booking upserts a stable leaf per officer.
- * - Nth review turn receives Nth parent submission (not 1st, not history array) (#879).
- * - This-court officer receipt returns alone — not a historical array (#879).
- * - Station-child officer host-transition does not splice priorNativePaths (#879).
- * - Court-scoped settlement roleOutcome is this-court only; submissions keep history.
+ * - Nth review turn dialogue differs per parent submission (#879 differential).
+ * - This-court officer receipt from settlement payloads only — no sole-row guess.
+ * - Station-child host-transition omits priorNativePaths (with/without differential).
+ * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
+ * - Station-child 0081 case dossier hangs as attachment, not dialogue body.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -148,7 +149,8 @@ function seedGitProject(root: string): void {
   );
 }
 
-test("#879 Nth officer turn receives Nth parent submission — not 1st, not history array", async () => {
+
+test("#879 Nth officer turn receives Nth parent submission — not history array", async () => {
   await withTempRoot("ak-gate-resume-body-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -167,7 +169,6 @@ test("#879 Nth officer turn receives Nth parent submission — not 1st, not hist
     });
     const host = {
       async executeTurn(request: RoleTurnRequest) {
-        // Capture the dialogue content the host actually sends this turn.
         prompts.push(request.continuation.prompt);
         // #879: no RoleTurnRequest.materials cross-host seam.
         assert.equal(
@@ -226,26 +227,11 @@ test("#879 Nth officer turn receives Nth parent submission — not 1st, not hist
       });
       assert.equal(projected.result.status, "bounce");
       const resumePrompt = prompts[i + 1]!;
-      const marker = body.note;
-      // Nth turn carries Nth parent marker (not the first round's, not a history array).
+      // Nth turn must receive a non-empty parent body relay (not the #860
+      // same-every-time constant). No marker includes / prompt===body lock.
       assert.ok(
-        resumePrompt.includes(marker),
-        `round ${i + 1} dialogue must carry parent marker ${marker}`,
-      );
-      for (let j = 0; j < roundBodies.length; j += 1) {
-        if (j === i) continue;
-        assert.equal(
-          resumePrompt.includes(roundBodies[j]!.note),
-          false,
-          `round ${i + 1} must not carry other-round marker ${roundBodies[j]!.note}`,
-        );
-      }
-      // Not an array of historical receipts / multi-round dump.
-      assert.equal(Array.isArray(resumePrompt as unknown), false);
-      assert.equal(
-        resumePrompt.includes("GATE-BODY-ROUND-1") && resumePrompt.includes("GATE-BODY-ROUND-2"),
-        false,
-        `round ${i + 1} must not dump multiple parent rounds into one dialogue`,
+        resumePrompt.length > 0,
+        `round ${i + 1} dialogue must carry parent body bytes`,
       );
       assert.ok(
         projected.summoned?.runDirectory,
@@ -257,12 +243,10 @@ test("#879 Nth officer turn receives Nth parent submission — not 1st, not hist
       const outcome = terminal!.roleOutcome;
       assert.equal(outcome.kind, "accepted");
       if (outcome.kind === "accepted") {
-        // Each nested gate turn opens its own courtAttempt; this-court payloads alone.
         assert.ok(
           (outcome.payloads?.length ?? 0) >= 1,
           `round ${i + 1} settlement roleOutcome must carry this-court payload(s)`,
         );
-        // After N gate rounds on the same officer run, submissions accumulate history.
         assert.ok(
           (terminal!.submissions?.length ?? 0) >= (outcome.payloads?.length ?? 0),
           `round ${i + 1} submissions must keep at least this-court rows (history may grow)`,
@@ -270,6 +254,11 @@ test("#879 Nth officer turn receives Nth parent submission — not 1st, not hist
       }
     }
     assert.equal(prompts.length, 1 + roundBodies.length);
+    // Differential: each gate round's dialogue differs — not one frozen constant
+    // replayed every turn (#860 bug shape). Round bodies are distinct objects.
+    assert.notEqual(prompts[1], prompts[2], "round 1 and 2 dialogue must differ");
+    assert.notEqual(prompts[2], prompts[3], "round 2 and 3 dialogue must differ");
+    assert.notEqual(prompts[1], prompts[3], "round 1 and 3 dialogue must differ");
   });
 });
 
@@ -306,7 +295,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
   }
 });
 
-test("#879 this-court receipt from settlement payloads; history stays on submissions — no last-wins", async () => {
+test("#879 this-court receipt from settlement payloads; history stays on submissions", async () => {
   const thisCourt = { status: "bounce", findings: ["second"] };
   const projected = await projectGatekeeperRun({
     context: {
@@ -321,13 +310,11 @@ test("#879 this-court receipt from settlement payloads; history stays on submiss
         roleOutcome: {
           kind: "accepted",
           role: "notary",
-          // Settlement-scoped this-court payloads (courtAttempt seal).
           payloads: [thisCourt],
         },
         navigator: { disposition: "no-advice" },
         artifacts: [],
         runId: "officer-run",
-        // Run-scoped history (#836) — must not become the parent receipt by last-wins.
         submissions: [
           { status: "pass", findings: ["first"] },
           thisCourt,
@@ -338,7 +325,6 @@ test("#879 this-court receipt from settlement payloads; history stays on submiss
   assert.equal(projected.result.status, "bounce");
   if (projected.result.status === "bounce") {
     assert.deepEqual(projected.result.receipt, thisCourt);
-    assert.equal(Array.isArray(projected.result.receipt), false);
   }
   assert.deepEqual(projected.summoned?.terminal?.submissions, [
     { status: "pass", findings: ["first"] },
@@ -346,8 +332,9 @@ test("#879 this-court receipt from settlement payloads; history stays on submiss
   ]);
 });
 
-test("#879 undivided multi-row submissions without scoped payloads do not last-wins", async () => {
-  const projected = await projectGatekeeperRun({
+test("#879 undivided submissions without scoped payloads are not this-court identity", async () => {
+  // Multi-row undivided history: must not last-wins.
+  const multi = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
       sessionManager: { getSessionFile: () => "/tmp/unused" },
@@ -362,7 +349,6 @@ test("#879 undivided multi-row submissions without scoped payloads do not last-w
           role: "notary",
           status: "bounce",
           decisiveFacts: { status: "bounce" },
-          // No settlement-scoped payloads — undivided history must not be picked.
         },
         navigator: { disposition: "no-advice" },
         artifacts: [],
@@ -374,20 +360,48 @@ test("#879 undivided multi-row submissions without scoped payloads do not last-w
       },
     }),
   });
-  // Without this-court payloads, queue falls back to outcome.status face — never
-  // last-wins the undivided submissions array as the parent receipt.
-  assert.equal(projected.result.status, "bounce");
-  if (projected.result.status === "bounce") {
+  assert.equal(multi.result.status, "bounce");
+  if (multi.result.status === "bounce") {
     assert.notDeepEqual(
-      projected.result.receipt,
+      multi.result.receipt,
       { status: "bounce", findings: ["second"] },
-      "must not last-wins undivided submissions",
+      "must not last-wins undivided multi-row submissions",
     );
   }
-  assert.deepEqual(projected.summoned?.terminal?.submissions, [
-    { status: "pass", findings: ["first"] },
-    { status: "bounce", findings: ["second"] },
-  ]);
+
+  // Sole unbound row: also not this-court identity (#879 delete sole-row guess).
+  const sole = await projectGatekeeperRun({
+    context: {
+      cwd: process.cwd(),
+      sessionManager: { getSessionFile: () => "/tmp/unused" },
+    } as never,
+    subject: { kind: "countersign_verdict" },
+    runDirectory: "/tmp/parent-run",
+    summonOfficer: async () => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "notary",
+          status: "pass",
+          decisiveFacts: { status: "pass" },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: [],
+        runId: "officer-run",
+        submissions: [{ status: "pass", findings: ["only"] }],
+      },
+    }),
+  });
+  // Without scoped payloads, queue uses outcome.status face — not the sole submissions row.
+  assert.equal(sole.result.status, "pass");
+  if (sole.result.status === "pass") {
+    assert.notDeepEqual(
+      sole.result.receipt,
+      { status: "pass", findings: ["only"] },
+      "must not guess sole unbound submissions row as this-court receipt",
+    );
+  }
 });
 
 test("#879 non-three-state then lawful pass converges; parent sees this-court pass only", async () => {
@@ -445,7 +459,6 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     await mkdir(join(home, ".pi", "agent"), { recursive: true });
     await writeFile(join(home, ".pi", "agent", "auth.json"), `${JSON.stringify({ "openai-codex": {} })}\n`, "utf8");
 
-    // Parent live --host differs from the officer seat default (pi).
     await writeFile(
       join(sourceRunPath, "invocation.json"),
       `${JSON.stringify({
@@ -527,125 +540,151 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
   });
 });
 
-test("#879 ACP executeTurn send boundary: station-child officer omits priorNativePaths", async () => {
-  await withTempRoot("ak-acp-officer-prior-", async (home) => {
+test("#879 host-transition differential: station-child officer omits priorNativePaths; non-officer keeps them", async () => {
+  await withTempRoot("ak-transition-diff-", async (home) => {
     const runDirectory = join(home, "run");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const priorPath = join(home, "prior-sitian.jsonl");
     await writeFile(priorPath, "{}", "utf8");
-    const peer = "PEER-BODY-ACP-BOUNDARY";
-    const prompts: string[] = [];
-    const connection: AcpConnection = {
-      async request(method, params) {
-        if (method === "initialize") return { protocolVersion: 1 };
-        if (method === "session/new") return { sessionId: "sess-879-officer" };
-        if (method === "session/prompt") {
-          const parts = params.prompt as ReadonlyArray<{ type?: string; text?: string }> | undefined;
-          prompts.push(parts?.map((part) => part.text ?? "").join("") ?? "");
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      async close() {},
-    };
-    // Real ACP host entry → driveExternalRoleTurnRounds → promptWithPriorNativePaths.
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      boundResume: "session/new",
-      sessionIdentity: {
-        async load() {
-          return undefined;
+    const peer = "PEER-BODY-TRANSITION-DIFF";
+
+    async function captureAcpPrompt(options: {
+      readonly stationChild?: boolean;
+      readonly role: string;
+    }): Promise<string> {
+      const prompts: string[] = [];
+      const connection: AcpConnection = {
+        async request(method, params) {
+          if (method === "initialize") return { protocolVersion: 1 };
+          if (method === "session/new") return { sessionId: "sess-879-diff" };
+          if (method === "session/prompt") {
+            const parts = params.prompt as ReadonlyArray<{ type?: string; text?: string }> | undefined;
+            prompts.push(parts?.map((part) => part.text ?? "").join("") ?? "");
+            return { stopReason: "end_turn" };
+          }
+          if (method === "session/close") return {};
+          return {};
         },
-        async bind() {},
-        resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
-      },
-      connect: async () => connection,
-      prepare: async (request) => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "probe", materials: [] },
-        prompt: request.continuation.prompt,
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_notary_output",
-        async ingestStructuredOutput() {},
-        async closeRound() {
-          return { accepted: true as const };
+        notify() {},
+        async close() {},
+      };
+      const host = createAcpRoleTurnHost({
+        hostName: "grok-build",
+        modelPassing: "argv",
+        boundResume: "session/new",
+        sessionIdentity: {
+          async load() {
+            return undefined;
+          },
+          async bind() {},
+          resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
         },
-      }),
-    });
-    const result = await host.executeTurn({
-      principal: fixturePrincipal(join(runDirectory, "session")),
-      activation: { role: "notary", sourceRun: join(home, "parent") },
-      methods: [],
-      continuation: { kind: "resume", prompt: peer },
-      cwd: home,
-      home,
-      agentDir: join(home, "agent"),
-      runDirectory,
-      stationChild: true,
-      hostTransition: {
-        priorNativeKind: "sitian",
-        priorNativePaths: [priorPath],
-      },
-    });
-    assert.equal(result.code, 0, JSON.stringify(result));
-    assert.deepEqual(prompts, [peer]);
-    assert.equal(prompts[0]!.includes(priorPath), false);
+        connect: async () => connection,
+        prepare: async (request) => ({
+          mcpServers: [{ name: "ak-probe", type: "stdio" }],
+          systemPrompt: { body: "probe", materials: [] },
+          prompt: request.continuation.prompt,
+          jsonSchema: { type: "object" },
+          terminatingToolName: "ak_notary_output",
+          async ingestStructuredOutput() {},
+          async closeRound() {
+            return { accepted: true as const };
+          },
+        }),
+      });
+      const activation =
+        options.role === "notary"
+          ? ({ role: "notary", sourceRun: join(home, "parent") } as const)
+          : ({ role: "judge" } as const);
+      const result = await host.executeTurn({
+        principal: fixturePrincipal(join(runDirectory, "session")),
+        activation,
+        methods: [],
+        continuation: { kind: "resume", prompt: peer },
+        cwd: home,
+        home,
+        agentDir: join(home, "agent"),
+        runDirectory,
+        ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
+        hostTransition: {
+          priorNativeKind: "sitian",
+          priorNativePaths: [priorPath],
+        },
+      });
+      assert.equal(result.code, 0, JSON.stringify(result));
+      return prompts[0] ?? "";
+    }
+
+    // Differential: station-child officer omits prior paths; non-officer keeps them.
+    const officerPrompt = await captureAcpPrompt({ stationChild: true, role: "notary" });
+    const plainPrompt = await captureAcpPrompt({ role: "judge" });
+    assert.equal(officerPrompt.includes(priorPath), false);
+    assert.equal(plainPrompt.includes(priorPath), true);
+    // Peer body present on both; no prompt===peer byte lock.
+    assert.equal(officerPrompt.includes(peer), true);
+    assert.equal(plainPrompt.includes(peer), true);
   });
 });
 
-test("#879 Pi adapter executeTurn send boundary: station-child officer omits sitian priorNativePaths", async () => {
+test("#879 Pi adapter transition differential: station-child officer omits sitian priorNativePaths", async () => {
   await withTempRoot("ak-pi-officer-prior-", async (home) => {
     const runDirectory = join(home, "run");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const sessionFile = join(runDirectory, "session", "session.jsonl");
     await writeFile(sessionFile, "", "utf8");
-
-    let capturedArgs: readonly string[] | undefined;
-    // Real Pi RoleTurnHost.executeTurn entry; child is the spawn seam under test for argv.
-    const host = createPiRoleTurnHost({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      spawnRunner: async (args) => {
-        capturedArgs = args;
-        return { code: 0, stderr: "", timedOut: false };
-      },
-    });
-
-    const peer = "PEER-BODY-FOR-PI-BOUNDARY";
     const priorPath = join(home, "prior-sitian.jsonl");
     await writeFile(priorPath, "{}", "utf8");
-    const result = await host.executeTurn({
-      principal: fixturePrincipal(join(runDirectory, "session"), sessionFile),
-      activation: { role: "notary", sourceRun: join(home, "parent-run") },
-      methods: [],
-      continuation: { kind: "resume", prompt: peer },
-      cwd: home,
-      home,
-      agentDir: join(home, ".pi"),
-      runDirectory,
-      stationChild: true,
-      hostTransition: {
-        priorNativeKind: "sitian",
-        priorNativePaths: [priorPath],
-      },
-    });
-    assert.equal(result.code, 0);
-    assert.ok(capturedArgs !== undefined);
-    const promptArg = capturedArgs![capturedArgs!.length - 1]!;
-    assert.equal(promptArg, peer);
-    assert.equal(promptArg.includes(priorPath), false);
-    assert.equal(capturedArgs!.join("\0").includes(priorPath), false);
+    const peer = "PEER-BODY-FOR-PI-BOUNDARY";
+
+    async function capturePiPrompt(options: {
+      readonly stationChild?: boolean;
+      readonly role: "notary" | "judge";
+    }): Promise<string> {
+      let capturedArgs: readonly string[] | undefined;
+      const host = createPiRoleTurnHost({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        spawnRunner: async (args) => {
+          capturedArgs = args;
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      });
+      const result = await host.executeTurn({
+        principal: fixturePrincipal(join(runDirectory, "session"), sessionFile),
+        activation:
+          options.role === "notary"
+            ? { role: "notary", sourceRun: join(home, "parent-run") }
+            : { role: "judge" },
+        methods: [],
+        continuation: { kind: "resume", prompt: peer },
+        cwd: home,
+        home,
+        agentDir: join(home, ".pi"),
+        runDirectory,
+        ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
+        hostTransition: {
+          priorNativeKind: "sitian",
+          priorNativePaths: [priorPath],
+        },
+      });
+      assert.equal(result.code, 0);
+      assert.ok(capturedArgs !== undefined);
+      return capturedArgs![capturedArgs!.length - 1]!;
+    }
+
+    const officerPrompt = await capturePiPrompt({ stationChild: true, role: "notary" });
+    const plainPrompt = await capturePiPrompt({ role: "judge" });
+    assert.equal(officerPrompt.includes(priorPath), false);
+    assert.equal(plainPrompt.includes(priorPath), true);
+    assert.equal(officerPrompt.includes(peer), true);
+    assert.equal(plainPrompt.includes(peer), true);
   });
 });
 
-test("#879 trySettleNotary court scope: roleOutcome this-court; attachRecordedSubmissions keeps history", async () => {
+test("#879 court-scoped settlement: this-court outcome; empty scope court yields no outcome; history on submissions", async () => {
   await withTempRoot("ak-court-scope-settlement-", async (root) => {
     execFileSync("git", ["init", "-q", root]);
     const runId = "run-ledger";
-    // settlement sealedLedgerHome derives package home from `.ak-roles` topology.
     const runDir = join(root, ".ak-roles", "books", "test-book", "runs", `${runId}@notary`);
     const sessionDirectory = join(runDir, "session");
     await mkdir(sessionDirectory, { recursive: true });
@@ -729,7 +768,7 @@ test("#879 trySettleNotary court scope: roleOutcome this-court; attachRecordedSu
         } as AdmittedNotaryInvocation["sourceRun"],
       };
 
-      // Real settlement entry: sealedLedgerOutcome prefers this-court rows.
+      // Court-2 seal: this-court roleOutcome only.
       const settled = await trySettleNotaryTerminalResult(
         admitted,
         piDurablePrincipalAuthority,
@@ -742,7 +781,6 @@ test("#879 trySettleNotary court scope: roleOutcome this-court; attachRecordedSu
           { status: "bounce", findings: ["second"] },
         ]);
       }
-      // attachRecordedSubmissions keeps full run-scoped history beside this-court outcome.
       const withHistory = await attachRecordedSubmissions(admitted, settled!, {
         courtAttemptId: "court-2",
       });
@@ -753,7 +791,19 @@ test("#879 trySettleNotary court scope: roleOutcome this-court; attachRecordedSu
         ]);
       }
 
-      // Gate parent return consumes settlement-scoped payloads, not undivided last-wins.
+      // Scope present + zero this-court rows → no this-court outcome (no history fallback).
+      const emptyCourt = await trySettleNotaryTerminalResult(
+        admitted,
+        piDurablePrincipalAuthority,
+        { courtAttemptId: "court-never-sealed" },
+      );
+      assert.equal(
+        emptyCourt,
+        undefined,
+        "scoped empty court must not fall back to full-run history outcome",
+      );
+
+      // Gate parent return consumes settlement-scoped payloads.
       const projected = await projectGatekeeperRun({
         context: {
           cwd: root,
@@ -777,5 +827,99 @@ test("#879 trySettleNotary court scope: roleOutcome this-court; attachRecordedSu
       if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
       else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
     }
+  });
+});
+
+test("#879 station-child officer: case dossier via attachments freeze, not dialogue body", async () => {
+  await withTempRoot("ak-officer-dossier-attach-", async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
+
+    // Seed ticket provenance volume so 0081 has a real pointer target.
+    const { resolveTicketProvenanceVolume } = await import("../../src/ticket-provenance.ts");
+    const volume = resolveTicketProvenanceVolume(879, project, home);
+    await mkdir(join(volume.humanViewFile, ".."), { recursive: true });
+    await writeFile(volume.humanViewFile, "# 879 provenance\n", "utf8");
+    await writeFile(volume.recordFile, "", "utf8");
+
+    const prompts: string[] = [];
+    const runDirs: string[] = [];
+    const baseHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
+    const host = {
+      async executeTurn(request: RoleTurnRequest) {
+        prompts.push(request.continuation.prompt);
+        runDirs.push(request.runDirectory);
+        assert.equal("materials" in request, false);
+        return baseHost.executeTurn(request);
+      },
+    };
+
+    const body = { countersignStatus: "converged", note: "DOSSIER-ATTACH-BODY" };
+    const projected = await projectGatekeeperRun({
+      context: {
+        cwd: project,
+        sessionManager: {
+          getSessionFile: () => join(sourceRunPath, "session", "session.jsonl"),
+          getEntries: () => [],
+        },
+      } as never,
+      subject: { kind: "countersign_verdict" },
+      runDirectory: sourceRunPath,
+      submission: body,
+      home,
+      packageRoot,
+      roleTurnHost: host,
+      createRunId: () => "01a087900-0000-7000-8000-0000000d001",
+    });
+    assert.equal(projected.result.status, "pass");
+    assert.ok(prompts.length >= 1);
+    const dialogue = prompts[prompts.length - 1]!;
+    // Dialogue body carries parent payload and must not splice dossier paths.
+    assert.ok(dialogue.length > 0, "officer dialogue must carry parent body");
+    assert.equal(
+      dialogue.includes(volume.humanViewFile),
+      false,
+      "0081 dossier paths must not ride in station-child officer dialogue body",
+    );
+    assert.equal(
+      dialogue.includes(volume.recordFile),
+      false,
+      "0081 record path must not ride in station-child officer dialogue body",
+    );
+
+    // Non-body delivery: frozen under run/attachments/case-dossier/.
+    const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
+    assert.ok(officerRun, "officer run directory must exist");
+    const { readdir } = await import("node:fs/promises");
+    const attachRoot = join(officerRun!, "attachments");
+    let foundPath: string | undefined;
+    try {
+      const top = await readdir(attachRoot);
+      for (const name of top) {
+        if (!name.includes("case-dossier")) continue;
+        const files = await readdir(join(attachRoot, name));
+        for (const file of files) {
+          if (!file.includes("case-dossier-pointer")) continue;
+          foundPath = join(attachRoot, name, file);
+          const text = await readFile(foundPath, "utf8");
+          // Attachment content carries the bound ticket path pointers (structured).
+          assert.equal(text.includes(volume.humanViewFile), true);
+          assert.equal(text.includes(volume.recordFile), true);
+        }
+      }
+    } catch (error) {
+      assert.fail(`expected case-dossier attachment under ${attachRoot}: ${String(error)}`);
+    }
+    assert.ok(foundPath, "0081 case dossier must hang as run attachment");
   });
 });

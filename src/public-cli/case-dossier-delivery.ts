@@ -5,12 +5,27 @@
  * 只读已有案卷：不刷新、不生成、不校验内容、不新增拒收或停工条件。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
- * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口追加本段。
+ * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
+ * 普通入口把本段追加进 continuation；station-child 审核轮次改走既有 attachments
+ * 冻结接缝（#879：对话正文保持父腿 payload，起居录不零递送、不新造 materials）。
  */
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
+import {
+  freezeAttachmentsIntoRun,
+  type FrozenAttachment,
+} from "./invocation.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only). */
 const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+
+/** Stable freeze key under run/attachments/ for station-child 0081 delivery. */
+const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
+
+/** Leaf name of the frozen pointer section (content = purpose + paths). */
+const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
 
 /** Pointer only — presence/absence is for the role to observe at the path. */
 function describeDossierFile(path: string): string {
@@ -41,4 +56,34 @@ export async function projectCaseDossierPointerSection(input: {
     `人读视图：${describeDossierFile(volume.humanViewFile)}`,
     `记录卷宗：${describeDossierFile(volume.recordFile)}`,
   ].join("\n");
+}
+
+/**
+ * ADR 0081 delivery for station-child officer turns (#879): hang the same
+ * pointer section via the existing attachments freeze seam — never into the
+ * parent↔officer dialogue body, and never via RoleTurnRequest.materials.
+ * Returns frozen attachments, or undefined when unbound (no dossier).
+ */
+export async function deliverCaseDossierAsAttachment(input: {
+  readonly ticketNumber: number | undefined;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly runDirectory: string;
+}): Promise<readonly FrozenAttachment[] | undefined> {
+  const section = await projectCaseDossierPointerSection({
+    ticketNumber: input.ticketNumber,
+    projectRoot: input.projectRoot,
+    home: input.home,
+  });
+  if (section === undefined) return undefined;
+  // Stage outside attachments/, then freeze through the shared attachment seam.
+  const stagingDir = join(input.runDirectory, ".case-dossier-stage");
+  await mkdir(stagingDir, { recursive: true });
+  const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
+  await writeFile(stagingPath, `${section}\n`, "utf8");
+  return freezeAttachmentsIntoRun(
+    [stagingPath],
+    input.runDirectory,
+    CASE_DOSSIER_ATTACH_KEY,
+  );
 }

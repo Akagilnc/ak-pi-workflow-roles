@@ -196,9 +196,10 @@ async function sealedLedgerOutcome(
   scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
   const home = sealedLedgerHome(admitted);
-  // #879: when this court sealed, roleOutcome is this-court original only — never
-  // last-wins over an undivided historical array. #836 presentation of full history
-  // stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
+  // #879: when court scope is present, roleOutcome is this-court original only —
+  // never last-wins over an undivided historical array, and never falls back to
+  // full-run history when this court sealed zero rows. #836 presentation of full
+  // history stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
   if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
     const thisCourt = await readAttemptScopedSubmissionRows(
       admitted.projectRoot,
@@ -206,11 +207,10 @@ async function sealedLedgerOutcome(
       scope.courtAttemptId,
       home,
     );
-    if (thisCourt.length > 0) {
-      return roleOutcomeFromRows(role, thisCourt);
-    }
+    // Scope present + zero this-court rows → no this-court outcome (not run history).
+    return roleOutcomeFromRows(role, thisCourt);
   }
-  // No this-court seal (or no court scope): keep run-scoped ledger face (#836).
+  // No court scope: keep run-scoped ledger face (#836).
   const rows = await readRecordedSubmissionRows(
     admitted.projectRoot,
     admitted.runId,

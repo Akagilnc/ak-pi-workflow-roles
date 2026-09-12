@@ -36,7 +36,10 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../host-contracts.ts";
-import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
+import {
+  deliverCaseDossierAsAttachment,
+  projectCaseDossierPointerSection,
+} from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
@@ -60,8 +63,8 @@ function appendContinuationSection(
 
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only (#879). Case dossier is already reachable via --source-run;
- * do not inject dossier text or invent a cross-host materials seam.
+ * peer words only (#879). ADR 0081 case dossier still hangs via the existing
+ * attachments freeze seam — never into the peer body, never RoleTurnRequest.materials.
  */
 function isStationChildOfficerDialogue(
   role: string,
@@ -663,9 +666,9 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
-    // public entries that are not station-child officer dialogue. #879: nested
-    // officer turns keep peer words only — officers already hold --source-run and
-    // self-fetch 起居录; no prompt wrap and no RoleTurnRequest.materials seam.
+    // every public entry. #879: station-child officer dialogue keeps peer body
+    // intact — 起居录 hangs via existing attachments freeze (not prompt wrap,
+    // not RoleTurnRequest.materials). Other entries keep the neutral prompt section.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -674,7 +677,15 @@ export async function dispatchPostAdmissionTurn<
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
-    if (!isStationChildOfficerDialogue(admitted.role, env)) {
+    if (isStationChildOfficerDialogue(admitted.role, env)) {
+      // Non-body 0081 delivery: freeze pointer section under run/attachments/.
+      await deliverCaseDossierAsAttachment({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+        runDirectory: admitted.runDirectory,
+      });
+    } else {
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,

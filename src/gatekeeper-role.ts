@@ -211,9 +211,9 @@ function projectOfficerDecision(
 
 /**
  * This-court officer payloads for the parent return path (#879).
- * Prefer settlement-scoped roleOutcome.payloads (courtAttempt seal). Fall back to
- * a sole submissions row. Never last-wins an undivided multi-row historical array
- * when settlement did not scope this court — history stays on terminal.submissions.
+ * Only settlement-scoped roleOutcome.payloads (courtAttempt seal) carry this-court
+ * identity. Never guess from undivided submissions — sole row included — history
+ * stays on terminal.submissions (#836 presentation).
  */
 function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
@@ -223,9 +223,7 @@ function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonl
   if (outcome?.kind === "failure" && outcome.payloads !== undefined && outcome.payloads.length > 0) {
     return outcome.payloads;
   }
-  const submissions = terminal?.submissions ?? [];
-  // Sole row is trivially this court; multi-row undivided history is not a pick list.
-  if (submissions.length === 1) return submissions;
+  // No sole-row identity guess: undivided submissions are not this-court (#879).
   return [];
 }
 
