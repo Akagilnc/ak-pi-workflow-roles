@@ -13,7 +13,7 @@
  * terminal face) for metric-family modules — no longer discarded after checks.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -21,6 +21,7 @@ import {
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
+import { listBookRunDirectories } from "./role-run-placement.ts";
 import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
@@ -530,7 +531,8 @@ async function classifyScopedRun(input: {
 }
 
 /**
- * Scan ledger home books/<book>/runs for runs in the issue scope.
+ * Scan ledger home books/<book>/{subject/}runs for runs in the issue scope.
+ * Walk = listBookRunDirectories (flat legacy + subject-tree; #859).
  * #399: scope = book × optional ticket.
  * - bookKey set → that book only; whole-book when no ticket and no projectRoot;
  *   ticket filters alone; bookKey + projectRoot (cohort ensure, #412) narrows
@@ -598,20 +600,19 @@ export async function scanAnalystIssueRuns(input: {
   const scopeConflicts: AnalystScopeConflict[] = [];
 
   for (const book of bookNames) {
-    const runsDir = join(booksRoot, book, "runs");
-    let runNames: string[];
+    const bookDir = join(booksRoot, book);
+    let runDirectories: string[];
     try {
-      const entries = await readdir(runsDir, { withFileTypes: true });
-      runNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+      runDirectories = await listBookRunDirectories(bookDir);
     } catch (error) {
       if (isMissingPathError(error)) continue;
       throw error;
     }
 
-    for (const runName of runNames) {
+    for (const runDirectory of runDirectories) {
+      const runName = basename(runDirectory);
       const parsed = parseRunDirectoryName(runName);
       if (parsed === undefined) continue;
-      const runDirectory = join(runsDir, runName);
 
       let scopeFields: InvocationScopeFields | undefined;
       try {

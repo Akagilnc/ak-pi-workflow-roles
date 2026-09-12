@@ -1196,6 +1196,27 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+
+    // Third summons: second call left a newer provisional under the ticket with
+    // no formed session principal. Lookup must still select s001, not s002/s003.
+    const third = await runPublicCountersign(
+      ["裁：#582 三轮再审。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s003",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(third.exitCode, 0);
+    assert.equal(
+      third.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s001",
+      "third same-ticket summons must skip provisional runs that never formed a principal",
+    );
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(seen[2]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
   });
 });
 

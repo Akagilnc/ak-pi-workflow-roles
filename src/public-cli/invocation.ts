@@ -32,7 +32,10 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import {
+  readRunTicketNumber,
+  requireSafePositiveTicketNumber,
+} from "../run-ticket-number.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -589,11 +592,10 @@ export async function bindTicketNumberOnRunDirectory(
   runDirectory: string,
   ticketNumber: number,
 ): Promise<void> {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
-    throw new Error(
-      `bindTicketNumberOnRunDirectory requires a safe positive integer, got ${String(ticketNumber)}`,
-    );
-  }
+  requireSafePositiveTicketNumber(
+    ticketNumber,
+    "bindTicketNumberOnRunDirectory",
+  );
   const admittedPath = join(runDirectory, "admitted-request.json");
   const invocationPath = join(runDirectory, "invocation.json");
   const admitted = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
@@ -1170,7 +1172,13 @@ export async function freezeAttachmentsIntoRun(
 function ticketAdmissionFields(
   ticketNumber: number | undefined,
 ): { ticketNumber?: number } {
-  return ticketNumber === undefined ? {} : { ticketNumber };
+  if (ticketNumber === undefined) return {};
+  return {
+    ticketNumber: requireSafePositiveTicketNumber(
+      ticketNumber,
+      "assertedTicketNumber",
+    ),
+  };
 }
 
 export type AdmitJudgeInvocationOptions = {
@@ -1214,6 +1222,8 @@ async function admitStandardMaterialInvocation<
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  // Validate asserted ticket before placement so 0/NaN never become subjects.
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -1226,14 +1236,13 @@ async function admitStandardMaterialInvocation<
     cwd: projectRoot,
     runId,
     role,
-    subject: options.assertedTicketNumber === undefined
+    subject: ticketFields.ticketNumber === undefined
       ? { unbound: true }
-      : { ticketNumber: options.assertedTicketNumber },
+      : { ticketNumber: ticketFields.ticketNumber },
     home: options.home,
   });
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const correlationFields =
     options.correlationId === undefined
       ? {}
