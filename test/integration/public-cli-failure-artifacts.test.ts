@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
@@ -711,7 +711,7 @@ test("real Coder/Fixer runs settle on the recorded status, or honestly no_receip
         } else {
           assert.equal(result.exitCode, 0, `${row.role}:${status}`);
           assert.equal(result.terminal!.roleOutcome.kind, "accepted", `${row.role}:${status}`);
-          assert.equal(payloadStatus(result.terminal!.roleOutcome), status, `${row.role}:${status}`);
+          assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), [status], `${row.role}:${status}`);
         }
       }
     }

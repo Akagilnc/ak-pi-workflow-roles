@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
@@ -516,7 +516,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(payloadStatus(result.terminal!.roleOutcome), "escalate");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
     assert.equal(result.terminal!.runId, "run-escalate-001");
   });
@@ -726,7 +726,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(report.outcome?.kind, "accepted");
     // #836: the persisted report carries the role's original payload, not an
     // invented top-level status.
-    assert.equal(report.outcome === undefined ? undefined : payloadStatus(report.outcome), "converged");
+    assert.deepEqual(report.outcome === undefined ? [] : payloadStatusSequence(report.outcome), ["converged"]);
     await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8");
   });
 });

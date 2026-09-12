@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -735,7 +735,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
     if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
       assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-      assert.equal(payloadStatus(rebuilt.terminal!.roleOutcome), "converged");
+      assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
       assert.equal(
         (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
         "lawful despite later publication failure",

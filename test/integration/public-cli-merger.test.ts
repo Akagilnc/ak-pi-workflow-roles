@@ -26,7 +26,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitMergerInvocation as admitMergerInvocationRaw,
@@ -150,8 +150,8 @@ test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materia
     await mkdir(project, { recursive: true });
     const fixture = await materializeConflictedRepo(project);
     const derived = await deriveMergerEnvelopeFromActiveMerge(project);
-    assert.equal(derived.targetObjectId, fixture.target);
-    assert.equal(derived.sourceObjectId, fixture.source);
+    assert.deepEqual(derived.targetObjectId, fixture.target);
+    assert.deepEqual(derived.sourceObjectId, fixture.source);
     assert.deepEqual(derived.expectedConflictPaths, [fixture.conflictPath]);
     assert.deepEqual(derived.resolutionScope, [fixture.conflictPath]);
 
@@ -160,7 +160,8 @@ test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materia
     await mkdir(clean, { recursive: true });
     seedGitProject(clean);
     const cleanDerived = await deriveMergerEnvelopeFromActiveMerge(clean);
-    assert.equal(cleanDerived.sourceObjectId, "");
+    assert.deepEqual(
+      cleanDerived.sourceObjectId, "");
     assert.deepEqual(cleanDerived.expectedConflictPaths, []);
     assert.equal(cleanDerived.targetObjectId.length > 0, true);
   });
@@ -324,13 +325,14 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     });
     assert.equal(terminal.roleOutcome.role, "merger");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       terminal.roleOutcome.kind === "accepted"
-        ? payloadStatus(terminal.roleOutcome)
-        : undefined,
-      "completed",
+        ? payloadStatusSequence(terminal.roleOutcome)
+        : [],
+      ["completed"],
     );
-    assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
+    assert.deepEqual(
+      terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
     // #757: full receipt passes through decisiveFacts (report also lives in artifact).
     assert.equal(
@@ -362,12 +364,10 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         resolutionScope: string[];
       };
     };
-    assert.equal(
-      evidence.methodProvenance.packageAdaptation,
+    assert.deepEqual(evidence.methodProvenance.packageAdaptation,
       "merger-merge-only-escalate-new-intent",
     );
-    assert.equal(
-      evidence.methodProvenance.upstream.path,
+    assert.deepEqual(evidence.methodProvenance.upstream.path,
       "skills/engineering/resolving-merge-conflicts",
     );
     assert.equal(evidence.methodInvocationObserved, true);
@@ -437,13 +437,13 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       methodSkillConfiguredPath: configuredPath,
     });
     assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       escalateTerminal.roleOutcome.kind === "accepted"
-        ? payloadStatus(escalateTerminal.roleOutcome)
-        : undefined,
-      "escalate",
+        ? payloadStatusSequence(escalateTerminal.roleOutcome)
+        : [],
+      ["escalate"],
     );
-    assert.equal(
+    assert.deepEqual(
       (objectPayloads(escalateTerminal.roleOutcome)[0] ?? {}).diagnosis,
       "New authority decision required on API surface.",
     );
@@ -729,11 +729,11 @@ test("ak-role resume continues merger with package method and exact session", as
     assert.equal(resumed.exitCode, 0, stdout.join("") || "merger resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumed.terminal?.roleOutcome.role, "merger");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "escalate",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["escalate"],
     );
   });
 });

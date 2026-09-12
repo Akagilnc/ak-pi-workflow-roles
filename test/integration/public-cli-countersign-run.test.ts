@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -137,7 +137,8 @@ test("countersign admission freezes attachments and binds the countersign role",
       createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
     });
 
-    assert.equal(admitted.role, "countersign");
+    assert.deepEqual(
+      admitted.role, "countersign");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.attachments.length, 1);
     assert.ok(admitted.attachments[0]?.frozenPath);
@@ -289,10 +290,8 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       assert.equal(result.exitCode, 0, `receipt ${receipt.countersignStatus}`);
       assert.ok(result.terminal, `receipt ${receipt.countersignStatus}`);
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
-      assert.equal(
-        payloadStatus(result.terminal.roleOutcome),
-        receipt.countersignStatus,
-      );
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [receipt.countersignStatus,
+      ]);
       const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
       // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
@@ -404,11 +403,11 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(resumeArgs!.includes("再裁一次"), true);
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "converged",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["converged"],
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
       ? (objectPayloads(resumed.terminal.roleOutcome)[0] ?? {})

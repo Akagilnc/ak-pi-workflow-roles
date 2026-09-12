@@ -54,7 +54,7 @@ import {
   trySettleCountersignTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { TerminalResult } from "./terminal.ts";
+import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -96,7 +96,26 @@ export function buildCountersignTurnRequest(
 type CourtDiaristIdentity =
   | { readonly kind: "ticket"; readonly ticketNumber: number }
   | { readonly kind: "unbound" }
-  | { readonly kind: "escalate"; readonly reason: string };
+  | { readonly kind: "escalate" };
+
+type CourtDiaristInvocationResult = {
+  readonly identity: CourtDiaristIdentity;
+  /** Full diarist terminal role outcome when present — payload sequence preserved (#881). */
+  readonly roleOutcome?: TerminalRoleOutcome;
+  readonly failedWithoutEscalate?: { readonly diagnostic: string };
+};
+
+/** Routing boolean over the preserved sequence — does not pick or rewrite a sole row. */
+function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
+  if (roleOutcome === undefined) return false;
+  if (roleOutcome.kind === "audit_escalation") return true;
+  if (roleOutcome.kind !== "accepted") return false;
+  return (roleOutcome.payloads ?? []).some((payload) => {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const record = payload as Record<string, unknown>;
+    return record.status === "escalate" || record.countersignStatus === "escalate";
+  });
+}
 
 /**
  * Invoke public 起居郎 under the court-pipeline quiet face.
@@ -105,6 +124,7 @@ type CourtDiaristIdentity =
  * whether refresh must fail or first-entry settles controlled failure.
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
  * binds under that key before the turn — never mechanical recognition from prose.
+ * Escalate carries the original roleOutcome sequence; no reason rewrite (#881).
  */
 async function invokeCourtDiarist(input: {
   readonly instruction: string;
@@ -112,10 +132,7 @@ async function invokeCourtDiarist(input: {
   readonly failureLabel: string;
   /** Already-verified typed key from countersign (refresh / post-assert handoff). */
   readonly boundTicketNumber?: number;
-}, env: CountersignRunEnv, io: CliIo): Promise<{
-  readonly identity: CourtDiaristIdentity;
-  readonly failedWithoutEscalate?: { readonly diagnostic: string };
-}> {
+}, env: CountersignRunEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
   // Quiet face: the countersign caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},
@@ -145,22 +162,13 @@ async function invokeCourtDiarist(input: {
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
-  // Escalation is a sequence existence fact, not a sole payload pick (#881).
-  // audit_escalation kind is itself the terminal fact; accepted rows contribute
-  // only via whether any payload carries escalate status — reasons stay on the
-  // payload sequence for callers that read result.terminal, not rewritten here.
-  if (roleOutcome?.kind === "audit_escalation") {
-    return { identity: { kind: "escalate", reason: "audit_escalation" } };
-  }
-  if (roleOutcome?.kind === "accepted") {
-    const hasEscalate = (roleOutcome.payloads ?? []).some((payload) => {
-      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
-      const record = payload as Record<string, unknown>;
-      return record.status === "escalate" || record.countersignStatus === "escalate";
-    });
-    if (hasEscalate) {
-      return { identity: { kind: "escalate", reason: "escalate status present in payload sequence" } };
-    }
+  // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
+  // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
+  if (courtDiaristEscalated(roleOutcome)) {
+    return {
+      identity: { kind: "escalate" },
+      ...(roleOutcome === undefined ? {} : { roleOutcome }),
+    };
   }
 
   if (result.exitCode !== 0) {
@@ -170,6 +178,7 @@ async function invokeCourtDiarist(input: {
         : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
+      ...(roleOutcome === undefined ? {} : { roleOutcome }),
       failedWithoutEscalate: {
         diagnostic: `court diarist station failed for ${input.failureLabel}: ${diagnostic}`,
       },
@@ -182,9 +191,15 @@ async function invokeCourtDiarist(input: {
     Number.isSafeInteger(asserted) &&
     asserted >= 1
   ) {
-    return { identity: { kind: "ticket", ticketNumber: asserted } };
+    return {
+      identity: { kind: "ticket", ticketNumber: asserted },
+      ...(roleOutcome === undefined ? {} : { roleOutcome }),
+    };
   }
-  return { identity: { kind: "unbound" } };
+  return {
+    identity: { kind: "unbound" },
+    ...(roleOutcome === undefined ? {} : { roleOutcome }),
+  };
 }
 
 /**
@@ -224,8 +239,9 @@ export async function runCountersignCourtDiaristStation(
   );
 
   if (outcome.identity.kind === "escalate") {
+    // roleOutcome (with full payload sequence) is on outcome for sequence consumers.
     throw new StationChildExhaustedError(
-      `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
+      "court diarist station escalated (cannot identify court target)",
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
@@ -301,6 +317,7 @@ export async function runPublicCountersign(
 
     if (outcome.identity.kind === "escalate") {
       // 御批: 识别不了就上抛 — settle on the admitted countersign run.
+      // Original diarist payload sequence remains on outcome.roleOutcome.
       return await presentControlledFailure(
         admitted,
         {
@@ -308,7 +325,7 @@ export async function runPublicCountersign(
           code: null,
           stderr: "",
           thrown: new Error(
-            `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
+            "court diarist station escalated (cannot identify court target)",
           ),
         },
         countersignAdapters(),

@@ -13,7 +13,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
@@ -541,9 +541,9 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
       assert.equal(result.terminal?.roleOutcome?.kind, "accepted", label);
       // #836: the role's own status field, read off its original payload —
       // not a runtime-selected top-level status.
-      assert.equal(
-        result.terminal?.roleOutcome === undefined ? undefined : payloadStatus(result.terminal.roleOutcome),
-        "planned",
+      assert.deepEqual(
+        result.terminal?.roleOutcome === undefined ? [] : payloadStatusSequence(result.terminal.roleOutcome),
+        ["planned"],
         label,
       );
       const evidenceRef = result.terminal?.artifacts?.find((a) => a.kind === "evidence");
