@@ -492,34 +492,25 @@ async function migrateHomePartitionBook(
 
   if (category !== TICKET_PROVENANCE) return;
 
-  // Partial-nesting era source: <ticket>/ticket-provenance/ → live ticket root.
+  // One ticket-dir walk: partial-nest <ticket>/ticket-provenance/ and live
+  // <ticket>/ root volumes share existence check, line placement, companions.
   for (const entry of await listMigrationDirents(backupBook)) {
     if (!entry.isDirectory() || !isTicketNumberString(entry.name)) continue;
-    const nested = join(backupBook, entry.name, TICKET_PROVENANCE, "records.jsonl");
-    try {
-      await stat(nested);
-    } catch (error) {
-      if (isMigrationEnoent(error)) continue;
-      throw error;
+    const ticketDir = join(backupBook, entry.name);
+    for (const volumeDir of [
+      join(ticketDir, TICKET_PROVENANCE),
+      ticketDir,
+    ] as const) {
+      const recordsFile = join(volumeDir, "records.jsonl");
+      try {
+        await stat(recordsFile);
+      } catch (error) {
+        if (isMigrationEnoent(error)) continue;
+        throw error;
+      }
+      await migrateJsonlFileByKind(context, bookKey, writes, recordsFile, TICKET_PROVENANCE, outcomes);
+      await copyTicketCompanions(context, bookKey, volumeDir);
     }
-    await migrateJsonlFileByKind(context, bookKey, writes, nested, TICKET_PROVENANCE, outcomes);
-    await copyTicketCompanions(context, bookKey, dirname(nested));
-  }
-
-  // Live topology source already at ticket root (production sitian write path):
-  // <ticket>/records.jsonl + 起居录.md / offered-identities — same authority as home.
-  for (const entry of await listMigrationDirents(backupBook)) {
-    if (!entry.isDirectory() || !isTicketNumberString(entry.name)) continue;
-    const liveRoot = join(backupBook, entry.name);
-    const liveRecords = join(liveRoot, "records.jsonl");
-    try {
-      await stat(liveRecords);
-    } catch (error) {
-      if (isMigrationEnoent(error)) continue;
-      throw error;
-    }
-    await migrateJsonlFileByKind(context, bookKey, writes, liveRecords, TICKET_PROVENANCE, outcomes);
-    await copyTicketCompanions(context, bookKey, liveRoot);
   }
 }
 
