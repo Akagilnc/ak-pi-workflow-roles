@@ -1,5 +1,6 @@
 import type { BookTopologyPartitionMigrator } from "./book-topology-migration.ts";
 import { BOOK_TOPOLOGY_RECORD_CLASS_MIGRATORS } from "./book-topology-record-class-migrators.ts";
+import { bookTopologyRunsMigrator } from "./book-topology-runs-migrator.ts";
 
 /**
  * One assembly point for the independently implemented legacy partitions.
@@ -9,5 +10,6 @@ import { BOOK_TOPOLOGY_RECORD_CLASS_MIGRATORS } from "./book-topology-record-cla
  * record classes when both are assembled.
  */
 export const BOOK_TOPOLOGY_PARTITION_MIGRATORS: readonly BookTopologyPartitionMigrator[] = [
+  bookTopologyRunsMigrator,
   ...BOOK_TOPOLOGY_RECORD_CLASS_MIGRATORS,
 ];
