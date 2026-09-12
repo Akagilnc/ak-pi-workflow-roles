@@ -88,13 +88,30 @@ export function reconcileMigrationPartition(
   };
 }
 
-async function findWriterLocks(root: string): Promise<string[]> {
-  const locks: string[] = [];
+type WriterLockCandidate = {
+  readonly path: string;
+  readonly regularFile: boolean;
+  readonly kind: string;
+};
+
+async function findWriterLocks(root: string): Promise<WriterLockCandidate[]> {
+  const locks: WriterLockCandidate[] = [];
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && entry.name === "writer.lock") locks.push(path);
+      if (entry.name === "writer.lock") {
+        const kind = entry.isFile() ? "file"
+          : entry.isDirectory() ? "directory"
+          : entry.isSymbolicLink() ? "symbolic link"
+          : entry.isFIFO() ? "FIFO"
+          : entry.isSocket() ? "socket"
+          : entry.isCharacterDevice() ? "character device"
+          : entry.isBlockDevice() ? "block device"
+          : "unknown filesystem object";
+        locks.push({ path, regularFile: entry.isFile(), kind });
+      } else if (entry.isDirectory()) {
+        await walk(path);
+      }
     }
   }
   await walk(root);
@@ -122,7 +139,13 @@ export async function assertBookTopologyMigrationPrerequisites(
   }
 
   const active: string[] = [];
-  for (const lockPath of await findWriterLocks(booksDirectory)) {
+  for (const candidate of await findWriterLocks(booksDirectory)) {
+    const lockPath = candidate.path;
+    if (!candidate.regularFile) {
+      throw new Error(
+        `cannot establish zero in-flight runs from ${lockPath}: writer lock is a ${candidate.kind}, holder liveness unverifiable`,
+      );
+    }
     const holder = await autopsyWriterLock(lockPath);
     if (holder.verdict === "alive") {
       active.push(`${lockPath} (live pid ${holder.pid})`);
