@@ -3,10 +3,11 @@
  * volume) attribution into the owning run; undecidable rows/volumes go to
  * unbound/. Never discard, never silent-merge, never leave at book root.
  */
-import type { Dirent } from "node:fs";
-import { appendFile, cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import type { Dirent, Stats } from "node:fs";
+import { appendFile, cp, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { pathContainedIn } from "./activation-ledger-topology.ts";
 import { WORKER_SUBMISSION_GATE_KIND } from "./archivist-record-entry.ts";
 import {
   reconcileMigrationPartition,
@@ -94,6 +95,25 @@ function pathCandidatesFromRecord(record: Record<string, unknown>): string[] {
   return paths;
 }
 
+function describeFsKind(entry: Dirent | Stats): string {
+  if (entry.isFile()) return "file";
+  if (entry.isDirectory()) return "directory";
+  if (entry.isSymbolicLink()) return "symbolic link";
+  if (entry.isFIFO()) return "FIFO";
+  if (entry.isSocket()) return "socket";
+  if (entry.isCharacterDevice()) return "character device";
+  if (entry.isBlockDevice()) return "block device";
+  return "unknown filesystem object";
+}
+
+function bookHistoricalRoots(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  bookKey: string,
+): readonly string[] {
+  return [join(booksDirectory, bookKey), join(backupBooksDirectory, bookKey)];
+}
+
 /** Last `runs/<leaf>` segment; leaf may be `<runId>@<role>` or bare. */
 function runLeafFromPath(path: string): string | undefined {
   const segments = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0);
@@ -104,12 +124,47 @@ function runLeafFromPath(path: string): string | undefined {
   return leaf;
 }
 
-function runLeafFromRecord(record: Record<string, unknown>): string | undefined {
-  for (const path of pathCandidatesFromRecord(record)) {
-    const leaf = runLeafFromPath(path);
+/** Bind path evidence to this book's historical roots before taking a run leaf. */
+function runLeafFromBoundPath(
+  path: string,
+  bookRoots: readonly string[],
+): string | undefined {
+  for (const root of bookRoots) {
+    const rootResolved = resolve(root);
+    const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
+    if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
+    const rel = relative(rootResolved, candidate).split(sep).join("/");
+    const leaf = runLeafFromPath(rel);
     if (leaf !== undefined) return leaf;
   }
   return undefined;
+}
+
+function runLeafFromRecord(
+  record: Record<string, unknown>,
+  bookRoots: readonly string[],
+): string | undefined {
+  for (const path of pathCandidatesFromRecord(record)) {
+    const leaf = runLeafFromBoundPath(path, bookRoots);
+    if (leaf !== undefined) return leaf;
+  }
+  return undefined;
+}
+
+async function readRegularBackupFile(path: string): Promise<string | undefined> {
+  let info: Stats;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
+  if (!info.isFile()) {
+    throw new Error(
+      `cannot migrate mixed volume from ${path}: source is a ${describeFsKind(info)}, not a regular file`,
+    );
+  }
+  return readFile(path, "utf8");
 }
 
 /**
@@ -117,7 +172,10 @@ function runLeafFromRecord(record: Record<string, unknown>): string | undefined 
  * session header's parentSession — never later message/payload path fields.
  * Malformed JSONL rows are reported separately; they do not select the leaf.
  */
-function inspectWorkerSubmissionGateVolume(text: string): {
+function inspectWorkerSubmissionGateVolume(
+  text: string,
+  bookRoots: readonly string[],
+): {
   readonly leaf: string | undefined;
   readonly malformedRows: readonly { readonly lineNumber: number; readonly raw: string }[];
 } {
@@ -145,7 +203,7 @@ function inspectWorkerSubmissionGateVolume(text: string): {
       parsed.type === "session" &&
       typeof parsed.parentSession === "string"
     ) {
-      leaf = runLeafFromPath(parsed.parentSession);
+      leaf = runLeafFromBoundPath(parsed.parentSession, bookRoots);
     }
   }
 
@@ -207,13 +265,8 @@ async function migrateCurrentSessionPointer(input: {
   readonly unboundPointerFile: string;
 }): Promise<void> {
   const sourceFile = join(input.sourceDir, CURRENT_SESSION_LEDGER);
-  let raw: string;
-  try {
-    raw = await readFile(sourceFile, "utf8");
-  } catch (error) {
-    if (isEnoent(error)) return;
-    throw error;
-  }
+  const raw = await readRegularBackupFile(sourceFile);
+  if (raw === undefined) return;
 
   let sessionFile: string | undefined;
   try {
@@ -230,30 +283,22 @@ async function migrateCurrentSessionPointer(input: {
     const pointed = resolve(input.sourceDir, sessionFile);
     destinationSessionFile = input.volumeDestinations.get(pointed)
       ?? input.volumeDestinations.get(sessionFile);
-    if (destinationSessionFile === undefined) {
-      const pointedName = basename(pointed);
-      for (const [sourcePath, destination] of input.volumeDestinations) {
-        if (basename(sourcePath) === pointedName) {
-          destinationSessionFile = destination;
-          break;
-        }
-      }
-    }
   }
 
-  const pointerFile = destinationSessionFile === undefined
-    ? input.unboundPointerFile
-    : join(dirname(destinationSessionFile), CURRENT_SESSION_LEDGER);
-  await mkdir(dirname(pointerFile), { recursive: true });
-  if (sessionFile === undefined) {
-    await writeFile(pointerFile, raw.endsWith("\n") ? raw : `${raw}\n`, "utf8");
+  if (destinationSessionFile === undefined) {
+    await mkdir(dirname(input.unboundPointerFile), { recursive: true });
+    await writeFile(
+      input.unboundPointerFile,
+      raw.endsWith("\n") ? raw : `${raw}\n`,
+      "utf8",
+    );
     return;
   }
-  const rewrittenSessionFile = destinationSessionFile
-    ?? join(dirname(input.unboundPointerFile), basename(resolve(input.sourceDir, sessionFile)));
+  const pointerFile = join(dirname(destinationSessionFile), CURRENT_SESSION_LEDGER);
+  await mkdir(dirname(pointerFile), { recursive: true });
   await writeFile(
     pointerFile,
-    `${JSON.stringify({ sessionFile: rewrittenSessionFile })}\n`,
+    `${JSON.stringify({ sessionFile: destinationSessionFile })}\n`,
     "utf8",
   );
 }
@@ -269,11 +314,9 @@ async function migrateSitianMixedVolume(
   for (const bookKey of await listBookKeys(backupBooksDirectory)) {
     const sourceDir = join(backupBooksDirectory, bookKey, partition);
     const recordsFile = join(sourceDir, "records.jsonl");
-    let text: string;
-    try {
-      text = await readFile(recordsFile, "utf8");
-    } catch (error) {
-      if (!isEnoent(error)) throw error;
+    const bookRoots = bookHistoricalRoots(booksDirectory, backupBooksDirectory, bookKey);
+    const text = await readRegularBackupFile(recordsFile);
+    if (text === undefined) {
       await migrateCurrentSessionPointer({
         sourceDir,
         volumeDestinations: new Map(),
@@ -329,7 +372,7 @@ async function migrateSitianMixedVolume(
         continue;
       }
 
-      const leaf = runLeafFromRecord(parsed);
+      const leaf = runLeafFromRecord(parsed, bookRoots);
       const destRun = leaf === undefined
         ? undefined
         : await placedRunForLeaf(placedCache, booksDirectory, bookKey, leaf);
@@ -382,8 +425,9 @@ async function migrateWorkerSubmissionGate(
       throw error;
     }
 
+    const bookRoots = bookHistoricalRoots(booksDirectory, backupBooksDirectory, bookKey);
     const volumes = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+      .filter((entry) => entry.name.endsWith(".jsonl"))
       .map((entry) => entry.name)
       .sort();
     const volumeDestinations = new Map<string, string>();
@@ -391,8 +435,9 @@ async function migrateWorkerSubmissionGate(
     for (const name of volumes) {
       const sourcePath = join(sourceDir, name);
       const source = posixRelative(backupBooksDirectory, sourcePath);
-      const text = await readFile(sourcePath, "utf8");
-      const inspected = inspectWorkerSubmissionGateVolume(text);
+      const text = await readRegularBackupFile(sourcePath);
+      if (text === undefined) continue;
+      const inspected = inspectWorkerSubmissionGateVolume(text, bookRoots);
       const leaf = inspected.leaf;
       const destRun = leaf === undefined
         ? undefined
@@ -407,6 +452,7 @@ async function migrateWorkerSubmissionGate(
       await mkdir(dirname(dest), { recursive: true });
       await cp(sourcePath, dest, { preserveTimestamps: true });
       volumeDestinations.set(resolve(sourcePath), dest);
+      volumeDestinations.set(resolve(join(booksDirectory, bookKey, kind, name)), dest);
       // One outcome per volume keeps the entries closure; bad rows attach below.
       outcomes.push({
         disposition: destRun?.disposition === "placed" ? "placed" : "unbound",
