@@ -190,6 +190,37 @@ export async function runPublicDiarist(
     request: turnRequest,
     adapters: diaristAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  }).then(async (result) => {
+    // Accept hook may have bound ticket onto durable pages; mirror onto the
+    // caller-visible admitted object from the full payload sequence (#881:
+    // scan sequence, never lastRolePayloadRecord sole pick). Escalate rows
+    // must not leak an unverified ticketNumber.
+    if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
+      const roleOutcome = result.terminal?.roleOutcome;
+      if (roleOutcome?.kind === "accepted") {
+        for (const payload of roleOutcome.payloads ?? []) {
+          if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+          const record = payload as Record<string, unknown>;
+          if (record.status === "escalate") continue;
+          const raw =
+            typeof record.ticketNumber === "number"
+              ? record.ticketNumber
+              : typeof record.sitian === "object"
+                && record.sitian !== null
+                && typeof (record.sitian as { ticketNumber?: unknown }).ticketNumber === "number"
+                ? (record.sitian as { ticketNumber: number }).ticketNumber
+                : undefined;
+          if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+            await bindAdmittedTicketNumber(admitted, raw);
+            if (result.admitted.ticketNumber === undefined) {
+              (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+            }
+            break;
+          }
+        }
+      }
+    }
+    return result;
   });
 }
 

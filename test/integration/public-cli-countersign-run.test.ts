@@ -477,16 +477,11 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(resumeArgs!.includes("再裁一次"), true);
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "continue",
-    );
-    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
-      : undefined;
-    assert.equal((facts?.fix as { summary?: string } | undefined)?.summary, "RESUMED-再审");
+    // #881: multi-row resume keeps the full payload sequence — no sole last pick.
+    assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
+      { countersignStatus: "converged", note: "FIRST-署" },
+      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+    ]);
   });
 });
 
