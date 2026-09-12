@@ -8,8 +8,7 @@
  * - Non-three-state then lawful pass: parent sees this-court pass only.
  * - Officer seat host is not parent invocation host (#821).
  * - Station-child officer promptWithPriorNativePaths omits prior paths.
- * - Deterministic 0081 freeze leaf (deliver ↔ load; missing freeze → undefined).
- * Medium FS #879 Nth-turn / court-scope / station-child dossier fold:
+ * Medium FS #879 Nth-turn / court-scope / dossier freeze-leaf + fold:
  * test/integration/gate-officer-resume-accounting.test.ts
  */
 import assert from "node:assert/strict";
@@ -25,10 +24,6 @@ import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import {
-  deliverCaseDossierAsAttachment,
-  loadCaseDossierReadingMaterial,
-} from "../../src/public-cli/case-dossier-delivery.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
@@ -481,25 +476,3 @@ test("#879 promptWithPriorNativePaths: station-child officer omits paths; others
   );
 });
 
-test("#879 case-dossier freeze leaf is deterministic; missing freeze is undefined", async () => {
-  await withTempRoot("ak-dossier-leaf-", async (home) => {
-    const runDirectory = join(home, ".ak-roles", "books", "test-book", "runs", "run-1@notary");
-    await mkdir(runDirectory, { recursive: true });
-    assert.equal(await loadCaseDossierReadingMaterial(runDirectory), undefined);
-
-    const delivered = await deliverCaseDossierAsAttachment({
-      ticketNumber: 879,
-      projectRoot: join(home, "project"),
-      home,
-      runDirectory,
-    });
-    assert.ok(delivered !== undefined && delivered.length === 1);
-    const loaded = await loadCaseDossierReadingMaterial(runDirectory);
-    assert.equal(loaded?.kind, "case-dossier-pointer");
-    assert.equal(loaded?.frozenPath, delivered![0]!.frozenPath);
-    assert.equal(
-      loaded?.frozenPath,
-      join(runDirectory, "attachments", "case-dossier", "00-case-dossier-pointer.md"),
-    );
-  });
-});

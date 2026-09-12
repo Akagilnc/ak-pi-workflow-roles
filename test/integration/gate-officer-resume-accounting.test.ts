@@ -4,6 +4,7 @@
  * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
  * - Station-child 0081 dossier folds via systemPrompt.materials, not dialogue.
+ * - Deterministic freeze leaf load (00-case-dossier-pointer.md); missing → undefined.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -17,6 +18,10 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import {
+  deliverCaseDossierAsAttachment,
+  loadCaseDossierReadingMaterial,
+} from "../../src/public-cli/case-dossier-delivery.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
@@ -227,6 +232,29 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       assert.deepEqual(projected.result.receipt, second);
     }
     assert.deepEqual(projected.summoned?.terminal?.submissions, [first, second]);
+  });
+});
+
+test("#879 case-dossier freeze leaf is deterministic; missing freeze is undefined", async () => {
+  await withTempRoot("ak-dossier-leaf-", async (home) => {
+    const runDirectory = join(home, ".ak-roles", "books", "test-book", "runs", "run-1@notary");
+    await mkdir(runDirectory, { recursive: true });
+    assert.equal(await loadCaseDossierReadingMaterial(runDirectory), undefined);
+
+    const delivered = await deliverCaseDossierAsAttachment({
+      ticketNumber: 879,
+      projectRoot: join(home, "project"),
+      home,
+      runDirectory,
+    });
+    assert.ok(delivered !== undefined && delivered.length === 1);
+    const loaded = await loadCaseDossierReadingMaterial(runDirectory);
+    assert.equal(loaded?.kind, "case-dossier-pointer");
+    assert.equal(loaded?.frozenPath, delivered![0]!.frozenPath);
+    assert.equal(
+      loaded?.frozenPath,
+      join(runDirectory, "attachments", "case-dossier", "00-case-dossier-pointer.md"),
+    );
   });
 });
 
