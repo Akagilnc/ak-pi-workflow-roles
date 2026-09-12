@@ -52,6 +52,7 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   trySettleCountersignTerminalResult,
+  withSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
@@ -104,6 +105,19 @@ type CourtDiaristInvocationResult = {
   readonly roleOutcome?: TerminalRoleOutcome;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+/** Full payload sequence on kinds that carry it — empty when absent. */
+function roleOutcomePayloads(roleOutcome: TerminalRoleOutcome | undefined): readonly unknown[] {
+  if (roleOutcome === undefined) return [];
+  if (
+    roleOutcome.kind === "accepted" ||
+    roleOutcome.kind === "audit_escalation" ||
+    roleOutcome.kind === "failure"
+  ) {
+    return roleOutcome.payloads ?? [];
+  }
+  return [];
+}
 
 /** Routing boolean over the preserved sequence — does not pick or rewrite a sole row. */
 function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
@@ -239,13 +253,17 @@ export async function runCountersignCourtDiaristStation(
   );
 
   if (outcome.identity.kind === "escalate") {
-    // roleOutcome (with full payload sequence) is on outcome for sequence consumers.
+    // Carry the original diarist payload sequence on the error → parent failure terminal (#881).
     throw new StationChildExhaustedError(
       "court diarist station escalated (cannot identify court target)",
+      roleOutcomePayloads(outcome.roleOutcome),
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
-    throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
+    throw new StationChildExhaustedError(
+      outcome.failedWithoutEscalate.diagnostic,
+      roleOutcomePayloads(outcome.roleOutcome),
+    );
   }
 }
 
@@ -317,8 +335,8 @@ export async function runPublicCountersign(
 
     if (outcome.identity.kind === "escalate") {
       // 御批: 识别不了就上抛 — settle on the admitted countersign run.
-      // Original diarist payload sequence remains on outcome.roleOutcome.
-      return await presentControlledFailure(
+      // Child payload sequence attaches onto the failure terminal (#881 coexist).
+      const settled = await presentControlledFailure(
         admitted,
         {
           timedOut: false,
@@ -332,6 +350,12 @@ export async function runPublicCountersign(
         env.principalAuthority,
         io,
       );
+      const childPayloads = roleOutcomePayloads(outcome.roleOutcome);
+      if (childPayloads.length === 0) return settled;
+      return {
+        ...settled,
+        terminal: withSubmissions(settled.terminal, childPayloads),
+      };
     }
 
     // Typed failure terminal (verification / infra / non-zero without escalate)

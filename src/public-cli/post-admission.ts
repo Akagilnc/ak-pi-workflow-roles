@@ -98,6 +98,7 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
+  withSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -119,6 +120,14 @@ import {
  */
 export class StationChildExhaustedError extends Error {
   override readonly name = "StationChildExhaustedError";
+  /** Child role payload sequence when the station escalated with a terminal (#881). */
+  readonly childPayloads?: readonly unknown[];
+  constructor(message: string, childPayloads?: readonly unknown[]) {
+    super(message);
+    if (childPayloads !== undefined && childPayloads.length > 0) {
+      this.childPayloads = childPayloads;
+    }
+  }
 }
 
 function withOnceSuccessfulBeforeDispatch<
@@ -631,7 +640,7 @@ export async function dispatchPostAdmissionTurn<
       try {
         await adapters.beforeDispatch(admitted);
       } catch (error) {
-        const settled = (await presentControlledFailure(
+        let settled = (await presentControlledFailure(
           admitted,
           {
             timedOut: false,
@@ -645,6 +654,13 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
         if (error instanceof StationChildExhaustedError) {
+          // #881: child payload sequence coexists on the parent failure terminal.
+          if (error.childPayloads !== undefined && error.childPayloads.length > 0) {
+            settled = {
+              ...settled,
+              terminal: withSubmissions(settled.terminal, error.childPayloads) as T,
+            };
+          }
           return { ...settled, skipAutoResume: true as const, ...deferredPersist };
         }
         return { ...settled, ...deferredPersist };
