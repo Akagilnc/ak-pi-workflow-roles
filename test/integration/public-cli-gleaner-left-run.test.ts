@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
  * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
@@ -80,7 +80,8 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     });
 
     const parsed = parseGleanerLeftArgv(["--project", project, "--base", "HEAD"]);
-    assert.equal(parsed.instruction, "");
+    assert.deepEqual(
+      parsed.instruction, "");
     assert.equal(parsed.baseRevision, "HEAD");
 
     const admitted = await admitGleanerLeftInvocation({
@@ -138,8 +139,8 @@ test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
-    assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = payloadFacts(result.terminal.roleOutcome);
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
+    const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
     assert.equal(facts.status, "completed");
     assert.deepEqual(facts.findings, []);
 
@@ -193,8 +194,8 @@ test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Ter
     assert.equal(result.exitCode, 0);
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = payloadFacts(result.terminal.roleOutcome);
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
+    const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
     const findings = facts.findings as readonly {
       pointer: string;
       statement: string;
@@ -283,14 +284,14 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumed.terminal?.roleOutcome.role, "gleaner-left");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "completed",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["completed"],
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
+      ? (objectPayloads(resumed.terminal.roleOutcome)[0] ?? {})
       : undefined;
     const findings = facts?.findings as readonly { pointer?: string; statement?: string }[] | undefined;
     assert.equal(findings?.[0]?.statement, "RESUMED-弹章");

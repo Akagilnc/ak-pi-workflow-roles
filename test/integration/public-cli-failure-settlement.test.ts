@@ -1,7 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -171,7 +173,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: "",
     thrown: original,
   });
-  assert.equal(unrecognized.cause, "unrecognized");
+  assert.equal(unrecognized.cause, undefined);
   assert.equal(unrecognized.diagnostic, "socket hang up");
   assert.equal(unrecognized.identity?.name, "ProviderTransportError");
 
@@ -263,7 +265,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     stderr: "",
     thrown: undefined,
   });
-  assert.equal(thrownUndefined.cause, "unrecognized");
+  assert.equal(thrownUndefined.cause, undefined);
   assert.equal(thrownUndefined.diagnostic, "undefined");
   // Absence of the thrown key still means no exception was observed.
   const noThrownKey = classifyPostAdmissionFailure({
@@ -514,7 +516,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(payloadStatus(result.terminal!.roleOutcome), "escalate");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
     assert.equal(result.terminal!.runId, "run-escalate-001");
   });
@@ -550,7 +552,6 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
       result,
       stdout,
       stderr,
-      expectedCause: "unrecognized",
       diagnosticEquals: "ECONNRESET from upstream",
       identityName: "RawSocketError",
     });
@@ -587,13 +588,12 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
       result,
       stdout,
       stderr,
-      expectedCause: "unrecognized",
       diagnosticEquals: "undefined",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       // Presence of thrown undefined must not wash into activation or null-exit output.
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.cause, undefined);
       assert.notEqual(terminal.roleOutcome.cause, "activation");
       assert.notEqual(terminal.roleOutcome.cause, "output");
     }
@@ -726,7 +726,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(report.outcome?.kind, "accepted");
     // #836: the persisted report carries the role's original payload, not an
     // invented top-level status.
-    assert.equal(report.outcome === undefined ? undefined : payloadStatus(report.outcome), "converged");
+    assert.deepEqual(report.outcome === undefined ? [] : payloadStatusSequence(report.outcome), ["converged"]);
     await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8");
   });
 });
@@ -737,16 +737,17 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
-    const causes: ControlledFailureCause[] = [
+    const causes: Array<ControlledFailureCause | undefined> = [
       "activation",
       "provider",
       "session",
       "output",
       "timeout",
-      "unrecognized",
+      undefined, // #881: no typed class — original diagnostic only
     ];
     for (const cause of causes) {
-      const runId = `run-cause-${cause}`;
+      const causeKey = cause ?? "no-typed-cause";
+      const runId = `run-cause-${causeKey}`;
       const runDirectory = join(
         home,
         ".ak-roles",
@@ -766,9 +767,9 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
       });
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
       const terminal = await settleJudgeFailureTerminalResult(admitted, {
-        cause,
-        diagnostic: `diagnostic for ${cause}`,
-        identity: { name: "CauseProbeError", code: cause },
+        ...(cause === undefined ? {} : { cause }),
+        diagnostic: `diagnostic for ${causeKey}`,
+        identity: { name: "CauseProbeError", code: causeKey },
       }, piDurablePrincipalAuthority);
       assert.equal(terminal.roleOutcome.kind, "failure");
       if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
@@ -797,13 +798,81 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
       };
       assert.equal(body.kind, "error");
       assert.equal(body.cause, cause);
-      assert.equal(body.diagnostic, `diagnostic for ${cause}`);
+      assert.equal(body.diagnostic, `diagnostic for ${causeKey}`);
       assert.equal(body.identity?.name, "CauseProbeError");
       // Must not look like a manufactured Judge Receipt status.
       assert.equal("judgeStatus" in body, false);
     }
   });
 });
+test("#881 non-sealed correctable-rejection and infrastructure params each appear once beside host failure", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const bounceParams = { judgeStatus: "converged", report: "bounce-verdict" };
+    const infraParams = { judgeStatus: "converged", report: "infra-verdict" };
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "host aborts after non-sealed submissions"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-881-non-sealed",
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args, spawnOptions) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            await recordNonSealedSubmissionForSpawn({
+              cwd: spawnOptions.cwd,
+              env: spawnOptions.env,
+              role: "judge",
+              details: bounceParams,
+              toolCallId: "call-bounce",
+              executeError: new GatekeeperDecisionError({
+                status: "bounce",
+                officer: "inspector",
+                receipt: { status: "bounce", findings: ["x"] },
+              }),
+            });
+            await recordNonSealedSubmissionForSpawn({
+              cwd: spawnOptions.cwd,
+              env: spawnOptions.env,
+              role: "judge",
+              details: infraParams,
+              toolCallId: "call-infra",
+              executeError: new Error("This operation was aborted"),
+            });
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            throw err;
+          },
+        }),
+      },
+    );
+
+    const { terminal } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      diagnosticEquals: "This operation was aborted",
+      identityName: "AbortError",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
+    // Host failure stays failure; both original params ride beside it exactly once.
+    assert.deepEqual(terminal.roleOutcome.payloads, [bounceParams, infraParams]);
+    assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
+    assert.equal(result.exitCode, 1);
+  });
+});
+
 function floodStderr(): string {
   return [
     "event: tool_call",

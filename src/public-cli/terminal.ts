@@ -73,8 +73,12 @@ export type TerminalRoleOutcome =
   | {
       kind: "failure";
       role: TerminalRoleName;
-      /** Typed cause class — never a fabricated role Receipt status. */
-      cause: ControlledFailureCause;
+      /**
+       * Typed cause class when a typed fact confirms it.
+       * Omitted when unknown — original diagnostic + error artifact carry the fact (#881).
+       * Never a fabricated "unrecognized" label.
+       */
+      cause?: ControlledFailureCause;
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
@@ -175,19 +179,6 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
   return [];
 }
 
-/** Last object payload the role actually wrote. No field remapping. */
-export function lastRolePayloadRecord(
-  payloads: readonly unknown[],
-): Record<string, unknown> | undefined {
-  for (let index = payloads.length - 1; index >= 0; index -= 1) {
-    const payload = payloads[index];
-    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-      return payload as Record<string, unknown>;
-    }
-  }
-  return undefined;
-}
-
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
@@ -253,7 +244,7 @@ export function formatTerminalResult(result: TerminalResult): string {
   lines.push("role\toutcome\tstatus");
   const outcomeStatus =
     result.roleOutcome.kind === "failure"
-      ? result.roleOutcome.cause
+      ? result.roleOutcome.cause ?? ""
       : result.roleOutcome.kind === "accepted"
         ? "accepted"
         : result.roleOutcome.status;

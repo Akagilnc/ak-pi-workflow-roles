@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -100,7 +100,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
         },
       );
       const req = captured.current!;
-      assert.equal(req.activation.role, "coder");
+      assert.deepEqual(
+      req.activation.role, "coder");
       assert.equal(req.activation.phase, "apply");
       assert.equal(
         req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
@@ -258,7 +259,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     });
     assert.equal(terminal.roleOutcome.role, "coder");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(terminal.roleOutcome), "completed");
+    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
     assert.equal(terminal.runId, "run-coder-settle-001");
     const report = terminal.artifacts.find((a) => a.kind === "report");
     assert.ok(report);
@@ -348,7 +349,7 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.roleOutcome.role, "coder");
-    assert.equal(payloadStatus(result.terminal!.roleOutcome), "completed");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
   });
 });
 
@@ -443,12 +444,12 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
       );
       assert.equal(captured!.includes("--skill"), false);
       assert.equal(result.terminal?.roleOutcome.role, "coder");
-      assert.equal(
+      assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? payloadStatus(result.terminal.roleOutcome)
-          : undefined,
-        "planned",
-      );
+        ? payloadStatusSequence(result.terminal.roleOutcome)
+        : [],
+      ["planned"],
+    );
       await access(
         join(
           home,
@@ -489,7 +490,8 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           }),
         },
       );
-      assert.equal(Array.isArray(captured), true);
+      assert.deepEqual(
+      Array.isArray(captured), true);
       assert.equal(
         captured![captured!.indexOf("--ak-coder-phase") + 1],
         "apply",
@@ -615,11 +617,11 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     assert.equal(resumed.exitCode, 0, stdout.join("") || "coder resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumed.terminal?.roleOutcome.role, "coder");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "planned",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["planned"],
     );
   });
 });
@@ -690,8 +692,8 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           }),
         },
       );
-      assert.equal(
-        result.exitCode,
+      assert.deepEqual(
+      result.exitCode,
         0,
         stderr.join("") || stdout.join("") || "bare model dispatch failed",
       );
@@ -719,12 +721,12 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(invocation.provider, "kimi-coding");
       assert.equal(invocation.model, "k3-256k");
       assert.equal("thinking" in invocation, false);
-      assert.equal(
+      assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? payloadStatus(result.terminal.roleOutcome)
-          : undefined,
-        "planned",
-      );
+        ? payloadStatusSequence(result.terminal.roleOutcome)
+        : [],
+      ["planned"],
+    );
     }
 
     // Suffix override: --thinking still forwarded unchanged.

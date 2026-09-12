@@ -31,7 +31,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
   admitDoctorInvocation,
@@ -100,7 +100,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
       createRunId: () => "run-doctor-001",
     });
 
-    assert.equal(admitted.role, "doctor");
+    assert.deepEqual(
+      admitted.role, "doctor");
     assert.equal(admitted.issueNumber, 40);
     assert.equal(admitted.caseRunsPath, await realpath(seededRuns));
     assert.deepEqual(admitted.caseIdentity, expectedPatient.identity);
@@ -325,7 +326,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
     // #836: captured from the same real `loadDoctorCase`/role payload the
-    // piRunner uses, so the later report.receipt/report.cost assertions check
+    // piRunner uses, so the later outcome.payloads/report.cost assertions check
     // against the actual values rather than hand-authored duplicates.
     let candidateCost: unknown;
     let candidateDetails: unknown;
@@ -387,12 +388,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(completed.terminal);
     assert.equal(completed.terminal!.roleOutcome.role, "doctor");
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(completed.terminal!.roleOutcome), "completed");
+    assert.deepEqual(payloadStatusSequence(completed.terminal!.roleOutcome), ["completed"]);
     // #757: full receipt passes through — issueNumber stays under case, not lifted.
-    const completedCase = payloadFacts(completed.terminal!.roleOutcome).case as { issueNumber?: number } | undefined;
+    const completedCase = (objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).case as { issueNumber?: number } | undefined;
     assert.equal(completedCase?.issueNumber, 40);
-    assert.ok(Array.isArray(payloadFacts(completed.terminal!.roleOutcome).findings));
-    assert.equal((payloadFacts(completed.terminal!.roleOutcome).findings as unknown[]).length, 1);
+    assert.ok(Array.isArray((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings));
+    assert.equal(((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
@@ -400,17 +401,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(reportPath);
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
-      receipt: { status: string; case: { issueNumber: number } };
+      outcome?: { payloads?: unknown };
       cost: unknown;
     };
     assert.equal(report.role, "doctor");
-    assert.equal(report.receipt.status, "completed");
-    assert.equal(report.receipt.case.issueNumber, 40);
+    assert.deepEqual(report.outcome?.payloads, [candidateDetails]);
     // #836: settlement.ts extractDoctorCandidateCostFact/publishDoctorArtifacts
     // must read the audit candidate entry and publish machine cost as an
     // independent report field beside — not merged into — the role's original
-    // payload, which the public report.receipt must still equal exactly.
-    assert.deepEqual(report.receipt, candidateDetails);
+    // payload sequence.
     assert.deepEqual(report.cost, candidateCost);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
@@ -421,7 +420,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         "utf8",
       ),
     ) as { state: string };
-    assert.equal(runState.state, "terminal", "doctor run must settle run-state terminal");
+    assert.deepEqual(runState.state, "terminal", "doctor run must settle run-state terminal");
 
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
@@ -474,14 +473,14 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(refused.exitCode, 0);
     assert.ok(refused.terminal);
     assert.equal(refused.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       refused.terminal!.roleOutcome.kind === "accepted"
-        ? payloadStatus(refused.terminal!.roleOutcome)
-        : undefined,
-      "refused",
+        ? payloadStatusSequence(refused.terminal!.roleOutcome)
+        : [],
+      ["refused"],
     );
     assert.equal(
-      payloadFacts(refused.terminal!.roleOutcome).reason,
+      (objectPayloads(refused.terminal!.roleOutcome)[0] ?? {}).reason,
       "Need retained sessions",
     );
 
@@ -680,7 +679,6 @@ test("terminal persistence failure through public entry propagates loudly with n
       result,
       stdout: captured.stdout,
       stderr: captured.stderr,
-      expectedCause: "unrecognized",
       diagnosticIncludes: "EISDIR",
       identityCode: "EISDIR",
     });

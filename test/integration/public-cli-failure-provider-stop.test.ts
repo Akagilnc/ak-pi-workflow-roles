@@ -80,7 +80,7 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
       },
           }),
     });
-    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr, expectedCause: "unrecognized" });
+    const { terminal } = await assertPublicFailureSettlement({ result, stdout, stderr });
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
@@ -111,7 +111,6 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
     assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
-      cause: "unrecognized",
       diagnostic: "Codex error: The usage limit has been reached",
       details: {
         errorMessage: "Codex error: The usage limit has been reached",
@@ -128,7 +127,6 @@ test("bound evidence-child provider stop outranks generic activation wash", asyn
         },
       }),
       {
-        cause: "unrecognized",
         diagnostic: "Codex error: The usage limit has been reached",
         details: {
           errorMessage: "Codex error: The usage limit has been reached",
@@ -519,7 +517,6 @@ test("bound auditor assistant supplies primary when secondary enrichment is abse
       { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "WebSocket error", provider: "xai", model: "audit-model" } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     assert.deepEqual(await readBoundAuditorKnownFailure(sessionFile), {
-      cause: "unrecognized",
       diagnostic: "WebSocket error",
       details: {
         errorMessage: "WebSocket error",
@@ -696,12 +693,11 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
         result,
         stdout,
         stderr,
-        expectedCause: "unrecognized",
         diagnosticEquals: row.errorMessage,
       });
       assert.equal(terminal.roleOutcome.kind, "failure", row.label);
       if (terminal.roleOutcome.kind === "failure") {
-        assert.equal(terminal.roleOutcome.cause, "unrecognized", row.label);
+        assert.equal(terminal.roleOutcome.cause, undefined, row.label);
         assert.equal(terminal.roleOutcome.decisiveFacts.errorName, undefined, row.label);
         assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, undefined, row.label);
         assert.equal(terminal.roleOutcome.diagnostic, row.errorMessage, row.label);
@@ -712,7 +708,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
         identity?: { name?: string; code?: string | number };
         details?: { timedOut?: boolean; errorMessage?: string };
       };
-      assert.equal(errorBody.cause, "unrecognized", row.label);
+      assert.equal(errorBody.cause, undefined, row.label);
       assert.equal(errorBody.diagnostic, row.errorMessage, row.label);
       assert.equal(errorBody.identity, undefined, row.label);
       assert.equal(errorBody.details?.errorMessage, row.errorMessage, row.label);
@@ -729,7 +725,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
     errorMessage: "WebSocket error",
     provider: "xai",
   });
-  assert.equal(fromStop?.cause, "unrecognized");
+  assert.equal(fromStop?.cause, undefined);
   assert.equal(fromStop?.identity, undefined);
   assert.equal(fromStop?.diagnostic, "WebSocket error");
   assert.deepEqual(
@@ -743,7 +739,7 @@ test("session provider-stop retains typed identity across exit-code shapes", asy
       errorMessage: "500: Internal error during token generation",
       provider: "openai-codex",
     })?.cause,
-    "unrecognized",
+    undefined,
   );
   assert.equal(
     knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
@@ -965,7 +961,7 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
     // Outer catch path prints a bare diagnostic without Terminal; controlled path keeps Terminal on stdout/structured.
     assert.equal(stdout.length + stderr.length > 0, true);
     assert.equal(
-      stderr.some((line) => line.includes("unrecognized exception")),
+      stderr.some((line) => line.includes("unrecognized exception") || /\bunrecognized\b/.test(line)),
       false,
     );
   });
@@ -1026,7 +1022,7 @@ async function settleDiskSessionStopToErrorJson(input: {
     timedOut: false,
     code: input.exitCode ?? 1,
     stderr: "",
-    knownCause: known.cause,
+    ...(known.cause === undefined ? {} : { knownCause: known.cause }),
     ...(known.diagnostic === undefined ? {} : { knownDiagnostic: known.diagnostic }),
     ...(known.identity === undefined ? {} : { knownIdentity: known.identity }),
     ...(known.details === undefined ? {} : { knownDetails: known.details }),

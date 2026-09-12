@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
@@ -665,7 +665,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
       // Publication errno retained; hint presence must not wash failure cause into provider-429.
-      assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
+      assert.equal(result.terminal!.roleOutcome.cause, undefined);
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
     // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
@@ -735,9 +735,9 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
     if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
       assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-      assert.equal(payloadStatus(rebuilt.terminal!.roleOutcome), "converged");
+      assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
       assert.equal(
-        payloadFacts(rebuilt.terminal!.roleOutcome).note,
+        (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
         "lawful despite later publication failure",
       );
     }

@@ -33,6 +33,7 @@ import {
 import { parseAutoResumeLimit } from "./config.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
+  attachRecordedSubmissions,
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
@@ -362,6 +363,33 @@ function unwrapTurnDispatchedFailure(error: unknown): unknown {
   return current;
 }
 
+async function attachDispatchExceptionTerminal(
+  admitted: {
+    readonly runDirectory: string;
+    readonly runId: string;
+    readonly projectRoot: string;
+  },
+  terminal: TerminalResult,
+  io: CliIo,
+): Promise<TerminalResult> {
+  try {
+    return await attachRecordedSubmissions(
+      {
+        projectRoot: admitted.projectRoot,
+        runId: admitted.runId,
+        runDirectory: admitted.runDirectory,
+      },
+      terminal,
+    );
+  } catch (error) {
+    // Existing diagnostic seam: attach true cause on stderr, original Terminal stays.
+    io.stderr(
+      `dispatch exception ledger attach failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
+    );
+    return terminal;
+  }
+}
+
 /**
  * Typed failure terminal for a retry path that ended with only exceptions:
  * loud, non-lawful, carrying the last true cause and the pointers to the
@@ -384,8 +412,8 @@ function dispatchExceptionFailureTerminal(input: {
     ? "dispatch threw an exception on every attempt"
     : "the final dispatch threw an exception";
   const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(causeError)}`;
+  // #881: no fabricated cause class — original error identity + error-file pointers carry the fact.
   const decisiveFacts: Record<string, unknown> = {
-    cause: "unrecognized",
     diagnostic,
     resumesUsed: input.autoResumeAttempts,
     dispatchErrorFiles: [...input.errorFiles],
@@ -406,7 +434,6 @@ function dispatchExceptionFailureTerminal(input: {
     roleOutcome: {
       kind: "failure",
       role: input.role,
-      cause: "unrecognized",
       diagnostic,
       decisiveFacts,
     },
@@ -427,6 +454,8 @@ export async function runWithAutoResumeLoop<
     role: TerminalRoleName;
     runId: string;
     principal: DurablePrincipal;
+    /** Required: exception terminals attach the ledger via this existing admitted fact. */
+    projectRoot: string;
   };
   principalAuthority: DurablePrincipalAuthority;
   /**
@@ -571,15 +600,19 @@ export async function runWithAutoResumeLoop<
     } else {
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "auto-resume budget exhausted",
-          everyAttemptThrew,
-        });
+        const terminal = await attachDispatchExceptionTerminal(
+          options.admitted,
+          dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "auto-resume budget exhausted",
+            everyAttemptThrew,
+          }),
+          options.io,
+        );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);
         return {
@@ -588,15 +621,19 @@ export async function runWithAutoResumeLoop<
         } as T;
       }
       if (!(await isPrincipalAvailable(options.admitted.principal))) {
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "session principal unavailable before further resume",
-          everyAttemptThrew,
-        });
+        const terminal = await attachDispatchExceptionTerminal(
+          options.admitted,
+          dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "session principal unavailable before further resume",
+            everyAttemptThrew,
+          }),
+          options.io,
+        );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);
         return {

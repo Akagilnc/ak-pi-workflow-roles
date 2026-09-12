@@ -1637,10 +1637,10 @@ export async function runAkRole(
       if (error.cause !== undefined) {
         const detail = formatErrorCauseDetail(error.cause);
         if (detail.trim().length > 0) {
-          label = `${label || error.name || "unrecognized exception"}; cause: ${detail}`;
+          label = `${label || error.name || "exception"}; cause: ${detail}`;
         }
       }
-      io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
+      io.stderr(formatCliDiagnostic(label || error.name || "exception"));
       return { exitCode: 1 };
     }
     io.stderr(formatCliDiagnostic(String(error)));

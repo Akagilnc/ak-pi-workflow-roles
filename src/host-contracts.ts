@@ -15,18 +15,22 @@ export type HostToolResult<T = unknown> = {
 /** Opaque host-owned identity persisted with a Role run. */
 export type DurablePrincipal = object & { readonly __durablePrincipal?: never };
 
-/** Controlled post-admission failure classes (ADR 0052 / #107). Owner = host contract. */
+/**
+ * Controlled post-admission failure classes (ADR 0052 / #107). Owner = host contract.
+ * Closed set of typed facts only — never a fabricated "could not classify" label (#881).
+ * When no typed confirmation exists, omit cause and keep the original diagnostic / error pointer.
+ */
 export type ControlledFailureCause =
   | "activation"
   | "provider"
   | "session"
   | "output"
-  | "timeout"
-  | "unrecognized";
+  | "timeout";
 
 /** Production-owned typed failure carried on a resolved turn result. */
 export type RoleTurnKnownFailure = {
-  readonly cause: ControlledFailureCause;
+  /** Present only when a typed fact confirms the class; omitted when unknown (#881). */
+  readonly cause?: ControlledFailureCause;
   readonly identity?: {
     readonly name?: string;
     readonly code?: string | number;
