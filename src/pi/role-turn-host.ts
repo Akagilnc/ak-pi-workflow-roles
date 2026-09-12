@@ -119,7 +119,7 @@ export function applyPiNativeSkillInvocation(
  * Pi last-hop argv after `--no-extensions -e entry` (#819).
  * Activation flag membership comes from middle-layer projectActivationFlags;
  * this function only renders session coords, controlled constants, and pairs.
- * Single forced method → Pi-native `/skill:` on the argv prompt (#822).
+ * User dialogue is not an argv element (#879): it rides spawn stdin.
  */
 export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
@@ -127,14 +127,6 @@ export function buildPiTurnExtraArgs(
   extraPiArgs: readonly string[] = [],
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
-  const rawPrompt =
-    request.continuation.kind === "initial" || request.continuation.kind === "resume"
-      ? request.continuation.prompt
-      : (() => {
-          const _exhaustive: never = request.continuation;
-          return _exhaustive;
-        })();
-  const prompt = applyPiNativeSkillInvocation(request.methods, rawPrompt);
   return [
     "--no-skills",
     ...buildMethodArgs(request.methods),
@@ -151,8 +143,18 @@ export function buildPiTurnExtraArgs(
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),
-    prompt,
   ];
+}
+
+function piUserDialogueBody(request: RoleTurnRequest): string {
+  const rawPrompt =
+    request.continuation.kind === "initial" || request.continuation.kind === "resume"
+      ? request.continuation.prompt
+      : (() => {
+          const _exhaustive: never = request.continuation;
+          return _exhaustive;
+        })();
+  return applyPiNativeSkillInvocation(request.methods, rawPrompt);
 }
 
 export type PiSpawnRunner = (
@@ -163,6 +165,8 @@ export type PiSpawnRunner = (
     timeoutMs?: number;
     /** Parent cancellation; the child gets the same graceful SIGTERM as a budget. */
     signal?: AbortSignal;
+    /** User dialogue body; omitted from argv so execve cannot E2BIG (#879). */
+    stdin?: string;
   },
 ) => Promise<{
   code: number | null;
@@ -271,11 +275,21 @@ export function createDefaultPiSpawnRunner(options: {
       const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: ["pipe", "ignore", "pipe"],
       });
+      if (child.stdin === null) {
+        throw new Error("Pi child stdin pipe was not created");
+      }
       if (child.stderr === null) {
         throw new Error("Pi child stderr pipe was not created");
       }
+      child.stdin.on("error", () => {
+        // Child may exit before reading; close remains the sole settlement.
+      });
+      if (spawnOptions.stdin !== undefined) {
+        child.stdin.write(spawnOptions.stdin);
+      }
+      child.stdin.end();
       let stderr = "";
       let timedOut = false;
       // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
@@ -404,6 +418,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      const stdin = piUserDialogueBody(turnRequest);
       // Shared envelope isolates this call's court identity: omitting courtAttemptId
       // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {
@@ -448,6 +463,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       return await spawnRunner(args, {
         cwd: request.cwd,
         env,
+        stdin,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });

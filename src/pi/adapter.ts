@@ -45,6 +45,12 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     cwd: context.cwd,
     mode: context.mode,
     model: context.model === undefined ? undefined : { provider: context.model.provider },
+    ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
+      ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
+      : {}),
+    ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
+      ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
+      : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),

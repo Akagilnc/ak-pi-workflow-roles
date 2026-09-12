@@ -1184,8 +1184,8 @@ test("runAkRole judge empty request does not invent semantic task content on the
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-        prompt = String(args.at(-1));
+            piRunner: async (args, options) => {
+        prompt = String(options.stdin ?? "");
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         const details = { judgeStatus: "converged" };

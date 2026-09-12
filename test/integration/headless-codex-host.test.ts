@@ -29,13 +29,13 @@ test("codex headless host binds and resumes a structured turn", async () => {
   const argvLog = join(root, "argv.log");
   const fakeBin = join(root, "fake-codex");
   await writeFile(fakeBin, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
 const resumeAt = args.indexOf("resume");
 const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
-const prompt = args.at(-1);
+const prompt = readFileSync(0, "utf8");
 const events = [
   { type: "thread.started", thread_id: thread },
   { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: resumed ? "resumed" : "initial" }) } },

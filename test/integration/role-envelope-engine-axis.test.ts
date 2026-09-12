@@ -5,7 +5,7 @@
  * External face: tools/list tool-name presence; process.env must stay untouched.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -237,5 +237,77 @@ test("concurrent envelopes arm detour per request without process.env writes", a
     await rm(home, { recursive: true, force: true });
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
     else process.env[AK_ROLE_ENGINE_ENV] = previous;
+  }
+});
+
+test("#879 concurrent envelopes keep case-dossier identity on HostContext, not process.env", async () => {
+  const previousRun = process.env.AK_ROLE_RUN_DIR;
+  const previousCourt = process.env.AK_ROLE_COURT_ATTEMPT;
+  delete process.env.AK_ROLE_RUN_DIR;
+  delete process.env.AK_ROLE_COURT_ATTEMPT;
+  const home = await mkdtemp(join(tmpdir(), "ak-879-envelope-dossier-"));
+  try {
+    const mkFrozen = async (label: string, courtAttemptId: string) => {
+      const runDirectory = join(home, label, "run");
+      const freezeDir = join(runDirectory, "attachments", "case-dossier");
+      await mkdir(freezeDir, { recursive: true });
+      await mkdir(join(runDirectory, "session"), { recursive: true });
+      const frozenPath = join(freezeDir, "00-case-dossier-pointer.md");
+      await writeFile(frozenPath, `dossier-for-${label}\n`, "utf8");
+      return {
+        socketPath: join(home, `${label}.sock`),
+        frozenPath,
+        request: {
+          principal: fixturePrincipal(join(runDirectory, "session")),
+          activation: { role: "judge" as const },
+          methods: [],
+          continuation: { kind: "initial" as const, prompt: `peer-${label}` },
+          cwd: packageRoot,
+          home,
+          agentDir: join(home, label, "agent"),
+          runDirectory,
+          courtAttemptId,
+        },
+      };
+    };
+    const a = await mkFrozen("a", "court-a");
+    const b = await mkFrozen("b", "court-b");
+    const deps = createRoleRuntimeDependencies(packageRoot);
+    const [preparedA, preparedB] = await Promise.all([
+      prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath }),
+      prepareRoleEnvelope({ request: b.request, dependencies: deps, socketPath: b.socketPath }),
+    ]);
+    try {
+      assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
+      assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
+      const dossierOf = (prepared: typeof preparedA, frozenPath: string) => {
+        const rows = prepared.systemPrompt.materials.filter(
+          (material) =>
+            typeof material === "object"
+            && material !== null
+            && (material as { kind?: unknown }).kind === "case-dossier-pointer",
+        );
+        assert.equal(rows.length, 1, "each envelope must load exactly its own dossier");
+        const row = rows[0] as { frozenPath?: unknown; section?: unknown };
+        assert.equal(row.frozenPath, frozenPath);
+        return row;
+      };
+      const dossierA = dossierOf(preparedA, a.frozenPath);
+      const dossierB = dossierOf(preparedB, b.frozenPath);
+      assert.equal(dossierA.section, "dossier-for-a\n");
+      assert.equal(dossierB.section, "dossier-for-b\n");
+      assert.equal(preparedA.prompt, "peer-a");
+      assert.equal(preparedB.prompt, "peer-b");
+    } finally {
+      await Promise.all([preparedA.dispose?.(), preparedB.dispose?.()]);
+    }
+    assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
+    assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    if (previousRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRun;
+    if (previousCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = previousCourt;
   }
 });

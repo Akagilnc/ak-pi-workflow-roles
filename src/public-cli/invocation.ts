@@ -131,6 +131,8 @@ export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "inspector";
+  /** Parent run directory (#747 / #879); independent of dialogue instruction. */
+  readonly sourceRunPath?: string;
 };
 
 export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {

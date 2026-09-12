@@ -2,7 +2,13 @@ import {
   resolveActivationLedgerHome,
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
-import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
+import {
+  courtAttemptIdFromHostContext,
+  runDirectoryFromHostContext,
+  type HostContext,
+  type HostToolResult,
+  type RoleHost,
+} from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 
@@ -55,8 +61,8 @@ export type SubmissionLedgerEvent =
  * otherwise session header id. Never a shared "unbound" bucket.
  */
 function runIdentity(context: HostContext): string {
-  const directory = process.env.AK_ROLE_RUN_DIR;
-  if (typeof directory === "string" && directory.length > 0) {
+  const directory = runDirectoryFromHostContext(context);
+  if (directory !== undefined) {
     const fromDir = runIdFromRunDirectory(directory);
     if (fromDir !== undefined) return fromDir;
   }
@@ -72,8 +78,8 @@ function runIdentity(context: HostContext): string {
 export const COURT_ATTEMPT_ENV = "AK_ROLE_COURT_ATTEMPT" as const;
 
 function attemptIdentity(context: HostContext, runId: string): string {
-  const courtAttempt = process.env[COURT_ATTEMPT_ENV];
-  if (typeof courtAttempt === "string" && courtAttempt.length > 0) return courtAttempt;
+  const courtAttempt = courtAttemptIdFromHostContext(context);
+  if (courtAttempt !== undefined) return courtAttempt;
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 

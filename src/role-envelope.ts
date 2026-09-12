@@ -172,6 +172,8 @@ export async function prepareRoleEnvelope(options: {
     cwd: request.cwd,
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
+    runDirectory: request.runDirectory,
+    ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     sessionManager: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
@@ -528,33 +530,14 @@ export async function prepareRoleEnvelope(options: {
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
   await listen(server, options.socketPath);
   let disposed = false;
-  // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
-  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
-  // identity sees the same signals. Engine axis is request-scoped via RoleHost
-  // flag — never process.env (#818 P1). Run-dir may wait
-  // until prepare succeeds. Dispose restores including unset.
-  let priorAkRoleRunDir: string | undefined;
-  let priorAkRoleCourtAttempt: string | undefined;
-  let runDirInjected = false;
-  const restoreAkRoleRunEnv = (): void => {
-    if (!runDirInjected) return;
-    runDirInjected = false;
-    if (priorAkRoleRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
-    if (priorAkRoleCourtAttempt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = priorAkRoleCourtAttempt;
-  };
+  // Per-turn run/court identity lives on HostContext (request-scoped). Engine
+  // axis is already a RoleHost flag — never process.env (#818 P1 / #879).
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
     try {
       await emit("session_shutdown", {});
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
-    try {
-      restoreAkRoleRunEnv();
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -641,14 +624,7 @@ export async function prepareRoleEnvelope(options: {
     }
     // Method notes only here — role before_agent_start injects soul once.
     // Preloading session materials duplicated soul under the role tag (#632).
-    // #879: inject run dir before before_agent_start so the single shared
-    // case-dossier readingMaterial owner (role-runtime) can see the freeze.
-    priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
-    priorAkRoleCourtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
-    process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-    if (request.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
-    runDirInjected = true;
+    // #879: case-dossier owner reads runDirectory from this turn's HostContext.
 
     const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
     const promptResults = await emit("before_agent_start", {

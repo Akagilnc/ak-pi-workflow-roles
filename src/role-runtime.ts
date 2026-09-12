@@ -2,6 +2,7 @@ import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
   ExplicitInternalActivationError,
+  runDirectoryFromHostContext,
   type HostContext,
   type HostToolResult,
   type RoleEnvelopeHost,
@@ -36,7 +37,12 @@ import {
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
-import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
+import {
+  ENGINE_DETOUR_TOOL_NAME,
+  resolveEngineModel,
+  resolveEngineName,
+} from "./engine-detour.ts";
+import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -71,7 +77,7 @@ import {
   INSPECTOR_TOOL_SPEC,
   type InspectorRuntimeDependencies,
 } from "./inspector-role.ts";
-import { INSPECTOR_ACCEPTED_TEXT } from "./inspector-contracts.ts";
+import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_SOURCE_RUN_FLAG } from "./inspector-contracts.ts";
 import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
@@ -566,6 +572,8 @@ type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybo
   Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
 
 export type RoleRuntimeDependencies = {
+  /** Package root for packaged engine-note resolution (#879). */
+  packageRoot?: string;
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
@@ -898,14 +906,14 @@ function readDiaristTicketAssertion(
 }
 
 /** Run coordinates + optional pre-bound ticket from durable pages (#779). */
-function readDiaristRunCoordinates(): {
+function readDiaristRunCoordinates(ctx: HostContext): {
   readonly runDirectory: string;
   readonly projectRoot: string;
   readonly home: string;
   readonly boundTicketNumber?: number;
 } {
-  const runDirectory = process.env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory !== "string" || runDirectory.trim() === "") {
+  const runDirectory = runDirectoryFromHostContext(ctx);
+  if (runDirectory === undefined) {
     throw new Error("diarist accept requires AK_ROLE_RUN_DIR");
   }
   const admittedPath = join(runDirectory, "admitted-request.json");
@@ -948,13 +956,13 @@ export function createDiaristRoleRuntime(
       tool: DIARIST_TOOL_SPEC,
       acceptedText: DIARIST_ACCEPTED_TEXT,
       soulTag: "diarist",
-      beforeAccept: async ({ parameters }) => {
+      beforeAccept: async ({ parameters, ctx }) => {
         const submitted =
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
         const assertion = readDiaristTicketAssertion(submitted);
-        const coords = readDiaristRunCoordinates();
+        const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
         if (ticketNumber !== undefined) {
@@ -1059,6 +1067,10 @@ export function createRoleRuntimeExtension(
     for (const flag of NOTARY_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
+    roleHost.registerFlag(
+      INSPECTOR_SOURCE_RUN_FLAG.name,
+      INSPECTOR_SOURCE_RUN_FLAG.definition,
+    );
     for (const flag of GLEANER_LEFT_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
@@ -1257,13 +1269,43 @@ export function createRoleRuntimeExtension(
         };
       }
     });
+    // #879: engine coordinates ride the existing readingMaterial face, not dialogue.
+    roleHost.on("before_agent_start", () => {
+      const engine = resolveEngineName((name) => roleHost.getFlag(name));
+      if (engine === undefined || dependencies.packageRoot === undefined) return;
+      const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
+      const material = engineSessionMaterialFromOptions({
+        engine,
+        ...(engineModel === undefined ? {} : { engineModel }),
+        packageRoot: dependencies.packageRoot,
+      });
+      if (material === undefined) return;
+      return {
+        readingMaterial: {
+          kind: "engine-session-material" as const,
+          name: material.name,
+          ...(material.model === undefined ? {} : { model: material.model }),
+          ...(material.materialPath === undefined ? {} : { materialPath: material.materialPath }),
+        },
+      };
+    });
+    roleHost.on("before_agent_start", () => {
+      const path = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
+      if (typeof path !== "string" || path.trim() === "") return;
+      return {
+        readingMaterial: {
+          kind: "inspector-parent-binding" as const,
+          sourceRunPath: path,
+        },
+      };
+    });
     // #879: single shared owner of station-child 0081 case-dossier → readingMaterial fold.
     // post-admission freezes under run/attachments/case-dossier/; this handler alone
     // projects it onto the existing agent-start materials face (Pi + envelope collect).
     // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
-    roleHost.on("before_agent_start", async () => {
-      const runDir = process.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir !== "string" || runDir.trim() === "") return;
+    roleHost.on("before_agent_start", async (_event, ctx) => {
+      const runDir = runDirectoryFromHostContext(ctx);
+      if (runDir === undefined) return;
       const { loadCaseDossierReadingMaterial } = await import(
         "./public-cli/case-dossier-delivery.ts"
       );
@@ -1357,7 +1399,7 @@ export function createRoleRuntimeExtension(
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
-        const runPointer = process.env.AK_ROLE_RUN_DIR;
+        const runPointer = runDirectoryFromHostContext(ctx);
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
           const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
@@ -1766,8 +1808,8 @@ export function createRoleRuntimeExtension(
       provider: string,
       ctx: HostContext,
     ): Promise<void> => {
-      const runDir = process.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir !== "string" || runDir.trim() === "") return;
+      const runDir = runDirectoryFromHostContext(ctx);
+      if (runDir === undefined) return;
       try {
         await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
@@ -1801,10 +1843,9 @@ export function createRoleRuntimeExtension(
         const underlying = priorFetch;
         globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const response = await underlying(input, init);
-          const runDir = process.env.AK_ROLE_RUN_DIR;
+          const runDir = runDirectoryFromHostContext(ctx);
           if (
-            typeof runDir === "string"
-            && runDir.trim() !== ""
+            runDir !== undefined
             && typeof response?.status === "number"
             && (response.status < 200 || response.status >= 300)
           ) {

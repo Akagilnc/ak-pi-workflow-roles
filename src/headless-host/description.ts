@@ -22,7 +22,7 @@ export type ClaudePrintHostDescription = HeadlessHostBase & Readonly<{
    * are composed by the adapter from the turn request — not listed here.
    */
   fixedArgs: readonly string[];
-  /** Print-mode flag that takes the user prompt as its value (e.g. `-p`). */
+  /** Print-mode flag (e.g. `-p`); user prompt rides stdin, not this flag's value (#879). */
   promptFlag: string;
   /** CLI flag for the seat model (e.g. `--model`). */
   modelFlag: string;
@@ -76,11 +76,11 @@ export function resolveHeadlessBinary(
 
 /**
  * Build one Claude print-mode argv for a single process turn.
- * Shape: `<promptFlag> <prompt> <fixedArgs…> <system/schema/mcp/model/effort/session…>`.
+ * Shape: `<promptFlag> <fixedArgs…> <system/schema/mcp/model/effort/session…>`.
+ * User dialogue rides stdin, not an argv element (#879 / ARG_MAX).
  */
 export function headlessTurnArgs(options: {
   readonly description: ClaudePrintHostDescription;
-  readonly prompt: string;
   /** Absolute path written by the adapter; paired with `systemPromptFlag`. */
   readonly systemPromptPath: string;
   readonly jsonSchema: Readonly<Record<string, unknown>>;
@@ -94,7 +94,6 @@ export function headlessTurnArgs(options: {
   const { description } = options;
   const args: string[] = [
     description.promptFlag,
-    options.prompt,
     ...description.fixedArgs,
     description.systemPromptFlag,
     options.systemPromptPath,
@@ -388,13 +387,12 @@ function codexMcpConfigArgs(
 
 /**
  * Build one `codex exec` / `codex exec resume` argv (#646).
- * New: `exec --approve-for-me … prompt`.
- * Resume: `exec --approve-for-me resume <thread_id> … prompt`.
+ * New: `exec --approve-for-me … -- -` (prompt on stdin).
+ * Resume: `exec --approve-for-me resume <thread_id> … -- -`.
  * Approval stays on the parent command so new and resumed turns use Codex's
  * automatic review with its workspace-write sandbox.
  */
 export function codexTurnArgs(options: {
-  readonly prompt: string;
   /** Absolute path for `-c model_instructions_file=…`. */
   readonly systemPromptPath: string;
   /** Absolute path for `--output-schema` (closed transport schema). */
@@ -455,10 +453,9 @@ export function codexTurnArgs(options: {
     args.push("--skip-git-repo-check");
   }
 
-  // Prompt last as positional. `--` stops option parsing so a leading `-`
-  // (markdown lists, pasted flags, rulings) is not eaten by clap (codex tip:
-  // "use '-- -s'"). Same for new and resume — both end here.
-  args.push("--", options.prompt);
+  // `-` after `--` is Codex's stdin prompt sentinel. `--` still stops option
+  // parsing; the user body itself is not an argv element (#879 / ARG_MAX).
+  args.push("--", "-");
   return args;
 }
 

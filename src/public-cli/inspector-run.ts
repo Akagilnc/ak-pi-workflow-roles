@@ -12,6 +12,7 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
+  persistAdmittedSourceRunPath,
   type AdmittedInspectorInvocation,
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
@@ -58,16 +59,27 @@ export type InspectorRunEnv = PostAdmissionEnv & {
   gateReviewInstruction?: string;
 };
 
+function inspectorParentRunPath(
+  admitted: AdmittedInspectorInvocation,
+): string | undefined {
+  if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+    return admitted.sourceRunPath;
+  }
+  return parentRunPathFromGatePointerInstruction(admitted.instruction);
+}
+
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildInspectorTurnRequest(
   admitted: AdmittedInspectorInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
+  const sourceRun = inspectorParentRunPath(admitted);
   return projectRoleTurnRequest(
     admitted,
     {
       activation: {
         role: "inspector" as const,
+        ...(sourceRun === undefined ? {} : { sourceRun }),
       },
     },
     options,
@@ -153,6 +165,10 @@ export async function runPublicInspector(
   }
 
   await markRunAdmitted(admitted, env.principalAuthority);
+  if (parentRunPath !== undefined) {
+    await persistAdmittedSourceRunPath(admitted, parentRunPath);
+    admitted = { ...admitted, sourceRunPath: parentRunPath };
+  }
 
   const engineMaterial = engineSessionMaterialFromOptions({
     ...pickEngineAxis(env),
@@ -170,7 +186,7 @@ export async function runPublicInspector(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      // #879: gate first mint uses parent payload as content; binding stays argv 卷宗指针.
+      // #879: gate first mint uses parent payload as content; binding stays typed activation.
       prompt: (env.reviewReask ?? env.gateReviewInstruction)
         ?? buildInspectorTransportPrompt(admitted, engineMaterial),
     },

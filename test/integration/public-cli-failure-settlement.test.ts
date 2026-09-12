@@ -102,8 +102,8 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-          dispatchedPrompt = String(args.at(-1));
+            piRunner: async (args, options) => {
+          dispatchedPrompt = String(options.stdin ?? "");
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(
