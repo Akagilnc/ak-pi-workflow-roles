@@ -403,17 +403,42 @@ function rewritePathIntoDestination(
   return sessionFile;
 }
 
+/**
+ * Destination current-session.sessionFile for mtime-tie comparison.
+ * Missing file (ENOENT) → undefined; non-ENOENT I/O, JSON damage, or non-object
+ * / non-string sessionFile keep identity and throw — never pretend "no pointer".
+ */
 async function readSessionFileField(path: string): Promise<string | undefined> {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const sessionFile = (parsed as { sessionFile?: unknown }).sessionFile;
-    return typeof sessionFile === "string" ? sessionFile : undefined;
-  } catch {
-    return undefined;
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMigrationEnoent(error)) return undefined;
+    throw error;
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `book topology migration cannot read current-session pointer at ${path}: invalid JSON (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+      { cause: error },
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `book topology migration cannot read current-session pointer at ${path}: expected a JSON object`,
+    );
+  }
+  const sessionFile = (parsed as { sessionFile?: unknown }).sessionFile;
+  if (typeof sessionFile !== "string") {
+    throw new Error(
+      `book topology migration cannot read current-session pointer at ${path}: sessionFile must be a string`,
+    );
+  }
+  return sessionFile;
 }
 
 async function writeWinningCurrentSession(
@@ -426,9 +451,16 @@ async function writeWinningCurrentSession(
   if (destStat !== undefined) {
     if (destStat.mtimeMs > srcStat.mtimeMs) return;
     if (destStat.mtimeMs === srcStat.mtimeMs) {
+      // Only a successfully projected dest pointer enters the basename race.
+      // Damage must throw above — never compare as empty and overwrite.
       const destSessionFile = await readSessionFileField(destPath);
+      if (destSessionFile === undefined) {
+        throw new Error(
+          `book topology migration cannot compare current-session pointer at ${destPath}: file disappeared during tie-break`,
+        );
+      }
       const srcName = basename(nextSessionFile ?? "");
-      const destName = basename(destSessionFile ?? "");
+      const destName = basename(destSessionFile);
       if (destName >= srcName) return;
     }
   }
