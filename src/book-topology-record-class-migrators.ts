@@ -274,20 +274,19 @@ async function resolveRunDestination(
   | { readonly kind: "run"; readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | { readonly kind: "unbound-key"; readonly key: string }
 > {
-  const leafName = hints.role !== undefined && hints.role.length > 0
-    ? `${runId}@${hints.role}`
-    : runId;
-  const sourceRelative = typeof hints.sessionParent === "string"
+  const bound = typeof hints.sessionParent === "string"
     ? runRefFromBoundPath(
       hints.sessionParent,
       bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
-    )?.sourceRelative
+    )
     : undefined;
+  const leafName = bound?.leaf
+    ?? (hints.role !== undefined && hints.role.length > 0 ? `${runId}@${hints.role}` : runId);
   const existingDest = await findPlacedMigratingRun(
     context.booksDirectory,
     bookKey,
     leafName,
-    sourceRelative,
+    bound?.sourceRelative,
   );
   if (existingDest !== undefined) {
     return {
@@ -350,7 +349,7 @@ async function placeRunOwnedLine(
     return { disposition: "unbound", source };
   }
 
-  const role = roleFromPayload(value.payload) ?? fromParent?.role;
+  const role = roleFromPayload(value.payload);
   const target = await resolveRunDestination(context, bookKey, runId, {
     ...(role === undefined ? {} : { role }),
     ...(value.sessionParent === undefined ? {} : { sessionParent: value.sessionParent }),
