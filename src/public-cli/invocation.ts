@@ -44,6 +44,7 @@ import {
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
+import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   emptyCollectorManifest,
@@ -136,6 +137,12 @@ export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
   readonly role: "countersign";
+  /**
+   * #871 typed co-review set for this countersign run (durable run fact).
+   * Main ticket remains `ticketNumber`; this set drives per-ticket court diarist refresh.
+   * Whole-set replace on new typed submission — never union with history.
+   */
+  courtTicketNumbers?: readonly number[];
 };
 
 export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
@@ -505,6 +512,58 @@ export async function bindAdmittedTicketNumber(
   }
   await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
+}
+
+/**
+ * #871: persist the typed co-review set as a countersign run fact (admitted-request +
+ * invocation.json). Whole-set replace — never union with a prior set. Main ticket
+ * binding stays on `ticketNumber` alone. Projection reuses the sole contract helper;
+ * principal membership is mandatory.
+ */
+export async function bindCourtTicketNumbersOnAdmitted(
+  admitted: AdmittedCountersignInvocation,
+  courtTicketNumbers: readonly number[],
+): Promise<void> {
+  const principal = admitted.ticketNumber;
+  if (
+    typeof principal !== "number" ||
+    !Number.isSafeInteger(principal) ||
+    principal < 1
+  ) {
+    throw new Error(
+      "bindCourtTicketNumbersOnAdmitted requires a bound principal ticketNumber",
+    );
+  }
+  // Strict write path: every member must already be a lawful number (no soft filter).
+  for (let i = 0; i < courtTicketNumbers.length; i += 1) {
+    const item = courtTicketNumbers[i];
+    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) {
+      throw new Error(
+        `bindCourtTicketNumbersOnAdmitted requires safe positive integers, got ${String(item)}`,
+      );
+    }
+  }
+  const projected = projectCourtTicketNumbers(courtTicketNumbers, {
+    principalTicket: principal,
+  });
+  if (projected === null || projected.length === 0) {
+    throw new Error("bindCourtTicketNumbersOnAdmitted requires a non-empty ticket set");
+  }
+  const frozen = Object.freeze([...projected]);
+  const admittedPath = admitted.admittedRequestPath;
+  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    admittedPath,
+    `${JSON.stringify({ ...current, courtTicketNumbers: frozen }, null, 2)}\n`,
+    "utf8",
+  );
+  await mergeInvocationIdentityPage(admitted.runDirectory, {
+    courtTicketNumbers: frozen,
+  });
+  admitted.courtTicketNumbers = frozen;
 }
 
 /** Move a settled first-entry run from unbound to its asserted ticket directory. */

@@ -41,6 +41,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 - **调用与顺序归调用者**（ADR 0010）：本 ADR 不规定谁调用起居郎、不规定先后；每次过庭都跑（`refresh-every-court`）是调用者的用法。**增量幂等**：水位＝卷宗 entry identity；同块再交为 no-op append。
 - **符宝郎内闸**：给事中交卷闸出席符宝郎（与大理寺闸 gatekeeper→notary 同构）；内闸永远出席。认得出票→有录，符宝郎读录核旨；真无票对象→无录，符宝郎按 source-run 核旨（不得因缺录把 true-unbound 打回给事中）。**#753 审核循环**：给事中交卷 → 符宝郎审 → 只读结论字段 `pass|bounce|escalate`；`pass` 收卷；`bounce`/`escalate` 把符宝郎回执原文当 tool result 回给事中；结论非三态 → resume 符宝郎本人人话重问；给事中 `escalate` 原样抛给调用者；给事中 status 读不出 → 回给事中本人重交；无轮数上限。handler 只记录与排队，不判内容（`notary-inner-gate` 触及；键 `review-queue-code-guarantee` / `unreadable-conclusion-resume-speaker` / `escalate-thrown-verbatim` / `no-round-cap` 见 #750）。
 - **认票（`diarist-resolves-ticket-llm-layer`）**：起居郎 LLM 自行认票，产 typed 断言「本庭对象=票N」或 true-unbound 或 escalate；认得出→有录；真无票→无录。已绑定 ticket（typed handoff）优先。机械层不重判票号。
+- **#871 窄扩展（合审票集）**：同一键下，首次起居郎 turn 可另交 typed `courtTicketNumbers`（本次合审应各自成录的去重正整数集合，含主票）。票庭接缝保持主票单一绑定（session / same-ticket resume / 符宝郎递送主键不变），对该集合逐票复用现役起居郎 bound refresh；集合是本 countersign run 可恢复的 typed 运行事实（admitted/run 页承载，不建平行索引）。同票 resume 无新集合时沿用已记集合；带新 summons 且 LLM 交出新集合时整集替换（不并集）；历史成员被移除后本庭不再刷新。单票调用＝集合仅含主票；true-unbound 仍不造录。不改符宝郎缺录规则，不从散文机械猜票。
 - **调用面**：调用方无感——任意目录/工作树，无附件无路径即可传召（#779）。
 
 ## 与既有 ADR
