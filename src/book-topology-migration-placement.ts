@@ -179,24 +179,20 @@ export async function listBackupRunLeaves(
   return leaves;
 }
 
-/** Locate `runId@role` under bookDir/runs, bookDir/<subject>/runs, bookDir/unbound/runs. */
-export async function findBookRunDirectory(
+async function listExactPlacedRunPaths(
   bookDir: string,
-  runId: string,
-  role?: string,
-): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
-  if (runId.trim() === "") return undefined;
+  leafName: string,
+): Promise<string[]> {
+  const matches: string[] = [];
   const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
     if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
     throw error;
   });
-  const subjectDirs = [
-    "",
-    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+  const runsDirs = [
+    join(bookDir, "runs"),
+    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
   ];
-  const exactLeaf = role !== undefined && role.length > 0 ? `${runId}@${role}` : undefined;
-  for (const subject of subjectDirs) {
-    const runsDir = subject === "" ? join(bookDir, "runs") : join(bookDir, subject, "runs");
+  for (const runsDir of runsDirs) {
     let entries: string[];
     try {
       entries = await readdir(runsDir);
@@ -204,38 +200,117 @@ export async function findBookRunDirectory(
       if ((error as { code?: unknown }).code === "ENOENT") continue;
       throw error;
     }
-    if (exactLeaf !== undefined && role !== undefined) {
-      if (entries.includes(exactLeaf)) {
-        return { runDirectory: join(runsDir, exactLeaf), role };
-      }
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.startsWith(`${runId}@`)) continue;
-      const foundRole = entry.slice(runId.length + 1);
-      if (foundRole.length === 0 || foundRole.includes("@")) continue;
-      return { runDirectory: join(runsDir, entry), role: foundRole };
-    }
+    if (entries.includes(leafName)) matches.push(join(runsDir, leafName));
   }
-  return undefined;
+  return matches;
 }
 
-/** Destination run already placed by T9, including role when known. */
+function destPathFromSourceRelative(
+  booksDirectory: string,
+  bookKey: string,
+  sourceRelative: string,
+): string | undefined {
+  const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
+  const leaf = parts[runsIndex + 1];
+  const before = parts.slice(0, runsIndex);
+  if (leaf === undefined || before.length !== 1) return undefined;
+  const subject = before[0];
+  if (subject === undefined) return undefined;
+  if (subject !== "unbound" && !isTicketNumberString(subject)) return undefined;
+  return join(booksDirectory, bookKey, subject, "runs", leaf);
+}
+
+function placedRunFromPath(runDirectory: string): {
+  readonly runDirectory: string;
+  readonly disposition: "placed" | "unbound";
+} {
+  return {
+    runDirectory,
+    disposition: isUnboundRunDirectory(runDirectory) ? "unbound" : "placed",
+  };
+}
+
+async function listPrincipalPlacedRunPaths(
+  bookDir: string,
+  runId: string,
+): Promise<string[]> {
+  const matches = [...await listExactPlacedRunPaths(bookDir, runId)];
+  const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
+    throw error;
+  });
+  const runsDirs = [
+    join(bookDir, "runs"),
+    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
+  ];
+  const prefix = `${runId}@`;
+  for (const runsDir of runsDirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(runsDir);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || entry.slice(runId.length + 1).includes("@")) continue;
+      const path = join(runsDir, entry);
+      if (!matches.includes(path)) matches.push(path);
+    }
+  }
+  return matches;
+}
+
+function uniquePlacedRun(leafName: string, matches: readonly string[]): {
+  readonly runDirectory: string;
+  readonly disposition: "placed" | "unbound";
+} | undefined {
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return placedRunFromPath(matches[0]!);
+  throw new Error(
+    `book topology migration cannot uniquely place run ${leafName}: ${matches.join(", ")}`,
+  );
+}
+
+/** Locate an exact run leaf under bookDir/runs, bookDir/<subject>/runs, bookDir/unbound/runs. */
+export async function findBookRunDirectory(
+  bookDir: string,
+  runId: string,
+  role?: string,
+): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
+  if (runId.trim() === "") return undefined;
+  const leafName = role !== undefined && role.length > 0 ? `${runId}@${role}` : runId;
+  const matches = role !== undefined && role.length > 0
+    ? await listExactPlacedRunPaths(bookDir, leafName)
+    : await listPrincipalPlacedRunPaths(bookDir, runId);
+  const unique = uniquePlacedRun(leafName, matches);
+  if (unique === undefined) return undefined;
+  const foundRole = unique.runDirectory.split(/[/\\]/).pop()?.split("@")[1] ?? role ?? "";
+  return { runDirectory: unique.runDirectory, role: foundRole };
+}
+
+/** Destination run already placed by T9. Follow complete leaf; bind source path when given. */
 export async function findPlacedMigratingRun(
   booksDirectory: string,
   bookKey: string,
-  runId: string,
-  role?: string,
+  leafName: string,
+  sourceRelative?: string,
 ): Promise<
   | { readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | undefined
 > {
-  const found = await findBookRunDirectory(join(booksDirectory, bookKey), runId, role);
-  if (found === undefined) return undefined;
-  return {
-    runDirectory: found.runDirectory,
-    disposition: isUnboundRunDirectory(found.runDirectory) ? "unbound" : "placed",
-  };
+  if (leafName.trim() === "") return undefined;
+  const matches = await listExactPlacedRunPaths(join(booksDirectory, bookKey), leafName);
+  if (sourceRelative !== undefined && sourceRelative.length > 0) {
+    const preferred = destPathFromSourceRelative(booksDirectory, bookKey, sourceRelative);
+    if (preferred !== undefined) {
+      const hit = matches.find((path) => path === preferred);
+      return hit === undefined ? undefined : placedRunFromPath(hit);
+    }
+  }
+  return uniquePlacedRun(leafName, matches);
 }
 
 /**

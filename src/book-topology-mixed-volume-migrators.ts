@@ -24,10 +24,7 @@ const SITIAN_MIXED_VOLUME_PARTITIONS = [
   "gate",
 ] as const;
 
-const RUN_LEAF = /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
 const CURRENT_SESSION_LEDGER = "current-session.json";
-
-type RunLeaf = { readonly runId: string; readonly role: string };
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -43,12 +40,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function posixRelative(from: string, to: string): string {
   return relative(from, to).split(sep).join("/");
-}
-
-function parseRunLeaf(name: string): RunLeaf | undefined {
-  const match = RUN_LEAF.exec(name);
-  if (match === null) return undefined;
-  return { runId: match[1]!, role: match[2]! };
 }
 
 async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
@@ -124,29 +115,38 @@ function runLeafFromPath(path: string): string | undefined {
   return leaf;
 }
 
+type BoundRunRef = {
+  readonly leaf: string;
+  readonly sourceRelative: string;
+};
+
 /** Bind path evidence to this book's historical roots before taking a run leaf. */
-function runLeafFromBoundPath(
+function runRefFromBoundPath(
   path: string,
   bookRoots: readonly string[],
-): string | undefined {
+): BoundRunRef | undefined {
   for (const root of bookRoots) {
     const rootResolved = resolve(root);
     const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
     if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
     const rel = relative(rootResolved, candidate).split(sep).join("/");
     const leaf = runLeafFromPath(rel);
-    if (leaf !== undefined) return leaf;
+    if (leaf === undefined) continue;
+    const parts = rel.split("/").filter((part) => part.length > 0);
+    const runsIndex = parts.indexOf("runs");
+    if (runsIndex < 0 || runsIndex + 1 >= parts.length) continue;
+    return { leaf, sourceRelative: parts.slice(0, runsIndex + 2).join("/") };
   }
   return undefined;
 }
 
-function runLeafFromRecord(
+function runRefFromRecord(
   record: Record<string, unknown>,
   bookRoots: readonly string[],
-): string | undefined {
+): BoundRunRef | undefined {
   for (const path of pathCandidatesFromRecord(record)) {
-    const leaf = runLeafFromBoundPath(path, bookRoots);
-    if (leaf !== undefined) return leaf;
+    const ref = runRefFromBoundPath(path, bookRoots);
+    if (ref !== undefined) return ref;
   }
   return undefined;
 }
@@ -177,11 +177,13 @@ function inspectWorkerSubmissionGateVolume(
   bookRoots: readonly string[],
 ): {
   readonly leaf: string | undefined;
+  readonly sourceRelative: string | undefined;
   readonly malformedRows: readonly { readonly lineNumber: number; readonly raw: string }[];
 } {
   const malformedRows: { lineNumber: number; raw: string }[] = [];
   let firstRecord = true;
   let leaf: string | undefined;
+  let sourceRelative: string | undefined;
 
   for (const row of jsonlRows(text)) {
     const isHeader = firstRecord;
@@ -203,11 +205,13 @@ function inspectWorkerSubmissionGateVolume(
       parsed.type === "session" &&
       typeof parsed.parentSession === "string"
     ) {
-      leaf = runLeafFromBoundPath(parsed.parentSession, bookRoots);
+      const ref = runRefFromBoundPath(parsed.parentSession, bookRoots);
+      leaf = ref?.leaf;
+      sourceRelative = ref?.sourceRelative;
     }
   }
 
-  return { leaf, malformedRows };
+  return { leaf, sourceRelative, malformedRows };
 }
 
 function volumeDestinationFile(
@@ -228,15 +232,15 @@ async function placedRunForLeaf(
   booksDirectory: string,
   bookKey: string,
   leaf: string,
+  sourceRelative?: string,
 ): Promise<{ runDirectory: string; disposition: "placed" | "unbound" } | undefined> {
-  const cacheKey = `${bookKey}\0${leaf}`;
+  const cacheKey = `${bookKey}\0${sourceRelative ?? ""}\0${leaf}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
-  const parsed = parseRunLeaf(leaf);
   const placed = await findPlacedMigratingRun(
     booksDirectory,
     bookKey,
-    parsed?.runId ?? leaf,
-    parsed?.role,
+    leaf,
+    sourceRelative,
   );
   cache.set(cacheKey, placed);
   return placed;
@@ -372,10 +376,16 @@ async function migrateSitianMixedVolume(
         continue;
       }
 
-      const leaf = runLeafFromRecord(parsed, bookRoots);
-      const destRun = leaf === undefined
+      const ref = runRefFromRecord(parsed, bookRoots);
+      const destRun = ref === undefined
         ? undefined
-        : await placedRunForLeaf(placedCache, booksDirectory, bookKey, leaf);
+        : await placedRunForLeaf(
+          placedCache,
+          booksDirectory,
+          bookKey,
+          ref.leaf,
+          ref.sourceRelative,
+        );
       const dest = volumeDestinationFile(
         booksDirectory,
         bookKey,
@@ -438,10 +448,15 @@ async function migrateWorkerSubmissionGate(
       const text = await readRegularBackupFile(sourcePath);
       if (text === undefined) continue;
       const inspected = inspectWorkerSubmissionGateVolume(text, bookRoots);
-      const leaf = inspected.leaf;
-      const destRun = leaf === undefined
+      const destRun = inspected.leaf === undefined
         ? undefined
-        : await placedRunForLeaf(placedCache, booksDirectory, bookKey, leaf);
+        : await placedRunForLeaf(
+          placedCache,
+          booksDirectory,
+          bookKey,
+          inspected.leaf,
+          inspected.sourceRelative,
+        );
       const dest = volumeDestinationFile(
         booksDirectory,
         bookKey,

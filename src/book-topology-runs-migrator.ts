@@ -217,10 +217,10 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
           );
         }
         await copyRunTree(move.sourcePath, move.targetPath, move.isDirectory);
-        if (move.isDirectory && move.historicalRunDirectory !== undefined) {
+        if (move.isDirectory) {
           await rewriteRoleRunDurablePages({
             pagesDirectory: move.targetPath,
-            oldRunDirectory: move.historicalRunDirectory,
+            oldRunDirectory: move.historicalRunDirectory ?? move.targetPath,
             newRunDirectory: move.targetPath,
             crossRunRewrites,
           });

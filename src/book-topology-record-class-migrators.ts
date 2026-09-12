@@ -272,11 +272,13 @@ async function resolveRunDestination(
   | { readonly kind: "run"; readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | { readonly kind: "unbound-key"; readonly key: string }
 > {
+  const leafName = hints.role !== undefined && hints.role.length > 0
+    ? `${runId}@${hints.role}`
+    : runId;
   const existingDest = await findPlacedMigratingRun(
     context.booksDirectory,
     bookKey,
-    runId,
-    hints.role,
+    leafName,
   );
   if (existingDest !== undefined) {
     return {

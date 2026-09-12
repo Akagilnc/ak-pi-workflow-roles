@@ -380,8 +380,7 @@ async function resolveDestinationRun(
   return findPlacedMigratingRun(
     context.booksDirectory,
     parent.bookKey,
-    parent.runId,
-    parent.role,
+    parent.leafName,
   );
 }
 
@@ -696,15 +695,12 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
       // Population 1: every retained run T9 inventories (flat, ticket, unbound).
       for (const leaf of await listBackupRunLeaves(join(backupBooksDirectory, bookKey))) {
         if (!leaf.isDirectory) continue;
-        const parsed = parseRunLeaf(leaf.leafName);
-        const placed = parsed === undefined
-          ? undefined
-          : await findPlacedMigratingRun(
-            booksDirectory,
-            bookKey,
-            parsed.runId,
-            parsed.role,
-          );
+        const placed = await findPlacedMigratingRun(
+          booksDirectory,
+          bookKey,
+          leaf.leafName,
+          leaf.relativePath,
+        );
         await discardDeprecatedPagesFromRunSource({
           backupBooksDirectory,
           sourceRunDirectory: leaf.sourcePath,
