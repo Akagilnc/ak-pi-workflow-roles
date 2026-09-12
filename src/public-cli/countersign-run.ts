@@ -26,8 +26,12 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  projectCourtTicketNumbers,
+} from "../diarist-contracts.ts";
+import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
+  bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
   relocateAdmittedRunToTicket,
   type AdmittedCountersignInvocation,
@@ -72,6 +76,12 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   runCourtDiaristStation?: (
     admitted: AdmittedCountersignInvocation,
   ) => Promise<void>;
+  /**
+   * #871: typed co-review set from the identity 起居郎 turn, applied onto the
+   * resumed run before bound refresh (same-ticket re-summons path). Whole-set
+   * replace — never union. Production leaves unset outside that handoff.
+   */
+  pendingCourtTicketNumbers?: readonly number[];
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -96,7 +106,16 @@ export function buildCountersignTurnRequest(
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
 type CourtDiaristIdentity =
-  | { readonly kind: "ticket"; readonly ticketNumber: number }
+  | {
+      readonly kind: "ticket";
+      readonly ticketNumber: number;
+      /**
+       * #871 typed co-review set when the LLM explicitly submitted one.
+       * Absent means "no new set this turn" — resume must keep the stored run fact
+       * (never silently degrade a multi-ticket set to [main]).
+       */
+      readonly courtTicketNumbers?: readonly number[];
+    }
   | { readonly kind: "unbound" }
   | { readonly kind: "escalate" };
 
@@ -104,6 +123,29 @@ type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+/** Read #871 set from preserved diarist payloads; undefined when the field was not submitted. */
+function courtTicketNumbersFromOutcome(
+  roleOutcome: TerminalRoleOutcome | undefined,
+): readonly number[] | undefined {
+  if (roleOutcome === undefined) return undefined;
+  const payloads =
+    roleOutcome.kind === "accepted" ||
+    roleOutcome.kind === "audit_escalation" ||
+    roleOutcome.kind === "failure"
+      ? roleOutcome.payloads ?? []
+      : [];
+  for (const payload of payloads) {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      continue;
+    }
+    const projected = projectCourtTicketNumbers(
+      (payload as Record<string, unknown>).courtTicketNumbers,
+    );
+    if (projected !== undefined) return projected;
+  }
+  return undefined;
+}
 
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
 function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
@@ -188,8 +230,13 @@ async function invokeCourtDiarist(input: {
     Number.isSafeInteger(asserted) &&
     asserted >= 1
   ) {
+    const courtTicketNumbers = courtTicketNumbersFromOutcome(roleOutcome);
     return {
-      identity: { kind: "ticket", ticketNumber: asserted },
+      identity: {
+        kind: "ticket",
+        ticketNumber: asserted,
+        ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
+      },
     };
   }
   return {
@@ -221,25 +268,34 @@ export async function runCountersignCourtDiaristStation(
   // First-entry unbound identity is owned by runPublicCountersign.
   if (admitted.ticketNumber === undefined) return;
 
-  const outcome = await invokeCourtDiarist(
-    {
-      instruction: `整理 #${admitted.ticketNumber} 的本案依据。`,
-      projectRoot: admitted.projectRoot,
-      failureLabel: `ticket #${admitted.ticketNumber}`,
-      // Refresh holds a typed key — hand it off so identity is bound before turn.
-      boundTicketNumber: admitted.ticketNumber,
-    },
-    env,
-    io,
-  );
+  // #871: refresh every member of the typed co-review set; single-ticket face
+  // is just the set [main]. Never silently fall back to main-only after a set.
+  const refreshTickets =
+    admitted.courtTicketNumbers !== undefined && admitted.courtTicketNumbers.length > 0
+      ? admitted.courtTicketNumbers
+      : [admitted.ticketNumber];
 
-  if (outcome.identity.kind === "escalate") {
-    throw new StationChildExhaustedError(
-      "court diarist station escalated (cannot identify court target)",
+  for (const ticketNumber of refreshTickets) {
+    const outcome = await invokeCourtDiarist(
+      {
+        instruction: `整理 #${ticketNumber} 的本案依据。`,
+        projectRoot: admitted.projectRoot,
+        failureLabel: `ticket #${ticketNumber}`,
+        // Refresh holds a typed key — hand it off so identity is bound before turn.
+        boundTicketNumber: ticketNumber,
+      },
+      env,
+      io,
     );
-  }
-  if (outcome.failedWithoutEscalate !== undefined) {
-    throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
+
+    if (outcome.identity.kind === "escalate") {
+      throw new StationChildExhaustedError(
+        "court diarist station escalated (cannot identify court target)",
+      );
+    }
+    if (outcome.failedWithoutEscalate !== undefined) {
+      throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
+    }
   }
 }
 
@@ -295,6 +351,7 @@ export async function runPublicCountersign(
   // hook failures stay on the parent call-local budget, exhausted nested
   // station children still skip parent auto-resume (#840 父子不层叠).
   let typedTicket: number | undefined;
+  let typedCourtTicketNumbers: readonly number[] | undefined;
   let identityDiaristRan = false;
 
   if (env.runCourtDiaristStation === undefined) {
@@ -351,6 +408,8 @@ export async function runPublicCountersign(
     if (outcome.identity.kind === "ticket") {
       const assertedTicket = outcome.identity.ticketNumber;
       typedTicket = assertedTicket;
+      // #871: identity may hand a co-review set; absent field defaults to [main].
+      typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
       const summons: SameTicketSummonsMaterials = {
         instruction: parsed.instruction,
         instructionEmpty: parsed.instruction.trim() === "",
@@ -371,12 +430,19 @@ export async function runPublicCountersign(
           await markRunTerminal(admitted.runDirectory);
           // Identity 起居郎 asserted unbound (no issue face). Resume still runs
           // the bound refresh station under the typed key (refresh-every-court).
+          // #871: hand the identity set so resume can whole-replace the run fact
+          // when this summons produced a new typed set (never union).
           return await runPublicCountersignResume(
             {
               runId,
               ...(materials === undefined ? {} : { summons: materials }),
             },
-            env,
+            {
+              ...env,
+              ...(typedCourtTicketNumbers === undefined
+                ? {}
+                : { pendingCourtTicketNumbers: typedCourtTicketNumbers }),
+            },
             io,
           );
         },
@@ -390,6 +456,11 @@ export async function runPublicCountersign(
   if (identityDiaristRan && typedTicket !== undefined) {
     await bindAdmittedTicketNumber(admitted, typedTicket);
     await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+    // First court: explicit set wins; omitted field → single-ticket face [main].
+    await bindCourtTicketNumbersOnAdmitted(
+      admitted,
+      typedCourtTicketNumbers ?? [typedTicket],
+    );
   }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
@@ -512,6 +583,15 @@ export async function runPublicCountersignResume(
     },
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
+        // #871: same-ticket re-summons may hand a fresh typed set from identity.
+        // Whole-set replace onto this run fact; no new set → keep stored set.
+        // Manual resume (no pending) keeps the durable set and never invents one.
+        if (env.pendingCourtTicketNumbers !== undefined) {
+          await bindCourtTicketNumbersOnAdmitted(
+            admitted,
+            env.pendingCourtTicketNumbers,
+          );
+        }
         await runCountersignCourtDiaristStation(admitted, env, io);
       },
     }),

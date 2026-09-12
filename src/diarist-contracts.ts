@@ -39,6 +39,12 @@ export type DiaristOutput =
        * LLM owns recognition; mechanical layer does not re-judge the number.
        */
       readonly ticketNumber?: number | null;
+      /**
+       * #871 typed co-review set (ADR 0075 `diarist-resolves-ticket-llm-layer` narrow extension).
+       * Positive integers = tickets that should each receive a diary this court (includes main).
+       * Absent/empty → single-ticket face (main only). Mechanical layer only type-projects/dedupes.
+       */
+      readonly courtTicketNumbers?: readonly number[] | null;
       /** Whole blocks to append under the asserted ticket. Empty list is lawful. */
       readonly entries?: readonly DiaristEntrySubmission[];
     }
@@ -47,6 +53,30 @@ export type DiaristOutput =
       readonly status: "escalate";
       readonly reason: string;
     };
+
+/**
+ * Shape-only projection of a typed co-review ticket set (#871).
+ * Positive safe integers, first-seen order, duplicates dropped. Not content judgment.
+ * Returns undefined when the field is absent or yields no lawful members after projection.
+ */
+export function projectCourtTicketNumbers(raw: unknown): readonly number[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const item of raw) {
+    let n: number | undefined;
+    if (typeof item === "number" && Number.isSafeInteger(item) && item >= 1) {
+      n = item;
+    } else if (typeof item === "string" && /^[1-9]\d*$/.test(item)) {
+      const parsed = Number(item);
+      if (Number.isSafeInteger(parsed) && parsed >= 1) n = parsed;
+    }
+    if (n === undefined || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

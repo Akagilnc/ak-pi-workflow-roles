@@ -769,6 +769,8 @@ test("public countersign path: summons text alone never mints a ticket without �
 /**
  * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
  * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出.
+ * courtTicketNumbers: #871 optional typed co-review set on identity turns only.
+ * Bound refresh (`整理 #N 的本案依据。`) asserts ticket N so each member volume is real.
  */
 function courtPipelinePiRunner(
   ticketAssertion: number | null | "escalate" = 582,
@@ -776,6 +778,7 @@ function courtPipelinePiRunner(
     countersignStatus: "converged",
     note: "署",
   },
+  courtTicketNumbers?: readonly number[],
 ): LegacyFauxPiRunner {
   return async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -800,21 +803,37 @@ function courtPipelinePiRunner(
         getAllTools: () =>
           registered === undefined ? [] : [{ name: registered.name }],
       } as unknown as RoleHost;
-      const runDir = options.env.AK_ROLE_RUN_DIR;
+      const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
       const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
         });
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
+        // Bound refresh places the child under the member ticket dir; identity stays unbound.
+        // Prefer durable run placement over argv prose (instruction is not a stable argv leaf).
+        const ticketDirMatch = /[\\/](\d+)[\\/]runs[\\/][^\\/]+@diarist$/.exec(runDir);
+        const boundTicket =
+          ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
         // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
         const params =
-          ticketAssertion === "escalate"
-            ? { status: "escalate", reason: "cannot identify court target" }
-            : {
-                status: "completed",
-                ticketNumber: ticketAssertion,
-                entries: [],
-              };
+          boundTicket !== undefined
+            ? {
+                status: "completed" as const,
+                ticketNumber: boundTicket,
+                entries: [] as const,
+              }
+            : ticketAssertion === "escalate"
+              ? { status: "escalate" as const, reason: "cannot identify court target" }
+              : ticketAssertion === null
+                ? { status: "completed" as const, ticketNumber: null, entries: [] as const }
+                : {
+                    status: "completed" as const,
+                    ticketNumber: ticketAssertion,
+                    entries: [] as const,
+                    ...(courtTicketNumbers === undefined
+                      ? {}
+                      : { courtTicketNumbers: [...courtTicketNumbers] }),
+                  };
       const accepted = await registered.execute(
         "call_diarist_1",
         params,
@@ -1271,5 +1290,234 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.equal(turnPrompt.includes(volume.humanViewFile), false);
     assert.equal(turnPrompt.includes(volume.recordFile), false);
+  });
+});
+
+/**
+ * #871 sole tracer: typed co-review set on the real countersign entry.
+ * Parent {100,101,102} → resume keeps set → new summons replaces with {100,101,103}.
+ * Single-ticket + true-unbound are the same line's minimal boundaries.
+ * Asserts typed identities / call counts / readable records only — never prose.
+ */
+test("public countersign path: #871 typed co-review set refresh, resume keep, replace, single and unbound", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const parent = 100;
+    const childA = 101;
+    const childB = 102;
+    const childC = 103;
+    for (const n of [parent, childA, childB, childC]) {
+      ensureTicketProvenanceVolume(n, project, home);
+    }
+    await installGhFixture(join(home, "bin"), {
+      issues: {
+        [parent]: { body: "parent body", comments: [] },
+        [childA]: { body: "child A body", comments: [] },
+        [childB]: { body: "child B body", comments: [] },
+        [childC]: { body: "child C body", comments: [] },
+      },
+    });
+
+    type Phase = "first" | "resumeKeep" | "replace" | "single" | "unbound";
+    let phase: Phase = "first";
+    const boundRefreshTickets: number[] = [];
+    let countersignBodyTurns = 0;
+
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          // Bound refresh places the child under the member ticket dir; identity stays unbound.
+          const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
+          const ticketDirMatch = /[\\/](\d+)[\\/]runs[\\/][^\\/]+@diarist$/.exec(runDir);
+          const boundTicket =
+            ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
+          if (boundTicket !== undefined) {
+            boundRefreshTickets.push(boundTicket);
+            return courtPipelinePiRunner(boundTicket)(args, options);
+          }
+          if (phase === "first") {
+            return courtPipelinePiRunner(parent, undefined, [parent, childA, childB])(
+              args,
+              options,
+            );
+          }
+          if (phase === "resumeKeep") {
+            // No new set field — resume must keep stored {parent,A,B}.
+            return courtPipelinePiRunner(parent)(args, options);
+          }
+          if (phase === "replace") {
+            return courtPipelinePiRunner(parent, undefined, [parent, childA, childC])(
+              args,
+              options,
+            );
+          }
+          if (phase === "single") {
+            return courtPipelinePiRunner(parent)(args, options);
+          }
+          return courtPipelinePiRunner(null)(args, options);
+        }
+        countersignBodyTurns += 1;
+        return courtPipelinePiRunner(parent)(args, options);
+      },
+    });
+
+    const envBase = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      roleTurnHost: host,
+      hostAdapters: [adapter("pi", host)],
+    };
+
+    async function assertReadableSubject(ticketNumber: number): Promise<void> {
+      const volume = await readTicketProvenance(ticketNumber, project, home);
+      assert.ok(volume.recordFile, `ticket #${ticketNumber} must have a record file`);
+      await readFile(volume.recordFile, "utf8");
+      const subjects = volume.records
+        .filter((row) => row.kind === "ticket-provenance")
+        .map((row) => row.subject);
+      // Empty-selection still ensures the volume; subject on any written row must match.
+      for (const subject of subjects) {
+        assert.equal(subject, String(ticketNumber));
+      }
+    }
+
+    // --- first court: set {parent,A,B} ---
+    phase = "first";
+    boundRefreshTickets.length = 0;
+    countersignBodyTurns = 0;
+    const first = await runPublicCountersign(
+      ["裁：父子一庭合审 #100 与子票。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000871a",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.admitted?.ticketNumber, parent);
+    assert.deepEqual(first.admitted?.courtTicketNumbers, [parent, childA, childB]);
+    assert.equal(countersignBodyTurns, 1, "countersign body runs once per court");
+    assert.deepEqual(
+      boundRefreshTickets,
+      [parent, childA, childB],
+      "first court bound-refreshes the typed set",
+    );
+    await assertReadableSubject(parent);
+    await assertReadableSubject(childA);
+    await assertReadableSubject(childB);
+    const firstRunId = first.admitted!.runId;
+
+    // --- same-ticket resume, no new set: keep {parent,A,B} ---
+    phase = "resumeKeep";
+    boundRefreshTickets.length = 0;
+    countersignBodyTurns = 0;
+    const resumed = await runPublicCountersign(
+      ["裁：#100 二轮再审，集合不变。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000871b",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.admitted?.runId, firstRunId, "same-ticket resume keeps principal run");
+    assert.equal(resumed.admitted?.ticketNumber, parent);
+    assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent, childA, childB]);
+    assert.equal(countersignBodyTurns, 1);
+    assert.deepEqual(
+      boundRefreshTickets,
+      [parent, childA, childB],
+      "resume without new set still refreshes stored set",
+    );
+
+    // --- new summons replaces whole set with {parent,A,C}; B not refreshed ---
+    phase = "replace";
+    boundRefreshTickets.length = 0;
+    countersignBodyTurns = 0;
+    const replaced = await runPublicCountersign(
+      ["裁：#100 三轮，子票集合改为 A+C。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000871c",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(replaced.exitCode, 0);
+    assert.equal(replaced.admitted?.runId, firstRunId);
+    assert.equal(replaced.admitted?.ticketNumber, parent);
+    assert.deepEqual(replaced.admitted?.courtTicketNumbers, [parent, childA, childC]);
+    assert.equal(countersignBodyTurns, 1);
+    assert.deepEqual(
+      boundRefreshTickets,
+      [parent, childA, childC],
+      "new typed set whole-replaces; historical B is not refreshed",
+    );
+    assert.equal(boundRefreshTickets.includes(childB), false);
+    await assertReadableSubject(parent);
+    await assertReadableSubject(childA);
+    await assertReadableSubject(childC);
+
+    // --- single-ticket boundary: set defaults to [main] ---
+    phase = "single";
+    boundRefreshTickets.length = 0;
+    countersignBodyTurns = 0;
+    const single = await runPublicCountersign(
+      ["裁：单票 #100 开新庭。"],
+      {
+        ...envBase,
+        // Explicit fresh summons so we mint a new run rather than resume #100.
+        freshSummons: true as const,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000871d",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(single.exitCode, 0);
+    assert.equal(single.admitted?.ticketNumber, parent);
+    assert.deepEqual(single.admitted?.courtTicketNumbers, [parent]);
+    assert.equal(countersignBodyTurns, 1);
+    assert.deepEqual(boundRefreshTickets, [parent]);
+    await assertReadableSubject(parent);
+
+    // --- true-unbound boundary: no typed ticket, zero diary generation ---
+    phase = "unbound";
+    boundRefreshTickets.length = 0;
+    countersignBodyTurns = 0;
+    const beforeUnboundVolumes = {
+      parent: (await readTicketProvenance(parent, project, home)).records.length,
+      a: (await readTicketProvenance(childA, project, home)).records.length,
+    };
+    const unbound = await runPublicCountersign(
+      ["一般性程序问询，本庭无具体票号。"],
+      {
+        ...envBase,
+        freshSummons: true as const,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000871e",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(unbound.exitCode, 0);
+    assert.equal(unbound.admitted?.ticketNumber, undefined);
+    assert.equal(unbound.admitted?.courtTicketNumbers, undefined);
+    assert.equal(countersignBodyTurns, 1, "true-unbound still runs countersign body");
+    assert.deepEqual(boundRefreshTickets, [], "true-unbound must not bound-refresh any ticket");
+    assert.equal(
+      (await readTicketProvenance(parent, project, home)).records.length,
+      beforeUnboundVolumes.parent,
+    );
+    assert.equal(
+      (await readTicketProvenance(childA, project, home)).records.length,
+      beforeUnboundVolumes.a,
+    );
   });
 });

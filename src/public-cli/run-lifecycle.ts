@@ -1182,6 +1182,8 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** #871 typed co-review set restored on countersign resume. */
+  readonly courtTicketNumbers?: readonly number[];
   /** Collector — admitted repository/PR identity restored on resume (#633). */
   readonly prNumber?: number;
   readonly repository?: string;
@@ -1207,6 +1209,7 @@ function parsePersistedTicketIdentity(
 ): {
   correlationId?: string;
   ticketNumber?: number;
+  courtTicketNumbers?: readonly number[];
 } {
   const correlationId =
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
@@ -1218,19 +1221,41 @@ function parsePersistedTicketIdentity(
     record.ticketNumber >= 1
       ? record.ticketNumber
       : undefined;
+  const courtTicketNumbers = parsePersistedCourtTicketNumbers(record.courtTicketNumbers);
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
+    ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
   };
+}
+
+/** Shape-only restore of #871 co-review set from durable run pages. */
+function parsePersistedCourtTicketNumbers(
+  raw: unknown,
+): readonly number[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const item of raw) {
+    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) continue;
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out.length > 0 ? Object.freeze(out) : undefined;
 }
 
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
+  courtTicketNumbers?: readonly number[];
 } {
   return {
     ...(fields.correlationId === undefined ? {} : { correlationId: fields.correlationId }),
     ...(fields.ticketNumber === undefined ? {} : { ticketNumber: fields.ticketNumber }),
+    ...(fields.courtTicketNumbers === undefined
+      ? {}
+      : { courtTicketNumbers: fields.courtTicketNumbers }),
   };
 }
 
@@ -1280,6 +1305,7 @@ async function loadResumableRunRecord(
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
+  let courtTicketNumbers: readonly number[] | undefined;
   let prNumber: number | undefined;
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
@@ -1441,6 +1467,7 @@ async function loadResumableRunRecord(
       const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
+      courtTicketNumbers = fromAdmitted.courtTicketNumbers;
     }
   } catch (error) {
     // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
@@ -1470,10 +1497,17 @@ async function loadResumableRunRecord(
             : {}),
         };
       }
-      if (correlationId === undefined || ticketNumber === undefined) {
+      if (
+        correlationId === undefined ||
+        ticketNumber === undefined ||
+        courtTicketNumbers === undefined
+      ) {
         const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
+        if (courtTicketNumbers === undefined) {
+          courtTicketNumbers = fromInvocation.courtTicketNumbers;
+        }
       }
     }
   } catch (error) {
@@ -1509,6 +1543,7 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
       ...(prNumber === undefined ? {} : { prNumber }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
@@ -1777,9 +1812,13 @@ export async function loadResumableCountersignRun(
       `role run ${runId} belongs to ${loaded.run.role}, not countersign`,
     );
   }
+  const base = resumedBaseAdmitted(loaded);
   const admitted: AdmittedCountersignInvocation = {
     role: "countersign",
-    ...resumedBaseAdmitted(loaded),
+    ...base,
+    ...(base.courtTicketNumbers === undefined
+      ? {}
+      : { courtTicketNumbers: base.courtTicketNumbers }),
   };
   return seatLoadedResult(loaded, admitted);
 }
