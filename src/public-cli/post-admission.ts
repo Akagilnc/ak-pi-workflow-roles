@@ -64,8 +64,8 @@ function isOfficerReviewSeat(role: string): boolean {
 
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only. Case materials ride RoleTurnRequest.materials → existing
- * systemPrompt.materials fold — never wrap continuation.prompt (#879).
+ * peer words only (#879). Case dossier is already reachable via --source-run;
+ * do not inject dossier text or invent a cross-host materials seam.
  */
 function isStationChildOfficerDialogue(
   role: string,
@@ -667,9 +667,9 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
-    // every public entry. #879: station-child officer dialogue keeps peer content
-    // byte-equal — case materials freeze as independent attachments, never wrap
-    // continuation.prompt. Other entries keep the neutral prompt section.
+    // public entries that are not station-child officer dialogue. #879: nested
+    // officer turns keep peer words only — officers already hold --source-run and
+    // self-fetch 起居录; no prompt wrap and no RoleTurnRequest.materials seam.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -678,19 +678,13 @@ export async function dispatchPostAdmissionTurn<
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
-    const dossierSection = await projectCaseDossierPointerSection({
-      ticketNumber: admitted.ticketNumber,
-      projectRoot: admitted.projectRoot,
-      home: env.home,
-    });
-    if (dossierSection !== undefined) {
-      if (isStationChildOfficerDialogue(admitted.role, env)) {
-        // #879: existing materials seam — independent of dialogue content bytes.
-        turnRequest = {
-          ...turnRequest,
-          materials: [...(turnRequest.materials ?? []), dossierSection],
-        };
-      } else {
+    if (!isStationChildOfficerDialogue(admitted.role, env)) {
+      const dossierSection = await projectCaseDossierPointerSection({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+      });
+      if (dossierSection !== undefined) {
         turnRequest = {
           ...turnRequest,
           continuation: appendContinuationSection(

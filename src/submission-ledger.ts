@@ -191,20 +191,11 @@ function recordedRole(payload: { role?: unknown; projection?: { role?: unknown }
   return undefined;
 }
 
-/**
- * All recorded role submissions in ledger order (#836 multi-submit).
- * `accepted` is the original payload; never rebuilt from a status/facts envelope.
- */
-export async function readRecordedSubmissionRows(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<readonly RecordedSubmissionRow[]> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
+function mapOwnedToSubmissionRows(
+  owned: readonly { kind?: unknown; subject?: unknown; payload?: unknown }[],
+): readonly RecordedSubmissionRow[] {
   const out: RecordedSubmissionRow[] = [];
-  for (const record of scoped) {
+  for (const record of owned) {
     if (record.kind === "sealed") {
       const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> & {
         projection?: { role?: unknown };
@@ -227,6 +218,39 @@ export async function readRecordedSubmissionRows(
     out.push({ role, kind: "audit-escalation", accepted: payload.accepted });
   }
   return out;
+}
+
+/**
+ * All recorded role submissions in ledger order (#836 multi-submit).
+ * `accepted` is the original payload; never rebuilt from a status/facts envelope.
+ * Presentation stays run-scoped: attemptId on the read scope is a recording tag,
+ * not a visibility gate (#836).
+ */
+export async function readRecordedSubmissionRows(
+  cwd: string,
+  runId: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): Promise<readonly RecordedSubmissionRow[]> {
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  return mapOwnedToSubmissionRows(scoped);
+}
+
+/**
+ * Settlement-only this-court rows (#879 return path).
+ * Filters by attemptId for court-scoped roleOutcome; does not replace the
+ * run-scoped presentation API above (#836 visibility gate stays pass-through).
+ */
+export async function readAttemptScopedSubmissionRows(
+  cwd: string,
+  runId: string,
+  attemptId: string,
+  home?: string,
+): Promise<readonly RecordedSubmissionRow[]> {
+  if (attemptId.length === 0) return [];
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
 }
 
 /**

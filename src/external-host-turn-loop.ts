@@ -54,8 +54,20 @@ export function mergeRoleTurnAbortSignals(
   return AbortSignal.any([prepared, request]);
 }
 
+function isOfficerReviewSeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor";
+}
+
+/**
+ * Host-transition prior-native paths are machine handoff material (#617 DK-4).
+ * #879: station-child officer dialogue must not receive those paths spliced into
+ * the review prompt — officers already hold --source-run / binding pointers.
+ */
 export function promptWithPriorNativePaths(basePrompt: string, request: RoleTurnRequest): string {
   if (request.continuation.kind !== "resume") return basePrompt;
+  if (request.stationChild === true && isOfficerReviewSeat(request.activation.role)) {
+    return basePrompt;
+  }
   const paths = request.hostTransition?.priorNativePaths;
   if (paths === undefined || paths.length === 0) return basePrompt;
   return `${basePrompt}\n${paths.join("\n")}`;

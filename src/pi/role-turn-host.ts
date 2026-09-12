@@ -375,9 +375,16 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
       // Pi already owns its own session file, so only sitian prior volume rides in.
+      // #879: station-child officer dialogue keeps peer words — do not splice
+      // host-transition priorNativePaths into the review prompt body.
       let turnRequest = request;
+      const officerStationChild =
+        request.stationChild === true
+        && (request.activation.role === "notary"
+          || request.activation.role === "inspector"
+          || request.activation.role === "auditor");
       const paths =
-        request.hostTransition?.priorNativeKind === "sitian"
+        !officerStationChild && request.hostTransition?.priorNativeKind === "sitian"
           ? request.hostTransition.priorNativePaths
           : undefined;
       if (

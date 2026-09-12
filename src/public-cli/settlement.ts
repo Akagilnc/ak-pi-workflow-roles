@@ -15,6 +15,7 @@ import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sit
 
 import {
   hasFreshAttemptSubmission,
+  readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../submission-ledger.ts";
@@ -194,6 +195,22 @@ async function sealedLedgerOutcome(
   role: TerminalRoleName,
   scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+  const home = sealedLedgerHome(admitted);
+  // #879: when this court sealed, roleOutcome is this-court original only — never
+  // last-wins over an undivided historical array. #836 presentation of full history
+  // stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
+  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
+    const thisCourt = await readAttemptScopedSubmissionRows(
+      admitted.projectRoot,
+      admitted.runId,
+      scope.courtAttemptId,
+      home,
+    );
+    if (thisCourt.length > 0) {
+      return roleOutcomeFromRows(role, thisCourt);
+    }
+  }
+  // No this-court seal (or no court scope): keep run-scoped ledger face (#836).
   const rows = await readRecordedSubmissionRows(
     admitted.projectRoot,
     admitted.runId,
@@ -258,7 +275,14 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   terminal: T,
   scope?: SettlementCourtScope,
 ): Promise<T> {
-  return withSubmissions(terminal, await recordedSubmissionPayloads(admitted, scope));
+  // #836 / #879: submissions presentation is always run-scoped history. Do not
+  // pass courtAttemptId here — roleOutcome already carries this-court payloads
+  // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
+  void scope;
+  return withSubmissions(
+    terminal,
+    await recordedSubmissionPayloads(admitted, undefined),
+  );
 }
 
 /**

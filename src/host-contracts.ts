@@ -185,12 +185,6 @@ export type RoleTurnRequest = {
   readonly courtAttemptId?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   readonly stationChild?: boolean;
-  /**
-   * Typed reading materials merged into prepared systemPrompt.materials
-   * (existing agent-start materials seam). Independent of continuation.prompt
-   * dialogue content (#879 content/binding split; ADR 0081 case dossier).
-   */
-  readonly materials?: readonly unknown[];
 };
 
 /** Turn result — only fields upper layers currently consume. */

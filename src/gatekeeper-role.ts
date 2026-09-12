@@ -210,15 +210,28 @@ function projectOfficerDecision(
 }
 
 /**
- * Project a public-role terminal onto the gate queue surface.
- * Host failure stays failure; recorded officer payloads ride beside it (#836 A.3).
- * Multiple recorded payloads are all kept — code does not pick last-wins.
+ * This-court officer payloads for the parent return path (#879).
+ * Prefer settlement-scoped roleOutcome.payloads (courtAttempt seal). Fall back to
+ * a sole submissions row. Never last-wins an undivided multi-row historical array
+ * when settlement did not scope this court — history stays on terminal.submissions.
  */
-function officerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
+function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
   if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
-    return outcome.payloads ?? terminal?.submissions ?? [];
+    if (outcome.payloads !== undefined && outcome.payloads.length > 0) return outcome.payloads;
   }
+  if (outcome?.kind === "failure" && outcome.payloads !== undefined && outcome.payloads.length > 0) {
+    return outcome.payloads;
+  }
+  const submissions = terminal?.submissions ?? [];
+  // Sole row is trivially this court; multi-row undivided history is not a pick list.
+  if (submissions.length === 1) return submissions;
+  return [];
+}
+
+/** Failure/transport channel may still surface every recorded payload beside the failure (#836 A.3). */
+function officerFailurePayloads(terminal: TerminalResult | undefined): readonly unknown[] {
+  const outcome = terminal?.roleOutcome;
   if (outcome?.kind === "failure") return outcome.payloads ?? terminal?.submissions ?? [];
   return terminal?.submissions ?? [];
 }
@@ -231,8 +244,8 @@ function projectOfficerPayloads(
   if (payloads.length === 0) {
     return projectOfficerDecision(officer, undefined, fallbackStatus);
   }
-  // Queue + parent dialogue return the this-turn conclusion only (#879).
-  // Historical rows stay on the officer terminal/ledger — not folded into an array receipt.
+  // This-court multi-submit: queue the latest seal of THIS court only (#836 呈现≠排队).
+  // Single this-court seal is the common path. Never fold history into an array receipt.
   return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
@@ -242,16 +255,17 @@ function projectOfficerTerminal(
 ): GatekeeperResult {
   const terminal: TerminalResult | undefined = summoned.terminal;
   const outcome = terminal?.roleOutcome;
-  const recorded = officerPayloads(terminal);
+  const thisCourt = thisCourtOfficerPayloads(terminal);
   if (outcome === undefined) {
     const detail = summoned.stderr ?? "";
+    const failurePayloads = officerFailurePayloads(terminal);
     return {
       status: "transport_failure",
       stage: officer,
       reason: detail.length > 0
         ? `${gateSeatLabel(officer)} public summon exit ${summoned.exitCode}: ${detail}`
         : `${gateSeatLabel(officer)} public summon produced no terminal (exit ${summoned.exitCode})`,
-      submission: recorded.length > 0 ? recorded : summoned,
+      submission: failurePayloads.length > 0 ? failurePayloads : summoned,
     };
   }
   if (outcome.kind === "no_receipt") {
@@ -265,32 +279,33 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "failure") {
+    const failurePayloads = officerFailurePayloads(terminal);
     return {
       status: "transport_failure",
       stage: officer,
       reason: outcome.diagnostic,
-      submission: recorded.length > 0 ? recorded : outcome.decisiveFacts,
+      submission: failurePayloads.length > 0 ? failurePayloads : outcome.decisiveFacts,
     };
   }
   if (outcome.kind === "audit_escalation") {
     return {
       status: "escalate",
       officer,
-      // This-turn receipt only (#879) — historical rows remain on terminal.submissions.
-      receipt: recorded.length > 0 ? recorded[recorded.length - 1] : retainedReceipt(outcome),
+      // This-court receipt only (#879) — historical rows remain on terminal.submissions.
+      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
     };
   }
   if (outcome.kind === "accepted") {
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded, so this only matters when a
     // caller still supplies status without any recorded payload (#836 hang).
-    return projectOfficerPayloads(officer, recorded, outcome.status);
+    return projectOfficerPayloads(officer, thisCourt, outcome.status);
   }
   return {
     status: "needs_reask",
     officer,
-    // This-turn receipt only (#879).
-    receipt: recorded.length > 0 ? recorded[recorded.length - 1] : retainedReceipt(outcome),
+    // This-court receipt only (#879).
+    receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
   };
 }
 
