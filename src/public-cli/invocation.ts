@@ -44,6 +44,7 @@ import {
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
+import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   emptyCollectorManifest,
@@ -516,25 +517,36 @@ export async function bindAdmittedTicketNumber(
 /**
  * #871: persist the typed co-review set as a countersign run fact (admitted-request +
  * invocation.json). Whole-set replace — never union with a prior set. Main ticket
- * binding stays on `ticketNumber` alone.
+ * binding stays on `ticketNumber` alone. Projection reuses the sole contract helper;
+ * principal membership is mandatory.
  */
 export async function bindCourtTicketNumbersOnAdmitted(
   admitted: AdmittedCountersignInvocation,
   courtTicketNumbers: readonly number[],
 ): Promise<void> {
-  const projected: number[] = [];
-  const seen = new Set<number>();
-  for (const item of courtTicketNumbers) {
+  const principal = admitted.ticketNumber;
+  if (
+    typeof principal !== "number" ||
+    !Number.isSafeInteger(principal) ||
+    principal < 1
+  ) {
+    throw new Error(
+      "bindCourtTicketNumbersOnAdmitted requires a bound principal ticketNumber",
+    );
+  }
+  // Strict write path: every member must already be a lawful number (no soft filter).
+  for (let i = 0; i < courtTicketNumbers.length; i += 1) {
+    const item = courtTicketNumbers[i];
     if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) {
       throw new Error(
         `bindCourtTicketNumbersOnAdmitted requires safe positive integers, got ${String(item)}`,
       );
     }
-    if (seen.has(item)) continue;
-    seen.add(item);
-    projected.push(item);
   }
-  if (projected.length === 0) {
+  const projected = projectCourtTicketNumbers(courtTicketNumbers, {
+    principalTicket: principal,
+  });
+  if (projected === null || projected.length === 0) {
     throw new Error("bindCourtTicketNumbersOnAdmitted requires a non-empty ticket set");
   }
   const frozen = Object.freeze([...projected]);

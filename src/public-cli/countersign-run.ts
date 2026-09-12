@@ -124,9 +124,17 @@ type CourtDiaristInvocationResult = {
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
-/** Read #871 set from preserved diarist payloads; undefined when the field was not submitted. */
+/**
+ * Read #871 set from preserved diarist payloads.
+ * - Field absent on every payload → undefined (no new set this turn).
+ * - Field present (including explicit empty) → sole projection with principal
+ *   guaranteed; empty/non-array present values become single-ticket [main].
+ * - Multiple submissions: last present set wins (whole-set replace, not first hit).
+ * Live path never shape-rejects the role turn; durable damage is a separate seam.
+ */
 function courtTicketNumbersFromOutcome(
   roleOutcome: TerminalRoleOutcome | undefined,
+  principalTicket: number,
 ): readonly number[] | undefined {
   if (roleOutcome === undefined) return undefined;
   const payloads =
@@ -135,16 +143,25 @@ function courtTicketNumbersFromOutcome(
     roleOutcome.kind === "failure"
       ? roleOutcome.payloads ?? []
       : [];
+  let latest: readonly number[] | undefined;
   for (const payload of payloads) {
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
       continue;
     }
-    const projected = projectCourtTicketNumbers(
-      (payload as Record<string, unknown>).courtTicketNumbers,
-    );
-    if (projected !== undefined) return projected;
+    const record = payload as Record<string, unknown>;
+    if (!Object.hasOwn(record, "courtTicketNumbers")) continue;
+    const raw = record.courtTicketNumbers;
+    // null/undefined value on an explicit key still means "no set asserted".
+    if (raw === null || raw === undefined) continue;
+    // Present value: project through the sole helper. Non-array → empty list face
+    // so principal guarantee yields [main] (do not reject live role output).
+    const projected = projectCourtTicketNumbers(Array.isArray(raw) ? raw : [], {
+      principalTicket,
+    });
+    if (projected === null) continue;
+    latest = projected;
   }
-  return undefined;
+  return latest;
 }
 
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
@@ -230,7 +247,7 @@ async function invokeCourtDiarist(input: {
     Number.isSafeInteger(asserted) &&
     asserted >= 1
   ) {
-    const courtTicketNumbers = courtTicketNumbersFromOutcome(roleOutcome);
+    const courtTicketNumbers = courtTicketNumbersFromOutcome(roleOutcome, asserted);
     return {
       identity: {
         kind: "ticket",
@@ -269,11 +286,22 @@ export async function runCountersignCourtDiaristStation(
   if (admitted.ticketNumber === undefined) return;
 
   // #871: refresh every member of the typed co-review set; single-ticket face
-  // is just the set [main]. Never silently fall back to main-only after a set.
-  const refreshTickets =
-    admitted.courtTicketNumbers !== undefined && admitted.courtTicketNumbers.length > 0
-      ? admitted.courtTicketNumbers
-      : [admitted.ticketNumber];
+  // is just the set [main]. Present-but-empty / missing-principal is damage —
+  // never silently fall back to main-only (legacy absent field still may).
+  let refreshTickets: readonly number[];
+  if (admitted.courtTicketNumbers !== undefined) {
+    if (
+      admitted.courtTicketNumbers.length === 0 ||
+      !admitted.courtTicketNumbers.includes(admitted.ticketNumber)
+    ) {
+      throw new StationChildExhaustedError(
+        `court diarist station: courtTicketNumbers is damaged (empty or missing principal #${admitted.ticketNumber})`,
+      );
+    }
+    refreshTickets = admitted.courtTicketNumbers;
+  } else {
+    refreshTickets = [admitted.ticketNumber];
+  }
 
   for (const ticketNumber of refreshTickets) {
     const outcome = await invokeCourtDiarist(
@@ -454,13 +482,30 @@ export async function runPublicCountersign(
   }
 
   if (identityDiaristRan && typedTicket !== undefined) {
-    await bindAdmittedTicketNumber(admitted, typedTicket);
-    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-    // First court: explicit set wins; omitted field → single-ticket face [main].
-    await bindCourtTicketNumbersOnAdmitted(
-      admitted,
-      typedCourtTicketNumbers ?? [typedTicket],
-    );
+    try {
+      await bindAdmittedTicketNumber(admitted, typedTicket);
+      await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+      // First court: explicit set wins; omitted field → single-ticket face [main].
+      // Set persistence is outside beforeDispatch — route write failures into the
+      // same controlled-failure settlement as station children (#871 B7).
+      await bindCourtTicketNumbersOnAdmitted(
+        admitted,
+        typedCourtTicketNumbers ?? [typedTicket],
+      );
+    } catch (error) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        countersignAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
   }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {

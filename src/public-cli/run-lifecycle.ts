@@ -31,6 +31,10 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
+import {
+  interpretDurableCourtTicketNumbers,
+  sameCourtTicketNumbers,
+} from "../diarist-contracts.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
@@ -1203,13 +1207,12 @@ type LoadedAdmittedRequestFields = {
   readonly model?: InvocationEffectiveModel;
 };
 
-/** Restore optional correlation + typed ticket identity from a durable admitted page. */
+/** Restore optional correlation + typed main-ticket identity from a durable page. */
 function parsePersistedTicketIdentity(
   record: Record<string, unknown>,
 ): {
   correlationId?: string;
   ticketNumber?: number;
-  courtTicketNumbers?: readonly number[];
 } {
   const correlationId =
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
@@ -1221,28 +1224,66 @@ function parsePersistedTicketIdentity(
     record.ticketNumber >= 1
       ? record.ticketNumber
       : undefined;
-  const courtTicketNumbers = parsePersistedCourtTicketNumbers(record.courtTicketNumbers);
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
-    ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
   };
 }
 
-/** Shape-only restore of #871 co-review set from durable run pages. */
-function parsePersistedCourtTicketNumbers(
-  raw: unknown,
+/**
+ * #871 durable set from one run page.
+ * Absent → undefined (legacy). Present damage → throw. Never filter into main-only.
+ */
+function requireDurableCourtTicketNumbers(
+  record: Record<string, unknown>,
+  principalTicket: number | undefined,
+  pageLabel: string,
 ): readonly number[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: number[] = [];
-  const seen = new Set<number>();
-  for (const item of raw) {
-    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) continue;
-    if (seen.has(item)) continue;
-    seen.add(item);
-    out.push(item);
+  const interpreted = interpretDurableCourtTicketNumbers(record, {
+    ...(principalTicket === undefined ? {} : { principalTicket }),
+  });
+  if (interpreted.kind === "damage") {
+    throw new CliUsageError(
+      `role run ${pageLabel} courtTicketNumbers is damaged: ${interpreted.reason}`,
+    );
   }
-  return out.length > 0 ? Object.freeze(out) : undefined;
+  return interpreted.kind === "ok" ? interpreted.tickets : undefined;
+}
+
+/**
+ * Merge admitted + invocation #871 sets. Both present must match; one present wins;
+ * both absent stays legacy-undefined. Damage and cross-page mismatch fail closed.
+ */
+function mergeDurableCourtTicketNumbers(input: {
+  readonly admittedRecord: Record<string, unknown> | undefined;
+  readonly invocationRecord: Record<string, unknown> | undefined;
+  readonly principalTicket: number | undefined;
+}): readonly number[] | undefined {
+  const fromAdmitted =
+    input.admittedRecord === undefined
+      ? undefined
+      : requireDurableCourtTicketNumbers(
+          input.admittedRecord,
+          input.principalTicket,
+          "admitted-request",
+        );
+  const fromInvocation =
+    input.invocationRecord === undefined
+      ? undefined
+      : requireDurableCourtTicketNumbers(
+          input.invocationRecord,
+          input.principalTicket,
+          "invocation",
+        );
+  if (fromAdmitted !== undefined && fromInvocation !== undefined) {
+    if (!sameCourtTicketNumbers(fromAdmitted, fromInvocation)) {
+      throw new CliUsageError(
+        "role run courtTicketNumbers differs between admitted-request and invocation",
+      );
+    }
+    return fromAdmitted;
+  }
+  return fromAdmitted ?? fromInvocation;
 }
 
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
@@ -1306,6 +1347,8 @@ async function loadResumableRunRecord(
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
   let courtTicketNumbers: readonly number[] | undefined;
+  let admittedIdentityRecord: Record<string, unknown> | undefined;
+  let invocationIdentityRecord: Record<string, unknown> | undefined;
   let prNumber: number | undefined;
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
@@ -1464,10 +1507,10 @@ async function loadResumableRunRecord(
           };
         }
       }
+      admittedIdentityRecord = record;
       const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
-      courtTicketNumbers = fromAdmitted.courtTicketNumbers;
     }
   } catch (error) {
     // Preserve unique --authority-ref grammar failures; do not collapse to unreadable.
@@ -1488,6 +1531,7 @@ async function loadResumableRunRecord(
       !Array.isArray(invocationRaw)
     ) {
       const rec = invocationRaw as Record<string, unknown>;
+      invocationIdentityRecord = rec;
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
         model = {
           provider: rec.provider,
@@ -1497,20 +1541,18 @@ async function loadResumableRunRecord(
             : {}),
         };
       }
-      if (
-        correlationId === undefined ||
-        ticketNumber === undefined ||
-        courtTicketNumbers === undefined
-      ) {
+      if (correlationId === undefined || ticketNumber === undefined) {
         const fromInvocation = parsePersistedTicketIdentity(rec);
         if (correlationId === undefined) correlationId = fromInvocation.correlationId;
         if (ticketNumber === undefined) ticketNumber = fromInvocation.ticketNumber;
-        if (courtTicketNumbers === undefined) {
-          courtTicketNumbers = fromInvocation.courtTicketNumbers;
-        }
       }
     }
   } catch (error) {
+    if (
+      error instanceof CliUsageError
+    ) {
+      throw error;
+    }
     if (
       !(
         error instanceof Error &&
@@ -1524,6 +1566,13 @@ async function loadResumableRunRecord(
       );
     }
   }
+  // #871: resolve set after main ticket so principal membership can be checked.
+  // Present-but-damaged / cross-page mismatch fail closed; absent stays legacy.
+  courtTicketNumbers = mergeDurableCourtTicketNumbers({
+    admittedRecord: admittedIdentityRecord,
+    invocationRecord: invocationIdentityRecord,
+    principalTicket: ticketNumber,
+  });
   return {
     run,
     principal,
