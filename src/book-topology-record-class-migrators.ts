@@ -183,8 +183,10 @@ function isHomeRecordClassRelativePath(relPosix: string): boolean {
   if (parts[0] === TICKET_PROVENANCE || parts[0] === SUBMISSION_LEDGER || parts[0] === ATTEMPT_HISTORY) {
     return true;
   }
-  if (parts.length >= 2 && isTicketNumberString(parts[0]!) && parts[1] === TICKET_PROVENANCE) {
-    return true;
+  if (parts.length >= 2 && isTicketNumberString(parts[0]!)) {
+    // Partial-nest era + live ticket-root volume (records.jsonl at ticket dir).
+    if (parts[1] === TICKET_PROVENANCE) return true;
+    if (parts.length === 2 && parts[1] === "records.jsonl") return true;
   }
   return false;
 }
@@ -502,6 +504,22 @@ async function migrateHomePartitionBook(
     }
     await migrateJsonlFileByKind(context, bookKey, writes, nested, TICKET_PROVENANCE, outcomes);
     await copyTicketCompanions(context, bookKey, dirname(nested));
+  }
+
+  // Live topology source already at ticket root (production sitian write path):
+  // <ticket>/records.jsonl + 起居录.md / offered-identities — same authority as home.
+  for (const entry of await listMigrationDirents(backupBook)) {
+    if (!entry.isDirectory() || !isTicketNumberString(entry.name)) continue;
+    const liveRoot = join(backupBook, entry.name);
+    const liveRecords = join(liveRoot, "records.jsonl");
+    try {
+      await stat(liveRecords);
+    } catch (error) {
+      if (isMigrationEnoent(error)) continue;
+      throw error;
+    }
+    await migrateJsonlFileByKind(context, bookKey, writes, liveRecords, TICKET_PROVENANCE, outcomes);
+    await copyTicketCompanions(context, bookKey, liveRoot);
   }
 }
 
