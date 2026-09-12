@@ -9,7 +9,7 @@ export const INSPECTOR_ACCEPTED_TEXT = "察院回执已接受";
 export const INSPECTOR_SOURCE_RUN_FLAG = {
   name: "ak-inspector-source-run",
   definition: {
-    description: "Absolute parent run directory bound for Inspector first mint",
+    description: "察院初铸绑定的父 run 绝对路径",
     type: "string" as const,
   },
 } as const;

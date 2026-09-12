@@ -18,6 +18,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
@@ -103,7 +104,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
-          dispatchedPrompt = String(options.stdin ?? "");
+          dispatchedPrompt = readUserDialogueStdin(String(options.stdin ?? ""));
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(

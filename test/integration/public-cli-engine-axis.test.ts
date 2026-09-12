@@ -71,9 +71,9 @@ function readJudgeInvocation(
 
 function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   assert.equal(
-    argv.some((a) => a === "--engine" || a.startsWith("--ak-engine")),
+    argv.some((a) => a === "--engine" || a === "--ak-engine"),
     false,
-    "engine must not leak as argv flag",
+    "engine name must not leak as argv flag",
   );
 }
 

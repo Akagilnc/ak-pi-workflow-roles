@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
@@ -404,7 +405,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
     assert.equal(resumeArgs!.includes("再裁一次"), false);
-    assert.equal(resumeStdin, "再裁一次");
+    assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
@@ -480,7 +481,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     });
     assert.equal(resumeDispatches, 1, "sealed resume with message must reach the host");
     assert.equal(resumeArgs!.includes("再裁一次"), false);
-    assert.equal(resumeStdin, "再裁一次");
+    assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(

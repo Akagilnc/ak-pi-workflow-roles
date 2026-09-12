@@ -22,8 +22,9 @@ import type {
   RoleTurnResult,
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError, isOfficerReviewSeat } from "../host-contracts.ts";
-import { applyEngineChildEnv } from "../engine-detour.ts";
+import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
+import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
@@ -140,10 +141,18 @@ export function buildPiTurnExtraArgs(
     ...extraPiArgs,
     // Envelope assembly = projectActivationFlags; pi only renders argv pairs.
     ...activationFlagsToPiArgv(projectActivationFlags(request)),
+    ...piEngineModelArgs(request),
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),
   ];
+}
+
+/** Engine name stays on child env; model has no env fallback (#883 / #879). */
+function piEngineModelArgs(request: RoleTurnRequest): string[] {
+  const model = normalizeEngineName(request.engineModel);
+  if (model === undefined) return [];
+  return [`--${ENGINE_MODEL_FLAG_NAME}`, model];
 }
 
 function piUserDialogueBody(request: RoleTurnRequest): string {
@@ -418,7 +427,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
-      const stdin = piUserDialogueBody(turnRequest);
+      const stdin = encodeUserDialogueStdin(piUserDialogueBody(turnRequest));
       // Shared envelope isolates this call's court identity: omitting courtAttemptId
       // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {

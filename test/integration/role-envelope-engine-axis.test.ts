@@ -15,10 +15,15 @@ import {
   AK_ROLE_ENGINE_ENV,
   ENGINE_DETOUR_TOOL_NAME,
 } from "../../src/engine-detour.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
+import type { RoleTurnActivation, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
+import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
+import { buildInspectorTurnRequest } from "../../src/public-cli/inspector-run.ts";
+import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 function mcpRelayToken(prepared: {
@@ -128,6 +133,16 @@ test("shared envelope registers engine detour when request.engine is set", async
           names.includes(ENGINE_DETOUR_TOOL_NAME),
           true,
           `expected ${ENGINE_DETOUR_TOOL_NAME} in ${JSON.stringify(names)}`,
+        );
+        assert.equal(
+          prepared.systemPrompt.materials.some(
+            (material) =>
+              typeof material === "object"
+              && material !== null
+              && (material as { kind?: unknown }).kind === "engine-session-material",
+          ),
+          false,
+          "ordinary judge must not fold engine readingMaterial (transport prompt already has it)",
         );
       } finally {
         await prepared.dispose?.();
@@ -309,5 +324,154 @@ test("#879 concurrent envelopes keep case-dossier identity on HostContext, not p
     else process.env.AK_ROLE_RUN_DIR = previousRun;
     if (previousCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
     else process.env.AK_ROLE_COURT_ATTEMPT = previousCourt;
+  }
+});
+
+const INSPECTOR_PARENT = "/tmp/ak-879-parent-run";
+const OFFICER_PAYLOAD = { status: "completed", report: "officer-peer-body" };
+const ENGINE = "cursor";
+const ENGINE_MODEL = "cursor-grok-4.6-high-fast";
+
+function admittedInspector(instruction: string, runDirectory: string): AdmittedInspectorInvocation {
+  return {
+    role: "inspector",
+    runId: "run-inspector",
+    bookKey: "book",
+    projectRoot: "/tmp/proj",
+    instruction,
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory,
+    principal: fixturePrincipal(join(runDirectory, "session")),
+    admittedRequestPath: join(runDirectory, "admitted-request.json"),
+  };
+}
+
+test("#879 inspector first mint: parent path on activation, payload stays dialogue", () => {
+  const request = buildInspectorTurnRequest(
+    admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, "/tmp/ak-879-inspector-run"),
+    {
+      packageRoot,
+      home: "/tmp/home",
+      agentDir: "/tmp/agent",
+      continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
+    },
+  );
+  assert.equal(request.activation.role, "inspector");
+  assert.equal(
+    request.activation.role === "inspector" ? request.activation.sourceRun : undefined,
+    INSPECTOR_PARENT,
+  );
+  assert.equal(request.continuation.prompt, JSON.stringify(OFFICER_PAYLOAD));
+  assert.equal(request.continuation.prompt.includes(INSPECTOR_PARENT), false);
+  assert.equal(projectActivationFlags(request).get("ak-inspector-source-run"), INSPECTOR_PARENT);
+});
+
+test("#879 inspector parent binding rides readingMaterial, not prompt", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-879-inspector-bind-"));
+  const runDirectory = join(home, "run");
+  await mkdir(join(runDirectory, "session"), { recursive: true });
+  const request = buildInspectorTurnRequest(
+    {
+      ...admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, runDirectory),
+      projectRoot: packageRoot,
+      principal: fixturePrincipal(join(runDirectory, "session")),
+    },
+    {
+      packageRoot,
+      home,
+      agentDir: join(home, "agent"),
+      continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
+    },
+  );
+  const prepared = await prepareRoleEnvelope({
+    request,
+    dependencies: createRoleRuntimeDependencies(packageRoot),
+    socketPath: join(home, "mcp.sock"),
+  });
+  try {
+    assert.equal(prepared.prompt, JSON.stringify(OFFICER_PAYLOAD));
+    const bindings = prepared.systemPrompt.materials.filter(
+      (material) =>
+        typeof material === "object"
+        && material !== null
+        && (material as { kind?: unknown }).kind === "inspector-parent-binding",
+    );
+    assert.equal(bindings.length, 1);
+    assert.deepEqual(bindings[0], {
+      kind: "inspector-parent-binding",
+      sourceRunPath: INSPECTOR_PARENT,
+    });
+  } finally {
+    await prepared.dispose?.();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#879 station-child officer engine material stays off dialogue", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ak-879-officer-engine-"));
+  const notesPath = resolveEngineMaterialPath(packageRoot, ENGINE);
+  const parentRun = await seedCanonicalSourceRun(home, packageRoot);
+  const seats: readonly RoleTurnActivation[] = [
+    { role: "notary", sourceRun: parentRun },
+    { role: "inspector", sourceRun: parentRun },
+    { role: "auditor" },
+  ];
+  try {
+    for (const activation of seats) {
+      const runDirectory = join(home, activation.role, "run");
+      await mkdir(join(runDirectory, "session"), { recursive: true });
+      const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+      if (activation.role === "auditor") {
+        process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+      }
+      let prepared;
+      try {
+        prepared = await prepareRoleEnvelope({
+          request: {
+            principal: fixturePrincipal(join(runDirectory, "session")),
+            activation,
+            methods: [],
+            continuation: { kind: "initial", prompt: JSON.stringify(OFFICER_PAYLOAD) },
+            engine: ENGINE,
+            engineModel: ENGINE_MODEL,
+            cwd: packageRoot,
+            home,
+            agentDir: join(runDirectory, "agent"),
+            runDirectory,
+            stationChild: true,
+          },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath: join(home, `${activation.role}.sock`),
+        });
+      } finally {
+        if (activation.role === "auditor") {
+          if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+          else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
+        }
+      }
+      try {
+        assert.equal(prepared.prompt, JSON.stringify(OFFICER_PAYLOAD));
+        assert.equal(prepared.prompt.includes(ENGINE), false);
+        assert.equal(prepared.prompt.includes(ENGINE_MODEL), false);
+        const engines = prepared.systemPrompt.materials.filter(
+          (material) =>
+            typeof material === "object"
+            && material !== null
+            && (material as { kind?: unknown }).kind === "engine-session-material",
+        );
+        assert.equal(engines.length, 1, `${activation.role} must keep engine material`);
+        assert.deepEqual(engines[0], {
+          kind: "engine-session-material",
+          name: ENGINE,
+          model: ENGINE_MODEL,
+          materialPath: notesPath,
+        });
+      } finally {
+        await prepared.dispose?.();
+      }
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });

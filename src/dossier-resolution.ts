@@ -1,9 +1,12 @@
 /**
  * Unique dossier-resolution seam for 审刑院 (#233).
- * Machine pointers only: cwd + AK_ROLE_RUN_DIR. No latest-run / mtime / global scan.
+ * Machine pointers only: cwd + per-turn HostContext (Pi child env fallback).
+ * No latest-run / mtime / global scan.
  */
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+
+import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 
 export const AUDIT_RUN_DIR_ENV = "AK_ROLE_RUN_DIR" as const;
 export const DOCTOR_CANDIDATE_ENTRY_TYPE = "ak_doctor_audit_candidate" as const;
@@ -33,18 +36,33 @@ export type SubjectIncomplete = {
 };
 export type SubjectResolution = SubjectOk | SubjectIncomplete;
 
-/**
- * Resolve the per-run dossier pointer injected by the public CLI.
- *
- * Absent pointer = bare Pi internal seam (ADR 0052): audit proceeds; the model
- * self-locates the dossier from its own fall-volume position per soul. Public CLI
- * always injects the pointer — only then does the machine validate the path.
- * Concurrent runs stay isolated because a present pointer is per-process.
- */
-export function resolveAuditDossier(env: NodeJS.ProcessEnv = process.env): DossierResolution {
+function isHostContext(value: object): value is HostContext {
+  return "sessionManager" in value;
+}
+
+function dossierPointerFrom(source?: HostContext | NodeJS.ProcessEnv): string | undefined {
+  if (source !== undefined && isHostContext(source)) {
+    return runDirectoryFromHostContext(source);
+  }
+  const env = source ?? process.env;
   const raw = env[AUDIT_RUN_DIR_ENV];
+  return typeof raw === "string" && raw.trim() !== "" ? raw : undefined;
+}
+
+/**
+ * Resolve the per-run dossier pointer.
+ *
+ * ACP/headless: typed HostContext.runDirectory.
+ * Pi child: HostContext projected from env, or env fallback when no context.
+ * Absent pointer = bare Pi internal seam (ADR 0052): audit proceeds; the model
+ * self-locates the dossier from its own fall-volume position per soul.
+ */
+export function resolveAuditDossier(
+  source?: HostContext | NodeJS.ProcessEnv,
+): DossierResolution {
+  const raw = dossierPointerFrom(source);
   // Bare Pi activation seam: no machine gate when the pointer was never injected.
-  if (typeof raw !== "string" || raw.trim() === "") {
+  if (raw === undefined) {
     return { status: "ok" };
   }
   const runDirectory = resolve(raw);

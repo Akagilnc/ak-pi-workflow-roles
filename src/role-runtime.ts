@@ -2,6 +2,7 @@ import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
   ExplicitInternalActivationError,
+  isOfficerReviewSeat,
   runDirectoryFromHostContext,
   type HostContext,
   type HostToolResult,
@@ -39,10 +40,13 @@ import {
 } from "./tool-execution-observation.ts";
 import {
   ENGINE_DETOUR_TOOL_NAME,
+  ENGINE_FLAG_NAME,
+  ENGINE_MODEL_FLAG_NAME,
   resolveEngineModel,
   resolveEngineName,
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
+import { readUserDialogueStdin } from "./user-dialogue-stdin.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -1080,6 +1084,16 @@ export function createRoleRuntimeExtension(
     }
     // Station-child identity (#840): omit navigator attendance. One flag.
     roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
+    roleHost.registerFlag(ENGINE_FLAG_NAME, {
+      description: "本次劳务引擎名",
+      type: "string",
+      default: "",
+    });
+    roleHost.registerFlag(ENGINE_MODEL_FLAG_NAME, {
+      description: "本次劳务引擎模型",
+      type: "string",
+      default: "",
+    });
 
     let admitted = false;
     let selectedRole: string | undefined;
@@ -1177,6 +1191,7 @@ export function createRoleRuntimeExtension(
       settleNavigatorProjection,
     );
     roleHost.on("input", (event) => {
+      const text = readUserDialogueStdin(event.text);
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Reviewer: recover original request; Pi argv may already carry native form.
@@ -1189,14 +1204,19 @@ export function createRoleRuntimeExtension(
         reviewerOriginalRequest =
           roleHost.capabilities?.skillOriginalRequest?.(
             activeReviewerParent.skillBinding.name,
-            event.text,
-          ) ?? event.text;
-        return { action: "continue" as const };
+            text,
+          ) ?? text;
+        return text === event.text
+          ? { action: "continue" as const }
+          : { action: "transform" as const, text };
       }
-      return { action: "continue" as const };
+      return text === event.text
+        ? { action: "continue" as const }
+        : { action: "transform" as const, text };
     });
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
+      const prompt = readUserDialogueStdin(event.prompt);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
@@ -1221,7 +1241,7 @@ export function createRoleRuntimeExtension(
           // output payload (#836 targets the latter): the human's own raw
           // prompt bytes, copied verbatim into Navigator's work context when
           // nothing else has supplied a subject yet.
-          const subject = event.prompt.trim();
+          const subject = prompt.trim();
           if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
@@ -1245,7 +1265,7 @@ export function createRoleRuntimeExtension(
         if (!reviewerExpansionCaptured) {
           if (reviewerOriginalRequest !== undefined) {
             activeReviewerParent.skillBinding.captureExpansion(
-              roleHost.capabilities?.skillExpansion(event.prompt),
+              roleHost.capabilities?.skillExpansion(prompt),
               reviewerOriginalRequest,
             );
           }
@@ -1269,8 +1289,12 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    // #879: engine coordinates ride the existing readingMaterial face, not dialogue.
+    // #879: engine coordinates ride readingMaterial only when station-child
+    // officer dialogue replaced the ordinary transport prompt (no double fold).
     roleHost.on("before_agent_start", () => {
+      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
+      if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
+      if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
       if (engine === undefined || dependencies.packageRoot === undefined) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
