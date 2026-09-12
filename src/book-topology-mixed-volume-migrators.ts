@@ -123,10 +123,12 @@ function inspectWorkerSubmissionGateVolume(text: string): {
   readonly malformedRows: readonly { readonly lineNumber: number; readonly raw: string }[];
 } {
   const malformedRows: { lineNumber: number; raw: string }[] = [];
-  let headerSeen = false;
+  let firstRecord = true;
   let leaf: string | undefined;
 
   for (const row of jsonlRows(text)) {
+    const isHeader = firstRecord;
+    firstRecord = false;
     let parsed: unknown;
     try {
       parsed = JSON.parse(row.raw);
@@ -138,12 +140,13 @@ function inspectWorkerSubmissionGateVolume(text: string): {
       malformedRows.push({ lineNumber: row.lineNumber, raw: row.raw });
       continue;
     }
-    if (!headerSeen) {
-      headerSeen = true;
-      // Sole attribution evidence: Pi session header parentSession.
-      if (parsed.type === "session" && typeof parsed.parentSession === "string") {
-        leaf = runLeafFromPath(parsed.parentSession);
-      }
+    // Sole attribution evidence: the first JSONL record's parentSession.
+    if (
+      isHeader &&
+      parsed.type === "session" &&
+      typeof parsed.parentSession === "string"
+    ) {
+      leaf = runLeafFromPath(parsed.parentSession);
     }
   }
 
