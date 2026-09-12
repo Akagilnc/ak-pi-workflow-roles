@@ -2399,6 +2399,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       { role: "judge", runId: "471-j-model", message: "--model" },
       { role: "judge", runId: "471-j-empty", message: "" },
       { role: "judge", runId: "471-j-ws", message: "  ruling with\nnewline  " },
+      { role: "judge", runId: "471-j-envelope", message: '{"kind":"ak-user-dialogue","body":"ACTUAL"}' },
       { role: "judge", runId: "471-j-dd", message: "--" },
       { role: "coder", runId: "471-c", message: "coder owner note" },
       { role: "fixer", runId: "471-f", message: "fixer owner note" },

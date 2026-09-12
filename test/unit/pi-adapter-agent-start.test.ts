@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { projectNotarySessionBound } from "../../src/notary-role.ts";
+import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
 function piCapture() {
@@ -97,4 +98,35 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
   assert.equal(typeof withBound.systemPrompt, "string");
   assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
   assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
+});
+
+test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {
+  const collision = encodeUserDialogueStdin("ACTUAL");
+  const wrapped = encodeUserDialogueStdin(collision);
+  const { pi, handlers, ctx } = piCapture();
+  const adapter = createPiRoleHostAdapter(pi);
+  let seenInput: string | undefined;
+  let seenPrompt: string | undefined;
+  adapter.host.on("input", (event) => {
+    seenInput = event.text;
+    return { action: "continue" as const };
+  });
+  adapter.host.on("before_agent_start", (event) => {
+    seenPrompt = event.prompt;
+    return {};
+  });
+
+  const inputHandler = handlers.get("input");
+  assert.ok(inputHandler);
+  const inputResult = await inputHandler({ text: wrapped, source: "piped" }, ctx);
+  assert.equal(seenInput, collision);
+  assert.deepEqual(inputResult, { action: "transform", text: collision });
+
+  const startHandler = handlers.get("before_agent_start");
+  assert.ok(startHandler);
+  await startHandler(
+    { prompt: collision, systemPrompt: "BASE", systemPromptOptions: {} },
+    ctx,
+  );
+  assert.equal(seenPrompt, collision);
 });

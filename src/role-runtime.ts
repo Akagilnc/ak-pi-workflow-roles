@@ -45,7 +45,6 @@ import {
   resolveEngineName,
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
-import { readUserDialogueStdin } from "./user-dialogue-stdin.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -1187,7 +1186,7 @@ export function createRoleRuntimeExtension(
       settleNavigatorProjection,
     );
     roleHost.on("input", (event) => {
-      const text = readUserDialogueStdin(event.text);
+      const text = event.text;
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Reviewer: recover original request; Pi argv may already carry native form.
@@ -1212,7 +1211,7 @@ export function createRoleRuntimeExtension(
     });
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
-      const prompt = readUserDialogueStdin(event.prompt);
+      const prompt = event.prompt;
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);

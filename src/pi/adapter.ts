@@ -21,6 +21,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
@@ -198,7 +199,18 @@ export function createPiRoleHostAdapter(
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;
-        pi.on("input", (value, ctx) => handler({ text: value.text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx)));
+        pi.on("input", (value, ctx) => {
+          const text = readUserDialogueStdin(value.text);
+          const result = handler({ text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx));
+          if (result instanceof Promise) {
+            return result.then((settled) => settled?.action === "continue" && text !== value.text
+              ? { action: "transform" as const, text }
+              : settled);
+          }
+          return result?.action === "continue" && text !== value.text
+            ? { action: "transform" as const, text }
+            : result;
+        });
       } else if (registration[0] === "tool_call") {
         const [, handler] = registration;
         pi.on("tool_call", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, input: value.input }, context(ctx)));

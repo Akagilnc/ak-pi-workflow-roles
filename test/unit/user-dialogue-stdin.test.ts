@@ -18,12 +18,6 @@ import {
 } from "../../src/user-dialogue-stdin.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 
-const BODY = JSON.stringify({
-  status: "completed",
-  report: "officer-peer-body",
-  pad: "x".repeat(2048),
-});
-
 test("#879 typed stdin recovers original body after pipe trim", () => {
   const body = "  ruling with\nnewline  ";
   const encoded = encodeUserDialogueStdin(body);
@@ -68,7 +62,7 @@ test("#879 Pi turn argv projects ak-engine-model, not ak-engine", () => {
   assert.equal(args.includes("--ak-engine"), false);
 });
 
-test("#879 Claude print argv keeps -p and omits the user body", () => {
+test("#879 Claude print argv keeps stdin print mode", () => {
   const description = lookupHeadlessHostDescription("claude");
   assert.ok(description && description.protocol === "claude-print");
   const argv = headlessTurnArgs({
@@ -79,16 +73,14 @@ test("#879 Claude print argv keeps -p and omits the user body", () => {
     session: { kind: "new", id: "sid" },
   });
   assert.ok(argv.includes("-p"));
-  assert.equal(argv.includes(BODY), false);
 });
 
-test("#879 Codex exec argv asks stdin instead of embedding the user body", () => {
+test("#879 Codex exec argv selects stdin", () => {
   const argv = codexTurnArgs({
     systemPromptPath: "/tmp/sys.txt",
     outputSchemaPath: "/tmp/out.json",
     mcpServers: [],
     session: { kind: "new" },
   });
-  assert.equal(argv.includes(BODY), false);
   assert.deepEqual(argv.slice(-2), ["--", "-"]);
 });
