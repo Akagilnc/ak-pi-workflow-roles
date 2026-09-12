@@ -22,12 +22,17 @@ import {
   type MigrationDisposition,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
+import {
+  findPlacedMigratingRun,
+  isFlatRunsRelative,
+  isTicketNumberString,
+  listBackupRunLeaves,
+  uniqueRunLeafExistsInBook,
+} from "./book-topology-migration-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
 } from "./role-run-relocation.ts";
-import { readRunTicketNumber } from "./run-ticket-number.ts";
 
 const AUDITOR_ROLES_PARTITION = "auditor-roles";
 const ISSUES_PARTITION = "issues";
@@ -39,8 +44,6 @@ const MANUAL_ARCHIVES_PARTITION = "manual-archives";
 
 const TICKET_NUMBER_NAME = /^[1-9][0-9]*$/;
 const RUN_LEAF = /^([A-Za-z0-9][A-Za-z0-9._-]*)@([A-Za-z][A-Za-z0-9_-]*)$/;
-/** Relative path under a books root: `<book>/runs/<leaf>/...`. */
-const RUN_UNDER_BOOKS = /^([^/]+)\/runs\/([^/]+)(?:\/|$)/;
 
 const DEPRECATED_KIND_DIRECTORIES = [
   "submission-candidate",
@@ -72,6 +75,7 @@ type RunLeaf = { readonly runId: string; readonly role: string };
 type ParentRun = {
   readonly bookKey: string;
   readonly leafName: string;
+  readonly sourceRelative: string;
   readonly runId: string;
   readonly role: string;
 };
@@ -203,14 +207,31 @@ function parseParentRunBoundToMigration(
     return undefined;
   }
 
-  const match = RUN_UNDER_BOOKS.exec(rel);
-  if (match === null) return undefined;
-  const bookKey = match[1];
-  const leafName = match[2];
-  if (bookKey === undefined || leafName === undefined) return undefined;
+  const parts = rel.split("/").filter((part) => part.length > 0);
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 1 || runsIndex + 1 >= parts.length) return undefined;
+  const leafName = parts[runsIndex + 1];
+  const before = parts.slice(0, runsIndex);
+  if (leafName === undefined) return undefined;
+  let bookKey: string | undefined;
+  if (before.length === 1) {
+    bookKey = before[0];
+  } else if (
+    before.length === 2
+    && (before[1] === "unbound" || (before[1] !== undefined && isTicketNumberString(before[1])))
+  ) {
+    bookKey = before[0];
+  }
+  if (bookKey === undefined) return undefined;
   const leaf = parseRunLeaf(leafName);
   if (leaf === undefined) return undefined;
-  return { bookKey, leafName, runId: leaf.runId, role: leaf.role };
+  return {
+    bookKey,
+    leafName,
+    sourceRelative: parts.slice(1, runsIndex + 2).join("/"),
+    runId: leaf.runId,
+    role: leaf.role,
+  };
 }
 
 async function readJsonlParentSession(path: string): Promise<string | undefined> {
@@ -242,9 +263,11 @@ async function backupParentRunExists(
   backupBooksDirectory: string,
   parent: ParentRun,
 ): Promise<boolean> {
-  return directoryExists(
-    join(backupBooksDirectory, parent.bookKey, "runs", parent.leafName),
-  );
+  const backupBook = join(backupBooksDirectory, parent.bookKey);
+  if (await directoryExists(join(backupBook, parent.sourceRelative))) return true;
+  // Unique-leaf fallback only for the cut historical flat alias, never missing nested paths.
+  if (!isFlatRunsRelative(parent.sourceRelative, parent.leafName)) return false;
+  return uniqueRunLeafExistsInBook(backupBook, parent.leafName);
 }
 
 /**
@@ -311,24 +334,6 @@ async function findTrueVolumeParent(
   return parent;
 }
 
-async function findPlacedRunDirectory(
-  booksDirectory: string,
-  bookKey: string,
-  leafName: string,
-): Promise<string | undefined> {
-  const matches: string[] = [];
-  for (const entry of await listDirents(join(booksDirectory, bookKey))) {
-    if (!entry.isDirectory()) continue;
-    const candidate = join(booksDirectory, bookKey, entry.name, "runs", leafName);
-    if (await directoryExists(candidate)) matches.push(candidate);
-  }
-  if (matches.length === 0) return undefined;
-  const ticketMatch = matches.find(
-    (path) => basename(dirname(dirname(path))) !== "unbound",
-  );
-  return ticketMatch ?? matches[0];
-}
-
 /**
  * Full historical→final run map for relocation. Covers every run already placed
  * under books/ (T9 ticket/unbound nests) so cross-run parent pointers rewrite to
@@ -374,36 +379,16 @@ function historicalRunDirectoriesFor(
 async function resolveDestinationRun(
   context: BookTopologyMigrationContext,
   parent: ParentRun,
-): Promise<{ readonly runDirectory: string; readonly disposition: MigrationDisposition }> {
-  const placed = await findPlacedRunDirectory(
+): Promise<
+  | { readonly runDirectory: string; readonly disposition: MigrationDisposition }
+  | undefined
+> {
+  return findPlacedMigratingRun(
     context.booksDirectory,
     parent.bookKey,
     parent.leafName,
+    parent.sourceRelative,
   );
-  if (placed !== undefined) {
-    const subject = basename(dirname(dirname(placed)));
-    return {
-      runDirectory: placed,
-      disposition: subject === "unbound" ? "unbound" : "placed",
-    };
-  }
-  const backupRun = join(
-    context.backupBooksDirectory,
-    parent.bookKey,
-    "runs",
-    parent.leafName,
-  );
-  const ticketNumber = await readRunTicketNumber(backupRun);
-  const runDirectory = roleRunPlacement(dirname(context.booksDirectory), {
-    bookKey: parent.bookKey,
-    subject: ticketNumber === undefined ? { unbound: true } : { ticketNumber },
-    runId: parent.runId,
-    role: parent.role,
-  }).runDirectory;
-  return {
-    runDirectory,
-    disposition: ticketNumber === undefined ? "unbound" : "placed",
-  };
 }
 
 function rewritePathIntoDestination(
@@ -570,13 +555,25 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
           continue;
         }
         const destination = await resolveDestinationRun(context, parent);
-        const destNest = join(destination.runDirectory, "session", AUDITOR_ROLES_PARTITION);
         const historicalVolume = join(
           booksDirectory,
           bookKey,
           AUDITOR_ROLES_PARTITION,
           entry.name,
         );
+        if (destination === undefined) {
+          const destNest = join(
+            booksDirectory,
+            bookKey,
+            "unbound",
+            AUDITOR_ROLES_PARTITION,
+            entry.name,
+          );
+          await copyVolumeIntoNest(sourcePath, historicalVolume, destNest);
+          outcomes.push({ disposition: "unbound", source });
+          continue;
+        }
+        const destNest = join(destination.runDirectory, "session", AUDITOR_ROLES_PARTITION);
         await copyVolumeIntoNest(sourcePath, historicalVolume, destNest);
 
         const historicalParents = historicalRunDirectoriesFor(
@@ -702,16 +699,19 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
     const { backupBooksDirectory, booksDirectory } = context;
 
     for (const bookKey of await listBookKeys(backupBooksDirectory)) {
-      // Population 1: flat runs/ (T9 places these under ticket/unbound).
-      const runsRoot = join(backupBooksDirectory, bookKey, "runs");
-      for (const run of await listDirents(runsRoot)) {
-        if (!run.isDirectory()) continue;
-        const runDirectory = join(runsRoot, run.name);
-        const placed = await findPlacedRunDirectory(booksDirectory, bookKey, run.name);
+      // Population 1: every retained run T9 inventories (flat, ticket, unbound).
+      for (const leaf of await listBackupRunLeaves(join(backupBooksDirectory, bookKey))) {
+        if (!leaf.isDirectory) continue;
+        const placed = await findPlacedMigratingRun(
+          booksDirectory,
+          bookKey,
+          leaf.leafName,
+          leaf.relativePath,
+        );
         await discardDeprecatedPagesFromRunSource({
           backupBooksDirectory,
-          sourceRunDirectory: runDirectory,
-          destinationRunDirectory: placed,
+          sourceRunDirectory: leaf.sourcePath,
+          destinationRunDirectory: placed?.runDirectory,
           outcomes,
         });
       }

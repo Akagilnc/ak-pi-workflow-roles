@@ -14,12 +14,14 @@ import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from 
 import { dirname, join, relative, sep } from "node:path";
 
 import {
-  destinationRunDirectory,
+  bookHistoricalRoots,
   findBookRunDirectory,
+  findPlacedMigratingRun,
+  findUniquePrincipalPlacedRun,
   isTicketNumberString,
-  resolveMigratingRunTicket,
   runCoordsFromSessionParent,
   runIdFromSubject,
+  runRefFromBoundPath,
   ticketNumberFromSubject,
 } from "./book-topology-migration-placement.ts";
 import {
@@ -273,36 +275,63 @@ async function resolveRunDestination(
   | { readonly kind: "run"; readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | { readonly kind: "unbound-key"; readonly key: string }
 > {
-  const destBook = join(context.booksDirectory, bookKey);
-  const existingDest = await findBookRunDirectory(destBook, runId);
-  if (existingDest !== undefined) {
-    const underUnbound = existingDest.runDirectory.includes(`${sep}unbound${sep}runs${sep}`);
+  const hasSessionParent =
+    typeof hints.sessionParent === "string" && hints.sessionParent.length > 0;
+  const bound = hasSessionParent
+    ? runRefFromBoundPath(
+      hints.sessionParent,
+      bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+    )
+    : undefined;
+  // Path present but not bound to this book: never steal role or unique-run-guess.
+  if (hasSessionParent && bound === undefined) {
+    return { kind: "unbound-key", key: stableKey(runId) };
+  }
+  if (bound !== undefined) {
+    const existingDest = await findPlacedMigratingRun(
+      context.booksDirectory,
+      bookKey,
+      bound.leaf,
+      bound.sourceRelative,
+    );
+    if (existingDest !== undefined) {
+      return {
+        kind: "run",
+        runDirectory: existingDest.runDirectory,
+        disposition: existingDest.disposition,
+      };
+    }
+    return { kind: "unbound-key", key: stableKey(bound.leaf) };
+  }
+  if (hints.role !== undefined && hints.role.length > 0) {
+    const existingDest = await findPlacedMigratingRun(
+      context.booksDirectory,
+      bookKey,
+      `${runId}@${hints.role}`,
+    );
+    if (existingDest !== undefined) {
+      return {
+        kind: "run",
+        runDirectory: existingDest.runDirectory,
+        disposition: existingDest.disposition,
+      };
+    }
+    return { kind: "unbound-key", key: stableKey(`${runId}@${hints.role}`) };
+  }
+  // No path, no role: follow only a uniquely matching principal in this book.
+  const uniquePrincipal = await findUniquePrincipalPlacedRun(
+    context.booksDirectory,
+    bookKey,
+    runId,
+  );
+  if (uniquePrincipal !== undefined) {
     return {
       kind: "run",
-      runDirectory: existingDest.runDirectory,
-      disposition: underUnbound ? "unbound" : "placed",
+      runDirectory: uniquePrincipal.runDirectory,
+      disposition: uniquePrincipal.disposition,
     };
   }
-
-  const backupRun = await findBookRunDirectory(join(context.backupBooksDirectory, bookKey), runId);
-  if (backupRun !== undefined) {
-    const ticketNumber = (await resolveMigratingRunTicket(backupRun.runDirectory)).ticketNumber;
-    return {
-      kind: "run",
-      runDirectory: destinationRunDirectory(
-        context.booksDirectory,
-        bookKey,
-        ticketNumber,
-        runId,
-        backupRun.role,
-      ),
-      disposition: ticketNumber !== undefined ? "placed" : "unbound",
-    };
-  }
-
-  const role = hints.role ?? runCoordsFromSessionParent(hints.sessionParent)?.role;
-  const key = role !== undefined ? stableKey(`${runId}@${role}`) : stableKey(runId);
-  return { kind: "unbound-key", key };
+  return { kind: "unbound-key", key: stableKey(runId) };
 }
 
 async function placeTicketProvenanceLine(
@@ -353,7 +382,7 @@ async function placeRunOwnedLine(
     return { disposition: "unbound", source };
   }
 
-  const role = roleFromPayload(value.payload) ?? fromParent?.role;
+  const role = roleFromPayload(value.payload);
   const target = await resolveRunDestination(context, bookKey, runId, {
     ...(role === undefined ? {} : { role }),
     ...(value.sessionParent === undefined ? {} : { sessionParent: value.sessionParent }),

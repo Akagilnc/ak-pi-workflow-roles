@@ -4,8 +4,9 @@
  * Worktree basename “所含票号” is the single #852/#865/#866 rule.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { pathContainedIn } from "./activation-ledger-topology.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 
@@ -55,7 +56,7 @@ export function ticketNumberFromWorktreeBasename(
 async function readProjectRootFromRun(
   runDirectory: string,
 ): Promise<{ readonly projectRoot: string; readonly sourcePage: string } | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
+  for (const page of ["admitted-request.json", "invocation.json", "run-state.json"] as const) {
     const path = join(runDirectory, page);
     try {
       const raw: unknown = JSON.parse(await readFile(path, "utf8"));
@@ -72,10 +73,13 @@ async function readProjectRootFromRun(
   return undefined;
 }
 
-export type MigratingRunTicketDerivation = {
-  readonly method: "board" | "project-root-basename";
-  readonly source: string;
-};
+export type MigratingRunTicketDerivation =
+  | { readonly method: "board"; readonly source: string }
+  | {
+      readonly method: "project-root-basename";
+      readonly source: string;
+      readonly sourcePage: string;
+    };
 
 /**
  * Ticket binding for a retained run directory (#852 / #865 / #866):
@@ -101,26 +105,191 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
   if (ticketNumber === undefined) return { ticketNumber: undefined, derivation: undefined };
   return {
     ticketNumber,
-    derivation: { method: "project-root-basename", source: project.projectRoot },
+    derivation: {
+      method: "project-root-basename",
+      source: project.projectRoot,
+      sourcePage: project.sourcePage,
+    },
   };
 }
 
-/** Locate `runId@role` under bookDir/runs, bookDir/<subject>/runs, bookDir/unbound/runs. */
-export async function findBookRunDirectory(
+export function isUnboundRunDirectory(runDirectory: string): boolean {
+  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
+}
+
+export function bookHistoricalRoots(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  bookKey: string,
+): readonly string[] {
+  return [join(booksDirectory, bookKey), join(backupBooksDirectory, bookKey)];
+}
+
+export type BoundRunRef = {
+  readonly leaf: string;
+  readonly sourceRelative: string;
+};
+
+function runLeafFromRelative(path: string): string | undefined {
+  const segments = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0);
+  const runsIndex = segments.lastIndexOf("runs");
+  if (runsIndex < 0 || runsIndex + 1 >= segments.length) return undefined;
+  const leaf = segments[runsIndex + 1];
+  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
+  return leaf;
+}
+
+/** Bind a path to this book's historical roots, then take complete leaf + source-relative run dir. */
+export function runRefFromBoundPath(
+  path: string,
+  bookRoots: readonly string[],
+): BoundRunRef | undefined {
+  for (const root of bookRoots) {
+    const rootResolved = resolve(root);
+    const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
+    if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
+    const rel = relative(rootResolved, candidate).split(sep).join("/");
+    const leaf = runLeafFromRelative(rel);
+    if (leaf === undefined) continue;
+    const parts = rel.split("/").filter((part) => part.length > 0);
+    const runsIndex = parts.indexOf("runs");
+    if (runsIndex < 0 || runsIndex + 1 >= parts.length) continue;
+    return { leaf, sourceRelative: parts.slice(0, runsIndex + 2).join("/") };
+  }
+  return undefined;
+}
+
+export type BackupRunLeaf = {
+  readonly relativePath: string;
+  readonly sourcePath: string;
+  readonly leafName: string;
+  readonly isDirectory: boolean;
+  readonly layout: "flat" | "ticket" | "unbound";
+};
+
+async function listRunLeafEntries(
+  runsDirectory: string,
+): Promise<readonly { readonly name: string; readonly isDirectory: boolean }[]> {
+  try {
+    const entries = await readdir(runsDirectory, { withFileTypes: true });
+    return entries
+      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+/**
+ * Every retained run tree under one backup book: legacy flat `runs/`,
+ * already-canonical `<ticket>/runs/`, and `unbound/runs/`.
+ */
+export async function listBackupRunLeaves(
+  backupBookDirectory: string,
+): Promise<readonly BackupRunLeaf[]> {
+  const leaves: BackupRunLeaf[] = [];
+  const collect = async (
+    relativeDir: string,
+    layout: BackupRunLeaf["layout"],
+  ): Promise<void> => {
+    const runsDirectory = join(backupBookDirectory, ...relativeDir.split("/"));
+    for (const entry of await listRunLeafEntries(runsDirectory)) {
+      leaves.push({
+        relativePath: `${relativeDir}/${entry.name}`,
+        sourcePath: join(runsDirectory, entry.name),
+        leafName: entry.name,
+        isDirectory: entry.isDirectory,
+        layout,
+      });
+    }
+  };
+  await collect("runs", "flat");
+  await collect("unbound/runs", "unbound");
+  let subjects: readonly { name: string; isDirectory: boolean }[] = [];
+  try {
+    subjects = (await readdir(backupBookDirectory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({ name: entry.name, isDirectory: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "ENOENT") throw error;
+  }
+  for (const subject of subjects) {
+    if (!isTicketNumberString(subject.name)) continue;
+    await collect(`${subject.name}/runs`, "ticket");
+  }
+  return leaves;
+}
+
+async function listExactPlacedRunPaths(
   bookDir: string,
-  runId: string,
-): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
-  if (runId.trim() === "") return undefined;
+  leafName: string,
+): Promise<string[]> {
+  const matches: string[] = [];
   const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
     if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
     throw error;
   });
-  const subjectDirs = [
-    "",
-    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
+  const runsDirs = [
+    join(bookDir, "runs"),
+    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
   ];
-  for (const subject of subjectDirs) {
-    const runsDir = subject === "" ? join(bookDir, "runs") : join(bookDir, subject, "runs");
+  for (const runsDir of runsDirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(runsDir);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "ENOENT") continue;
+      throw error;
+    }
+    if (entries.includes(leafName)) matches.push(join(runsDir, leafName));
+  }
+  return matches;
+}
+
+function destPathFromSourceRelative(
+  booksDirectory: string,
+  bookKey: string,
+  sourceRelative: string,
+): string | undefined {
+  const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
+  const runsIndex = parts.indexOf("runs");
+  if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
+  const leaf = parts[runsIndex + 1];
+  const before = parts.slice(0, runsIndex);
+  if (leaf === undefined || before.length !== 1) return undefined;
+  const subject = before[0];
+  if (subject === undefined) return undefined;
+  if (subject !== "unbound" && !isTicketNumberString(subject)) return undefined;
+  return join(booksDirectory, bookKey, subject, "runs", leaf);
+}
+
+function placedRunFromPath(runDirectory: string): {
+  readonly runDirectory: string;
+  readonly disposition: "placed" | "unbound";
+} {
+  return {
+    runDirectory,
+    disposition: isUnboundRunDirectory(runDirectory) ? "unbound" : "placed",
+  };
+}
+
+async function listPrincipalPlacedRunPaths(
+  bookDir: string,
+  runId: string,
+): Promise<string[]> {
+  const matches = [...await listExactPlacedRunPaths(bookDir, runId)];
+  const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
+    throw error;
+  });
+  const runsDirs = [
+    join(bookDir, "runs"),
+    ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
+  ];
+  const prefix = `${runId}@`;
+  for (const runsDir of runsDirs) {
     let entries: string[];
     try {
       entries = await readdir(runsDir);
@@ -129,13 +298,102 @@ export async function findBookRunDirectory(
       throw error;
     }
     for (const entry of entries) {
-      if (!entry.startsWith(`${runId}@`)) continue;
-      const role = entry.slice(runId.length + 1);
-      if (role.length === 0 || role.includes("@")) continue;
-      return { runDirectory: join(runsDir, entry), role };
+      if (!entry.startsWith(prefix) || entry.slice(runId.length + 1).includes("@")) continue;
+      const path = join(runsDir, entry);
+      if (!matches.includes(path)) matches.push(path);
     }
   }
-  return undefined;
+  return matches;
+}
+
+function uniquePlacedRun(leafName: string, matches: readonly string[]): {
+  readonly runDirectory: string;
+  readonly disposition: "placed" | "unbound";
+} | undefined {
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return placedRunFromPath(matches[0]!);
+  throw new Error(
+    `book topology migration cannot uniquely place run ${leafName}: ${matches.join(", ")}`,
+  );
+}
+
+/** Locate an exact run leaf under bookDir/runs, bookDir/<subject>/runs, bookDir/unbound/runs. */
+export async function findBookRunDirectory(
+  bookDir: string,
+  runId: string,
+  role?: string,
+): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
+  if (runId.trim() === "") return undefined;
+  const leafName = role !== undefined && role.length > 0 ? `${runId}@${role}` : runId;
+  const matches = role !== undefined && role.length > 0
+    ? await listExactPlacedRunPaths(bookDir, leafName)
+    : await listPrincipalPlacedRunPaths(bookDir, runId);
+  const unique = uniquePlacedRun(leafName, matches);
+  if (unique === undefined) return undefined;
+  const foundRole = unique.runDirectory.split(/[/\\]/).pop()?.split("@")[1] ?? role ?? "";
+  return { runDirectory: unique.runDirectory, role: foundRole };
+}
+
+/** Historical flat `runs/<leaf>` alias under a book root (not ticket/unbound). */
+export function isFlatRunsRelative(sourceRelative: string, leafName: string): boolean {
+  const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
+  return parts.length === 2 && parts[0] === "runs" && parts[1] === leafName;
+}
+
+/** Destination run already placed by T9. Follow complete leaf; bind source path when given. */
+export async function findPlacedMigratingRun(
+  booksDirectory: string,
+  bookKey: string,
+  leafName: string,
+  sourceRelative?: string,
+): Promise<
+  | { readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
+  | undefined
+> {
+  if (leafName.trim() === "") return undefined;
+  const bookDir = join(booksDirectory, bookKey);
+  const matches = await listExactPlacedRunPaths(bookDir, leafName);
+  if (sourceRelative !== undefined && sourceRelative.length > 0) {
+    const preferred = destPathFromSourceRelative(booksDirectory, bookKey, sourceRelative);
+    if (preferred !== undefined) {
+      const hit = matches.find((path) => path === preferred);
+      return hit === undefined ? undefined : placedRunFromPath(hit);
+    }
+    // Historical flat `runs/<leaf>` alias after T9 nested the unique complete leaf.
+    if (isFlatRunsRelative(sourceRelative, leafName)) {
+      return uniquePlacedRun(leafName, matches);
+    }
+    return undefined;
+  }
+  return uniquePlacedRun(leafName, matches);
+}
+
+/** True when this book retains exactly one directory named leafName across layouts. */
+export async function uniqueRunLeafExistsInBook(
+  bookDir: string,
+  leafName: string,
+): Promise<boolean> {
+  if (leafName.trim() === "") return false;
+  const matches = await listExactPlacedRunPaths(bookDir, leafName);
+  return matches.length === 1;
+}
+
+/**
+ * No path / role evidence: follow runId only when exactly one `runId@role`
+ * (or bare runId) exists across this book's layouts. Zero or multi → undefined.
+ */
+export async function findUniquePrincipalPlacedRun(
+  booksDirectory: string,
+  bookKey: string,
+  runId: string,
+): Promise<
+  | { readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
+  | undefined
+> {
+  if (runId.trim() === "") return undefined;
+  const matches = await listPrincipalPlacedRunPaths(join(booksDirectory, bookKey), runId);
+  if (matches.length !== 1) return undefined;
+  return placedRunFromPath(matches[0]!);
 }
 
 /**
