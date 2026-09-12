@@ -26,6 +26,7 @@ import {
   findPlacedMigratingRun,
   isTicketNumberString,
   listBackupRunLeaves,
+  uniqueRunLeafExistsInBook,
 } from "./book-topology-migration-placement.ts";
 import {
   rewriteRoleRunDurablePages,
@@ -261,9 +262,10 @@ async function backupParentRunExists(
   backupBooksDirectory: string,
   parent: ParentRun,
 ): Promise<boolean> {
-  return directoryExists(
-    join(backupBooksDirectory, parent.bookKey, parent.sourceRelative),
-  );
+  const backupBook = join(backupBooksDirectory, parent.bookKey);
+  if (await directoryExists(join(backupBook, parent.sourceRelative))) return true;
+  // Old flat `runs/<leaf>` alias while the unique complete leaf already nests elsewhere.
+  return uniqueRunLeafExistsInBook(backupBook, parent.leafName);
 }
 
 /**

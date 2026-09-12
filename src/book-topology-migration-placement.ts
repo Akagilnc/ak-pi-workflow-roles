@@ -334,6 +334,11 @@ export async function findBookRunDirectory(
   return { runDirectory: unique.runDirectory, role: foundRole };
 }
 
+function isFlatRunsRelative(sourceRelative: string, leafName: string): boolean {
+  const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
+  return parts.length === 2 && parts[0] === "runs" && parts[1] === leafName;
+}
+
 /** Destination run already placed by T9. Follow complete leaf; bind source path when given. */
 export async function findPlacedMigratingRun(
   booksDirectory: string,
@@ -345,15 +350,49 @@ export async function findPlacedMigratingRun(
   | undefined
 > {
   if (leafName.trim() === "") return undefined;
-  const matches = await listExactPlacedRunPaths(join(booksDirectory, bookKey), leafName);
+  const bookDir = join(booksDirectory, bookKey);
+  const matches = await listExactPlacedRunPaths(bookDir, leafName);
   if (sourceRelative !== undefined && sourceRelative.length > 0) {
     const preferred = destPathFromSourceRelative(booksDirectory, bookKey, sourceRelative);
     if (preferred !== undefined) {
       const hit = matches.find((path) => path === preferred);
       return hit === undefined ? undefined : placedRunFromPath(hit);
     }
+    // Historical flat `runs/<leaf>` alias after T9 nested the unique complete leaf.
+    if (isFlatRunsRelative(sourceRelative, leafName)) {
+      return uniquePlacedRun(leafName, matches);
+    }
+    return undefined;
   }
   return uniquePlacedRun(leafName, matches);
+}
+
+/** True when this book retains exactly one directory named leafName across layouts. */
+export async function uniqueRunLeafExistsInBook(
+  bookDir: string,
+  leafName: string,
+): Promise<boolean> {
+  if (leafName.trim() === "") return false;
+  const matches = await listExactPlacedRunPaths(bookDir, leafName);
+  return matches.length === 1;
+}
+
+/**
+ * No path / role evidence: follow runId only when exactly one `runId@role`
+ * (or bare runId) exists across this book's layouts. Zero or multi → undefined.
+ */
+export async function findUniquePrincipalPlacedRun(
+  booksDirectory: string,
+  bookKey: string,
+  runId: string,
+): Promise<
+  | { readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
+  | undefined
+> {
+  if (runId.trim() === "") return undefined;
+  const matches = await listPrincipalPlacedRunPaths(join(booksDirectory, bookKey), runId);
+  if (matches.length !== 1) return undefined;
+  return placedRunFromPath(matches[0]!);
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   bookHistoricalRoots,
   findBookRunDirectory,
   findPlacedMigratingRun,
+  findUniquePrincipalPlacedRun,
   isTicketNumberString,
   runCoordsFromSessionParent,
   runIdFromSubject,
@@ -274,31 +275,63 @@ async function resolveRunDestination(
   | { readonly kind: "run"; readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | { readonly kind: "unbound-key"; readonly key: string }
 > {
-  const bound = typeof hints.sessionParent === "string"
+  const hasSessionParent =
+    typeof hints.sessionParent === "string" && hints.sessionParent.length > 0;
+  const bound = hasSessionParent
     ? runRefFromBoundPath(
       hints.sessionParent,
       bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
     )
     : undefined;
-  const leafName = bound?.leaf
-    ?? (hints.role !== undefined && hints.role.length > 0 ? `${runId}@${hints.role}` : runId);
-  const existingDest = await findPlacedMigratingRun(
+  // Path present but not bound to this book: never steal role or unique-run-guess.
+  if (hasSessionParent && bound === undefined) {
+    return { kind: "unbound-key", key: stableKey(runId) };
+  }
+  if (bound !== undefined) {
+    const existingDest = await findPlacedMigratingRun(
+      context.booksDirectory,
+      bookKey,
+      bound.leaf,
+      bound.sourceRelative,
+    );
+    if (existingDest !== undefined) {
+      return {
+        kind: "run",
+        runDirectory: existingDest.runDirectory,
+        disposition: existingDest.disposition,
+      };
+    }
+    return { kind: "unbound-key", key: stableKey(bound.leaf) };
+  }
+  if (hints.role !== undefined && hints.role.length > 0) {
+    const existingDest = await findPlacedMigratingRun(
+      context.booksDirectory,
+      bookKey,
+      `${runId}@${hints.role}`,
+    );
+    if (existingDest !== undefined) {
+      return {
+        kind: "run",
+        runDirectory: existingDest.runDirectory,
+        disposition: existingDest.disposition,
+      };
+    }
+    return { kind: "unbound-key", key: stableKey(`${runId}@${hints.role}`) };
+  }
+  // No path, no role: follow only a uniquely matching principal in this book.
+  const uniquePrincipal = await findUniquePrincipalPlacedRun(
     context.booksDirectory,
     bookKey,
-    leafName,
-    bound?.sourceRelative,
+    runId,
   );
-  if (existingDest !== undefined) {
+  if (uniquePrincipal !== undefined) {
     return {
       kind: "run",
-      runDirectory: existingDest.runDirectory,
-      disposition: existingDest.disposition,
+      runDirectory: uniquePrincipal.runDirectory,
+      disposition: uniquePrincipal.disposition,
     };
   }
-
-  const role = hints.role ?? runCoordsFromSessionParent(hints.sessionParent)?.role;
-  const key = role !== undefined ? stableKey(`${runId}@${role}`) : stableKey(runId);
-  return { kind: "unbound-key", key };
+  return { kind: "unbound-key", key: stableKey(runId) };
 }
 
 async function placeTicketProvenanceLine(
