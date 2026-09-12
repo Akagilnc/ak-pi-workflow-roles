@@ -10,7 +10,7 @@
  * 冻结 + `buildInstructionTransportPrompt` 附件路径投影（#879：对话 instruction
  * 保持父腿 payload 原文；起居录作独立附件面，不新造 RoleTurnRequest.materials）。
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,4 +93,35 @@ export async function deliverCaseDossierAsAttachment(input: {
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }
+}
+
+/** Typed reading-material face for a frozen station-child 0081 attachment. */
+export type CaseDossierReadingMaterial = {
+  readonly kind: "case-dossier-pointer";
+  readonly frozenPath: string;
+  readonly section: string;
+};
+
+/**
+ * Load a previously frozen case-dossier attachment as reading material
+ * (existing agent-start / systemPrompt.materials fold — not dialogue prompt,
+ * not RoleTurnRequest.materials). Undefined when the run has no such freeze.
+ */
+export async function loadCaseDossierReadingMaterial(
+  runDirectory: string,
+): Promise<CaseDossierReadingMaterial | undefined> {
+  const root = join(runDirectory, "attachments", CASE_DOSSIER_ATTACH_KEY);
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const leaf = names.find((name) => name.includes(CASE_DOSSIER_ATTACH_FILE));
+  if (leaf === undefined) return undefined;
+  const frozenPath = join(root, leaf);
+  const section = await readFile(frozenPath, "utf8");
+  if (section.trim() === "") return undefined;
+  return { kind: "case-dossier-pointer", frozenPath, section };
 }

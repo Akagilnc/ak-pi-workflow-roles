@@ -830,14 +830,13 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#879 station-child officer: case dossier via attach transport, peer body intact", async () => {
+test("#879 station-child officer: case dossier on readingMaterial face; dialogue body = peer only", async () => {
   await withTempRoot("ak-officer-dossier-attach-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
 
-    // Seed ticket provenance volume so 0081 has a real pointer target.
     const { resolveTicketProvenanceVolume } = await import("../../src/ticket-provenance.ts");
     const volume = resolveTicketProvenanceVolume(879, project, home);
     await mkdir(join(volume.humanViewFile, ".."), { recursive: true });
@@ -857,7 +856,6 @@ test("#879 station-child officer: case dossier via attach transport, peer body i
     });
     const host = {
       async executeTurn(request: RoleTurnRequest) {
-        // Real send boundary: host sees the projected continuation.
         prompts.push(request.continuation.prompt);
         runDirs.push(request.runDirectory);
         assert.equal("materials" in request, false);
@@ -886,45 +884,35 @@ test("#879 station-child officer: case dossier via attach transport, peer body i
     });
     assert.equal(projected.result.status, "pass");
     assert.ok(prompts.length >= 1);
-    const sent = prompts[prompts.length - 1]!;
+    const dialogue = prompts[prompts.length - 1]!;
 
-    // Peer dialogue instruction is the parent payload (prefix); attach transport
-    // rides after via existing buildInstructionTransportPrompt shape.
-    assert.equal(
-      sent.startsWith(peerBody),
-      true,
-      "send-boundary prompt must keep parent payload as dialogue instruction prefix",
-    );
+    // Dialogue body is peer payload only — no attachment listing splice.
+    assert.equal(dialogue, peerBody, "continuation.prompt must equal parent payload only");
 
-    // Frozen attachment under run/attachments/case-dossier/ + path projected to seat.
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");
-    const { readdir, access } = await import("node:fs/promises");
-    const attachRoot = join(officerRun!, "attachments");
-    let foundPath: string | undefined;
-    const top = await readdir(attachRoot);
-    for (const name of top) {
-      if (!name.includes("case-dossier")) continue;
-      const files = await readdir(join(attachRoot, name));
-      for (const file of files) {
-        if (!file.includes("case-dossier-pointer")) continue;
-        foundPath = join(attachRoot, name, file);
-        const text = await readFile(foundPath, "utf8");
-        assert.equal(text.includes(volume.humanViewFile), true);
-        assert.equal(text.includes(volume.recordFile), true);
-      }
-    }
-    assert.ok(foundPath, "0081 case dossier must hang as run attachment");
-    // Send boundary must project the frozen path (existing attach transport).
-    assert.equal(
-      sent.includes(foundPath!),
-      true,
-      "send-boundary prompt must project frozen case-dossier path to the seat",
-    );
-    // Dossier volume paths live in the attachment file, not spliced as body rewrite
-    // of the peer payload prefix.
-    assert.equal(sent.startsWith(peerBody), true);
-    // No leftover run-local staging copy.
+
+    // Non-body face: post-admission freeze + loadCaseDossierReadingMaterial
+    // (same function role-envelope / notary before_agent_start consume).
+    const {
+      loadCaseDossierReadingMaterial,
+    } = await import("../../src/public-cli/case-dossier-delivery.ts");
+    const material = await loadCaseDossierReadingMaterial(officerRun!);
+    assert.ok(material !== undefined, "0081 reading material must load from freeze");
+    assert.equal(material!.kind, "case-dossier-pointer");
+    assert.equal(material!.section.includes(volume.humanViewFile), true);
+    assert.equal(material!.section.includes(volume.recordFile), true);
+
+    // Existing agent-start fold surfaces it on systemPrompt face (not dialogue).
+    const { renderAgentStartMaterials } = await import("../../src/agent-start-materials.ts");
+    const folded = renderAgentStartMaterials("soul-body", [material!]);
+    assert.equal(folded.includes(material!.frozenPath), true);
+    assert.equal(folded.includes(volume.humanViewFile), true);
+    // Dialogue body still has neither volume path nor frozen path.
+    assert.equal(dialogue.includes(volume.humanViewFile), false);
+    assert.equal(dialogue.includes(material!.frozenPath), false);
+
+    const { access } = await import("node:fs/promises");
     await assert.rejects(
       () => access(join(officerRun!, ".case-dossier-stage")),
       /ENOENT/,

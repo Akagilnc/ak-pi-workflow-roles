@@ -678,33 +678,17 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, hostTransition };
     }
     if (isStationChildOfficerDialogue(admitted.role, env)) {
-      // 0081 non-body face: freeze pointer section, then project frozen paths via
-      // the existing attach transport (buildInstructionTransportPrompt). Peer
-      // dialogue instruction stays the parent payload bytes (instructionEmpty
-      // forced false so whitespace-only peer body is not collapsed).
-      const frozen = await deliverCaseDossierAsAttachment({
+      // 0081 non-body face: freeze pointer section under run/attachments/.
+      // Peer dialogue continuation.prompt stays parent payload only — the seat
+      // consumes the freeze via loadCaseDossierReadingMaterial → existing
+      // agent-start readingMaterial / systemPrompt.materials fold (not prompt splice,
+      // not RoleTurnRequest.materials).
+      await deliverCaseDossierAsAttachment({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
         home: env.home,
         runDirectory: admitted.runDirectory,
       });
-      if (frozen !== undefined && frozen.length > 0) {
-        const peerBody = turnRequest.continuation.prompt;
-        const withAttach = buildInstructionTransportPrompt({
-          instruction: peerBody,
-          instructionEmpty: false,
-          attachments: frozen.map((attachment) => ({
-            frozenPath: attachment.frozenPath,
-          })),
-        });
-        turnRequest = {
-          ...turnRequest,
-          continuation:
-            turnRequest.continuation.kind === "initial"
-              ? { kind: "initial", prompt: withAttach }
-              : { kind: "resume", prompt: withAttach },
-        };
-      }
     } else {
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,

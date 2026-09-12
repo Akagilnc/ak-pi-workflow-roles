@@ -650,13 +650,22 @@ export async function prepareRoleEnvelope(options: {
     const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
     // Typed reading materials from agent-start handlers. Folded into the
     // provider-visible systemPrompt by the adapter at the send boundary.
-    // #879: no RoleTurnRequest.materials fold — officers self-fetch via --source-run.
+    // #879: no RoleTurnRequest.materials; station-child 0081 case dossier rides
+    // the same readingMaterial → systemPrompt.materials fold when frozen under
+    // run/attachments/case-dossier/ (post-admission mount; dialogue prompt untouched).
     const readingMaterials: unknown[] = [];
     for (const value of promptResults) {
       if (typeof value !== "object" || value === null) continue;
       if (!("readingMaterial" in value)) continue;
       const material = (value as { readingMaterial?: unknown }).readingMaterial;
       if (material !== undefined) readingMaterials.push(material);
+    }
+    {
+      const { loadCaseDossierReadingMaterial } = await import(
+        "./public-cli/case-dossier-delivery.ts"
+      );
+      const caseDossier = await loadCaseDossierReadingMaterial(request.runDirectory);
+      if (caseDossier !== undefined) readingMaterials.push(caseDossier);
     }
 
     priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
