@@ -90,6 +90,9 @@ async function withEnvelopeHome<T>(
     const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
+    // stationChild: real envelope without automatic Navigator attendance.
+    // Top-level attendance may finish session create after dispose returns;
+    // this fixture would then rm the home under that late writer (CI ENOTEMPTY).
     const request = (engine?: string): RoleTurnRequest => ({
       principal: fixturePrincipal(join(runDirectory, "session")),
       activation: { role: "judge" },
@@ -99,6 +102,7 @@ async function withEnvelopeHome<T>(
       home,
       agentDir: join(home, "agent"),
       runDirectory,
+      stationChild: true,
       ...(engine === undefined ? {} : { engine }),
     });
     return await run({ home, runDirectory, socketPath, request });
@@ -191,6 +195,7 @@ test("concurrent envelopes arm detour per request without process.env writes", a
           home,
           agentDir: join(home, label, "agent"),
           runDirectory,
+          stationChild: true,
           ...(engine === undefined ? {} : { engine }),
         },
       };
