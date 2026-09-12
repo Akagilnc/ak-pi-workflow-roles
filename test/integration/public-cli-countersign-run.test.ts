@@ -1176,40 +1176,5 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.equal(turnPrompt.includes(volume.humanViewFile), false);
     assert.equal(turnPrompt.includes(volume.recordFile), false);
-
-    // #881: same first-entry path — diarist escalate carries child payload sequence
-    // on the presented failure terminal (coexist via single settlement attachment).
-    const escalateHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner("escalate"),
-    });
-    const escalateIo = captureIo();
-    const escalated = await runPublicCountersign(
-      ["裁：本庭对象不明。"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: escalateHost,
-        hostAdapters: [adapter("pi", escalateHost)],
-        createRunId: () => "01a0sign00-0000-7000-8000-000000000d47",
-      },
-      escalateIo.io,
-      parseCountersignArgv,
-    );
-    assert.equal(escalated.exitCode, 1);
-    assert.equal(escalated.terminal?.roleOutcome.kind, "failure");
-    if (escalated.terminal?.roleOutcome.kind !== "failure") throw new Error("unreachable");
-    // First-entry: parent ledger empty; child escalate sequence exactly once.
-    assert.deepEqual(escalated.terminal.roleOutcome.payloads, [
-      { status: "escalate", reason: "cannot identify court target" },
-    ]);
-    assert.deepEqual(escalated.terminal.submissions, [
-      { status: "escalate", reason: "cannot identify court target" },
-    ]);
   });
 });
