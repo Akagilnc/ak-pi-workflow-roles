@@ -7,11 +7,14 @@
  * deprecated-kinds, deprecated-run-pages, navigator, collector-handbook,
  * manual-archives.
  */
-import { cp, mkdir, readdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import type { Dirent, Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
-import { pathContainedIn } from "./activation-ledger-topology.ts";
+import {
+  pathContainedIn,
+  physicallyContainedIn,
+} from "./activation-ledger-topology.ts";
 import {
   reconcileMigrationPartition,
   type BookTopologyMigrationContext,
@@ -20,6 +23,10 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
+import {
+  rewriteRoleRunDurablePages,
+  type RunDirectoryPathRewrite,
+} from "./role-run-relocation.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 
 const AUDITOR_ROLES_PARTITION = "auditor-roles";
@@ -150,7 +157,7 @@ function mapBooksPathToBackup(
 /**
  * Live session for this volume: either already under the volume, or the books
  * original path that maps 1:1 onto a file inside this backup volume. Basename
- * fallback is not a binding.
+ * fallback is not a binding. Physical containment rejects symlink escape.
  */
 function resolveVolumeSessionFile(
   booksDirectory: string,
@@ -160,7 +167,7 @@ function resolveVolumeSessionFile(
 ): string | undefined {
   const resolvedVolume = resolve(volumeDirectory);
   const resolvedSession = resolve(sessionFileField);
-  if (pathContainedIn(resolvedVolume, resolvedSession)) return resolvedSession;
+  if (physicallyContainedIn(resolvedVolume, resolvedSession)) return resolvedSession;
 
   const mapped = mapBooksPathToBackup(
     booksDirectory,
@@ -169,7 +176,9 @@ function resolveVolumeSessionFile(
   );
   if (mapped === undefined) return undefined;
   const resolvedMapped = resolve(mapped);
-  return pathContainedIn(resolvedVolume, resolvedMapped) ? resolvedMapped : undefined;
+  return physicallyContainedIn(resolvedVolume, resolvedMapped)
+    ? resolvedMapped
+    : undefined;
 }
 
 /**
@@ -279,8 +288,11 @@ async function findTrueVolumeParent(
     sessionFileField,
   );
   if (liveSession === undefined) return undefined;
+  // lstat: only a regular file is later materialized by copyDirSkippingCurrentSession
+  // (Dirent.isFile skips symlinks). Accepting a symlink would report placed with a
+  // broken ledger target after copy.
   try {
-    const info = await stat(liveSession);
+    const info = await lstat(liveSession);
     if (!info.isFile()) return undefined;
   } catch (error) {
     if (isEnoent(error)) return undefined;
@@ -315,6 +327,48 @@ async function findPlacedRunDirectory(
     (path) => basename(dirname(dirname(path))) !== "unbound",
   );
   return ticketMatch ?? matches[0];
+}
+
+/**
+ * Full historical→final run map for relocation. Covers every run already placed
+ * under books/ (T9 ticket/unbound nests) so cross-run parent pointers rewrite to
+ * each peer's final path, not only the current parent.
+ */
+async function collectPlacedRunRewrites(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+): Promise<RunDirectoryPathRewrite[]> {
+  const rewrites: RunDirectoryPathRewrite[] = [];
+  const seen = new Set<string>();
+  const push = (oldRunDirectory: string, newRunDirectory: string): void => {
+    if (seen.has(oldRunDirectory)) return;
+    seen.add(oldRunDirectory);
+    rewrites.push({ oldRunDirectory, newRunDirectory });
+  };
+  for (const bookKey of await listBookKeys(booksDirectory)) {
+    for (const subject of await listDirents(join(booksDirectory, bookKey))) {
+      if (!subject.isDirectory()) continue;
+      const runsRoot = join(booksDirectory, bookKey, subject.name, "runs");
+      for (const run of await listDirents(runsRoot)) {
+        if (!run.isDirectory()) continue;
+        const finalPath = join(runsRoot, run.name);
+        push(join(booksDirectory, bookKey, "runs", run.name), finalPath);
+        push(join(backupBooksDirectory, bookKey, "runs", run.name), finalPath);
+      }
+    }
+  }
+  return rewrites;
+}
+
+function historicalRunDirectoriesFor(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  parent: ParentRun,
+): readonly string[] {
+  return [
+    join(booksDirectory, parent.bookKey, "runs", parent.leafName),
+    join(backupBooksDirectory, parent.bookKey, "runs", parent.leafName),
+  ];
 }
 
 async function resolveDestinationRun(
@@ -486,6 +540,13 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
   async migrate(context: BookTopologyMigrationContext) {
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
+    // T9 already rewrote pages present in flat runs; volumes land after that and
+    // must reuse the same relocation authority with the full historical→final map.
+    const crossRunRewrites = await collectPlacedRunRewrites(
+      booksDirectory,
+      backupBooksDirectory,
+    );
+    const rewriteSeen = new Set(crossRunRewrites.map((r) => r.oldRunDirectory));
 
     for (const bookKey of await listBookKeys(backupBooksDirectory)) {
       const auditorRoot = join(backupBooksDirectory, bookKey, AUDITOR_ROLES_PARTITION);
@@ -517,6 +578,28 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
           entry.name,
         );
         await copyVolumeIntoNest(sourcePath, historicalVolume, destNest);
+
+        const historicalParents = historicalRunDirectoriesFor(
+          booksDirectory,
+          backupBooksDirectory,
+          parent,
+        );
+        for (const oldRunDirectory of historicalParents) {
+          if (rewriteSeen.has(oldRunDirectory)) continue;
+          rewriteSeen.add(oldRunDirectory);
+          crossRunRewrites.push({
+            oldRunDirectory,
+            newRunDirectory: destination.runDirectory,
+          });
+        }
+        // Own pair = this parent; cross map covers every other final placement.
+        await rewriteRoleRunDurablePages({
+          pagesDirectory: destination.runDirectory,
+          oldRunDirectory: historicalParents[0]!,
+          newRunDirectory: destination.runDirectory,
+          crossRunRewrites,
+        });
+
         outcomes.push({ disposition: destination.disposition, source });
       }
     }
@@ -582,9 +665,35 @@ async function unlinkIfPresent(path: string): Promise<void> {
 }
 
 /**
+ * Source-correlated discard for one run directory: count each deprecated page
+ * and delete it from the matching final run when that run was already copied.
+ */
+async function discardDeprecatedPagesFromRunSource(input: {
+  readonly backupBooksDirectory: string;
+  readonly sourceRunDirectory: string;
+  readonly destinationRunDirectory: string | undefined;
+  readonly outcomes: MigrationItemOutcome[];
+}): Promise<void> {
+  for (const page of await listDirents(input.sourceRunDirectory)) {
+    if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
+    input.outcomes.push({
+      disposition: "discarded",
+      source: sourceIdentity(
+        input.backupBooksDirectory,
+        join(input.sourceRunDirectory, page.name),
+      ),
+    });
+    if (input.destinationRunDirectory !== undefined) {
+      await unlinkIfPresent(join(input.destinationRunDirectory, page.name));
+    }
+  }
+}
+
+/**
  * Count each backup deprecated run page as discarded, and delete the same page
- * from the destination run when T9 has already placed it. One rule, one place:
- * isDeprecatedRunPage names the pages; this migrator applies the discard.
+ * from the destination run when it has already been placed. One rule, one place:
+ * isDeprecatedRunPage names the pages; this migrator applies the discard across
+ * both actual source populations — flat `runs/` and legacy `issues/<N>/runs/`.
  */
 export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrator = {
   partition: DEPRECATED_RUN_PAGES_PARTITION,
@@ -593,20 +702,44 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
     const { backupBooksDirectory, booksDirectory } = context;
 
     for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+      // Population 1: flat runs/ (T9 places these under ticket/unbound).
       const runsRoot = join(backupBooksDirectory, bookKey, "runs");
       for (const run of await listDirents(runsRoot)) {
         if (!run.isDirectory()) continue;
         const runDirectory = join(runsRoot, run.name);
-        for (const page of await listDirents(runDirectory)) {
-          if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
-          outcomes.push({
-            disposition: "discarded",
-            source: sourceIdentity(backupBooksDirectory, join(runDirectory, page.name)),
+        const placed = await findPlacedRunDirectory(booksDirectory, bookKey, run.name);
+        await discardDeprecatedPagesFromRunSource({
+          backupBooksDirectory,
+          sourceRunDirectory: runDirectory,
+          destinationRunDirectory: placed,
+          outcomes,
+        });
+      }
+
+      // Population 2: legacy issues/<N>/runs (issues migrator copies whole tree
+      // to <book>/<N>/runs). Same discard authority — no parallel scrub in the
+      // issues copier.
+      const issuesRoot = join(backupBooksDirectory, bookKey, ISSUES_PARTITION);
+      for (const issue of await listDirents(issuesRoot)) {
+        if (!issue.isDirectory() || !TICKET_NUMBER_NAME.test(issue.name)) continue;
+        const issueRunsRoot = join(issuesRoot, issue.name, "runs");
+        for (const run of await listDirents(issueRunsRoot)) {
+          if (!run.isDirectory()) continue;
+          const runDirectory = join(issueRunsRoot, run.name);
+          const destination = join(
+            booksDirectory,
+            bookKey,
+            issue.name,
+            "runs",
+            run.name,
+          );
+          const destExists = await directoryExists(destination);
+          await discardDeprecatedPagesFromRunSource({
+            backupBooksDirectory,
+            sourceRunDirectory: runDirectory,
+            destinationRunDirectory: destExists ? destination : undefined,
+            outcomes,
           });
-          const placed = await findPlacedRunDirectory(booksDirectory, bookKey, run.name);
-          if (placed !== undefined) {
-            await unlinkIfPresent(join(placed, page.name));
-          }
         }
       }
     }
