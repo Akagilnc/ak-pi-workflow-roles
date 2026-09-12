@@ -52,7 +52,7 @@ async function driveLedgerProducer(input: {
     description: "",
     parameters: Type.Object({}),
     execute: async () => {
-      if (input.executeError !== undefined) throw input.executeError;
+      if (Object.hasOwn(input, "executeError")) throw input.executeError;
       return { content: [], details: input.details, terminate: true };
     },
   });
@@ -83,7 +83,7 @@ async function driveLedgerProducer(input: {
     try {
       await registered.execute(input.toolCallId, input.details, undefined, undefined, context);
     } catch (error) {
-      if (input.executeError === undefined) throw error;
+      if (!Object.hasOwn(input, "executeError")) throw error;
       // Non-sealed path: candidate + outcome already on the ledger; swallow for fixtures.
     }
     const turnEnd = handlers.get("turn_end");

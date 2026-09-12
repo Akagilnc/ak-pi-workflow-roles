@@ -35,7 +35,7 @@ import {
   trySettleDiaristTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { lastRolePayloadRecord, type TerminalResult } from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -190,38 +190,6 @@ export async function runPublicDiarist(
     request: turnRequest,
     adapters: diaristAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  }).then(async (result) => {
-    // Accept may have bound ticket onto durable pages after LLM assertion.
-    // Mirror only lawful non-escalate accepted terminals — escalate must not
-    // leak an unverified ticketNumber into the caller-visible typed key.
-    if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
-      const roleOutcome = result.terminal?.roleOutcome;
-      const facts =
-        roleOutcome?.kind === "accepted"
-          ? lastRolePayloadRecord(roleOutcome.payloads ?? [])
-          : undefined;
-      if (
-        roleOutcome !== undefined &&
-        roleOutcome.kind === "accepted" &&
-        facts?.status !== "escalate"
-      ) {
-        const raw =
-          typeof facts?.ticketNumber === "number"
-            ? facts.ticketNumber
-            : typeof facts?.sitian === "object"
-              && facts.sitian !== null
-              && typeof (facts.sitian as { ticketNumber?: unknown }).ticketNumber === "number"
-              ? (facts.sitian as { ticketNumber: number }).ticketNumber
-              : undefined;
-        if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-          (admitted as { ticketNumber?: number }).ticketNumber = raw;
-          if (result.admitted.ticketNumber === undefined) {
-            (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
-          }
-        }
-      }
-    }
-    return result;
   });
 }
 

@@ -21,6 +21,7 @@ import {
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   selectNavigatorCandidate,
+  navigatorProviderFailureFromPublicTerminal,
   subjectPath } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -381,6 +382,32 @@ test("navigator open failures classify typed reason/status/code, not Error.messa
   assert.deepEqual(
     navigatorProviderFailureFromError({ cause: Object.assign(new Error("nested"), { reason: "quota" }) }),
     { source: "quota", cause: "quota" },
+  );
+});
+
+test("untyped public navigator failure keeps unknown cause instead of relabeling session", () => {
+  assert.deepEqual(
+    navigatorProviderFailureFromPublicTerminal({
+      diagnostic: "opaque provider wording",
+      decisiveFacts: { diagnostic: "opaque provider wording" },
+    }),
+    { source: "unknown", cause: "unknown" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromPublicTerminal({
+      cause: "session",
+      diagnostic: "session unreadable",
+      decisiveFacts: {},
+    }),
+    { source: "session", cause: "session" },
+  );
+  assert.deepEqual(
+    navigatorProviderFailureFromPublicTerminal({
+      cause: "provider",
+      diagnostic: "provider failure",
+      decisiveFacts: { httpStatus: 401 },
+    }),
+    { source: "auth", cause: "auth" },
   );
 });
 

@@ -340,8 +340,10 @@ test("typed groups travel from real output settlement into the report artifact",
     assert.deepEqual(result.terminal && payloadFacts(result.terminal.roleOutcome).groups, receipt().groups);
     const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
     assert.ok(reportPath);
-    const artifact = JSON.parse(await readFile(reportPath, "utf8")) as { receipt: { groups: unknown[] } };
-    assert.deepEqual(artifact.receipt.groups, receipt().groups);
+    const artifact = JSON.parse(await readFile(reportPath, "utf8")) as {
+      outcome?: { payloads?: readonly { groups?: unknown[] }[] };
+    };
+    assert.deepEqual(artifact.outcome?.payloads?.[0]?.groups, receipt().groups);
     assert.equal(stdout.length > 0, true);
   });
 });

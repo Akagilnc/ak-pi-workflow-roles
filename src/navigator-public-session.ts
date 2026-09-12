@@ -8,9 +8,8 @@
 import { sitianReport } from "./sitian-facade.ts";
 import {
   NavigatorUnavailableError,
-  navigatorProviderFailureFromDiagnostics,
+  navigatorProviderFailureFromPublicTerminal,
   navigatorProviderFailureFromError,
-  navigatorProviderFailureFromStatus,
   navigatorUnavailableError,
   parseNavigatorModelSetting,
   resolveNavigatorSeatSelection,
@@ -18,43 +17,6 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { lastRolePayloadRecord } from "./public-cli/terminal.ts";
-
-/**
- * Classify public-navigator failure terminal from structured decisiveFacts only
- * (httpStatus / diagnostics / secondaryEvidence on the terminal) — same fields
- * settlement already stamps from typed HTTP observation / provider stop.
- */
-function providerFailureFromPublicTerminal(outcome: {
-  readonly cause?: string;
-  readonly diagnostic: string;
-  readonly decisiveFacts: Readonly<Record<string, unknown>>;
-}): NavigatorProviderFailureFact {
-  const facts = outcome.decisiveFacts;
-  const secondary =
-    typeof facts.secondaryEvidence === "object" && facts.secondaryEvidence !== null
-      ? (facts.secondaryEvidence as Record<string, unknown>)
-      : undefined;
-  const httpStatus =
-    typeof secondary?.httpStatus === "number"
-      ? secondary.httpStatus
-      : typeof facts.httpStatus === "number"
-        ? facts.httpStatus
-        : typeof facts.errorCode === "number"
-          ? facts.errorCode
-          : undefined;
-  const fromStatus = navigatorProviderFailureFromStatus(httpStatus);
-  if (fromStatus !== undefined) return fromStatus;
-  const diagnostics = secondary?.diagnostics ?? facts.diagnostics;
-  const fromDiagnostics = navigatorProviderFailureFromDiagnostics(diagnostics);
-  if (fromDiagnostics !== undefined) return fromDiagnostics;
-  const fromCode = navigatorProviderFailureFromError({
-    code: secondary?.code ?? facts.errorCode,
-  });
-  if (fromCode !== undefined) return fromCode;
-  if (outcome.cause === "provider") return { source: "transport", cause: "transport" };
-  return { source: "session", cause: "session" };
-}
 
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
@@ -129,7 +91,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             );
           }
           if (outcome.kind === "failure") {
-            providerFailure = providerFailureFromPublicTerminal(outcome);
+            providerFailure = navigatorProviderFailureFromPublicTerminal(outcome);
             throw navigatorUnavailableError(
               providerFailure.source,
               new Error(outcome.diagnostic),
@@ -147,19 +109,18 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
-          const candidates = lastRolePayloadRecord(outcome.payloads ?? [])?.candidates;
-          if (!Array.isArray(candidates)) {
-            // Accepted reply without candidates array — no advice, no judgment.
-            return;
+          for (const payload of outcome.payloads ?? []) {
+            if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+            const candidates = (payload as { candidates?: unknown }).candidates;
+            if (!Array.isArray(candidates)) continue;
+            await tool.execute(
+              "navigator-public-prepare",
+              { candidates },
+              undefined,
+              undefined,
+              context as never,
+            );
           }
-          // Rejoin attendance prepare tool sink (same candidate shape as public advice).
-          await tool.execute(
-            "navigator-public-prepare",
-            { candidates },
-            undefined,
-            undefined,
-            context as never,
-          );
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);

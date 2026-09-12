@@ -54,7 +54,7 @@ import {
   trySettleCountersignTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { lastRolePayloadRecord, type TerminalResult } from "./terminal.ts";
+import type { TerminalResult } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -146,19 +146,22 @@ async function invokeCourtDiarist(input: {
 
   const roleOutcome = result.terminal?.roleOutcome;
   if (roleOutcome !== undefined && (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation")) {
-    const facts = lastRolePayloadRecord(roleOutcome.payloads ?? []);
-    const status =
-      typeof facts?.status === "string"
-        ? facts.status
-        : typeof facts?.countersignStatus === "string"
-          ? facts.countersignStatus
-          : roleOutcome.kind === "audit_escalation"
-            ? "escalate"
+    if (roleOutcome.kind === "audit_escalation") {
+      return { identity: { kind: "escalate", reason: "diarist escalated without reason" } };
+    }
+    for (const payload of roleOutcome.payloads ?? []) {
+      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+      const record = payload as Record<string, unknown>;
+      const status =
+        typeof record.status === "string"
+          ? record.status
+          : typeof record.countersignStatus === "string"
+            ? record.countersignStatus
             : undefined;
-    if (status === "escalate") {
+      if (status !== "escalate") continue;
       const reason =
-        typeof facts?.reason === "string"
-          ? facts.reason
+        typeof record.reason === "string"
+          ? record.reason
           : "diarist escalated without reason";
       return { identity: { kind: "escalate", reason } };
     }

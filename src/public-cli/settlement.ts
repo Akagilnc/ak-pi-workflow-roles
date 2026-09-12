@@ -56,28 +56,22 @@ import {
 } from "../package-contracts/judge-output.ts";
 import {
   COLLECTOR_OUTPUT_TOOL,
-  type CollectorReceipt,
 } from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
-  type CoderOutput,
-  type FixerOutput,
 } from "../package-contracts/worker-output.ts";
 
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   type DoctorCaseCost,
-  type DoctorOutput,
 } from "../doctor-contracts.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
-  type ReviewerIntent,
 } from "../package-contracts/reviewer-output.ts";
 import {
   MERGER_OUTPUT_TOOL_NAME,
-  type MergerOutput,
 } from "../merger-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL_NAME,
@@ -152,7 +146,7 @@ import {
 } from "./invocation.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
-function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
+function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
   return homeFromRunDirectory(admitted.runDirectory);
 }
 
@@ -165,7 +159,7 @@ export type SettlementCourtScope = {
 };
 
 function ledgerReadScope(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
   scope?: SettlementCourtScope,
 ): { home: string; attemptId?: string } {
   return {
@@ -237,7 +231,7 @@ export async function attemptProducedFreshSubmission(
 
 /** #836: every raw role payload in settle scope (调几次记几次). */
 export async function recordedSubmissionPayloads(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   scope?: SettlementCourtScope,
 ): Promise<readonly unknown[]> {
   return readRecordedSubmissions(
@@ -264,7 +258,7 @@ export function withSubmissions<T extends TerminalResult>(
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
 export async function attachRecordedSubmissions<T extends TerminalResult>(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   terminal: T,
   scope?: SettlementCourtScope,
 ): Promise<T> {
@@ -323,7 +317,6 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
-  lastRolePayloadRecord,
   recommendationNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
@@ -2364,7 +2357,6 @@ export async function publishCoderArtifacts(
   coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly coderOutput?: CoderOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2379,9 +2371,6 @@ export async function publishCoderArtifacts(
         runId: admitted.runId,
         phase: admitted.phase,
         outcome: roleOutcome,
-        ...(options.coderOutput === undefined
-          ? {}
-          : { receipt: options.coderOutput }),
       },
       null,
       2,
@@ -2537,10 +2526,6 @@ async function settleLawfulCoderTerminalResult(
   const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
   if (ledgerOutcome === undefined) return undefined;
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const output: CoderOutput | undefined =
-    ledgerOutcome.kind === "accepted"
-      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as CoderOutput | undefined)
-      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
@@ -2549,7 +2534,6 @@ async function settleLawfulCoderTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(output === undefined ? {} : { coderOutput: output }),
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
@@ -2640,7 +2624,6 @@ export async function publishFixerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly fixerOutput?: FixerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2655,9 +2638,6 @@ export async function publishFixerArtifacts(
         runId: admitted.runId,
         phase: admitted.phase,
         outcome: roleOutcome,
-        ...(options.fixerOutput === undefined
-          ? {}
-          : { receipt: options.fixerOutput }),
       },
       null,
       2,
@@ -2716,10 +2696,6 @@ async function settleLawfulFixerTerminalResult(
   const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
   if (ledgerOutcome === undefined) return undefined;
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const output: FixerOutput | undefined =
-    ledgerOutcome.kind === "accepted"
-      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as FixerOutput | undefined)
-      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
@@ -2735,7 +2711,6 @@ async function settleLawfulFixerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(output === undefined ? {} : { fixerOutput: output }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -2775,9 +2750,6 @@ export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly collectorReceipt?: CollectorReceipt;
-  } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
@@ -2790,9 +2762,6 @@ export async function publishCollectorArtifacts(
         role: "collector",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.collectorReceipt === undefined
-          ? {}
-          : { receipt: options.collectorReceipt }),
       },
       null,
       2,
@@ -2860,14 +2829,12 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  const receipt = (lastRolePayloadRecord(roleOutcome.payloads ?? []) ?? {}) as CollectorReceipt;
   const accepted: LawfulCollectorRoleOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
     accepted,
     coordinates,
-    { collectorReceipt: receipt },
   );
   return attachRecordedSubmissions(
     admitted,
@@ -2952,7 +2919,6 @@ export async function publishDoctorArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   options: {
-    readonly doctorOutput?: DoctorOutput;
     readonly cost?: DoctorCaseCost;
     readonly auditNoReceipt?: unknown;
   } = {},
@@ -2968,10 +2934,6 @@ export async function publishDoctorArtifacts(
         role: "doctor",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.doctorOutput === undefined
-          ? {}
-          : { receipt: options.doctorOutput }),
-        // Independent machine fields beside the receipt — not merged into it.
         ...(options.cost === undefined ? {} : { cost: options.cost }),
         ...(options.auditNoReceipt === undefined ? {} : { auditNoReceipt: options.auditNoReceipt }),
       },
@@ -3037,7 +2999,6 @@ async function settleLawfulDoctorTerminalResult(
       sessionDirectory,
     );
   }
-  const output = (lastRolePayloadRecord(sealed.payloads ?? []) ?? {}) as DoctorOutput;
   const roleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const cost = extractDoctorCandidateCostFact(entries);
@@ -3047,7 +3008,6 @@ async function settleLawfulDoctorTerminalResult(
     roleOutcome,
     coordinates,
     {
-      doctorOutput: output,
       ...(cost === undefined ? {} : { cost }),
       ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
     },
@@ -3483,7 +3443,6 @@ export async function publishReviewerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly reviewerReceipt?: ReviewerIntent;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -3497,9 +3456,6 @@ export async function publishReviewerArtifacts(
         role: "reviewer",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.reviewerReceipt === undefined
-          ? {}
-          : { receipt: options.reviewerReceipt }),
       },
       null,
       2,
@@ -3559,7 +3515,6 @@ async function settleLawfulReviewerTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const receipt = lastRolePayloadRecord(sealed.payloads ?? []) as ReviewerIntent | undefined;
   const roleOutcome: LawfulReviewerRoleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
@@ -3573,7 +3528,6 @@ async function settleLawfulReviewerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(receipt === undefined ? {} : { reviewerReceipt: receipt }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -3662,7 +3616,6 @@ export async function publishMergerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly mergerOutput?: MergerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -3676,9 +3629,6 @@ export async function publishMergerArtifacts(
         role: "merger",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.mergerOutput === undefined
-          ? {}
-          : { receipt: options.mergerOutput }),
       },
       null,
       2,
@@ -3761,7 +3711,6 @@ async function settleLawfulMergerTerminalResult(
     accepted,
     coordinates,
     {
-      mergerOutput: (lastRolePayloadRecord(accepted.payloads ?? []) ?? {}) as MergerOutput,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },

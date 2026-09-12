@@ -1,11 +1,17 @@
-import { lastRolePayloadRecord, type TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
-/** Original last payload record. Host-owned failure/no_receipt facts stay on decisiveFacts. */
+/** Host-owned failure/no_receipt facts, or the sole object payload when the sequence is length 1. */
 export function payloadFacts(outcome: TerminalRoleOutcome): Record<string, unknown> {
   if (outcome.kind === "failure" || outcome.kind === "no_receipt") {
     return { ...outcome.decisiveFacts };
   }
-  return lastRolePayloadRecord(outcome.payloads ?? []) ?? {};
+  const records: Record<string, unknown>[] = [];
+  for (const payload of outcome.payloads ?? []) {
+    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+      records.push(payload as Record<string, unknown>);
+    }
+  }
+  return records.length === 1 ? records[0]! : {};
 }
 
 /** Status leaf the role wrote (status / judgeStatus / countersignStatus). Never invents "". */

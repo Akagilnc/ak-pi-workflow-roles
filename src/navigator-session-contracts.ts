@@ -133,6 +133,43 @@ export function navigatorProviderFailureFromDiagnostics(diagnostics: unknown): N
   return undefined;
 }
 
+/**
+ * Classify a public-navigator failure terminal from structured facts only.
+ * Untyped cause stays unknown — never relabeled session.
+ */
+export function navigatorProviderFailureFromPublicTerminal(outcome: {
+  readonly cause?: string;
+  readonly diagnostic: string;
+  readonly decisiveFacts: Readonly<Record<string, unknown>>;
+}): NavigatorProviderFailureFact {
+  const facts = outcome.decisiveFacts;
+  const secondary =
+    typeof facts.secondaryEvidence === "object" && facts.secondaryEvidence !== null
+      ? (facts.secondaryEvidence as Record<string, unknown>)
+      : undefined;
+  const httpStatus =
+    typeof secondary?.httpStatus === "number"
+      ? secondary.httpStatus
+      : typeof facts.httpStatus === "number"
+        ? facts.httpStatus
+        : typeof facts.errorCode === "number"
+          ? facts.errorCode
+          : undefined;
+  const fromStatus = navigatorProviderFailureFromStatus(httpStatus);
+  if (fromStatus !== undefined) return fromStatus;
+  const diagnostics = secondary?.diagnostics ?? facts.diagnostics;
+  const fromDiagnostics = navigatorProviderFailureFromDiagnostics(diagnostics);
+  if (fromDiagnostics !== undefined) return fromDiagnostics;
+  const fromCode = navigatorProviderFailureFromError({
+    code: secondary?.code ?? facts.errorCode,
+  });
+  if (fromCode !== undefined) return fromCode;
+  if (outcome.cause === "provider") return { source: "transport", cause: "transport" };
+  const typed = navigatorUnavailableKey(outcome.cause);
+  if (typed !== undefined) return { source: typed, cause: typed };
+  return { source: "unknown", cause: "unknown" };
+}
+
 const navigatorProviderFailureSchema = Type.Object({
   source: Type.Union([
     Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"),

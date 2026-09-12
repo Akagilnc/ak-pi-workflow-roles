@@ -22,6 +22,8 @@ import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../.
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-dispatch-throw-", fn);
@@ -46,18 +48,57 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[])
 
 type PointerEntry={data?:{file?:unknown};};
 
+const sealedParams={judgeStatus:"converged",report:"sealed-before-throw"};
+const bounceParams={judgeStatus:"converged",report:"bounce-before-throw"};
+
+async function plantRecordedSubmissions(input:{
+  readonly home:string;
+  readonly project:string;
+  readonly runDirectory:string;
+  readonly runId:string;
+  readonly role:"judge"|"fixer";
+}):Promise<void>{
+  await sealAcceptedSubmission({
+    cwd:input.project,
+    runId:input.runId,
+    role:input.role,
+    details:sealedParams,
+    home:input.home,
+    runDirectory:input.runDirectory,
+    toolCallId:"call-sealed",
+  });
+  await recordNonSealedSubmission({
+    cwd:input.project,
+    runId:input.runId,
+    role:input.role,
+    details:bounceParams,
+    home:input.home,
+    runDirectory:input.runDirectory,
+    toolCallId:"call-bounce",
+    executeError:new GatekeeperDecisionError({
+      status:"bounce",
+      officer:"inspector",
+      receipt:{status:"bounce",findings:["x"]},
+    }),
+  });
+}
+
 test("dispatch exceptions retry to budget with full per-attempt retention and typed failure", async()=>{
   await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","throw-loop-limit2b");
+    const project=join(home,"proj");
+    const runId="throw-loop-limit2b";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
     await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");
     await writeFile(sessionFile,"{}\n","utf8");
+    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
     const callsRef={n:0};
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
@@ -104,6 +145,42 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(filesFromFacts.length,3);
     assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
+    assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+  });
+});
+
+test("dispatch exception principal-unavailable terminal attaches recorded submissions", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="throw-principal-unavailable";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");
+    await writeFile(sessionFile,"{}\n","utf8");
+    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
+    const callsRef={n:0};
+    const {io}=captureIo();
+    const result=await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
+      io,
+      autoResumeLimit:2,
+      isPrincipalAvailable: async()=>false,
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
+      dispatch:alwaysThrowingDispatch(callsRef,["boom-unavailable"]),
+    });
+    const terminal=result.terminal as TerminalResult;
+    assert.equal(callsRef.n,1);
+    assert.equal(result.exitCode,1);
+    assert.equal(terminal.roleOutcome.kind,"failure");
+    if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    assert.match(terminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
+    assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
   });
 });
 

@@ -325,7 +325,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
     // #836: captured from the same real `loadDoctorCase`/role payload the
-    // piRunner uses, so the later report.receipt/report.cost assertions check
+    // piRunner uses, so the later outcome.payloads/report.cost assertions check
     // against the actual values rather than hand-authored duplicates.
     let candidateCost: unknown;
     let candidateDetails: unknown;
@@ -400,17 +400,15 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(reportPath);
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
-      receipt: { status: string; case: { issueNumber: number } };
+      outcome?: { payloads?: unknown };
       cost: unknown;
     };
     assert.equal(report.role, "doctor");
-    assert.equal(report.receipt.status, "completed");
-    assert.equal(report.receipt.case.issueNumber, 40);
+    assert.deepEqual(report.outcome?.payloads, [candidateDetails]);
     // #836: settlement.ts extractDoctorCandidateCostFact/publishDoctorArtifacts
     // must read the audit candidate entry and publish machine cost as an
     // independent report field beside — not merged into — the role's original
-    // payload, which the public report.receipt must still equal exactly.
-    assert.deepEqual(report.receipt, candidateDetails);
+    // payload sequence.
     assert.deepEqual(report.cost, candidateCost);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 

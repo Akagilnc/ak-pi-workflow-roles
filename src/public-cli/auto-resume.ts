@@ -33,6 +33,7 @@ import {
 import { parseAutoResumeLimit } from "./config.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
+  attachRecordedSubmissions,
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
@@ -362,6 +363,25 @@ function unwrapTurnDispatchedFailure(error: unknown): unknown {
   return current;
 }
 
+async function attachDispatchExceptionTerminal(
+  admitted: {
+    readonly runDirectory: string;
+    readonly runId: string;
+    readonly projectRoot?: string;
+  },
+  terminal: TerminalResult,
+): Promise<TerminalResult> {
+  if (admitted.projectRoot === undefined) return terminal;
+  return attachRecordedSubmissions(
+    {
+      projectRoot: admitted.projectRoot,
+      runId: admitted.runId,
+      runDirectory: admitted.runDirectory,
+    },
+    terminal,
+  );
+}
+
 /**
  * Typed failure terminal for a retry path that ended with only exceptions:
  * loud, non-lawful, carrying the last true cause and the pointers to the
@@ -426,6 +446,8 @@ export async function runWithAutoResumeLoop<
     role: TerminalRoleName;
     runId: string;
     principal: DurablePrincipal;
+    /** Required for ledger attach on exception terminals; production callers pass Admitted. */
+    projectRoot?: string;
   };
   principalAuthority: DurablePrincipalAuthority;
   /**
@@ -570,15 +592,18 @@ export async function runWithAutoResumeLoop<
     } else {
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "auto-resume budget exhausted",
-          everyAttemptThrew,
-        });
+        const terminal = await attachDispatchExceptionTerminal(
+          options.admitted,
+          dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "auto-resume budget exhausted",
+            everyAttemptThrew,
+          }),
+        );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);
         return {
@@ -587,15 +612,18 @@ export async function runWithAutoResumeLoop<
         } as T;
       }
       if (!(await isPrincipalAvailable(options.admitted.principal))) {
-        const terminal = dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runId: options.admitted.runId,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: "session principal unavailable before further resume",
-          everyAttemptThrew,
-        });
+        const terminal = await attachDispatchExceptionTerminal(
+          options.admitted,
+          dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "session principal unavailable before further resume",
+            everyAttemptThrew,
+          }),
+        );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);
         return {

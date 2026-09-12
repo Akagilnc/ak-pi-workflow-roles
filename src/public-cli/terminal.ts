@@ -179,19 +179,6 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
   return [];
 }
 
-/** Last object payload the role actually wrote. No field remapping. */
-export function lastRolePayloadRecord(
-  payloads: readonly unknown[],
-): Record<string, unknown> | undefined {
-  for (let index = payloads.length - 1; index >= 0; index -= 1) {
-    const payload = payloads[index];
-    if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-      return payload as Record<string, unknown>;
-    }
-  }
-  return undefined;
-}
-
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
