@@ -39,7 +39,7 @@ type PlannedRunMove = {
   readonly targetPath: string;
   readonly historicalRunDirectory: string | undefined;
   readonly derivation:
-    | { readonly ticketNumber: number; readonly projectRoot: string }
+    | { readonly ticketNumber: number; readonly projectRoot: string; readonly sourcePage: string }
     | undefined;
 };
 
@@ -82,12 +82,17 @@ async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
 
 async function writeDerivationPage(
   targetRunDirectory: string,
-  derivation: { readonly ticketNumber: number; readonly projectRoot: string },
+  derivation: {
+    readonly ticketNumber: number;
+    readonly projectRoot: string;
+    readonly sourcePage: string;
+  },
 ): Promise<void> {
   const page = {
     ticketNumber: derivation.ticketNumber,
     derivation: "worktree-path-basename" as const,
     source: {
+      page: derivation.sourcePage,
       field: "projectRoot",
       path: derivation.projectRoot,
       basename: basename(derivation.projectRoot),
@@ -157,7 +162,11 @@ async function planBookMoves(
       derivation =
         ticket.derivation?.method === "project-root-basename"
           && ticket.ticketNumber !== undefined
-          ? { ticketNumber: ticket.ticketNumber, projectRoot: ticket.derivation.source }
+          ? {
+              ticketNumber: ticket.ticketNumber,
+              projectRoot: ticket.derivation.source,
+              sourcePage: ticket.derivation.sourcePage,
+            }
           : undefined;
     }
 

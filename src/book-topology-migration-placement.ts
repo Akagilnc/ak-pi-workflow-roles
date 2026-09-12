@@ -55,7 +55,7 @@ export function ticketNumberFromWorktreeBasename(
 async function readProjectRootFromRun(
   runDirectory: string,
 ): Promise<{ readonly projectRoot: string; readonly sourcePage: string } | undefined> {
-  for (const page of ["admitted-request.json", "invocation.json"] as const) {
+  for (const page of ["admitted-request.json", "invocation.json", "run-state.json"] as const) {
     const path = join(runDirectory, page);
     try {
       const raw: unknown = JSON.parse(await readFile(path, "utf8"));
@@ -72,10 +72,13 @@ async function readProjectRootFromRun(
   return undefined;
 }
 
-export type MigratingRunTicketDerivation = {
-  readonly method: "board" | "project-root-basename";
-  readonly source: string;
-};
+export type MigratingRunTicketDerivation =
+  | { readonly method: "board"; readonly source: string }
+  | {
+      readonly method: "project-root-basename";
+      readonly source: string;
+      readonly sourcePage: string;
+    };
 
 /**
  * Ticket binding for a retained run directory (#852 / #865 / #866):
@@ -101,7 +104,11 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
   if (ticketNumber === undefined) return { ticketNumber: undefined, derivation: undefined };
   return {
     ticketNumber,
-    derivation: { method: "project-root-basename", source: project.projectRoot },
+    derivation: {
+      method: "project-root-basename",
+      source: project.projectRoot,
+      sourcePage: project.sourcePage,
+    },
   };
 }
 
