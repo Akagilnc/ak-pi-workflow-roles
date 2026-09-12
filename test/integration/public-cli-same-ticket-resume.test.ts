@@ -86,11 +86,8 @@ function runIdFromDirectory(runDirectory: string): string {
 
 /**
  * Find a frozen attachment file by content under a run's attachments tree.
- * #836: presenting a same-parent no-new-seal court as accepted (ledger
- * honesty) clears currentCourt immediately — the admission-time attachment
- * freeze itself already happened and is durable on disk regardless, so its
- * identity is recovered from the tree directly rather than from
- * currentCourt.summons.attachmentPaths (gone once the court clears).
+ * Admission-time freeze is durable on disk; recover that identity from the
+ * tree rather than from any live court pointer.
  */
 async function findFrozenAttachmentWithContent(
   dir: string,
@@ -475,7 +472,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   }
 });
 
-test("#637 public inspector: freeze-once attachment identity survives a no-seal court and a fresh resume-with-message court", async () => {
+test("#637 public inspector: freeze-once attachment identity survives a no-seal court and resume-with-message continues the open no-seal court", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
   const priorPath = process.env.PATH;
