@@ -689,7 +689,9 @@ rl.on("line", (line) => {
         `#!/usr/bin/env node
 import { existsSync, writeFileSync } from "node:fs";
 const dump = ${JSON.stringify(argvDump)};
-if (!existsSync(dump)) writeFileSync(dump, JSON.stringify(process.argv.slice(2)));
+let stdin = "";
+for await (const chunk of process.stdin) stdin += chunk;
+if (!existsSync(dump)) writeFileSync(dump, JSON.stringify({ argv: process.argv.slice(2), stdin }));
 process.stdout.write(${JSON.stringify(JSON.stringify(plannedEnvelope))} + "\\n");
 process.exit(0);
 `,
@@ -704,10 +706,10 @@ process.exit(0);
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-claude" },
       );
 
-      const argv = JSON.parse(await readFile(argvDump, "utf8")) as string[];
-      const promptAt = argv.indexOf("-p");
-      assert.equal(promptAt >= 0, true, "headless prompt flag -p must be present");
-      const hostPrompt = argv[promptAt + 1]!;
+      const observed = JSON.parse(await readFile(argvDump, "utf8")) as { argv: string[]; stdin: string };
+      const argv = observed.argv;
+      assert.equal(argv.includes("-p"), true, "headless prompt flag -p must be present");
+      const hostPrompt = observed.stdin;
       assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
       assert.equal(hostPrompt.includes(assignment), true);
       // Provider-visible systemPrompt channel is a path flag (structure), not free text.

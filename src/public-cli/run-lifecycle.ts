@@ -2007,6 +2007,9 @@ export async function loadResumableInspectorRun(
   const admitted: AdmittedInspectorInvocation = {
     role: "inspector",
     ...resumedBaseAdmitted(loaded),
+    ...(loaded.admittedFields.sourceRunPath === undefined
+      ? {}
+      : { sourceRunPath: loaded.admittedFields.sourceRunPath }),
   };
   return seatLoadedResult(loaded, admitted);
 }

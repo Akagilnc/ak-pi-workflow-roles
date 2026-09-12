@@ -2,7 +2,7 @@
 
 Status: accepted（母票 #630；owner 2026-09-03 grill 收口「可以」；实施分票 #634）
 
-> **Supersession / 修订 `summons-pointer-input` (#836):** 指针仍唯一输入，改为整个父 run 目录；删 reask/gateReviewInstruction 互斥、偏好持久化 gate leaf、最后 toolCall leaf 即交卷。同席 resume 传召开场加「请重读」。
+> **Supersession / 修订 `summons-pointer-input` (#836；#879 再修):** 指针是**绑定材料**，由代码精准递送（整个父 run 目录）；审核对话的**内容**由父角色本轮 typed payload 原话传递，不由代码撰写或「请重读」开场顶替。删偏好持久化 gate leaf、最后 toolCall leaf 即交卷。#632「这个输入是代码控制的，所以可以完全精准」射程限于绑定材料。
 
 本 ADR 是 #630 三项一体改造的薄决策页；历史 ADR 正文不回改，承继与修正关系记于本页。
 
@@ -14,7 +14,7 @@ Status: accepted（母票 #630；owner 2026-09-03 grill 收口「可以」；实
 | `ticket-seat-memory-officer-principal` | 察院／符宝郎／审刑院**同一父 run 内**再传召 = resume 该席上一次的 run（既有 resume 机制），不新起 run；查找键为本次父 run 路径（符宝郎／审刑院 `--source-run`；察院闸召 argv「卷宗指针：\<父\>」），换父无匹配则新铸 | 「所有给事中，符宝郎，审刑院，察院，都改成resume而不是每次都是全新起腿」；「和现在一致。没有任何变化。只是把新起变成resume，也就是让衙门有记忆。调用本身不改」；L119243「点头」所对助手单句改法（找旧 run 的键从票号换成本次父 run 路径）；L119882「肯定是一起改。不用怀疑」（三席一并） | #636；本键整条修订 #747 |
 | `ticket-seat-memory-countersign-principal` | 给事中同票再传召 = resume 该席上一次的 run（既有 resume 机制），不新起 run | （同上记忆原话；给事中席单独承接） | #637 |
 | `explicit-fresh-summons` | 自动同票 resume 保留；新增显式「派新腿」公开入口（`ak-role new <role> …`，名从本 ADR 落定），调用者自行决定新起或续跑；显式 `ak-role resume <runId>` 不变；机制不判断上下文是否超限 | 「这种东西应该是通过调用来解决。而不是全自动。就算全自动，也要有后路吧」「可以显示 resume，也可以显示派新腿就可以解决这个问题？这样自动resume是不是就不用删了」（卷 47ef0224 L108533）；对「2. 三个动词…再加一个显式『派新腿』入口」答「2吧。3你们肯定又是一堆复杂机制。1的话缺了自动resume能力」（L108565） | #724 |
-| `summons-pointer-input` | 传召输入由代码精准控制，只给卷宗指针，不转述内容 | 「差不多。正常应该就是这样。而且这个输入是代码控制的，所以可以完全精准。不像你调用的，根本记不住😂」 | #632 |
+| `summons-pointer-input` | 指针是绑定材料，由代码精准递送；审核对话内容由父角色原话传递，不由代码撰写（#879） | 「差不多。正常应该就是这样。而且这个输入是代码控制的，所以可以完全精准。不像你调用的，根本记不住😂」（#632，射程=绑定）；「llm之间的对话就是传递。为什么这里还在用代码给resume写prompt?」「没有这三个字！」（#879） | #632；#879 修订内容/绑定分立 |
 
 本 ADR 正文中未被上表绑定的措辞属驱动方综合，不主张 owner authority。
 

@@ -315,6 +315,29 @@ setInterval(() => {}, 1000);
   });
 });
 
+test("Pi stdin delivery error cannot settle as successful child exit", async () => {
+  await withTempHome(async (home) => {
+    const stub = join(home, "stdin-close-child.mjs");
+    await writeExecutableStub(
+      stub,
+      `#!/usr/bin/env node
+if (process.argv.includes("--version")) { process.stdout.write("1.0.0\\n"); process.exit(0); }
+process.stdin.destroy();
+process.exit(0);
+`,
+    );
+    const runner = createDefaultPiSpawnRunner({});
+    await assert.rejects(
+      runner([], {
+        cwd: home,
+        env: { ...isolatedTestProcessEnv(), PI_BINARY: stub },
+        stdin: "x".repeat(8 * 1024 * 1024),
+      }),
+      (error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "EPIPE",
+    );
+  });
+});
+
 test("a parent abort terminates the nested activation with SIGTERM", async () => {
   await withTempHome(async (home) => {
     const signalFile = join(home, "signal");

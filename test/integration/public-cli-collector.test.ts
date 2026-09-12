@@ -73,14 +73,61 @@ function receipt(overrides: Record<string, unknown> = {}) {
 
 type Handler = (...args: any[]) => any;
 
+/**
+ * Host merge for before_agent_start: run every listener and join results the
+ * way the production envelope does (systemPrompt parts + readingMaterial).
+ * A Map.set last-wins harness would drop #879's shared readingMaterial owner
+ * or collector's own activation/handbook handler.
+ */
+function mergeBeforeAgentStartResults(
+  results: readonly unknown[],
+): { systemPrompt?: string; readingMaterial?: unknown } | undefined {
+  const systemPromptParts: string[] = [];
+  const readingMaterials: unknown[] = [];
+  for (const value of results) {
+    if (typeof value !== "object" || value === null) continue;
+    const record = value as { systemPrompt?: unknown; readingMaterial?: unknown };
+    if (typeof record.systemPrompt === "string") systemPromptParts.push(record.systemPrompt);
+    if ("readingMaterial" in record && record.readingMaterial !== undefined) {
+      readingMaterials.push(record.readingMaterial);
+    }
+  }
+  if (systemPromptParts.length === 0 && readingMaterials.length === 0) return undefined;
+  return {
+    ...(systemPromptParts.length === 0
+      ? {}
+      : { systemPrompt: systemPromptParts.join("\n\n") }),
+    ...(readingMaterials.length === 0
+      ? {}
+      : {
+          readingMaterial:
+            readingMaterials.length === 1 ? readingMaterials[0] : readingMaterials,
+        }),
+  };
+}
+
 /** Light extension harness — same shape as judge-role contract (production envelope install). */
 function extensionHarness(
   role: string | undefined,
   extraFlags: Readonly<Record<string, string>> = {},
 ) {
+  const handlerLists = new Map<string, Handler[]>();
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, HostToolDefinition>();
   const flags = new Map<string, unknown>();
+
+  const dispatch = (name: string): Handler => async (event, ctx) => {
+    const results: unknown[] = [];
+    for (const handler of handlerLists.get(name) ?? []) {
+      results.push(await handler(event, ctx));
+    }
+    if (name === "before_agent_start") return mergeBeforeAgentStartResults(results);
+    for (let i = results.length - 1; i >= 0; i -= 1) {
+      if (results[i] !== undefined) return results[i];
+    }
+    return undefined;
+  };
+
   const pi = {
     registerFlag(name: string, options: unknown) {
       flags.set(name, options);
@@ -90,7 +137,10 @@ function extensionHarness(
       return extraFlags[name];
     },
     on(name: string, handler: Handler) {
-      handlers.set(name, handler);
+      const list = handlerLists.get(name) ?? [];
+      list.push(handler);
+      handlerLists.set(name, list);
+      handlers.set(name, dispatch(name));
     },
     registerTool(tool: HostToolDefinition) {
       tools.set(tool.name, tool);

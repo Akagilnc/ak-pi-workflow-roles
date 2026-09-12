@@ -35,6 +35,7 @@ import {
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
@@ -2313,8 +2314,8 @@ test("typed 429 without a session principal is not offered as resumable", async 
   });
 });
 
-/** #471 transport on existing resume owner: opaque last-argv + bare -- + extras reject. */
-test("#471 resume opaque message is last argv; bare -- dispatches; extras reject", async () => {
+/** #471 transport on existing resume owner: opaque stdin body + bare -- + extras reject. */
+test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras reject", async () => {
   await withTempHome(async (home) => {
     type Role = "judge" | "coder" | "fixer" | "reviewer" | "merger";
     const creds = { "openai-codex": true, xai: true } as const;
@@ -2398,6 +2399,7 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       { role: "judge", runId: "471-j-model", message: "--model" },
       { role: "judge", runId: "471-j-empty", message: "" },
       { role: "judge", runId: "471-j-ws", message: "  ruling with\nnewline  " },
+      { role: "coder", runId: "471-c-envelope", message: '{"kind":"ak-user-dialogue","body":"ACTUAL"}' },
       { role: "judge", runId: "471-j-dd", message: "--" },
       { role: "coder", runId: "471-c", message: "coder owner note" },
       { role: "fixer", runId: "471-f", message: "fixer owner note" },
@@ -2416,6 +2418,7 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
         c.message === undefined ? ["resume", c.runId] : ["resume", c.runId, c.message];
       const { io, stderr } = captureIo();
       let seen: string[] | undefined;
+      let seenStdin: string | undefined;
       let n = 0;
       await runAkRole(resumeArgv, {
         packageRoot,
@@ -2426,9 +2429,10 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
+          piRunner: async (args, options) => {
           n += 1;
           seen = [...args];
+          seenStdin = options.stdin;
           return { code: 0, stderr: "", timedOut: false, args: [...args] };
         },
         }),
@@ -2437,9 +2441,9 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
-      // Pi adapter prefixes single forced method onto resume argv (#822); judge/coder-plan/fixer plain.
+      // Pi adapter prefixes single forced method onto resume dialogue (#822); judge/coder-plan/fixer plain.
       const rawPrompt = c.message === undefined ? "" : c.message;
-      const expectedLast =
+      const expectedBody =
         c.role === "reviewer"
           ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)
           : c.role === "merger"
@@ -2447,7 +2451,8 @@ test("#471 resume opaque message is last argv; bare -- dispatches; extras reject
               ? "/skill:resolving-merge-conflicts"
               : `/skill:resolving-merge-conflicts ${rawPrompt}`)
             : rawPrompt;
-      assert.equal(seen.at(-1), expectedLast);
+      assert.equal(readUserDialogueStdin(seenStdin ?? ""), expectedBody);
+      assert.equal(readUserDialogueStdin((seenStdin ?? "").trim()), expectedBody);
     }
 
     // extras → usage reject, dispatch=0 (including `-- extra`)

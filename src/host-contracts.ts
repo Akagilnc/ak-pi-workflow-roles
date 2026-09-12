@@ -130,7 +130,7 @@ export type RoleTurnActivation =
       /** Required comparison-base revision for the unanchored merge-candidate diff. */
       readonly baseRevision: string;
     }
-  | { readonly role: "inspector" }
+  | { readonly role: "inspector"; readonly sourceRun?: string }
   | { readonly role: "gatekeeper" }
   | { readonly role: "navigator" }
   | { readonly role: "auditor" }
@@ -159,6 +159,11 @@ export type RoleTurnHostTransition = {
   readonly priorNativeKind: "pi-native" | "sitian";
   readonly priorNativePaths: readonly string[];
 };
+
+/** Gate review officers (察院 / 符宝郎 / 审刑院). Single authority for seat checks. */
+export function isOfficerReviewSeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor";
+}
 
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
@@ -241,7 +246,21 @@ export interface DurablePrincipalAuthority {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+
+/** Per-turn run directory; adapters must project any child-process identity. */
+export function runDirectoryFromHostContext(context: HostContext): string | undefined {
+  return typeof context.runDirectory === "string" && context.runDirectory.trim() !== ""
+    ? context.runDirectory
+    : undefined;
+}
+
+/** Per-turn court attempt; absence never inherits ambient process identity. */
+export function courtAttemptIdFromHostContext(context: HostContext): string | undefined {
+  return typeof context.courtAttemptId === "string" && context.courtAttemptId.trim() !== ""
+    ? context.courtAttemptId
+    : undefined;
+}
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; /**
  * #641 chain② opt-in: when the output params carry the shared infrastructure
@@ -356,7 +375,7 @@ export interface RoleHost {
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
-  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string }): Promise<void>;
+  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string; submission?: unknown }): Promise<void>;
   on(event: "before_agent_start", handler: HostEventHandler<"before_agent_start">): void;
   on(event: "input", handler: HostEventHandler<"input">): void;
   on(event: "tool_call", handler: HostEventHandler<"tool_call">): void;

@@ -111,6 +111,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   createPiRoleRuntimeExtension({
+    packageRoot,
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),

@@ -256,6 +256,8 @@ function spawnHeadlessTurn(options: {
   readonly env: NodeJS.ProcessEnv;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** User dialogue body; omitted from argv so execve cannot E2BIG (#879). */
+  readonly stdin?: string;
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
@@ -267,8 +269,20 @@ function spawnHeadlessTurn(options: {
     const child = spawn(options.binary, [...options.args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    if (child.stdin === null) {
+      reject(new Error("headless child stdin pipe was not created"));
+      return;
+    }
+    let stdinDeliveryError: Error | undefined;
+    child.stdin.on("error", (error) => {
+      stdinDeliveryError ??= error;
+    });
+    if (options.stdin !== undefined) {
+      child.stdin.write(options.stdin);
+    }
+    child.stdin.end();
     // Rolling retention only: last result-candidate line for final parse.
     // Live events go to sitian via onStdoutLine — never accumulate the full stream.
     let resultStdout = "";
@@ -318,6 +332,10 @@ function spawnHeadlessTurn(options: {
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
+      if (stdinDeliveryError !== undefined) {
+        reject(stdinDeliveryError);
+        return;
+      }
       resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {
@@ -381,7 +399,6 @@ function terminalFromSpawned(
 
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
-  readonly prompt: string;
   readonly systemPromptPath: string;
   readonly jsonSchema: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
@@ -400,7 +417,6 @@ function buildTurnArgs(options: {
     }
     if (options.outputSchemaPath === undefined) throw new Error("codex requires an output schema path");
     return codexTurnArgs({
-      prompt: options.prompt,
       systemPromptPath: options.systemPromptPath,
       outputSchemaPath: options.outputSchemaPath,
       mcpServers: options.mcpServers,
@@ -419,7 +435,6 @@ function buildTurnArgs(options: {
   if (options.mcpConfigPath === undefined) throw new Error("claude print-mode requires an MCP config path");
   return headlessTurnArgs({
     description: options.description,
-    prompt: options.prompt,
     systemPromptPath: options.systemPromptPath,
     jsonSchema: options.jsonSchema,
     mcpConfigPath: options.mcpConfigPath,
@@ -479,7 +494,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
             args = buildTurnArgs({
               description: config.description,
-              prompt,
               systemPromptPath,
               jsonSchema: prepared.jsonSchema,
               mcpServers: prepared.mcpServers,
@@ -508,6 +522,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
+              stdin: prompt,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {

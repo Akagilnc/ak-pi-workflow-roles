@@ -2,7 +2,13 @@ import {
   resolveActivationLedgerHome,
   tryHomeFromAkRolesPath,
 } from "./activation-ledger-topology.ts";
-import type { HostContext, HostToolResult, RoleHost } from "./host-contracts.ts";
+import {
+  courtAttemptIdFromHostContext,
+  runDirectoryFromHostContext,
+  type HostContext,
+  type HostToolResult,
+  type RoleHost,
+} from "./host-contracts.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 
@@ -57,8 +63,8 @@ export type SubmissionLedgerEvent =
  * otherwise session header id. Never a shared "unbound" bucket.
  */
 function runIdentity(context: HostContext): string {
-  const directory = process.env.AK_ROLE_RUN_DIR;
-  if (typeof directory === "string" && directory.length > 0) {
+  const directory = runDirectoryFromHostContext(context);
+  if (directory !== undefined) {
     const fromDir = runIdFromRunDirectory(directory);
     if (fromDir !== undefined) return fromDir;
   }
@@ -74,8 +80,8 @@ function runIdentity(context: HostContext): string {
 export const COURT_ATTEMPT_ENV = "AK_ROLE_COURT_ATTEMPT" as const;
 
 function attemptIdentity(context: HostContext, runId: string): string {
-  const courtAttempt = process.env[COURT_ATTEMPT_ENV];
-  if (typeof courtAttempt === "string" && courtAttempt.length > 0) return courtAttempt;
+  const courtAttempt = courtAttemptIdFromHostContext(context);
+  if (courtAttempt !== undefined) return courtAttempt;
   return context.sessionManager.getHeader?.()?.id ?? context.sessionManager.getLeafId?.() ?? `${runId}:initial`;
 }
 
@@ -258,14 +264,10 @@ function rowFromPayload(
  * recorded attemptId + toolCallId so distinct court attempts stay distinct (#881).
  * `accepted` is the original payload; never rebuilt from a status/facts envelope.
  */
-export async function readRecordedSubmissionRows(
-  cwd: string,
-  runId: string,
-  homeOrScope?: string | SubmissionLedgerReadScope,
-): Promise<readonly RecordedSubmissionRow[]> {
-  const scope = resolveReadScope(homeOrScope);
-  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
-  const scoped = recordsForAttempt(owned, scope.attemptId);
+function mapOwnedToSubmissionRows(
+  owned: readonly { kind?: unknown; subject?: unknown; payload?: unknown }[],
+): readonly RecordedSubmissionRow[] {
+  const scoped = owned;
   const out: RecordedSubmissionRow[] = [];
   const indexByCall = new Map<string, number>();
   // Recover seat identity for historical non-sealed rows that omitted role (#881).
@@ -358,6 +360,39 @@ export async function readRecordedSubmissionRows(
     take(rowFromPayload(kind, payload, payload.accepted, fallback), callKey);
   }
   return out;
+}
+
+/**
+ * All recorded role submissions in ledger order (#836 multi-submit).
+ * `accepted` is the original payload; never rebuilt from a status/facts envelope.
+ * Presentation stays run-scoped: attemptId on the read scope is a recording tag,
+ * not a visibility gate (#836).
+ */
+export async function readRecordedSubmissionRows(
+  cwd: string,
+  runId: string,
+  homeOrScope?: string | SubmissionLedgerReadScope,
+): Promise<readonly RecordedSubmissionRow[]> {
+  const scope = resolveReadScope(homeOrScope);
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
+  const scoped = recordsForAttempt(owned, scope.attemptId);
+  return mapOwnedToSubmissionRows(scoped);
+}
+
+/**
+ * Settlement-only this-court rows (#879 return path).
+ * Filters by attemptId for court-scoped roleOutcome; does not replace the
+ * run-scoped presentation API above (#836 visibility gate stays pass-through).
+ */
+export async function readAttemptScopedSubmissionRows(
+  cwd: string,
+  runId: string,
+  attemptId: string,
+  home?: string,
+): Promise<readonly RecordedSubmissionRow[]> {
+  if (attemptId.length === 0) return [];
+  const { owned } = await readOwnedSubmissionRecords(cwd, runId, home);
+  return mapOwnedToSubmissionRows(owned.filter((record) => recordAttemptId(record) === attemptId));
 }
 
 /**

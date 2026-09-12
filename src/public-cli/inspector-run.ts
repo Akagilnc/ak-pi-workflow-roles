@@ -12,6 +12,7 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
   buildInspectorTransportPrompt,
+  persistAdmittedSourceRunPath,
   type AdmittedInspectorInvocation,
   type ParseInspectorArgvResult,
 } from "./invocation.ts";
@@ -50,18 +51,35 @@ export type InspectorRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the 卷宗指针 parentRunPath key (#747).
    */
   reviewReask?: string;
+  /**
+   * #879 gate summons: verbatim parent-submission body for officer dialogue content.
+   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
+   * Argv 卷宗指针 stays the binding/lookup key only.
+   */
+  gateReviewInstruction?: string;
 };
+
+function inspectorParentRunPath(
+  admitted: AdmittedInspectorInvocation,
+): string | undefined {
+  if (typeof admitted.sourceRunPath === "string" && admitted.sourceRunPath.trim() !== "") {
+    return admitted.sourceRunPath;
+  }
+  return parentRunPathFromGatePointerInstruction(admitted.instruction);
+}
 
 /** Project admitted invocation onto the host-neutral turn request. */
 export function buildInspectorTurnRequest(
   admitted: AdmittedInspectorInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
+  const sourceRun = inspectorParentRunPath(admitted);
   return projectRoleTurnRequest(
     admitted,
     {
       activation: {
         role: "inspector" as const,
+        ...(sourceRun === undefined ? {} : { sourceRun }),
       },
     },
     options,
@@ -97,7 +115,7 @@ export async function runPublicInspector(
   // #753/#786: gate re-ask / verbatim submission body ride summons.instruction on resume.
   const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction);
   if (parentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask;
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: parentRunPath,
       ...(resumeInstruction === undefined
@@ -147,6 +165,10 @@ export async function runPublicInspector(
   }
 
   await markRunAdmitted(admitted, env.principalAuthority);
+  if (parentRunPath !== undefined) {
+    await persistAdmittedSourceRunPath(admitted, parentRunPath);
+    admitted = { ...admitted, sourceRunPath: parentRunPath };
+  }
 
   const engineMaterial = engineSessionMaterialFromOptions({
     ...pickEngineAxis(env),
@@ -164,7 +186,9 @@ export async function runPublicInspector(
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildInspectorTransportPrompt(admitted, engineMaterial),
+      // #879: gate first mint uses parent payload as content; binding stays typed activation.
+      prompt: (env.reviewReask ?? env.gateReviewInstruction)
+        ?? buildInspectorTransportPrompt(admitted, engineMaterial),
     },
   });
 

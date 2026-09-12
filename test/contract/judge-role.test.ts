@@ -363,6 +363,7 @@ function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contrac
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       hostActions: options.hostActions,
       toolCallId: options.toolCallId,
+      ...(options.submission === undefined ? {} : { submission: options.submission }),
       ...(defaultGateSummon === undefined ? {} : { summonOfficer: extensionGateSummon }),
     });
   };
@@ -1001,8 +1002,19 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     "ak-fixer-prerequisites": "/prereqs.json",
     "ak-fixer-phase": "plan",
   });
+  const fixerAdapterHost = createPiRoleHostAdapter(fixer.pi as unknown as ExtensionAPI).host;
+  const fixerRoleEvents = new Set<string>();
+  const fixerHost = new Proxy(fixerAdapterHost, {
+    get(target, property, receiver) {
+      if (property !== "on") return Reflect.get(target, property, receiver);
+      return (event: string, handler: unknown) => {
+        fixerRoleEvents.add(event);
+        return (target.on as (event: string, handler: unknown) => void)(event, handler);
+      };
+    },
+  });
   const fixerRuntime = createFixerRoleRuntime(
-    ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(fixer.pi as unknown as ExtensionAPI).host),
+    ((h) => { armGateSummonOnHost(h); return h; })(fixerHost),
     {
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async (path) =>
@@ -1016,7 +1028,8 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
   await fixerRuntime.activate();
   assert.deepEqual([...fixer.tools.keys()], [FIXER_OUTPUT_TOOL_NAME]);
   assert.ok(fixer.handlers.has("before_agent_start"));
-  assert.equal(fixer.handlers.has("input"), false);
+  assert.equal(fixerRoleEvents.has("input"), false);
+  assert.equal(fixer.handlers.has("input"), true);
   const fixerPrompt = (await fixer.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},

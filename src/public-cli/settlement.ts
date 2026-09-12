@@ -15,6 +15,7 @@ import { readSitianRecords, resolveSitianRecordPath, sitianReport } from "../sit
 
 import {
   hasFreshAttemptSubmission,
+  readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
   readRecordedSubmissions,
 } from "../submission-ledger.ts";
@@ -198,6 +199,22 @@ async function sealedLedgerOutcome(
   role: TerminalRoleName,
   scope?: SettlementCourtScope,
 ): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
+  const home = sealedLedgerHome(admitted);
+  // #879: when court scope is present, roleOutcome is this-court original only —
+  // never last-wins over an undivided historical array, and never falls back to
+  // full-run history when this court sealed zero rows. #836 presentation of full
+  // history stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
+  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
+    const thisCourt = await readAttemptScopedSubmissionRows(
+      admitted.projectRoot,
+      admitted.runId,
+      scope.courtAttemptId,
+      home,
+    );
+    // Scope present + zero this-court rows → no this-court outcome (not run history).
+    return roleOutcomeFromRows(role, thisCourt);
+  }
+  // No court scope: keep run-scoped ledger face (#836).
   const rows = await readRecordedSubmissionRows(
     admitted.projectRoot,
     admitted.runId,
@@ -247,12 +264,14 @@ export function withSubmissions<T extends TerminalResult>(
 ): T {
   if (submissions.length === 0) return terminal;
   const roleOutcome = terminal.roleOutcome;
-  // Full ledger sequence always wins the role-result block (#881): do not keep a
-  // narrower pre-filtered payloads array when attach brings the complete set.
+  // #879 keeps an already scoped this-court result; #881 full run history is
+  // presented independently on terminal.submissions. Only fill a missing result payload.
   const withPayloads =
-    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation" || roleOutcome.kind === "failure"
-      ? { ...roleOutcome, payloads: submissions }
-      : roleOutcome;
+    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
+      ? { ...roleOutcome, payloads: (roleOutcome.payloads ?? []).length > 0 ? roleOutcome.payloads : submissions }
+      : roleOutcome.kind === "failure"
+        ? { ...roleOutcome, payloads: roleOutcome.payloads ?? submissions }
+        : roleOutcome;
   return { ...terminal, roleOutcome: withPayloads, submissions };
 }
 
@@ -262,7 +281,14 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   terminal: T,
   scope?: SettlementCourtScope,
 ): Promise<T> {
-  return withSubmissions(terminal, await recordedSubmissionPayloads(admitted, scope));
+  // #836 / #879: submissions presentation is always run-scoped history. Do not
+  // pass courtAttemptId here — roleOutcome already carries this-court payloads
+  // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
+  void scope;
+  return withSubmissions(
+    terminal,
+    await recordedSubmissionPayloads(admitted, undefined),
+  );
 }
 
 /**

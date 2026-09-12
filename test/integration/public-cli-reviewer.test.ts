@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -863,6 +864,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
+    let resumeStdin: string | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
@@ -872,8 +874,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
         resumeArgs = [...args];
+        resumeStdin = options.stdin;
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
@@ -883,10 +886,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
-        assert.equal(
-          args.some((a) => a.startsWith("/skill:code-review")),
-          true,
-        );
+        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:code-review"), true);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const material = await loadPackagedMethodSkillMaterial(
           packageRoot,

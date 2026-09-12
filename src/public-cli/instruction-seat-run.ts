@@ -69,6 +69,11 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
    */
   reviewReask?: string;
+  /**
+   * #879 gate summons: verbatim parent-submission body for officer dialogue content.
+   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -291,8 +296,9 @@ export async function runPublicInstructionSeat(
     }
   }
 
-  // #756/#786: auditor reask / verbatim submission body ride summons.instruction on resume.
-  const resumeInstruction = env.reviewReask;
+  // #756/#879: auditor reask / verbatim submission body ride summons.instruction.
+  // Binding pointer stays --source-run / argv 卷宗指针; content is body or reask.
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
   const summons: SameTicketSummonsMaterials = {
     ...(resumeInstruction === undefined
       ? {
@@ -372,13 +378,15 @@ export async function runPublicInstructionSeat(
           : { correlationId: env.correlationId }),
         continuation: {
           kind: "initial",
-          prompt: buildInstructionTransportPrompt(
-            admitted,
-            engineSessionMaterialFromOptions({
-              ...pickEngineAxis(env),
-              packageRoot: env.packageRoot,
-            }),
-          ),
+          // #879: gate first mint uses parent payload as content when present.
+          prompt: (env.reviewReask ?? env.gateReviewInstruction)
+            ?? buildInstructionTransportPrompt(
+              admitted,
+              engineSessionMaterialFromOptions({
+                ...pickEngineAxis(env),
+                packageRoot: env.packageRoot,
+              }),
+            ),
         },
       });
 

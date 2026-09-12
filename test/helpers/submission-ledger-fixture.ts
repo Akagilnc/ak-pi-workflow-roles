@@ -57,17 +57,12 @@ async function driveLedgerProducer(input: {
     },
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
-  const priorRun = process.env.AK_ROLE_RUN_DIR;
-  const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
-  process.env.AK_ROLE_RUN_DIR =
-    input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
-  if (input.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-  else process.env.AK_ROLE_COURT_ATTEMPT = input.courtAttemptId;
-  try {
-    const context = {
+  const context = {
         cwd: input.cwd,
         mode: "json",
         model: undefined,
+        runDirectory: input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`,
+        ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
           getLeafId: () => null,
@@ -93,12 +88,6 @@ async function driveLedgerProducer(input: {
         calls: [{ toolCallId: input.toolCallId, toolName }],
       }, context);
     }
-  } finally {
-    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorRun;
-    if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
-  }
 }
 
 /**

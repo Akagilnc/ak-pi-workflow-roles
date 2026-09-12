@@ -26,6 +26,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
+    packageRoot,
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),

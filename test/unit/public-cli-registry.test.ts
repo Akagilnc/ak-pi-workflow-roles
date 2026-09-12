@@ -105,7 +105,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     role: "inspector",
     phases: [null],
     outputTool: "ak_inspector_output",
-    inputFlag: undefined,
+    inputFlag: "ak-inspector-source-run",
     phaseFlag: undefined,
     activationStage: "load-and-install",
   },

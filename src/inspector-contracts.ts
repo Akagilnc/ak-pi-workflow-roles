@@ -6,6 +6,13 @@
 
 export const INSPECTOR_OUTPUT_TOOL_NAME = "ak_inspector_output" as const;
 export const INSPECTOR_ACCEPTED_TEXT = "察院回执已接受";
+export const INSPECTOR_SOURCE_RUN_FLAG = {
+  name: "ak-inspector-source-run",
+  definition: {
+    description: "察院初铸绑定的父 run 绝对路径",
+    type: "string" as const,
+  },
+} as const;
 
 export type InspectorOutput =
   | { readonly status: "pass"; readonly findings?: unknown }

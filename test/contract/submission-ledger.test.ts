@@ -59,6 +59,7 @@ function registerTool(
     cwd: root,
     mode: "json",
     model: undefined,
+    runDirectory: `${root}/runs/run-ledger@${role}`,
     sessionManager: {
       getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
       getLeafEntry: () => undefined,
@@ -367,6 +368,7 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
     const bare = registerTool(f.root);
     const context = {
       ...bare.context,
+      runDirectory: undefined,
       sessionManager: {},
     } as unknown as HostContext;
     await assert.rejects(
@@ -393,7 +395,6 @@ test("every packaged role records original payload through the production ledger
   ];
   for (const row of rows) {
     await withLedgerFixture(async (f) => {
-      process.env.AK_ROLE_RUN_DIR = `${f.root}/runs/run-${row.role}@${row.role}`;
       const outputTool = packagedRoleOutputTool(row.role)!;
       const alternateHost = registerTool(
         f.root,
@@ -401,6 +402,7 @@ test("every packaged role records original payload through the production ledger
         outputTool,
         row.role,
       );
+      alternateHost.context.runDirectory = `${f.root}/runs/run-${row.role}@${row.role}`;
       await alternateHost.start(`${row.role}-output`, outputTool);
       const accepted = await alternateHost.tool().execute(`${row.role}-output`, row.details, undefined, undefined, alternateHost.context);
       assert.deepEqual(accepted.details, row.details, row.role);
@@ -454,10 +456,9 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
     const reusedCallId = "reused-id";
     await f.start(reusedCallId);
     await f.tool().execute(reusedCallId, { judgeStatus: "continue" }, undefined, undefined, f.context);
-    const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
-    process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
-    try {
-      const reopened = registerTool(f.root);
+    const reopened = registerTool(f.root);
+    reopened.context.courtAttemptId = "court-turn-2";
+    {
       await reopened.start(reusedCallId);
       await reopened.tool().execute(reusedCallId, { judgeStatus: "converged" }, undefined, undefined, reopened.context);
       const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
@@ -482,9 +483,6 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
         }),
         recorded,
       );
-    } finally {
-      if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-      else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
     }
   });
 });
